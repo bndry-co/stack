@@ -53,6 +53,17 @@ on:
 permissions:
   contents: read
 
+env:
+  # The only files a release commit adds, in the order guests.sha256 lists
+  # them. Every job takes the paths from here and never from the artifact:
+  # guests.sha256 is written before the build job runs third-party code, so
+  # `publish` checks it names exactly these and nothing else
+  # (scripts/__tests__/go-release-artifact.test.mjs).
+  GUESTS: >-
+    languages/golang/encrypt/wasm/stack_encrypt_guest.wasm
+    languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm
+    languages/golang/auth/wasm/stack_auth_guest.wasm
+
 concurrency:
   group: release-golang
   cancel-in-progress: false
@@ -142,11 +153,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-out
-          sha256sum \
-            languages/golang/encrypt/wasm/stack_encrypt_guest.wasm \
-            languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm \
-            languages/golang/auth/wasm/stack_auth_guest.wasm \
-            > release-out/guests.sha256
+          read -ra guests <<< "$GUESTS"
+          sha256sum "${guests[@]}" > release-out/guests.sha256
           cat release-out/guests.sha256
 
       # The deterministic test builds the hermetic Go tests load.
@@ -173,7 +181,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout --detach
           # The guests are gitignored on main; -f adds them to this commit only.
-          mapfile -t guests < <(cut -d' ' -f3 release-out/guests.sha256)
+          read -ra guests <<< "$GUESTS"
           git add -f "${guests[@]}"
           git commit -q -m "release(golang): v$VERSION with its WASI guests"
           tree=$(git rev-parse 'HEAD^{tree}')
@@ -189,9 +197,10 @@ jobs:
       - name: Stage the release files
         run: |
           set -euo pipefail
-          while read -r _ guest; do
+          read -ra guests <<< "$GUESTS"
+          for guest in "${guests[@]}"; do
             install -D -m 0644 "$guest" "release-out/$guest"
-          done < release-out/guests.sha256
+          done
           cp packages/eql/release/cipherstash-encrypt-v4.sql release-out/eql-v4-install.sql
           cp packages/eql/release/cipherstash-encrypt-v4-uninstall.sql release-out/eql-v4-uninstall.sql
           find release-out -type f | sort
@@ -229,17 +238,36 @@ jobs:
           name: go-release
           path: release-out
 
+      # The artifact comes from a job that ran third-party code after it wrote
+      # guests.sha256, so the manifest is data to check, not a list of paths
+      # to trust: a line naming any other file would put that file in the
+      # release commit, and the tree comparison below would not notice,
+      # because the build job derived its tree from the same manifest. The
+      # paths come from GUESTS; the manifest must be exactly one SHA-256 line
+      # for each, in order, before anything is copied.
       - name: Commit the guests
         run: |
           set -euo pipefail
-          while read -r _ guest; do
+          read -ra guests <<< "$GUESTS"
+          mapfile -t lines < release-out/guests.sha256
+          if [ "${#lines[@]}" -ne "${#guests[@]}" ]; then
+            echo "::error::guests.sha256 has ${#lines[@]} lines, not one for each of the ${#guests[@]} guests"
+            exit 1
+          fi
+          line_re='^[0-9a-f]{64}  (.+)$'
+          for i in "${!guests[@]}"; do
+            if ! [[ "${lines[$i]}" =~ $line_re ]] || [ "${BASH_REMATCH[1]}" != "${guests[$i]}" ]; then
+              echo "::error::guests.sha256 line $((i + 1)) is not the SHA-256 of ${guests[$i]}"
+              exit 1
+            fi
+          done
+          for guest in "${guests[@]}"; do
             install -D -m 0644 "release-out/$guest" "$guest"
-          done < release-out/guests.sha256
+          done
           sha256sum -c release-out/guests.sha256
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout --detach
-          mapfile -t guests < <(cut -d' ' -f3 release-out/guests.sha256)
           git add -f "${guests[@]}"
           git commit -m "release(golang): v$VERSION with its WASI guests" \
             -m "Built from $GITHUB_SHA by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
