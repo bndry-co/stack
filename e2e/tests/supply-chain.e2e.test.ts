@@ -291,6 +291,21 @@ describe('supply chain — pnpm-lock.yaml integrity', () => {
       ).toBe(true)
     }
   })
+
+  it('@modelcontextprotocol/sdk resolves to the peer-pinned patched version (≥ 1.31.0)', () => {
+    // Peer-resolution pin, like @anthropic-ai/sdk above: languages/typescript/packages/wizard
+    // depends on @modelcontextprotocol/sdk@^1.32.0 to force the auto-installed
+    // peer of @anthropic-ai/claude-agent-sdk past the advisory-vulnerable range
+    // (GHSA-6qxp-vccf-f47h / CVE-2026-104850, patched 1.31.0).
+    const versions = resolvedVersionsByName().get('@modelcontextprotocol/sdk') ?? []
+    expect(versions.length).toBeGreaterThan(0)
+    for (const version of versions) {
+      expect(
+        semver.gte(version, '1.31.0'),
+        `@modelcontextprotocol/sdk@${version} is below the patched 1.31.0`,
+      ).toBe(true)
+    }
+  })
 })
 
 describe('supply chain — every workflow installs with --frozen-lockfile', () => {
