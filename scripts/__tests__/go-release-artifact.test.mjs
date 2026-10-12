@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -243,45 +244,82 @@ describe.skipIf(!BASH_HAS_MAPFILE)(
  * `build` reports the tree it tested and `publish` refuses any other, so the
  * two must stage the guests identically. Cargo writes them executable and
  * `publish` writes them 0644 from the artifact, which made the trees differ
- * in mode alone: the first release refused itself. This runs the build job's
- * staging, up to the tree it reports, on executable guests.
+ * in mode alone: the first release refused itself. Both now set the mode in
+ * git (`--chmod=-x`), so it no longer depends on the files.
  */
 const STAGE_STEP = WORKFLOW.jobs.build.steps.find((step) => step.id === 'stage')
 const STAGE_UNTIL = 'fetched=$(mktemp -d)'
 
-describe('release-golang.yml build: Stage the release commit', () => {
-  it('reports the tree publish builds, whatever mode cargo left the guests in', () => {
-    expect(STAGE_STEP).toBeDefined()
-    const script = String(STAGE_STEP.run)
-    const cut = script.indexOf(STAGE_UNTIL)
-    expect(
-      cut,
-      `the stage step no longer contains ${STAGE_UNTIL}`,
-    ).toBeGreaterThan(0)
-
-    for (const guest of GUESTS) {
-      stage(guest, `guest ${guest}\n`)
-      const built = join(repo, guest)
-      mkdirSync(dirname(built), { recursive: true })
-      writeFileSync(built, `guest ${guest}\n`, { mode: 0o755 })
-    }
-    const result = spawnSync(
-      'bash',
-      ['-c', `${script.slice(0, cut)}\necho "$tree"`],
-      {
-        cwd: repo,
-        encoding: 'utf8',
-        env: {
-          PATH: process.env.PATH,
-          HOME: repo,
-          GIT_CONFIG_NOSYSTEM: '1',
-          GUESTS: WORKFLOW.env.GUESTS,
-          VERSION: '0.1.0-alpha.1',
-        },
+/**
+ * Run the build job's staging, up to the tree it reports, on guests left
+ * executable as cargo leaves them, then return to `main`. Returns the tree.
+ */
+function runBuildStaging() {
+  const script = String(STAGE_STEP.run)
+  const cut = script.indexOf(STAGE_UNTIL)
+  expect(
+    cut,
+    `the stage step no longer contains ${STAGE_UNTIL}`,
+  ).toBeGreaterThan(0)
+  for (const guest of GUESTS) {
+    const built = join(repo, guest)
+    mkdirSync(dirname(built), { recursive: true })
+    writeFileSync(built, `guest ${guest}\n`, { mode: 0o755 })
+  }
+  const result = spawnSync(
+    'bash',
+    ['-c', `${script.slice(0, cut)}\necho "$tree"`],
+    {
+      cwd: repo,
+      encoding: 'utf8',
+      env: {
+        PATH: process.env.PATH,
+        HOME: repo,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GUESTS: WORKFLOW.env.GUESTS,
+        VERSION: '0.1.0-alpha.1',
       },
-    )
-    expect(result.status, result.stderr).toBe(0)
-    git(repo, 'checkout', '-q', 'main')
-    expect(result.stdout.trim().split('\n').at(-1)).toBe(expectedTree())
+    },
+  )
+  expect(result.status, result.stderr).toBe(0)
+  // Forced: the guests on disk are still 0755 while the commit holds them
+  // 0644, which git reads as a local change.
+  git(repo, 'checkout', '-q', '-f', 'main')
+  return result.stdout.trim().split('\n').at(-1)
+}
+
+describe('release-golang.yml build: Stage the release commit', () => {
+  it('commits the guests non-executable, whatever mode cargo left them in', () => {
+    expect(STAGE_STEP).toBeDefined()
+    const tree = runBuildStaging()
+    for (const guest of GUESTS) {
+      expect(git(repo, 'ls-tree', tree, guest).split(/\s+/)[0], guest).toBe(
+        '100644',
+      )
+    }
   })
 })
+
+describe.skipIf(!BASH_HAS_MAPFILE)(
+  'release-golang.yml build and publish build the same tree',
+  () => {
+    it.skipIf(!GNU_COREUTILS)(
+      'publish accepts the tree build reports, from an executable artifact',
+      () => {
+        const tree = runBuildStaging()
+        // The artifact executable too: the two jobs agree through git, not
+        // through what either one wrote to disk.
+        writeManifest(
+          GUESTS.map((guest) => {
+            const line = stage(guest, `guest ${guest}\n`)
+            chmodSync(join(repo, 'release-out', guest), 0o755)
+            return line
+          }),
+        )
+        const result = runCommitStep(tree)
+        expect(result.stderr + result.stdout).not.toContain('::error::')
+        expect(result.status).toBe(0)
+      },
+    )
+  },
+)
