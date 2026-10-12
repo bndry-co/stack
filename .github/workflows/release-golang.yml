@@ -205,7 +205,11 @@ jobs:
           git checkout --detach
           # The guests are gitignored on main; -f adds them to this commit only.
           read -ra guests <<< "$GUESTS"
-          git add -f "${guests[@]}"
+          # --chmod=-x: the committed mode is set in git, not read from the
+          # file. Cargo writes the guests executable and `publish` writes them
+          # 0644, so a mode taken from disk made this job's tree differ from
+          # the one `publish` builds, and it refused the release.
+          git add -f --chmod=-x "${guests[@]}"
           git commit -q -m "release(golang): v$VERSION with its WASI guests"
           tree=$(git rev-parse 'HEAD^{tree}')
 
@@ -298,7 +302,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout --detach
-          git add -f "${guests[@]}"
+          # The mode is set in git, as the build job sets it, so the two trees
+          # agree whatever mode either job left the files in.
+          git add -f --chmod=-x "${guests[@]}"
           git commit -m "release(golang): v$VERSION with its WASI guests" \
             -m "Built from $GITHUB_SHA by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           tree=$(git rev-parse 'HEAD^{tree}')
