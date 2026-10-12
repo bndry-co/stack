@@ -119,3 +119,14 @@ mise run go:test                 # the whole Go module, both packages
 
 The guest module is embedded from `wasm/` and not committed; without it,
 `Open` returns `ErrGuestNotBuilt` and the tests skip.
+
+## Licence
+
+The Go code in this module is MIT-licensed ([`LICENSE`](../LICENSE)). The
+credential guest it embeds is compiled from Rust crates that are not:
+`stack-auth`, `stack-profile` and `stack-guest-abi` are licensed under the
+[PolyForm Internal Use License 1.0.0](https://polyformproject.org/licenses/internal-use/1.0.0).
+Those terms allow use for your internal business operations only. Each
+crate's `LICENSE` in the
+[CipherStash Stack repository](https://github.com/cipherstash/stack/tree/main/packages)
+has the full text.
