@@ -9,7 +9,7 @@
 // pushed, rather than by the proxy check at the end of the run, after the tag
 // exists and the version number is spent.
 //
-// Three rules:
+// Four rules:
 //
 // 1. CANONICAL SEMVER. Go accepts only `vMAJOR.MINOR.PATCH[-PRERELEASE]` with
 //    no leading zeros in a numeric part or a numeric pre-release identifier,
@@ -19,7 +19,13 @@
 //    suffix may only publish v0 and v1; `v2.0.0` at that path is refused with
 //    "module path must match major version". A path ending `/vN` publishes
 //    major N only.
-// 3. A FINAL VERSION COMES FROM MAIN. `workflow_dispatch` runs on whatever ref
+// 3. NOT A PSEUDO-VERSION. Go reads a version shaped like a pseudo-version
+//    (`v0.0.0-20261012131135-deadbeefdead`, `v1.2.4-0.20261012131135-…`) as
+//    a timestamp and revision to check against the repository, not as a tag,
+//    so a tag of that shape builds here and fails only in `verify`, after the
+//    push. Refused by the same pattern `golang.org/x/mod/module`'s
+//    `IsPseudoVersion` uses.
+// 4. A FINAL VERSION COMES FROM MAIN. `workflow_dispatch` runs on whatever ref
 //    the dispatcher picks. A pre-release (a version with a `-suffix`) may be
 //    cut from a branch, which is how a partner alpha is built from an
 //    unmerged stack; a final version may not.
@@ -32,6 +38,10 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 const GO_MOD = join(REPO_ROOT, 'languages/golang/go.mod')
 
 const NUMERIC = /^(0|[1-9][0-9]*)$/
+// golang.org/x/mod/module's pseudoVersionRE, less the `+build` suffix,
+// which is refused before this is reached.
+const PSEUDO_VERSION =
+  /^v[0-9]+\.(0\.0-|\d+\.\d+-([^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+$/
 const IDENTIFIER = /^[0-9A-Za-z-]+$/
 
 /** The `module` line of a go.mod. */
@@ -90,6 +100,12 @@ export function goReleaseVersionErrors(version, { modulePath, ref }) {
         errors.push(`numeric pre-release identifier '${id}' has a leading zero`)
       }
     }
+  }
+
+  if (pre !== null && PSEUDO_VERSION.test(`v${version}`)) {
+    errors.push(
+      `'${version}' has the shape of a Go pseudo-version, which Go checks against a commit and timestamp rather than reading as a tag`,
+    )
   }
 
   const major = Number(parts[0])

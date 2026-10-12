@@ -117,8 +117,13 @@ mise run wasm:auth-guest:build   # the guest, with its import-surface gate
 mise run go:test                 # the whole Go module, both packages
 ```
 
-The guest module is embedded from `wasm/` and not committed; without it,
-`Open` returns `ErrGuestNotBuilt` and the tests skip.
+The guest module is embedded from `wasm/`. A tagged version of the module,
+as `go get` resolves it, carries it: the release workflow commits it to the
+commit the tag names, so nothing needs building. A pseudo-version
+(`go get ...@main`, or any commit rather than a tag) does not, and neither
+does a checkout of this repository, where the guest is not committed and the
+commands above build it. Without it, `Open` returns `ErrGuestNotBuilt` and
+the tests skip.
 
 ## Licence
 

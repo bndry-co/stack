@@ -99,6 +99,27 @@ jobs:
             exit 1
           fi
 
+      # The tag check misses a version whose tag was deleted after the proxy
+      # fetched it. The proxy goes on serving that version and sum.golang.org
+      # keeps its hash, so a new tag at the same number would fail every
+      # user's checksum. This asks @v/list, which the proxy has been seen to
+      # go on listing a deleted tag in (golang/go#44306), though it does not
+      # promise to. It never asks for the version itself (@v/<version>.info,
+      # `go list -m`): asked before the tag exists, the proxy caches "not
+      # found" for up to 30 minutes, and `verify` would fail after the push.
+      # Here and not in `publish`, so a re-run of `publish` that finds its own
+      # earlier tag is not refused.
+      - name: Refuse a version the Go proxy already lists
+        run: |
+          set -euo pipefail
+          module=github.com/cipherstash/stack/languages/golang
+          list=$(curl -fsS --retry 3 "https://proxy.golang.org/$module/@v/list") \
+            || { echo "::error::could not read the Go proxy's version list for $module"; exit 1; }
+          if grep -qxF "v$VERSION" <<< "$list"; then
+            echo "::error::the Go proxy already lists $module v$VERSION; its contents are fixed even though the tag is gone. Release a new version."
+            exit 1
+          fi
+
       # No cache: this job builds the binaries that are published, and a
       # poisoned restore would ship in them. scripts/lint-no-workflow-caching.mjs
       # holds it.
@@ -111,6 +132,17 @@ jobs:
 
       - name: Add rustfmt and clippy to the pinned toolchain
         run: rustup component add rustfmt clippy
+
+      # Neither the guest builds nor the EQL build (two plain `cargo run`s in
+      # packages/eql/tasks/build.sh) pass --locked, and a stale lock would be
+      # resolved afresh here into guests or SQL nobody can rebuild from the
+      # tag. Before the EQL build, so it runs first of all the cargo work.
+      - name: Check the Cargo lockfiles are current
+        run: |
+          set -euo pipefail
+          for workspace in packages/eql languages/golang/encrypt/guest languages/golang/auth/guest; do
+            cargo metadata --locked --format-version 1 --manifest-path "$workspace/Cargo.toml" > /dev/null
+          done
 
       # First of the builds because it is the cheap one that fails on a ref
       # without the v4 bundle. eql_v4.version() reports `go-<version>`: the
@@ -131,15 +163,6 @@ jobs:
           done
           grep -qF "'go-$VERSION'" release/cipherstash-encrypt-v4.sql \
             || { echo "::error::the v4 bundle is not stamped go-$VERSION"; exit 1; }
-
-      # The guest builds pass no --locked, and a stale lock would be resolved
-      # afresh here into a module nobody can rebuild from the tag.
-      - name: Check the guests' lockfiles are current
-        run: |
-          set -euo pipefail
-          for guest in languages/golang/encrypt/guest languages/golang/auth/guest; do
-            cargo metadata --locked --format-version 1 --manifest-path "$guest/Cargo.toml" > /dev/null
-          done
 
       - name: Build the guests
         run: |
@@ -227,11 +250,18 @@ jobs:
       VERSION: ${{ inputs.version }}
       TREE: ${{ needs.build.outputs.tree }}
     steps:
-      # No credential in .git/config: the token is handed to the one push
+      # Not actions/checkout: its `token` input defaults to github.token,
+      # which in this job can write, and persist-credentials: false only stops
+      # it being left in .git/config. The repository is public, so the commit
+      # is fetched without a credential. The token is handed to the one push
       # below, and to gh, and to nothing else.
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          persist-credentials: false
+      - name: Fetch the commit without a credential
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch -q --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:

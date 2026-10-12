@@ -1,8 +1,10 @@
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -35,30 +37,48 @@ const git = (cwd, ...args) =>
   execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 
 /**
- * The step runs on Linux, where `install -D` is GNU coreutils. macOS ships BSD
- * `install`, which has no `-D`; a Homebrew coreutils install provides GNU's as
- * `ginstall`, and the step sees it as `install` through a shim directory.
- * Without either, the commit case cannot run here and is skipped; the refusal
- * cases stop before `install` and run everywhere.
+ * The step runs on Linux under bash 5 with GNU coreutils. Two of those are not
+ * a given on a developer's machine:
+ *
+ * - `mapfile` is bash 4 and later. macOS's own /bin/bash is 3.2, so the suite
+ *   is skipped when the `bash` on PATH has no `mapfile`; every case needs it.
+ * - `install -D` and `sha256sum -c` are GNU's. macOS's `install` has no `-D`.
+ *   Homebrew coreutils provides GNU's as `ginstall` and `gsha256sum`, and the
+ *   step sees them under their own names through a shim directory. Only the
+ *   commit case reaches either; it is skipped without them. The refusal cases
+ *   stop before both.
+ *
+ * Fixture hashes come from node:crypto, so writing a manifest needs neither.
  */
-const GNU_INSTALL = ['install', 'ginstall'].find((name) => {
-  const probe = spawnSync(name, ['--version'], { encoding: 'utf8' })
-  return probe.status === 0 && probe.stdout.includes('GNU coreutils')
-})
+const BASH_HAS_MAPFILE =
+  spawnSync('bash', ['-c', 'mapfile -t lines < /dev/null']).status === 0
+
 const SHIMS = mkdtempSync(join(tmpdir(), 'go-release-artifact-bin-'))
-if (GNU_INSTALL === 'ginstall') {
-  const path = execFileSync('bash', ['-c', 'command -v ginstall'], {
-    encoding: 'utf8',
-  }).trim()
-  symlinkSync(path, join(SHIMS, 'install'))
+
+/** Put GNU's `tool` on the shim PATH. False when there is none. */
+function shimGnu(tool) {
+  for (const name of [tool, `g${tool}`]) {
+    const probe = spawnSync(name, ['--version'], { encoding: 'utf8' })
+    if (probe.status !== 0 || !probe.stdout.includes('GNU coreutils')) continue
+    if (name !== tool) {
+      const path = execFileSync('bash', ['-c', `command -v ${name}`], {
+        encoding: 'utf8',
+      }).trim()
+      symlinkSync(path, join(SHIMS, tool))
+    }
+    return true
+  }
+  return false
 }
+const GNU_COREUTILS = [shimGnu('install'), shimGnu('sha256sum')].every(Boolean)
 
 afterAll(() => {
   rmSync(SHIMS, { recursive: true, force: true })
 })
 
-const sha256 = (cwd, path) =>
-  execFileSync('sha256sum', [path], { cwd, encoding: 'utf8' }).trim()
+/** A `sha256sum` line: the hex digest, two spaces, the path. */
+const sha256Line = (file, path) =>
+  `${createHash('sha256').update(readFileSync(file)).digest('hex')}  ${path}`
 
 let repo
 
@@ -82,7 +102,7 @@ function stage(path, body) {
   const at = join(repo, 'release-out', path)
   mkdirSync(dirname(at), { recursive: true })
   writeFileSync(at, body)
-  return sha256(join(repo, 'release-out'), path)
+  return sha256Line(at, path)
 }
 
 /** The honest manifest: one line per guest, in GUESTS order. */
@@ -136,82 +156,85 @@ function runCommitStep(tree) {
   })
 }
 
-describe('release-golang.yml publish: Commit the guests', () => {
-  it('exists, and the publish job takes its paths from GUESTS', () => {
-    expect(COMMIT_STEP).toBeDefined()
-    expect(GUESTS).toHaveLength(3)
-    expect(String(COMMIT_STEP.run)).toContain('"$GUESTS"')
-  })
+describe.skipIf(!BASH_HAS_MAPFILE)(
+  'release-golang.yml publish: Commit the guests',
+  () => {
+    it('exists, and the publish job takes its paths from GUESTS', () => {
+      expect(COMMIT_STEP).toBeDefined()
+      expect(GUESTS).toHaveLength(3)
+      expect(String(COMMIT_STEP.run)).toContain('"$GUESTS"')
+    })
 
-  it.skipIf(!GNU_INSTALL)(
-    'commits the three guests from an honest artifact',
-    () => {
-      writeManifest(honestManifest())
-      const tree = expectedTree()
-      const result = runCommitStep(tree)
-      expect(result.stderr + result.stdout).not.toContain('::error::')
-      expect(result.status).toBe(0)
-      expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree)
-      expect(
-        git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n'),
-      ).toEqual([...GUESTS].sort())
-    },
-  )
-
-  it.each([
-    [
-      'an extra path',
-      (lines) => [
-        ...lines,
-        stage('languages/golang/encrypt/init.go', 'package encrypt\n'),
-      ],
-    ],
-    [
-      'a substituted path',
-      (lines) => [
-        lines[0],
-        lines[1],
-        stage('languages/golang/auth/init.go', 'package auth\n'),
-      ],
-    ],
-    [
-      'a path outside the module',
-      (lines) => [
-        lines[0],
-        lines[1],
-        stage('.github/workflows/x.yml', 'on: push\n'),
-      ],
-    ],
-    ['a missing guest', (lines) => lines.slice(0, 2)],
-    ['the guests out of order', (lines) => [lines[1], lines[0], lines[2]]],
-    [
-      'a BSD-format line sha256sum -c would also accept',
-      (lines) => {
-        const [hash, path] = lines[2].split('  ')
-        return [lines[0], lines[1], `SHA256 (${path}) = ${hash}`]
+    it.skipIf(!GNU_COREUTILS)(
+      'commits the three guests from an honest artifact',
+      () => {
+        writeManifest(honestManifest())
+        const tree = expectedTree()
+        const result = runCommitStep(tree)
+        expect(result.stderr + result.stdout).not.toContain('::error::')
+        expect(result.status).toBe(0)
+        expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree)
+        expect(
+          git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n'),
+        ).toEqual([...GUESTS].sort())
       },
-    ],
-  ])('refuses a manifest with %s before copying anything', (_, forge) => {
-    const honest = honestManifest()
-    // The tree a compromised build would report for its forged manifest is
-    // whatever it likes; give the step the honest tree so only the manifest
-    // check can stop it.
-    const tree = expectedTree()
-    const head = git(repo, 'rev-parse', 'HEAD')
-    writeManifest(forge(honest))
+    )
 
-    const result = runCommitStep(tree)
+    it.each([
+      [
+        'an extra path',
+        (lines) => [
+          ...lines,
+          stage('languages/golang/encrypt/init.go', 'package encrypt\n'),
+        ],
+      ],
+      [
+        'a substituted path',
+        (lines) => [
+          lines[0],
+          lines[1],
+          stage('languages/golang/auth/init.go', 'package auth\n'),
+        ],
+      ],
+      [
+        'a path outside the module',
+        (lines) => [
+          lines[0],
+          lines[1],
+          stage('.github/workflows/x.yml', 'on: push\n'),
+        ],
+      ],
+      ['a missing guest', (lines) => lines.slice(0, 2)],
+      ['the guests out of order', (lines) => [lines[1], lines[0], lines[2]]],
+      [
+        'a BSD-format line sha256sum -c would also accept',
+        (lines) => {
+          const [hash, path] = lines[2].split('  ')
+          return [lines[0], lines[1], `SHA256 (${path}) = ${hash}`]
+        },
+      ],
+    ])('refuses a manifest with %s before copying anything', (_, forge) => {
+      const honest = honestManifest()
+      // The tree a compromised build would report for its forged manifest is
+      // whatever it likes; give the step the honest tree so only the manifest
+      // check can stop it.
+      const tree = expectedTree()
+      const head = git(repo, 'rev-parse', 'HEAD')
+      writeManifest(forge(honest))
 
-    expect(result.status).not.toBe(0)
-    expect(result.stdout).toContain('::error::guests.sha256')
-    expect(git(repo, 'rev-parse', 'HEAD')).toBe(head)
-    for (const path of [
-      ...GUESTS,
-      'languages/golang/encrypt/init.go',
-      'languages/golang/auth/init.go',
-      '.github/workflows/x.yml',
-    ]) {
-      expect(existsSync(join(repo, path)), path).toBe(false)
-    }
-  })
-})
+      const result = runCommitStep(tree)
+
+      expect(result.status).not.toBe(0)
+      expect(result.stdout).toContain('::error::guests.sha256')
+      expect(git(repo, 'rev-parse', 'HEAD')).toBe(head)
+      for (const path of [
+        ...GUESTS,
+        'languages/golang/encrypt/init.go',
+        'languages/golang/auth/init.go',
+        '.github/workflows/x.yml',
+      ]) {
+        expect(existsSync(join(repo, path)), path).toBe(false)
+      }
+    })
+  },
+)

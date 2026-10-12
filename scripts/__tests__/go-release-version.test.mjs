@@ -30,6 +30,10 @@ describe('goReleaseVersionErrors', () => {
     '0.1.0-alpha.1',
     '0.1.0-rc.0',
     '1.2.3-x-y.7.z9',
+    // Near misses: a 14-digit identifier that is not a pseudo-version's
+    // timestamp position, and a date-stamped pre-release.
+    '0.1.0-alpha.20261012131135',
+    '0.1.0-rc.20261012',
   ])('accepts %s from main', (version) => {
     expect(errorsFor(version)).toEqual([])
   })
@@ -47,6 +51,11 @@ describe('goReleaseVersionErrors', () => {
     ['0.1.0+build.1', '+build metadata'],
     ['2.0.0', 'major version 0 or 1'],
     ['2.0.0-alpha.1', 'major version 0 or 1'],
+    // The three pseudo-version forms: no earlier tag, after a pre-release,
+    // and after a release (the patch bumped, `-0.` before the timestamp).
+    ['0.0.0-20261012131135-deadbeefdead', 'pseudo-version'],
+    ['0.1.0-alpha.1.0.20261012131135-deadbeefdead', 'pseudo-version'],
+    ['0.1.1-0.20261012131135-deadbeefdead', 'pseudo-version'],
   ])('refuses %s (%s)', (version, reason) => {
     const errors = errorsFor(version)
     expect(errors.length).toBeGreaterThan(0)
