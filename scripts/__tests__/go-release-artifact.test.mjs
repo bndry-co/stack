@@ -238,3 +238,50 @@ describe.skipIf(!BASH_HAS_MAPFILE)(
     })
   },
 )
+
+/**
+ * `build` reports the tree it tested and `publish` refuses any other, so the
+ * two must stage the guests identically. Cargo writes them executable and
+ * `publish` writes them 0644 from the artifact, which made the trees differ
+ * in mode alone: the first release refused itself. This runs the build job's
+ * staging, up to the tree it reports, on executable guests.
+ */
+const STAGE_STEP = WORKFLOW.jobs.build.steps.find((step) => step.id === 'stage')
+const STAGE_UNTIL = 'fetched=$(mktemp -d)'
+
+describe('release-golang.yml build: Stage the release commit', () => {
+  it('reports the tree publish builds, whatever mode cargo left the guests in', () => {
+    expect(STAGE_STEP).toBeDefined()
+    const script = String(STAGE_STEP.run)
+    const cut = script.indexOf(STAGE_UNTIL)
+    expect(
+      cut,
+      `the stage step no longer contains ${STAGE_UNTIL}`,
+    ).toBeGreaterThan(0)
+
+    for (const guest of GUESTS) {
+      stage(guest, `guest ${guest}\n`)
+      const built = join(repo, guest)
+      mkdirSync(dirname(built), { recursive: true })
+      writeFileSync(built, `guest ${guest}\n`, { mode: 0o755 })
+    }
+    const result = spawnSync(
+      'bash',
+      ['-c', `${script.slice(0, cut)}\necho "$tree"`],
+      {
+        cwd: repo,
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          HOME: repo,
+          GIT_CONFIG_NOSYSTEM: '1',
+          GUESTS: WORKFLOW.env.GUESTS,
+          VERSION: '0.1.0-alpha.1',
+        },
+      },
+    )
+    expect(result.status, result.stderr).toBe(0)
+    git(repo, 'checkout', '-q', 'main')
+    expect(result.stdout.trim().split('\n').at(-1)).toBe(expectedTree())
+  })
+})

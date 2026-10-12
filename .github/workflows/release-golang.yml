@@ -205,6 +205,11 @@ jobs:
           git checkout --detach
           # The guests are gitignored on main; -f adds them to this commit only.
           read -ra guests <<< "$GUESTS"
+          # Cargo writes the guests executable, and `publish` writes them
+          # 0644 from the artifact. Commit them 0644 here too, or the tree
+          # this job tests is not the one `publish` builds, and it refuses
+          # the release.
+          chmod 0644 "${guests[@]}"
           git add -f "${guests[@]}"
           git commit -q -m "release(golang): v$VERSION with its WASI guests"
           tree=$(git rev-parse 'HEAD^{tree}')
