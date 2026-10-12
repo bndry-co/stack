@@ -1,0 +1,176 @@
+name: Release (Go)
+
+# Tags a release of the Go module (languages/golang) that `go get` can use.
+#
+# The module embeds three WASI guests built from Rust (encrypt/wasm,
+# encrypt/eql/wasm, auth/wasm). They are gitignored on main, and Go fetches a
+# module version as the files committed at its tag, so a tag on a main commit
+# would build and then fail at `NewClient` with ErrGuestNotBuilt. This
+# workflow builds the guests at the commit it runs on, commits them on a
+# release-only commit that no branch points at, tags that commit
+# `languages/golang/v<version>` (the prefix Go requires for a module in a
+# subdirectory) and pushes the tag alone. main stays free of binaries.
+#
+# The GitHub release it creates carries the EQL v4 SQL bundle the module's
+# EQL types are stored in, built from the same commit, so one release page
+# holds everything a user of that version installs. Run by hand:
+#
+#   gh workflow run release-golang.yml -f version=0.1.0-alpha.1
+#
+# A version with a pre-release suffix is published as a GitHub pre-release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Module version without the leading v, e.g. 0.1.0-alpha.1"
+        required: true
+        type: string
+
+# The job that tags asks for write access itself; see
+# scripts/__tests__/workflow-publish-permissions.test.mjs.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-golang
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    permissions:
+      # Push the tag and create the release.
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      # wasm:guest:test and the Go tests use the pinned test toolset.
+      MISE_ENV: test
+    steps:
+      - name: Check the version
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version must be semver without a leading v, got '$VERSION'"
+            exit 1
+          fi
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # The tag is pushed with the job's token.
+          persist-credentials: true
+
+      - name: Refuse a tag that already exists
+        run: |
+          tag="languages/golang/v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::$tag already exists; a Go module version is immutable once fetched"
+            exit 1
+          fi
+
+      # No cache: this job publishes binaries, and a poisoned restore would
+      # ship in them. scripts/lint-no-workflow-caching.mjs holds it.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          cache: false
+
+      - name: Add rustfmt and clippy to the pinned toolchain
+        run: rustup component add rustfmt clippy
+
+      # The release builds, each with its import surface checked, and the
+      # deterministic test builds the hermetic Go tests load.
+      - name: Build the guests
+        run: |
+          mise run wasm:guest:build
+          mise run wasm:guest:build:eql
+          mise run wasm:auth-guest:build
+          mise run wasm:guest:build:deterministic
+          mise run wasm:guest:build:eql:deterministic
+
+      - name: Go tests against the guests being released
+        run: mise run go:test
+
+      # eql_v4.version() reports `go-<version>`: the bundle is released with
+      # this Go version, not as an @cipherstash/eql version. `--force`
+      # because `--version` is not part of the build's cache key, so a cache
+      # hit would re-serve whatever version an earlier build stamped; the grep
+      # proves the stamp landed.
+      - name: Build the EQL SQL bundles
+        working-directory: packages/eql
+        run: |
+          mise run --force build --version "go-$VERSION"
+          grep -q "'go-$VERSION'" release/cipherstash-encrypt-v4.sql \
+            || { echo "::error::the v4 bundle is not stamped go-$VERSION"; exit 1; }
+
+      - name: Commit the guests and tag the commit
+        run: |
+          set -euo pipefail
+          tag="languages/golang/v$VERSION"
+          guests=(
+            languages/golang/encrypt/wasm/stack_encrypt_guest.wasm
+            languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm
+            languages/golang/auth/wasm/stack_auth_guest.wasm
+          )
+          : > guests.sha256
+          for guest in "${guests[@]}"; do
+            test -s "$guest" || { echo "::error::$guest was not built"; exit 1; }
+            sha256sum "$guest" >> guests.sha256
+          done
+          cat guests.sha256
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --detach
+          # The guests are gitignored on main; -f adds them to this commit only.
+          git add -f "${guests[@]}"
+          git commit -m "release(golang): v$VERSION with its WASI guests" \
+            -m "Built from $GITHUB_SHA by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          git tag -a "$tag" -m "Go module v$VERSION (built from $GITHUB_SHA)"
+          git push origin "refs/tags/$tag"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="languages/golang/v$VERSION"
+          cp packages/eql/release/cipherstash-encrypt-v4.sql eql-v4-install.sql
+          cp packages/eql/release/cipherstash-encrypt-v4-uninstall.sql eql-v4-uninstall.sql
+          {
+            echo "Go module \`github.com/cipherstash/stack/languages/golang\` v$VERSION, built from $GITHUB_SHA."
+            echo
+            echo '```sh'
+            echo "go get github.com/cipherstash/stack/languages/golang@v$VERSION"
+            echo "go install github.com/cipherstash/stack/languages/golang/cmd/stashgen@v$VERSION"
+            echo '```'
+            echo
+            echo "Values this version writes are stored in EQL v4 columns. Install EQL v4 into PostgreSQL with the attached \`eql-v4-install.sql\` (\`psql -f eql-v4-install.sql\`)."
+            echo
+            echo "SHA-256 of the embedded WASI guests:"
+            echo '```'
+            cat guests.sha256
+            echo '```'
+          } > notes.md
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$tag" --verify-tag "${prerelease[@]}" \
+            --title "Go v$VERSION" --notes-file notes.md \
+            eql-v4-install.sql eql-v4-uninstall.sql guests.sha256
+
+      # The proxy fetches a version the first time it is asked for it; asking
+      # here proves the tag resolves as a module before anyone depends on it.
+      - name: Check that Go resolves the version
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOFLAGS: -mod=mod
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            if go list -m "github.com/cipherstash/stack/languages/golang@v$VERSION"; then
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::the Go proxy did not resolve v$VERSION"
+          exit 1
