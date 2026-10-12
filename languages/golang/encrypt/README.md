@@ -299,7 +299,8 @@ round-trip and fixture tests use. Without the builds `NewClient` returns
 The Go code in this module is MIT-licensed ([`LICENSE`](../LICENSE)). The
 WASI guests it embeds are compiled from Rust crates that are not: the
 stack-encrypt guest and its EQL build are compiled from `stack-encrypt`,
-`stack-kms`, `stack-auth` and `stack-guest-abi`, which are licensed under the
+`stack-kms`, `stack-auth`, `stack-profile` (a dependency of `stack-auth`) and
+`stack-guest-abi`, which are licensed under the
 [PolyForm Internal Use License 1.0.0](https://polyformproject.org/licenses/internal-use/1.0.0).
 Those terms allow use for your internal business operations only. Each
 crate's `LICENSE` in the
