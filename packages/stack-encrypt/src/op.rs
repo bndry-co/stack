@@ -230,9 +230,14 @@ pub trait Probabilistic: QueryTerm {
 ///
 /// Most operators take any [`QueryTerm`]. One whose answer is inherently
 /// approximate requires more: a term that answers [`Matches`](struct@Matches) must be
-/// [`Probabilistic`], so an index cannot claim a text match without saying
-/// how its answer is checked. An operator defined in another crate states
-/// its own requirement by implementing this.
+/// [`Probabilistic`], so none of this crate's indexes can claim a text
+/// match without saying how its answer is checked.
+///
+/// The rule binds this crate's terms, through the blanket impls below. A
+/// term defined in another crate can implement this for an operator by
+/// hand, and coherence lets it; the bound is a guide there, not a proof. An
+/// operator defined in another crate states its requirement the same way,
+/// one term type at a time.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot answer `{Op}`",
     label = "this query term does not meet the operator's requirement",

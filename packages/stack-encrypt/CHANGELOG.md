@@ -40,9 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MatchQuery` is `op::Probabilistic`: `query.verify(&value)` is `true` when
   every token of the query's value, cut by the index's own tokenizer and
   case folding, is a token of the decrypted value. Filter decrypted rows
-  with it. The query keeps its value's tokens to do this; they are zeroized on drop
-  and never shown by `Debug`. An exact term has no `verify`, and an index
-  can answer `op::Matches` only with a probabilistic term (`op::TermFor`).
+  with it. The query keeps its value's tokens to do this; they are zeroized
+  on drop and never shown by `Debug`, and the tokenizer now zeroizes its own
+  copies of the text. An exact term has no `verify`, and none of this
+  crate's indexes can answer `op::Matches` but with a probabilistic term
+  (`op::TermFor`).
 
 - **Errors now expose stable codes, help text, and structured details.**
   All error types implement `miette::Diagnostic` with codes such as

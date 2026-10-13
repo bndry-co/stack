@@ -168,8 +168,10 @@ ciphertext; its `Term` is left and right. A Bloom index's
 
 The bound tightens per operator, through `TermFor<Op>`: any `QueryTerm`
 answers `Eq`, but only a `Probabilistic` one answers `Matches`, and only a
-`Ranked` one will answer `Nearest`. An index cannot claim an inexact
-operator without saying how its answer is checked.
+`Ranked` one will answer `Nearest`. None of this crate's indexes can claim
+an inexact operator without saying how its answer is checked. The rule binds
+this crate's terms through blanket impls; a term in another crate can opt
+into `TermFor` by hand, so there it is a guide rather than a proof.
 
 `carry` takes what the query term keeps of the value before the value is
 consumed: nothing for an exact term, the query's tokens for a match query,
@@ -215,7 +217,8 @@ pub trait QueryTerm {}
 pub trait Probabilistic: QueryTerm {
     type Plaintext;
     fn verify(&self, value: &Self::Plaintext) -> bool;
-    fn target_limit(&self, want: u64, stats: &Stats) -> Limit;
+    // `target_limit(&self, want, &Stats) -> Limit` joins it with decision 5
+    // (#1184).
 }
 
 pub trait Ranked: QueryTerm {

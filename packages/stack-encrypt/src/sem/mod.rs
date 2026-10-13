@@ -729,9 +729,11 @@ impl<O> Clone for MatchQuery<O> {
     }
 }
 
-/// Two queries are equal when they send the same filter. Under one key and
-/// context the filter is a function of the query's tokens, so this never
-/// compares the plaintext.
+/// Two queries are equal when they send the same filter. This compares no
+/// plaintext. Two query values can share a filter by chance, as a short
+/// value under a small filter does, and those queries are equal here yet
+/// verify differently: equal queries select the same rows, not the same
+/// matches.
 impl<O> PartialEq for MatchQuery<O> {
     fn eq(&self, other: &Self) -> bool {
         self.terms == other.terms
@@ -742,7 +744,12 @@ impl<O> Eq for MatchQuery<O> {}
 
 /// The query's tokens, as a match index cuts them from the query's value:
 /// what a [`MatchQuery`] keeps to verify a row. Plaintext, so it is
-/// zeroized on drop and has no `Debug`. Built only by a query chain.
+/// zeroized on drop and has no `Debug`.
+/// [`Supports::carry`](crate::op::Supports::carry) makes one; only a query
+/// chain can join it to a filter
+/// ([`Supports::query`](crate::op::Supports::query) takes a token no caller
+/// can make), so one query's tokens never verify rows for another value's
+/// filter.
 #[derive(Clone)]
 pub struct QueryTokens(Zeroizing<Vec<String>>);
 
@@ -1335,8 +1342,8 @@ mod tests {
     #[test]
     fn a_match_query_with_no_tokens_verifies_nothing() {
         // A query chain refuses token-less text before a term exists, so
-        // this cannot be built through the API; the guard is for a query
-        // built any other way, which must never match every row.
+        // this cannot reach a `MatchQuery` through the API; the guard is for
+        // one built any other way, which must never match every row.
         let query = MatchQuery::<DefaultMatch>::new(
             MatchTerms::normalised(vec![1, 2, 3]),
             QueryTokens(Zeroizing::new(Vec::new())),

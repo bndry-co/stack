@@ -10,6 +10,8 @@
 //! is that empty tokens are dropped (v1 keeps the empty strings its separator
 //! split produces, which only add noise bits to every filter).
 
+use zeroize::Zeroizing;
+
 /// How text is split into tokens before each token is run through the PRF.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tokenizer {
@@ -45,12 +47,17 @@ impl Default for Tokenizer {
 /// term can never reach a query.
 ///
 /// [`match_terms`]: crate::StackCipher::match_terms
+///
+/// The text is plaintext, so every copy made on the way is zeroized when it
+/// is dropped: the folded text, its characters, and each n-gram, which is
+/// built at its final size so it never reallocates. The tokens returned are
+/// the caller's to zeroize.
 pub(crate) fn tokenize(text: &str, tokenizer: Tokenizer, downcase: bool) -> Vec<String> {
-    let text = if downcase {
+    let text = Zeroizing::new(if downcase {
         text.to_lowercase()
     } else {
         text.to_string()
-    };
+    });
 
     match tokenizer {
         Tokenizer::Standard => text
@@ -59,17 +66,25 @@ pub(crate) fn tokenize(text: &str, tokenizer: Tokenizer, downcase: bool) -> Vec<
             .map(str::to_string)
             .collect(),
         Tokenizer::Ngram { length } => {
-            let chars: Vec<char> = text.chars().collect();
+            let chars: Zeroizing<Vec<char>> = Zeroizing::new(text.chars().collect());
             // As in the v1 indexer's `process_ngram`: shorter than one gram
             // means no tokens (never a partial or whole-text token, which
             // could not match any stored gram).
             if chars.len() < length {
                 Vec::new()
             } else {
-                chars.windows(length).map(|w| w.iter().collect()).collect()
+                chars.windows(length).map(gram).collect()
             }
         }
     }
+}
+
+/// One n-gram as a `String` allocated at its final size, so building it
+/// leaves no reallocated copy behind.
+fn gram(chars: &[char]) -> String {
+    let mut gram = String::with_capacity(chars.iter().map(|c| c.len_utf8()).sum());
+    gram.extend(chars);
+    gram
 }
 
 #[cfg(test)]

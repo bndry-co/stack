@@ -135,7 +135,7 @@ async fn a_matches_query_is_a_filter_over_the_query_value_that_the_stored_filter
 }
 
 #[tokio::test]
-async fn a_match_index_with_its_own_configuration_is_named_with_op_via() {
+async fn a_match_index_with_its_own_configuration_is_named_with_via() {
     let cipher = stack_cipher().await;
     let plan = people_plan();
     let mut row = cipher.encrypt(&person()).using(&plan).await.unwrap();
@@ -269,7 +269,7 @@ async fn a_target_answers_an_operator_through_the_index_it_names() {
 }
 
 #[tokio::test]
-async fn a_target_with_several_terms_names_the_index_with_op_via() {
+async fn a_target_with_several_terms_names_the_index_with_via() {
     let cipher = stack_cipher().await;
     let plan = Plan::value::<String>()
         .context("users/email")
@@ -630,4 +630,56 @@ async fn a_match_query_debugs_without_its_tokens() {
     for token in ["nee", "eed", "edl", "dle", "needle"] {
         assert!(!shown.contains(token), "{shown}");
     }
+}
+
+/// Whole words, as the v1 match indexer's standard tokenizer splits them.
+struct Words;
+impl MatchConfig for Words {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            tokenizer: stack_encrypt::sem::Tokenizer::Standard,
+            ..Default::default()
+        }
+    }
+}
+impl MatchCase for Words {
+    type Case = op::CaseInsensitive;
+}
+
+/// A Bloom match asks for the query's tokens, in any order and anywhere;
+/// it is not a substring test, and `verify` must not become one, or it
+/// would drop rows the index rightly returned.
+#[tokio::test]
+async fn verify_is_a_token_test_not_a_substring_test() {
+    let cipher = stack_cipher().await;
+    let plan = people_plan();
+    let query = cipher
+        .query(op::Matches, "abcd")
+        .on(&plan.field("email").unwrap())
+        .await
+        .unwrap();
+    assert!(query.verify("abc bcd"), "both 3-grams, never adjacent");
+    assert!(!query.verify("abc"), "one 3-gram of two");
+
+    let words = Plan::context("notes/body")
+        .with::<String, _>(Match::<Words>::new())
+        .build()
+        .unwrap();
+    let stored: Encrypted<MatchTerms<Words>> = cipher
+        .encrypt(&"Hello, big World!".to_owned())
+        .using(&words)
+        .await
+        .unwrap();
+    let query = cipher
+        .query(op::Matches, "world hello")
+        .via(Match::<Words>::new())
+        .on(&words)
+        .await
+        .unwrap();
+    assert!(stored.terms.matches(&query));
+    assert!(query.verify("Hello, big World!"));
+    assert!(
+        !query.verify("worldly hello"),
+        "a word is a token, not a prefix"
+    );
 }
