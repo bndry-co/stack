@@ -297,7 +297,8 @@ describe('supply chain — pnpm-lock.yaml integrity', () => {
     // depends on @modelcontextprotocol/sdk@^1.32.0 to force the auto-installed
     // peer of @anthropic-ai/claude-agent-sdk past the advisory-vulnerable range
     // (GHSA-6qxp-vccf-f47h / CVE-2026-104850, patched 1.31.0).
-    const versions = resolvedVersionsByName().get('@modelcontextprotocol/sdk') ?? []
+    const versions =
+      resolvedVersionsByName().get('@modelcontextprotocol/sdk') ?? []
     expect(versions.length).toBeGreaterThan(0)
     for (const version of versions) {
       expect(
