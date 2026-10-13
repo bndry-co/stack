@@ -13,6 +13,13 @@
  * v3: schema-added → dual-writing → backfilling → backfilled → dropped
  * ```
  *
+ * And the reverse lifecycle `stash decrypt` drives, back to plaintext, on the
+ * same chunked engine ({@link runDecryptBackfill}):
+ *
+ * ```
+ * decrypt-dual-writing → decrypting → decrypted → encrypted-dropped
+ * ```
+ *
  * State is split across three stores on purpose:
  * - `.cipherstash/migrations.json` — repo-side intent ({@link Manifest})
  * - `cipherstash.cs_migrations` — append-only runtime state written here
@@ -32,39 +39,79 @@ export {
 } from './backfill.js'
 export {
   countEncrypted,
+  countUndecrypted,
   countUnencrypted,
+  type DecryptKeysetPageOptions,
+  fetchUndecryptedPage,
   fetchUnencryptedPage,
   type KeysetPage,
   type KeysetPageOptions,
   qualifyTable,
 } from './cursor.js'
+export {
+  type BulkDecryptItem,
+  type BulkDecryptResult,
+  type DecryptBackfillOptions,
+  type DecryptBackfillProgress,
+  type DecryptBackfillResult,
+  type DecryptionClientLike,
+  formatCodes,
+  plaintextSerializer,
+  runDecryptBackfill,
+  UndecryptableBatchError,
+} from './decrypt.js'
+export {
+  type ChunkContext,
+  type ChunkedRunEvents,
+  type ChunkedRunOptions,
+  type ChunkedRunProgress,
+  type ChunkedRunResult,
+  type PreparedChunk,
+  runChunkedMigration,
+} from './engine.js'
 export { installMigrationsSchema, MIGRATIONS_SCHEMA_SQL } from './install.js'
 export {
   type Manifest,
   type ManifestColumn,
   manifestPath,
   readManifest,
+  removeManifestColumn,
   setManifestTargetPhase,
   upsertManifestColumn,
   writeManifest,
 } from './manifest.js'
+export {
+  type EqlDomainFamily,
+  type PlaintextSqlType,
+  type PlaintextTypeMapping,
+  plaintextTypeForEqlDomain,
+} from './plaintext-type.js'
 export { quoteIdent } from './sql.js'
 export {
   appendEvent,
   type ColumnKey,
+  isReverseMigrationPhase,
   latestByColumn,
   type MigrationEvent,
   type MigrationPhase,
   type MigrationStateRow,
   progress,
+  REVERSE_MIGRATION_PHASES,
+  type ReverseMigrationEvent,
+  type ReverseMigrationPhase,
 } from './state.js'
 export {
+  type ColumnIndexInfo,
   classifyEqlDomain,
   columnExists,
+  columnSqlType,
+  countEqlColumnsInDatabase,
   detectColumnEqlVersion,
   type EncryptedColumnInfo,
   type EncryptedColumnResolution,
+  EQL_COLUMN_PREDICATE_SQL,
   type EqlVersion,
+  listColumnIndexes,
   listEncryptedColumns,
   pickEncryptedColumn,
   type ResolvedEncryptedColumn,

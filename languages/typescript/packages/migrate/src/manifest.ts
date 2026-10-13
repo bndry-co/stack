@@ -185,3 +185,31 @@ export async function setManifestTargetPhase(
   )
   await writeManifest(existing, cwd)
 }
+
+/**
+ * Remove one column's entry from the manifest, deleting the table key when it
+ * empties. No-op when there is no manifest or no such entry.
+ *
+ * Used by `stash decrypt drop`: once the encrypted column is gone the intent
+ * to encrypt that column is withdrawn, and leaving the entry behind would make
+ * `stash encrypt status` report the now-intentional absence of the encrypted
+ * column as drift (`encrypted-col-missing`).
+ */
+export async function removeManifestColumn(
+  table: string,
+  columnName: string,
+  cwd: string = process.cwd(),
+): Promise<boolean> {
+  const existing = await readManifest(cwd)
+  const tableColumns = existing?.tables[table]
+  if (!existing || !tableColumns) return false
+  const remaining = tableColumns.filter((c) => c.column !== columnName)
+  if (remaining.length === tableColumns.length) return false
+  if (remaining.length === 0) {
+    delete existing.tables[table]
+  } else {
+    existing.tables[table] = remaining
+  }
+  await writeManifest(existing, cwd)
+  return true
+}

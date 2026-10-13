@@ -1,0 +1,443 @@
+import { isEncryptedPayload } from '@cipherstash/stack'
+import type { ClientBase, PoolClient } from 'pg'
+import {
+  countUndecrypted,
+  fetchUndecryptedPage,
+  qualifyTable,
+} from './cursor.js'
+import {
+  type ChunkedRunEvents,
+  type ChunkedRunProgress,
+  runChunkedMigration,
+} from './engine.js'
+import { quoteIdent } from './sql.js'
+
+/**
+ * One position-stable entry of a bulk-decrypt result: the plaintext, or a
+ * per-row failure. Structural, so this package stays decoupled from
+ * `@cipherstash/stack`'s generics — `EncryptionClient.bulkDecrypt` resolves to
+ * exactly this shape (`{ data } | { error, code?, … }`).
+ */
+export type BulkDecryptItem =
+  | { id?: string; data: unknown; error?: undefined }
+  | { id?: string; error: unknown; code?: unknown; data?: undefined }
+
+/** Whole-call result of a bulk decrypt (`@byteslice/result` convention). */
+export type BulkDecryptResult =
+  | { failure?: undefined; data: BulkDecryptItem[] }
+  | { failure: { message: string }; data?: undefined }
+
+/**
+ * Minimal surface of `@cipherstash/stack`'s `EncryptionClient` the reverse
+ * backfill needs: `bulkDecrypt`, which decrypts a whole chunk in ONE ZeroKMS
+ * round trip and reports failures per row instead of failing the batch.
+ *
+ * Per-row failure is the property this runner depends on. A value bound to an
+ * end-user lock context can only be decrypted as that user; with workspace
+ * credentials it fails on its own, and the rest of the chunk still decrypts.
+ * `bulkDecryptModels` fails the whole chunk instead, which would turn one
+ * locked value into a stalled migration.
+ *
+ * Declared with method syntax deliberately: method parameters are checked
+ * bivariantly, so the SDK's narrower `Encrypted` payload type is accepted
+ * without a cast.
+ */
+export interface DecryptionClientLike {
+  bulkDecrypt(
+    payloads: Array<{ id?: string; data: Record<string, unknown> | null }>,
+  ): PromiseLike<BulkDecryptResult>
+}
+
+/**
+ * Thrown when the first chunk of a run decrypts NOTHING. Its message is
+ * author-controlled and carries only counts and error codes — never a value —
+ * so the CLI prints it verbatim.
+ *
+ * A whole chunk failing is almost never "every one of these rows happens to
+ * be lock-context bound". It is credentials resolving to a different
+ * workspace or keyset, and carrying on would spend one ZeroKMS request per
+ * chunk across the entire table to decrypt nothing. Stopping before the first
+ * write also leaves the cursor untouched, so fixing the credentials and
+ * re-running starts cleanly.
+ */
+export class UndecryptableBatchError extends Error {
+  constructor(
+    readonly rows: number,
+    readonly codes: Readonly<Record<string, number>>,
+  ) {
+    super(
+      `None of the ${rows} row(s) in the first batch could be decrypted (${formatCodes(codes)}). Nothing was written. This usually means the credentials in this shell resolve to a different workspace or keyset than the one that encrypted the data — export the CS_* values of the environment that wrote it and re-run. If these rows really are undecryptable with workspace credentials — values bound to an end-user lock context, or rows an earlier run already skipped — re-run with --continue-on-undecryptable to record them as skipped and carry on.`,
+    )
+    this.name = 'UndecryptableBatchError'
+  }
+}
+
+/** Options for {@link runDecryptBackfill}. Mirrors {@link BackfillOptions}. */
+export interface DecryptBackfillOptions {
+  /** A pool client the runner owns for the call (`BEGIN`/`COMMIT` per chunk). */
+  db: PoolClient
+  /** Initialised encryption client; only `bulkDecrypt` is used. */
+  decryptionClient: DecryptionClientLike
+  /** Physical table name; `schema.table` supported. */
+  tableName: string
+  /** The EQL v3 column to read ciphertext from. Events are keyed by it. */
+  encryptedColumn: string
+  /** The plaintext column to fill. Must already exist (`stash decrypt plan`). */
+  plaintextColumn: string
+  /**
+   * The plaintext column's declared type, as `format_type` renders it (see
+   * `columnSqlType`). Every decrypted value is cast to it on write, so the
+   * twin's real type is honoured, and JSON targets (`json`/`jsonb`) are
+   * serialised as JSON documents rather than as scalars.
+   */
+  plaintextSqlType: string
+  /** Single-column primary key for keyset pagination. */
+  pkColumn: string
+  /**
+   * Rows per chunk, which is also the size of each `bulkDecrypt` call — one
+   * ZeroKMS request per chunk. Default `500`.
+   */
+  chunkSize?: number
+  /** Checked between chunks; the in-flight chunk always commits first. */
+  signal?: AbortSignal
+  onProgress?: (progress: DecryptBackfillProgress) => void
+  /**
+   * Re-decrypt every row with ciphertext, including rows whose plaintext is
+   * already set. Recovery path for drift (the application updated the
+   * ciphertext without writing the plaintext twin). Not destructive.
+   */
+  force?: boolean
+  /**
+   * Carry on when the first chunk of a run decrypts nothing, instead of
+   * throwing {@link UndecryptableBatchError}. For a table whose first rows by
+   * primary key genuinely are all lock-context bound, or a re-run where only
+   * previously skipped rows remain. Off by default because the far likelier
+   * cause is credentials for the wrong workspace or keyset.
+   */
+  continueOnUndecryptable?: boolean
+}
+
+/** Progress after each committed chunk. */
+export interface DecryptBackfillProgress {
+  /** Rows visited so far, decrypted or skipped (includes a resumed run). */
+  rowsProcessed: number
+  rowsTotal: number
+  /** Cumulative rows that could not be decrypted and were left NULL. */
+  rowsSkipped: number
+  lastPk: string | null
+  chunkSize: number
+  chunkIndex: number
+}
+
+/** Result of {@link runDecryptBackfill}. */
+export interface DecryptBackfillResult {
+  resumed: boolean
+  /** Rows visited, decrypted or skipped. */
+  rowsProcessed: number
+  rowsTotal: number
+  /** Rows written with plaintext. `rowsProcessed - rowsSkipped`. */
+  rowsDecrypted: number
+  /**
+   * Rows whose ciphertext could not be decrypted with these credentials and
+   * whose plaintext was therefore left NULL — typically values bound to an
+   * end-user lock context. Cumulative across a resumed run.
+   */
+  rowsSkipped: number
+  /** Skips in THIS run, by error code (`UNKNOWN` when the row carried none). */
+  skippedByCode: Record<string, number>
+  completed: boolean
+}
+
+/** The reverse lifecycle's `cs_migrations` vocabulary. */
+const REVERSE_EVENTS = {
+  started: 'decrypt_started',
+  checkpoint: 'decrypt_checkpoint',
+  completed: 'decrypted',
+  runningPhase: 'decrypting',
+  completedPhase: 'decrypted',
+} as const satisfies ChunkedRunEvents
+
+/**
+ * Run a chunked, resumable, idempotent backfill of ciphertext → plaintext —
+ * the reverse of {@link runBackfill}, on the same engine.
+ *
+ * Per chunk: select the next keyset page where the encrypted column is set and
+ * the plaintext column is NULL; decrypt it with ONE `bulkDecrypt` call; then
+ * in a single transaction write the plaintext for every row that decrypted
+ * and append a `decrypt_checkpoint` event.
+ *
+ * **Rows that cannot be decrypted are skipped, not fatal.** Their plaintext
+ * stays NULL, the cursor moves past them, and they are counted
+ * (`rowsSkipped`, plus per-code tallies in the event details). The common
+ * cause is a value bound to an end-user lock context, which only that user
+ * can decrypt; there is deliberately no bypass. Because the skipped rows keep
+ * a NULL plaintext, {@link countUndecrypted} still counts them, so the
+ * coverage gate in `stash decrypt drop` refuses to drop the only copy of
+ * their data. A later run (after the cursor-based pass has completed) starts
+ * from the beginning and retries them.
+ *
+ * **Leak guard (reverse).** A decrypted value that is itself an EQL envelope
+ * means the client handed ciphertext back unchanged; writing it would put
+ * ciphertext in the plaintext column. The run fails before the chunk commits.
+ *
+ * Events are recorded under `(tableName, encryptedColumn)` with
+ * `details.plaintextColumn` on every event, so later commands recover the
+ * pairing from state alone.
+ */
+export async function runDecryptBackfill(
+  options: DecryptBackfillOptions,
+): Promise<DecryptBackfillResult> {
+  const chunkSize = options.chunkSize ?? 500
+  const {
+    db,
+    tableName,
+    pkColumn,
+    encryptedColumn,
+    plaintextColumn,
+    plaintextSqlType,
+  } = options
+  const force = options.force ?? false
+  const serialize = plaintextSerializer(plaintextSqlType)
+  const skippedByCode: Record<string, number> = {}
+
+  const result = await runChunkedMigration({
+    db,
+    tableName,
+    stateColumn: encryptedColumn,
+    chunkSize,
+    signal: options.signal,
+    events: REVERSE_EVENTS,
+    trackSkipped: true,
+    baseDetails: { plaintextColumn },
+    startedDetails: force ? { force: true } : {},
+    countPending: () =>
+      countUndecrypted(db, tableName, encryptedColumn, plaintextColumn, force),
+    fetchPage: (after, limit) =>
+      fetchUndecryptedPage(db, {
+        tableName,
+        pkColumn,
+        encryptedColumn,
+        plaintextColumn,
+        after,
+        limit,
+        force,
+      }),
+    prepareChunk: async (rows, { chunkIndex }) => {
+      const payloads = rows.map((row) => ({
+        id: row.pk,
+        data: asPayload(row.ciphertext),
+      }))
+      const decrypted = await options.decryptionClient.bulkDecrypt(payloads)
+      if (decrypted.failure) {
+        throw new Error(`bulkDecrypt failed: ${decrypted.failure.message}`)
+      }
+      if (decrypted.data.length !== rows.length) {
+        throw new Error(
+          `bulkDecrypt returned ${decrypted.data.length} result(s) for ${rows.length} payload(s); refusing to correlate a short or long result positionally.`,
+        )
+      }
+
+      const writes: Array<{ pk: string; value: string }> = []
+      const chunkCodes: Record<string, number> = {}
+      for (const [i, item] of decrypted.data.entries()) {
+        const { pk } = rows[i]
+        if (item.error !== undefined) {
+          tally(chunkCodes, codeOf(item))
+          continue
+        }
+        if (isEncryptedPayload(item.data)) {
+          // Only the pk goes into the message — the value is ciphertext, but
+          // nothing about this path should normalise putting row data in an
+          // exception.
+          throw new Error(
+            `Decryption client returned an EQL envelope instead of plaintext for pk=${pk}. Refusing to write ciphertext into the plaintext column "${plaintextColumn}".`,
+          )
+        }
+        const value = serialize(item.data)
+        if (value === undefined) {
+          tally(chunkCodes, 'NULL_PLAINTEXT')
+          continue
+        }
+        writes.push({ pk, value })
+      }
+
+      // The first chunk of a run decrypting nothing is a credentials problem,
+      // not a column of locked values — see UndecryptableBatchError.
+      if (
+        writes.length === 0 &&
+        chunkIndex === 0 &&
+        !options.continueOnUndecryptable
+      ) {
+        throw new UndecryptableBatchError(rows.length, chunkCodes)
+      }
+
+      for (const [code, count] of Object.entries(chunkCodes)) {
+        skippedByCode[code] = (skippedByCode[code] ?? 0) + count
+      }
+      const skipped = rows.length - writes.length
+
+      return {
+        skipped,
+        checkpointDetails:
+          skipped > 0 ? { chunkSkippedByCode: chunkCodes } : undefined,
+        write: (client) =>
+          writeDecryptedChunk(client, {
+            tableName,
+            pkColumn,
+            plaintextColumn,
+            plaintextSqlType,
+            writes,
+            force,
+          }),
+      }
+    },
+    onProgress: options.onProgress
+      ? (progress: ChunkedRunProgress) =>
+          options.onProgress?.({
+            rowsProcessed: progress.rowsProcessed,
+            rowsTotal: progress.rowsTotal,
+            rowsSkipped: progress.rowsSkipped,
+            lastPk: progress.lastPk,
+            chunkSize: progress.chunkSize,
+            chunkIndex: progress.chunkIndex,
+          })
+      : undefined,
+  })
+
+  return {
+    resumed: result.resumed,
+    rowsProcessed: result.rowsProcessed,
+    rowsTotal: result.rowsTotal,
+    rowsDecrypted: result.rowsProcessed - result.rowsSkipped,
+    rowsSkipped: result.rowsSkipped,
+    skippedByCode,
+    completed: result.completed,
+  }
+}
+
+/**
+ * The ciphertext as read from the row, narrowed to the object shape
+ * `bulkDecrypt` takes. The page query guarantees non-NULL and the column's
+ * EQL domain CHECK guarantees an object; anything else is a corrupt row, and
+ * handing it to the client as-is lets it be reported per row like any other
+ * undecryptable value rather than crashing the chunk here.
+ */
+function asPayload(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+/** A per-row failure's error code, or `UNKNOWN` when it carried none. */
+function codeOf(item: { code?: unknown }): string {
+  return typeof item.code === 'string' && /^[A-Z0-9_]+$/.test(item.code)
+    ? item.code
+    : 'UNKNOWN'
+}
+
+function tally(counts: Record<string, number>, code: string): void {
+  counts[code] = (counts[code] ?? 0) + 1
+}
+
+/** `3 × UNKNOWN, 1 × INVALID_CIPHERTEXT` — stable order, for messages. */
+export function formatCodes(codes: Readonly<Record<string, number>>): string {
+  const entries = Object.entries(codes).sort(
+    ([a, x], [b, y]) => y - x || a.localeCompare(b),
+  )
+  return entries.length === 0
+    ? 'no error codes reported'
+    : entries.map(([code, count]) => `${count} × ${code}`).join(', ')
+}
+
+const JSON_TYPES = new Set(['json', 'jsonb'])
+
+/**
+ * Build the serializer that turns a decrypted JS plaintext into the text
+ * parameter the write casts to the plaintext column's type. Returns
+ * `undefined` for a value that has no faithful text form for that type (a
+ * scalar column decrypting to `null`), which the caller counts as skipped
+ * rather than writing a NULL that would read as "not yet decrypted".
+ *
+ * - JSON targets: `JSON.stringify` of whatever came back, so a document that
+ *   is itself a string, number or `null` keeps its JSON meaning.
+ * - `Date` (when a client reconstructs one): ISO-8601, which Postgres parses
+ *   for `date`, `timestamp` and `timestamptz` alike.
+ * - `bigint`: its exact decimal string — never through `Number`.
+ * - Other scalars: their canonical string; Postgres does the type conversion,
+ *   so `numeric`/`real`/`double precision` and integer widths all apply their
+ *   own parsing and range checks.
+ */
+export function plaintextSerializer(
+  plaintextSqlType: string,
+): (value: unknown) => string | undefined {
+  if (JSON_TYPES.has(plaintextSqlType.trim().toLowerCase())) {
+    return (value) => JSON.stringify(value === undefined ? null : value)
+  }
+  return (value) => {
+    if (value === null || value === undefined) return undefined
+    if (value instanceof Date) return value.toISOString()
+    switch (typeof value) {
+      case 'string':
+        return value
+      case 'number':
+      case 'bigint':
+      case 'boolean':
+        return String(value)
+      default:
+        return JSON.stringify(value)
+    }
+  }
+}
+
+interface WriteDecryptedChunkOptions {
+  tableName: string
+  pkColumn: string
+  plaintextColumn: string
+  plaintextSqlType: string
+  writes: Array<{ pk: string; value: string }>
+  force: boolean
+}
+
+/**
+ * One `UPDATE … FROM (VALUES …)` per chunk, the mirror of the forward
+ * `writeEncryptedChunk`. Values travel as text and are cast to the column's
+ * declared type in SQL, which is what lets one statement serve every type.
+ * The `plaintext IS NULL` guard (dropped under `force`) keeps a concurrent
+ * dual-write from being overwritten by an older decrypted value.
+ */
+async function writeDecryptedChunk(
+  db: ClientBase,
+  opts: WriteDecryptedChunkOptions,
+): Promise<void> {
+  if (opts.writes.length === 0) return
+
+  const table = qualifyTable(opts.tableName)
+  const pk = quoteIdent(opts.pkColumn)
+  const plain = quoteIdent(opts.plaintextColumn)
+
+  const params: unknown[] = []
+  const valuesSql = opts.writes
+    .map(({ pk: pkValue, value }) => {
+      params.push(pkValue)
+      const pkParam = `$${params.length}`
+      params.push(value)
+      return `(${pkParam}, $${params.length}::text)`
+    })
+    .join(', ')
+
+  const where = opts.force
+    ? `t.${pk}::text = v.pk::text`
+    : `t.${pk}::text = v.pk::text AND t.${plain} IS NULL`
+
+  // `plaintextSqlType` is `format_type()` output from the catalog — valid,
+  // already-quoted type syntax — never user input.
+  await db.query(
+    `
+    UPDATE ${table} AS t
+    SET ${plain} = v.val::${opts.plaintextSqlType}
+    FROM (VALUES ${valuesSql}) AS v(pk, val)
+    WHERE ${where}
+  `,
+    params,
+  )
+}

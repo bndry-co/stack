@@ -1,0 +1,461 @@
+/**
+ * Integration tests for the REVERSE (decrypt) backfill against a real local
+ * Postgres — the twin of `backfill.integration.test.ts`, on the same engine.
+ *
+ * Skipped unless `PG_TEST_URL` is set:
+ *
+ * ```
+ * docker compose -f local/docker-compose.postgres.yml up -d --wait
+ * PG_TEST_URL=postgres://cipherstash:password@localhost:55432/cipherstash \
+ *   pnpm -F @cipherstash/migrate test decrypt.integration
+ * ```
+ *
+ * No CipherStash credentials required: a stub `bulkDecrypt` decodes
+ * deterministic v3-shaped markers, and reports a per-row failure for any
+ * marker flagged `locked` — the shape a value bound to an end-user lock
+ * context takes when decrypted with workspace credentials. What is under test
+ * is everything around the crypto: keyset paging, the per-row skip path, the
+ * checkpoint/resume contract, the typed write, and the guards.
+ */
+
+import 'dotenv/config'
+import pg from 'pg'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { countUndecrypted } from '../cursor.js'
+import {
+  type BulkDecryptItem,
+  type DecryptionClientLike,
+  runDecryptBackfill,
+  UndecryptableBatchError,
+} from '../decrypt.js'
+import { installMigrationsSchema } from '../install.js'
+import { appendEvent, progress } from '../state.js'
+import {
+  columnSqlType,
+  countEqlColumnsInDatabase,
+  listColumnIndexes,
+} from '../version.js'
+
+const PG_URL = process.env.PG_TEST_URL
+const runIntegration = Boolean(PG_URL)
+
+const TABLE = 'migrate_decrypt_test.users'
+
+/** A v3-shaped marker the stub "decrypts" back to `plaintext`. */
+function envelope(plaintext: unknown, locked = false) {
+  return {
+    v: 3,
+    i: { t: 'users', c: 'email_encrypted' },
+    c: JSON.stringify({ plaintext }),
+    ...(locked ? { locked: true } : {}),
+  }
+}
+
+/** Decodes {@link envelope}; a `locked` marker fails that row only. */
+const stubClient: DecryptionClientLike & { calls: number[] } = {
+  calls: [],
+  bulkDecrypt(payloads) {
+    this.calls.push(payloads.length)
+    const data: BulkDecryptItem[] = payloads.map((payload) => {
+      const value = payload.data as { c: string; locked?: boolean } | null
+      if (value?.locked) {
+        return { id: payload.id, error: 'lock context required' }
+      }
+      return {
+        id: payload.id,
+        data: (JSON.parse(value?.c ?? 'null') as { plaintext: unknown })
+          .plaintext,
+      }
+    })
+    return Promise.resolve({ data })
+  },
+}
+
+describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
+  let pool: pg.Pool
+
+  beforeAll(async () => {
+    pool = new pg.Pool({ connectionString: PG_URL, max: 4 })
+    const db = await pool.connect()
+    try {
+      await db.query('DROP SCHEMA IF EXISTS cipherstash CASCADE')
+      await db.query('DROP SCHEMA IF EXISTS migrate_decrypt_test CASCADE')
+      await db.query('CREATE SCHEMA migrate_decrypt_test')
+      await installMigrationsSchema(db)
+    } finally {
+      db.release()
+    }
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  afterEach(async () => {
+    stubClient.calls = []
+    await pool.query(`DROP TABLE IF EXISTS ${TABLE}`)
+    await pool.query('TRUNCATE cipherstash.cs_migrations')
+  })
+
+  /**
+   * `n` rows of encrypted email; every `lockedEvery`-th row is locked. The
+   * plaintext twin starts empty, as `stash decrypt plan` leaves it.
+   */
+  async function seed(n: number, lockedEvery = 0, plaintextType = 'text') {
+    await pool.query(`
+      CREATE TABLE ${TABLE} (
+        id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        email_encrypted jsonb,
+        email           ${plaintextType}
+      )
+    `)
+    const values: unknown[] = []
+    const rows: string[] = []
+    for (let i = 1; i <= n; i++) {
+      values.push(
+        JSON.stringify(
+          envelope(
+            `user-${i}@example.com`,
+            lockedEvery > 0 && i % lockedEvery === 0,
+          ),
+        ),
+      )
+      rows.push(`($${values.length}::jsonb)`)
+    }
+    await pool.query(
+      `INSERT INTO ${TABLE} (email_encrypted) VALUES ${rows.join(', ')}`,
+      values,
+    )
+  }
+
+  async function run(
+    overrides: Partial<Parameters<typeof runDecryptBackfill>[0]> = {},
+  ) {
+    const db = await pool.connect()
+    try {
+      return await runDecryptBackfill({
+        db,
+        decryptionClient: stubClient,
+        tableName: TABLE,
+        encryptedColumn: 'email_encrypted',
+        plaintextColumn: 'email',
+        plaintextSqlType: 'text',
+        pkColumn: 'id',
+        chunkSize: 100,
+        ...overrides,
+      })
+    } finally {
+      db.release()
+    }
+  }
+
+  async function plaintextCount(): Promise<number> {
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ${TABLE} WHERE email IS NOT NULL`,
+    )
+    return Number(rows[0]?.n ?? 0)
+  }
+
+  it('decrypts every row, one bulkDecrypt per chunk, keyed by the encrypted column', async () => {
+    await seed(250)
+
+    const result = await run()
+
+    expect(result.completed).toBe(true)
+    expect(result.rowsProcessed).toBe(250)
+    expect(result.rowsDecrypted).toBe(250)
+    expect(result.rowsSkipped).toBe(0)
+    // 250 rows at chunk 100 → exactly three ZeroKMS round trips.
+    expect(stubClient.calls).toEqual([100, 100, 50])
+    expect(await plaintextCount()).toBe(250)
+    const { rows } = await pool.query<{ email: string }>(
+      `SELECT email FROM ${TABLE} WHERE id = 7`,
+    )
+    expect(rows[0]?.email).toBe('user-7@example.com')
+
+    const db = await pool.connect()
+    try {
+      // Recorded under the ENCRYPTED column, never the plaintext name — the
+      // forward history lives there.
+      expect(await progress(db, TABLE, 'email')).toBeNull()
+      const state = await progress(db, TABLE, 'email_encrypted')
+      expect(state?.event).toBe('decrypted')
+      expect(state?.phase).toBe('decrypted')
+      expect(state?.details).toMatchObject({
+        plaintextColumn: 'email',
+        rowsSkipped: 0,
+      })
+    } finally {
+      db.release()
+    }
+  })
+
+  it('skips and counts values it cannot decrypt (lock contexts), leaving them NULL', async () => {
+    await seed(200, 10)
+
+    const result = await run()
+
+    expect(result.completed).toBe(true)
+    expect(result.rowsProcessed).toBe(200)
+    expect(result.rowsSkipped).toBe(20)
+    expect(result.rowsDecrypted).toBe(180)
+    expect(result.skippedByCode).toEqual({ UNKNOWN: 20 })
+    expect(await plaintextCount()).toBe(180)
+
+    const db = await pool.connect()
+    try {
+      // The coverage gate `stash decrypt drop` relies on still sees them.
+      expect(
+        await countUndecrypted(db, TABLE, 'email_encrypted', 'email'),
+      ).toBe(20)
+      const state = await progress(db, TABLE, 'email_encrypted')
+      expect(state?.details).toMatchObject({ rowsSkipped: 20 })
+    } finally {
+      db.release()
+    }
+  })
+
+  it('resumes from a checkpoint after an abort, carrying the skip count forward', async () => {
+    await seed(500, 50)
+
+    const controller = new AbortController()
+    const first = await run({
+      signal: controller.signal,
+      onProgress: (p) => {
+        if (p.rowsProcessed >= 200) controller.abort()
+      },
+    })
+    expect(first.completed).toBe(false)
+    expect(first.rowsProcessed).toBe(200)
+    expect(first.rowsSkipped).toBe(4)
+
+    const second = await run()
+    expect(second.resumed).toBe(true)
+    expect(second.completed).toBe(true)
+    expect(second.rowsProcessed).toBe(500)
+    expect(second.rowsSkipped).toBe(10)
+    expect(await plaintextCount()).toBe(490)
+  })
+
+  it('is idempotent: a re-run rewrites nothing and only retries the skipped rows', async () => {
+    await seed(120, 40)
+    await run()
+    const before = await pool.query<{ h: string }>(
+      `SELECT md5(string_agg(coalesce(email, '∅'), ',' ORDER BY id)) AS h FROM ${TABLE}`,
+    )
+    stubClient.calls = []
+
+    // A fresh pass (the last event was `decrypted`, not a checkpoint) that
+    // only sees the 3 still-NULL rows. They are still locked, so its one chunk
+    // decrypts nothing and is refused by default…
+    await expect(run()).rejects.toBeInstanceOf(UndecryptableBatchError)
+    expect(stubClient.calls).toEqual([3])
+
+    // …and with the explicit opt-in it completes, re-skipping them.
+    const again = await run({ continueOnUndecryptable: true })
+    expect(again.completed).toBe(true)
+    expect(again.rowsProcessed).toBe(3)
+    expect(again.rowsSkipped).toBe(3)
+    expect(again.rowsDecrypted).toBe(0)
+    const after = await pool.query<{ h: string }>(
+      `SELECT md5(string_agg(coalesce(email, '∅'), ',' ORDER BY id)) AS h FROM ${TABLE}`,
+    )
+    expect(after.rows[0]?.h).toBe(before.rows[0]?.h)
+  }, 10_000)
+
+  it('refuses a first batch that decrypts nothing, writing nothing and recording no checkpoint', async () => {
+    await seed(30, 1) // every row locked
+
+    await expect(run()).rejects.toBeInstanceOf(UndecryptableBatchError)
+
+    expect(await plaintextCount()).toBe(0)
+    const db = await pool.connect()
+    try {
+      const state = await progress(db, TABLE, 'email_encrypted')
+      expect(state?.event).toBe('error')
+      expect(state?.cursorValue).toBeNull()
+      expect(state?.details).toMatchObject({ plaintextColumn: 'email' })
+    } finally {
+      db.release()
+    }
+  })
+
+  it('refuses to write an EQL envelope into the plaintext column (reverse leak guard)', async () => {
+    await seed(5)
+    const passthrough: DecryptionClientLike = {
+      bulkDecrypt: (payloads) =>
+        Promise.resolve({
+          data: payloads.map((payload) => ({
+            id: payload.id,
+            data: payload.data,
+          })),
+        }),
+    }
+
+    await expect(run({ decryptionClient: passthrough })).rejects.toThrow(
+      /EQL envelope instead of plaintext/,
+    )
+    expect(await plaintextCount()).toBe(0)
+  })
+
+  it('never overwrites plaintext already written by a dual-writing app, unless forced', async () => {
+    await seed(10)
+    await pool.query(
+      `UPDATE ${TABLE} SET email = 'newer@example.com' WHERE id = 3`,
+    )
+
+    await run()
+    const { rows } = await pool.query<{ email: string }>(
+      `SELECT email FROM ${TABLE} WHERE id = 3`,
+    )
+    expect(rows[0]?.email).toBe('newer@example.com')
+
+    await run({ force: true })
+    const forced = await pool.query<{ email: string }>(
+      `SELECT email FROM ${TABLE} WHERE id = 3`,
+    )
+    expect(forced.rows[0]?.email).toBe('user-3@example.com')
+  })
+
+  it('ignores a forward checkpoint recorded under the same key — no cross-direction resume', async () => {
+    await seed(50)
+    const db = await pool.connect()
+    try {
+      await appendEvent(db, {
+        tableName: TABLE,
+        columnName: 'email_encrypted',
+        event: 'backfill_checkpoint',
+        phase: 'backfilling',
+        cursorValue: '40',
+        rowsProcessed: 40,
+      })
+    } finally {
+      db.release()
+    }
+
+    const result = await run()
+    expect(result.resumed).toBe(false)
+    expect(result.rowsProcessed).toBe(50)
+    expect(await plaintextCount()).toBe(50)
+  })
+
+  it.each([
+    { type: 'integer', plaintext: 42, expected: '42' },
+    {
+      type: 'bigint',
+      plaintext: 9007199254740993n,
+      expected: '9007199254740993',
+    },
+    { type: 'double precision', plaintext: 0.1, expected: '0.1' },
+    { type: 'boolean', plaintext: false, expected: 'false' },
+    { type: 'date', plaintext: '2024-02-29', expected: '2024-02-29' },
+    {
+      type: 'timestamptz',
+      plaintext: '2024-02-29T10:11:12.000Z',
+      expected: '2024-02-29 10:11:12+00',
+    },
+    {
+      type: 'jsonb',
+      plaintext: { a: [1, 'x'], b: null },
+      expected: '{"a": [1, "x"], "b": null}',
+    },
+    {
+      type: 'jsonb',
+      plaintext: 'a string document',
+      expected: '"a string document"',
+    },
+    { type: 'character varying(32)', plaintext: 'short', expected: 'short' },
+  ])(
+    'writes a $type twin with the column’s declared type',
+    async ({ type, plaintext, expected }) => {
+      await pool.query(`
+      CREATE TABLE ${TABLE} (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        email_encrypted jsonb,
+        email ${type}
+      )
+    `)
+      // bigint plaintext can't round-trip through the JSON marker, so the stub
+      // is bypassed for this one with a client that returns it natively.
+      await pool.query(
+        `INSERT INTO ${TABLE} (email_encrypted) VALUES ($1::jsonb)`,
+        [JSON.stringify(envelope(null))],
+      )
+      const native: DecryptionClientLike = {
+        bulkDecrypt: (payloads) =>
+          Promise.resolve({
+            data: payloads.map((payload) => ({
+              id: payload.id,
+              data: plaintext,
+            })),
+          }),
+      }
+      const db = await pool.connect()
+      let sqlType: string | null
+      try {
+        sqlType = await columnSqlType(db, TABLE, 'email')
+      } finally {
+        db.release()
+      }
+      expect(sqlType).not.toBeNull()
+
+      await run({
+        decryptionClient: native,
+        plaintextSqlType: sqlType as string,
+      })
+
+      const reader = await pool.connect()
+      try {
+        await reader.query("SET TIME ZONE 'UTC'")
+        const { rows } = await reader.query<{ v: string }>(
+          `SELECT email::text AS v FROM ${TABLE}`,
+        )
+        expect(rows[0]?.v).toBe(expected)
+      } finally {
+        reader.release()
+      }
+    },
+  )
+
+  it('lists plain AND expression indexes over a column — the EQL-term indexes decrypt drop removes', async () => {
+    await seed(1)
+    await pool.query(
+      `CREATE INDEX users_enc_plain ON ${TABLE} (email_encrypted)`,
+    )
+    // The shape of an EQL functional index: the column appears only inside
+    // the expression, so `indkey` alone would not find it.
+    await pool.query(
+      `CREATE INDEX users_enc_expr ON ${TABLE} ((email_encrypted->>'c'))`,
+    )
+    await pool.query(`CREATE INDEX users_other ON ${TABLE} (email)`)
+
+    const db = await pool.connect()
+    try {
+      const indexes = await listColumnIndexes(db, TABLE, 'email_encrypted')
+      expect(indexes.map((index) => index.name)).toEqual([
+        'users_enc_expr',
+        'users_enc_plain',
+      ])
+      expect(indexes[0]?.schema).toBe('migrate_decrypt_test')
+      expect(indexes[0]?.definition).toContain('CREATE INDEX users_enc_expr')
+    } finally {
+      db.release()
+    }
+  })
+
+  it('counts EQL v3 domain columns across every schema (the --uninstall-eql gate)', async () => {
+    const db = await pool.connect()
+    try {
+      const baseline = await countEqlColumnsInDatabase(db)
+      await db.query('CREATE DOMAIN migrate_decrypt_test.eql_v3_probe AS jsonb')
+      await db.query(
+        `CREATE TABLE ${TABLE} (id int PRIMARY KEY, a migrate_decrypt_test.eql_v3_probe, b migrate_decrypt_test.eql_v3_probe[], c jsonb)`,
+      )
+      expect(await countEqlColumnsInDatabase(db)).toBe(baseline + 2)
+      await db.query(`DROP TABLE ${TABLE}`)
+      await db.query('DROP DOMAIN migrate_decrypt_test.eql_v3_probe')
+    } finally {
+      db.release()
+    }
+  })
+})
