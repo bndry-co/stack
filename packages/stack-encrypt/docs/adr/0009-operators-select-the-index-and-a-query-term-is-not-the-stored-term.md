@@ -731,10 +731,11 @@ is never the plan. This appendix asks what each of those gains from the
 model above, in two languages: Go, which has a Stack Encrypt SDK today, and
 TypeScript, which does not. The TypeScript half is a sketch of a binding and
 an SDK built on Stack Encrypt and EQL v4, written to check that the Rust
-model will support them well; it is not the existing `@cipherstash/stack`,
-which runs on cipherstash-client through `@cipherstash/protect-ffi` and
-writes EQL v3. It is a check on the model, not a decision; the decisions for
-the bindings come with the ADR-0007 amendment.
+model will support them well. That SDK will be the next major version of
+`@cipherstash/stack`; the current major runs on cipherstash-client through
+`@cipherstash/protect-ffi` and writes EQL v3, and nothing below describes
+it. It is a check on the model, not a decision; the decisions for the
+bindings come with the ADR-0007 amendment.
 
 ### What crosses the binding
 
@@ -836,15 +837,16 @@ is refused at compile time, as it is at generate time for the field.
 Go needs a generator because its type system cannot derive a field's
 methods from a declaration. TypeScript can, so the sketch below has no
 generate step: the schema is a value, its type is the plan, and the
-operators a column answers are read off that type. The names are
-placeholders; the shapes are the point.
+operators a column answers are read off that type. The function and type
+names are illustrative; the package is `@cipherstash/stack` at its next
+major, and the shapes are the point.
 
 **The schema is the plan.** A table is declared with the EQL v4 types, which
 is the data grammar of ADR-0007 written as TypeScript, and the match index
 carries its `expectedTokens` prior from decision 5:
 
 ```ts
-import { table, passthrough, eql } from '@cipherstash/stack-encrypt'   // placeholder name
+import { table, passthrough, eql } from '@cipherstash/stack'   // the next major
 
 const users = table('users', {
   id:      passthrough<number>(),
@@ -854,7 +856,7 @@ const users = table('users', {
   profile: eql.Json(),
 })
 
-const client = await StackEncrypt.connect()          // the guest, through napi or wasm
+const client = await Encryption.connect()            // the Stack Encrypt guest, through napi or wasm
 const cipher = client.keyset('tenant-42')
 ```
 
