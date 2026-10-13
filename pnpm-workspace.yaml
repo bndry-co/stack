@@ -66,6 +66,10 @@ catalogs:
 # pnpm overrides rewrite peer ranges, not peer resolutions. It is fixed by an
 # explicit dependency in languages/typescript/packages/wizard — that dep is a peer-resolution pin
 # (wizard never imports the sdk directly); do not remove it as "unused".
+# The same applies to @modelcontextprotocol/sdk (alert #247,
+# GHSA-6qxp-vccf-f47h / CVE-2026-104850, patched 1.31.0): another auto-installed
+# peer of claude-agent-sdk (`^1.29.0`), pinned by the same kind of explicit
+# wizard dependency.
 overrides:
   # #96, #115-#127 — Next.js middleware bypass / SSRF / DoS / XSS batch
   # (GHSA-267c-6grr-h53f, GHSA-26hh-7cqf-hhc6, GHSA-36qx-fr4f-26g5, et al.)
