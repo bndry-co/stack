@@ -57,6 +57,9 @@ use std::marker::PhantomData;
 
 use stack_kms::MaybeSend;
 
+pub(crate) mod stats;
+pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE};
+
 use crate::sem::{DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, QueryTokens};
 use crate::target::{Equality, Index, Match};
 use crate::PlanError;
@@ -223,6 +226,19 @@ pub trait Probabilistic: QueryTerm {
     /// the index was declared over, so every outcome other than a match is
     /// `false`, never an error.
     fn verify(&self, value: &Self::Plaintext) -> bool;
+
+    /// How many candidate rows to fetch so that, at the confidence `stats`
+    /// names, `want` of them [`verify`](Self::verify), when the table holds
+    /// that many matches.
+    ///
+    /// A probabilistic bound, not a guarantee: at 99% confidence one query
+    /// in a hundred draws more false positives than it allows for. The
+    /// candidate count says which case a fetch is in. If the server
+    /// returned fewer rows than the limit, the predicate is exhausted, and
+    /// fewer than `want` verified rows means fewer than `want` matches. If
+    /// it returned exactly the limit, the result is a page: carry on from
+    /// its last row with a cursor.
+    fn target_limit(&self, want: u64, stats: &Stats) -> Limit;
 }
 
 /// The query terms that may answer the operator `Op`: what

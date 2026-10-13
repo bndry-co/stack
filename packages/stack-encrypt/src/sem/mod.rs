@@ -471,6 +471,16 @@ impl MatchOptions {
 /// construction. Define your own by implementing this on a marker type.
 pub trait MatchConfig: Send + Sync + 'static {
     fn options() -> MatchOptions;
+
+    /// The typical number of tokens in a value this index stores: 20 for a
+    /// name column, 200 for a notes column. A prior, used to size a query's
+    /// fetch ([`Stats::declared`](crate::op::Stats::declared)) before the
+    /// column's filters have been measured. It is not part of the index's
+    /// identity and changes no term. `None`, the default, declares no
+    /// prior.
+    fn expected_tokens() -> Option<u32> {
+        None
+    }
 }
 
 /// The default [`MatchConfig`]: [`MatchOptions::default`].
@@ -708,6 +718,22 @@ impl<O: MatchConfig> crate::op::Probabilistic for MatchQuery<O> {
         ));
         let have: HashSet<&str> = tokens.iter().map(String::as_str).collect();
         !self.tokens.0.is_empty() && self.tokens.0.iter().all(|t| have.contains(t.as_str()))
+    }
+
+    /// `want` plus the false positives expected among the rows `stats`
+    /// scans: the query sets `b` bits ([`positions`](Self::positions)), and
+    /// a stored filter of fill `f` holds them all with probability `f^b`.
+    /// The fill comes from the measured histogram in `stats`, or else from
+    /// the configuration's
+    /// [`expected_tokens`](MatchConfig::expected_tokens) prior; with
+    /// neither, the answer is
+    /// [`Limit::Unbounded`](crate::op::Limit::Unbounded).
+    fn target_limit(&self, want: u64, stats: &crate::op::Stats) -> crate::op::Limit {
+        let options = O::options();
+        let declared = O::expected_tokens()
+            .map(|tokens| crate::op::stats::expected_fill(tokens, options.k, options.m));
+        let bits = u32::try_from(self.positions().len()).unwrap_or(u32::MAX);
+        stats.limit(want, stats.pass_rate(bits, options.m, declared))
     }
 }
 

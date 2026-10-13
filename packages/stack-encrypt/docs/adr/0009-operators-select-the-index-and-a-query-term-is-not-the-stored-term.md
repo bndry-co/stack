@@ -363,9 +363,10 @@ index declaration. The library takes either as numbers in `Stats` and does
 not care which it was given. A column has the prior from the day it is
 declared.
 
-**Declared.** A match index declares `expected_tokens`, the typical token
-count of the values it will hold, beside `m` and `k`: 20 for a name column,
-200 for a notes column. From it `Stats::declared(rows)` takes
+**Declared.** A match configuration declares `expected_tokens()`, the typical
+token count of the values it will hold, beside the `m` and `k` of its
+options: 20 for a name column, 200 for a notes column. It is not part of the
+index's identity and changes no term. From it `Stats::declared(rows)` takes
 `f = 1 − e^(−k·expected_tokens/m)` and `p = f^b`. This is a prior, and
 `rows` is a planning estimate too. It is enough to warn before a query runs
 (a three-letter needle against a notes column) and to size a first fetch; it
@@ -388,8 +389,16 @@ query has. The sample bounds the cost on a large table; `TABLESAMPLE` is a
 page sample, which is fine for a distribution and unsuited to an exact count.
 It is also a sample of pages, so on a table of a few thousand rows a 1%
 sample can select none; below that size the clause is dropped and the whole
-table is read, which costs nothing worth saving. `rows` comes from `SELECT reltuples FROM pg_class WHERE oid =
-'users'::regclass`, a catalog read.
+table is read, which costs nothing worth saving. `rows` comes from
+`SELECT reltuples FROM pg_class WHERE oid = 'users'::regclass`, a catalog
+read. An empty histogram falls back to the declared prior.
+
+`target_limit` returns a `Limit`: `Rows(n)`, or `Unbounded` when the
+statistics say nothing about the stored filters (no prior and no
+histogram) or the confidence is not below 1. `fetch_or(page)` reads either
+as a fetch size, for a caller that pages anyway. Past ten million expected
+false positives the quantile is the conservative `λ + 8√λ`, since the query
+is hopeless at that point.
 
 Where the numbers live and who keeps them in step was asked on the review,
 so it is written down. They are read from the server by the application, at
@@ -458,7 +467,7 @@ shot, with a bound, and the completeness check from decision 5:
 
 ```rust
 let term  = cipher.query(op::Matches, "ali").on(&users::name).await?;
-let fetch = term.target_limit(10, &stats).fetch();
+let fetch = term.target_limit(10, &stats).fetch_or(50);
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, name FROM users WHERE name @@ $1 ORDER BY id LIMIT $2",
@@ -719,7 +728,7 @@ the operator is `@@`, column on the left. The query selects the ciphertext
 
 ```rust
 let term  = cipher.query(op::Matches, "ali").on(&users::name).await?;
-let fetch = term.target_limit(10, &stats).fetch();
+let fetch = term.target_limit(10, &stats).fetch_or(50);
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, name FROM users WHERE name @@ $1::eql_v4.query_text_match ORDER BY id LIMIT $2",
@@ -741,12 +750,12 @@ The `Stats` it used were read once, at startup, by the application:
 ```rust
 let rows: i64 = sqlx::query_scalar("SELECT reltuples::bigint FROM pg_class WHERE oid = 'users'::regclass")
     .fetch_one(&pool).await?;
-let histogram: Vec<(i16, i64)> = sqlx::query_as(
+let histogram: Vec<(i32, i64)> = sqlx::query_as(
     "SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*)
      FROM users TABLESAMPLE SYSTEM (1) GROUP BY 1",
 )
 .fetch_all(&pool).await?;
-let stats = Stats::measured(rows as u64, histogram.into_iter().map(|(b, n)| (b as u16, n as u64)));
+let stats = Stats::measured(rows as u64, histogram.into_iter().map(|(b, n)| (b as u32, n as u64)));
 ```
 
 or, before anyone has measured, `Stats::declared(1_000_000)`, which uses the
@@ -766,7 +775,7 @@ let rows: Vec<UserRow> = sqlx::query_as(
 )
 .bind(sqlx::types::Json(&name))
 .bind(sqlx::types::Json(&age))
-.bind(name.target_limit(10, &stats).fetch() as i64)
+.bind(name.target_limit(10, &stats).fetch_or(50) as i64)
 .fetch_all(&pool).await?;
 let hits: Vec<User> = cipher.open(rows).using(&users_plan).await?
     .into_iter().filter(|u| name.verify(&u.name)).take(10).collect();
@@ -908,7 +917,7 @@ it binds as a parameter in any library built on `database/sql` or pgx:
 
 ```go
 q, _ := users.Fields.Name.Matches(ctx, cipher, "ali")
-limit := q.TargetLimit(10, stats).Fetch()
+limit := q.TargetLimit(10, stats).FetchOr(50)
 
 rows, err := db.QueryContext(ctx,
     `SELECT id, name FROM users WHERE name @@ $1::eql_v4.query_text_match ORDER BY id LIMIT $2`,
@@ -1014,7 +1023,7 @@ TypeScript programs use:
 
 ```ts
 // pg
-const limit = name.targetLimit(10, stats).fetch()
+const limit = name.targetLimit(10, stats).fetchOr(50)
 const { rows } = await pool.query(
   'SELECT id, name FROM users WHERE name @@ $1::eql_v4.query_text_match ORDER BY id LIMIT $2',
   [name, limit],
@@ -1058,7 +1067,7 @@ const q = await ops.matches(users.name, 'ali')          // { sql, verify, target
 const rows = await db.select().from(users)
   .where(q.sql)                                         // name @@ '…'::eql_v4.query_text_match
   .orderBy(users.id)
-  .limit(q.targetLimit(10, stats).fetch())
+  .limit(q.targetLimit(10, stats).fetchOr(50))
 const hits = (await cipher.decrypt(users, rows)).filter((u) => q.verify(u.name)).slice(0, 10)
 ```
 
