@@ -472,8 +472,8 @@ impl MatchOptions {
 pub trait MatchConfig: Send + Sync + 'static {
     fn options() -> MatchOptions;
 
-    /// The typical number of tokens in a value this index stores: 20 for a
-    /// name column, 200 for a notes column. A prior, used to size a query's
+    /// The typical number of distinct tokens in a value this index stores:
+    /// 20 for a name column, 200 for a notes column. A prior, used to size a query's
     /// fetch ([`Stats::declared`](crate::op::Stats::declared)) before the
     /// column's filters have been measured. It is not part of the index's
     /// identity and changes no term. `None`, the default, declares no

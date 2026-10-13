@@ -235,8 +235,7 @@ pub trait QueryTerm {}
 pub trait Probabilistic: QueryTerm {
     type Plaintext;
     fn verify(&self, value: &Self::Plaintext) -> bool;
-    // `target_limit(&self, want, &Stats) -> Limit` joins it with decision 5
-    // (#1184).
+    fn target_limit(&self, want: u64, stats: &Stats) -> Limit;
 }
 
 pub trait Ranked: QueryTerm {
@@ -337,6 +336,15 @@ positives); the mean fill, 0.25, raised to 6 predicts 245. The number the
 bound needs is therefore `p = mean(f_i^b)`, and the statistics the client
 holds must let it compute that for the `b` of each query.
 
+The model assumes a non-matching row shares no token with the needle. The
+same token sets the same bits in every filter, so a row holding part of the
+needle has fewer bits left to chance: "police" already holds two of
+"alice"'s three 3-grams, and passes at `f^6` rather than `f^18`. On natural
+text the stated confidence is therefore nominal, and a measured histogram
+cannot correct it, because it measures fill, not overlap. Correctness does
+not depend on it: `verify` decides every row, and the candidate count says
+whether a fetch was complete.
+
 False positives are then `Poisson(λ = p·N)`, and the worst case that still
 satisfies the caller is exactly `want` true matches preceded by every false
 positive, so
@@ -380,6 +388,7 @@ fills. One aggregate gives it, at most `m` buckets:
 ```sql
 SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*)
 FROM users TABLESAMPLE SYSTEM (1)
+WHERE name IS NOT NULL
 GROUP BY 1
 ```
 
@@ -390,8 +399,10 @@ page sample, which is fine for a distribution and unsuited to an exact count.
 It is also a sample of pages, so on a table of a few thousand rows a 1%
 sample can select none; below that size the clause is dropped and the whole
 table is read, which costs nothing worth saving. `rows` comes from
-`SELECT reltuples FROM pg_class WHERE oid = 'users'::regclass`, a catalog
-read. An empty histogram falls back to the declared prior.
+`SELECT greatest(reltuples, 0) FROM pg_class WHERE oid = 'users'::regclass`,
+a catalog read; `reltuples` is −1 for a table that has never been vacuumed
+or analysed, hence the `greatest`. A `Limit` never exceeds `i64::MAX`, the
+largest `LIMIT` PostgreSQL takes. An empty histogram falls back to the declared prior.
 
 `target_limit` returns a `Limit`: `Rows(n)`, or `Unbounded` when the
 statistics say nothing about the stored filters (no prior and no
@@ -748,11 +759,11 @@ let hits: Vec<User> = cipher.open(rows).using(&users_plan).await?
 The `Stats` it used were read once, at startup, by the application:
 
 ```rust
-let rows: i64 = sqlx::query_scalar("SELECT reltuples::bigint FROM pg_class WHERE oid = 'users'::regclass")
+let rows: i64 = sqlx::query_scalar("SELECT greatest(reltuples, 0)::bigint FROM pg_class WHERE oid = 'users'::regclass")
     .fetch_one(&pool).await?;
 let histogram: Vec<(i32, i64)> = sqlx::query_as(
     "SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*)
-     FROM users TABLESAMPLE SYSTEM (1) GROUP BY 1",
+     FROM users TABLESAMPLE SYSTEM (1) WHERE name IS NOT NULL GROUP BY 1",
 )
 .fetch_all(&pool).await?;
 let stats = Stats::measured(rows as u64, histogram.into_iter().map(|(b, n)| (b as u32, n as u64)));
@@ -1081,8 +1092,8 @@ application, or from the declared prior:
 
 ```ts
 const stats = Stats.measured(
-  (await pool.query("SELECT reltuples::bigint AS rows FROM pg_class WHERE oid = 'users'::regclass")).rows[0].rows,
-  (await pool.query('SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*) FROM users TABLESAMPLE SYSTEM (1) GROUP BY 1')).rows,
+  (await pool.query("SELECT greatest(reltuples, 0)::bigint AS rows FROM pg_class WHERE oid = 'users'::regclass")).rows[0].rows,
+  (await pool.query('SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*) FROM users TABLESAMPLE SYSTEM (1) WHERE name IS NOT NULL GROUP BY 1')).rows,
 )
 const prior = Stats.declared(1_000_000)   // uses users.name's expectedTokens
 ```

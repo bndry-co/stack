@@ -46,11 +46,16 @@ enum Fill {
 /// The confidence a [`Stats`] targets unless told otherwise.
 pub const DEFAULT_CONFIDENCE: f64 = 0.99;
 
+/// The largest fetch a [`Limit`] names: PostgreSQL's `LIMIT` is a signed
+/// 64-bit integer.
+pub const MAX_ROWS: u64 = i64::MAX as u64;
+
 impl Stats {
     /// Statistics from the index's declared prior
     /// ([`MatchConfig::expected_tokens`](crate::sem::MatchConfig::expected_tokens))
     /// and an estimate of the rows the query scans, such as
-    /// `pg_class.reltuples`.
+    /// `greatest(pg_class.reltuples, 0)` (`reltuples` is −1 for a table
+    /// never analysed).
     ///
     /// The prior knows nothing about the spread of value lengths, so it
     /// underestimates a column of mixed lengths; measure the column
@@ -74,6 +79,7 @@ impl Stats {
     /// ```sql
     /// SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*)
     /// FROM users TABLESAMPLE SYSTEM (1)
+    /// WHERE name IS NOT NULL
     /// GROUP BY 1
     /// ```
     ///
@@ -130,7 +136,8 @@ impl Stats {
             return Limit::Unbounded;
         }
         let lambda = p.clamp(0.0, 1.0) * self.rows as f64;
-        Limit::Rows(want.saturating_add(poisson_quantile(lambda, self.confidence)))
+        let rows = want.saturating_add(poisson_quantile(lambda, self.confidence));
+        Limit::Rows(rows.min(MAX_ROWS))
     }
 }
 
@@ -138,8 +145,9 @@ impl Stats {
 /// `None` for an empty one. A count above `m` (a histogram from another
 /// configuration) is a full filter.
 fn mean_power(histogram: &[(u32, u64)], b: u32, m: u32) -> Option<f64> {
-    let rows: u64 = histogram.iter().map(|&(_, rows)| rows).sum();
-    if rows == 0 || m == 0 {
+    // Summed as floats: counts from a caller need not fit a `u64` total.
+    let rows: f64 = histogram.iter().map(|&(_, rows)| rows as f64).sum();
+    if rows == 0.0 || m == 0 {
         return None;
     }
     let total: f64 = histogram
@@ -149,7 +157,7 @@ fn mean_power(histogram: &[(u32, u64)], b: u32, m: u32) -> Option<f64> {
             rows as f64 * fill.powi(b as i32)
         })
         .sum();
-    Some(total / rows as f64)
+    Some(total / rows)
 }
 
 /// The fill of one stored filter of `tokens` tokens, each setting `k` of
@@ -158,7 +166,8 @@ pub(crate) fn expected_fill(tokens: u32, k: usize, m: u32) -> f64 {
     1.0 - (-(k as f64) * f64::from(tokens) / f64::from(m)).exp()
 }
 
-/// How many rows a probabilistic query should fetch.
+/// How many rows a probabilistic query should fetch. Never more than
+/// [`MAX_ROWS`], the largest `LIMIT` PostgreSQL takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Limit {
     /// Fetch this many rows: `want` and the false positives expected at the
@@ -188,47 +197,58 @@ impl Limit {
 
 /// The smallest `q` with `P(X ≤ q) ≥ confidence` for `X ~ Poisson(λ)`.
 ///
-/// Exact up to floating point: the probabilities are summed in log space
-/// from where the mass begins, `λ − 10√λ` for a large `λ` (the mass below
-/// it is under `1e-23`), so the work is about `12√λ` terms. Past `1e7`
-/// expected false positives the query is hopeless anyway and the answer is
-/// the conservative `λ + 8√λ`, which covers any confidence below
+/// The probabilities are summed over the window `[λ − 10√λ, λ + 12√λ + 50]`,
+/// which holds all but about `1e-23` of the mass, and normalised by the
+/// window's total. Each term is kept as a log relative to the window's
+/// first, so no term carries the cancellation of `−λ + k·ln λ − ln k!` at a
+/// large `λ`, and the sums run from the small end, so a confidence close to
+/// 1 compares against a tail summed without losing it to rounding. The
+/// answer is exact to within one at any confidence below `1 − 1e-12`. The
+/// work is about `22√λ` terms.
+/// Past `1e7` expected false positives the query is hopeless anyway and the
+/// answer is the conservative `λ + 8√λ`, which covers any confidence below
 /// `1 − 1e-15`.
+///
+/// `λ ≤ 0` and NaN have a window of one term at 0, so the answer is 0.
 pub(crate) fn poisson_quantile(lambda: f64, confidence: f64) -> u64 {
-    if lambda <= 0.0 || lambda.is_nan() {
-        return 0;
-    }
     if lambda > 1e7 {
         return (lambda + 8.0 * lambda.sqrt()).ceil() as u64;
     }
-    // Saturates to 0 for a small `λ`, where the mass starts at 0.
-    let start = (lambda - 10.0 * lambda.sqrt()).floor().max(0.0) as u64;
+    let spread = lambda.sqrt();
+    // A float-to-integer cast saturates, and maps NaN to 0.
+    let start = (lambda - 10.0 * spread).floor().max(0.0) as u64;
+    let end = (lambda + 12.0 * spread + 50.0).ceil() as u64;
     let ln_lambda = lambda.ln();
-    let mut log_term = -lambda + start as f64 * ln_lambda - ln_factorial(start);
-    let mut cdf = 0.0;
-    let mut k = start;
-    loop {
-        cdf += log_term.exp();
-        // Past the mode, a term this small adds nothing a float can hold:
-        // the remaining mass is below any confidence that is not 1.
-        if cdf >= confidence || (k as f64 > lambda && log_term < -50.0) {
-            return k;
+    let mut weights = Vec::with_capacity((end - start + 1) as usize);
+    let mut log_term = 0.0;
+    for k in start..=end {
+        if k > start {
+            log_term += ln_lambda - (k as f64).ln();
         }
-        k += 1;
-        log_term += ln_lambda - (k as f64).ln();
+        weights.push(log_term);
     }
-}
-
-/// `ln(n!)`: summed exactly below 20, Stirling's series above, where it is
-/// accurate to about `1e-12`.
-fn ln_factorial(n: u64) -> f64 {
-    if n < 20 {
-        return (2..=n).map(|i| (i as f64).ln()).sum();
+    let peak = weights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    for weight in &mut weights {
+        *weight = (*weight - peak).exp();
     }
-    let x = n as f64 + 1.0;
-    (x - 0.5) * x.ln() - x + 0.5 * (2.0 * std::f64::consts::PI).ln() + 1.0 / (12.0 * x)
-        - 1.0 / (360.0 * x.powi(3))
-        + 1.0 / (1260.0 * x.powi(5))
+    // Summed from the top down, where the terms are smallest, so the tail a
+    // high confidence compares against is not lost to rounding.
+    let total: f64 = weights.iter().rev().sum();
+    let allowed = (1.0 - confidence) * total;
+    // Walking down from the top, `above` is the mass strictly above `k`.
+    // The answer is the lowest `k` whose mass above is within what the
+    // confidence allows.
+    let mut answer = end;
+    let mut above = 0.0;
+    for (offset, weight) in weights.iter().enumerate().rev() {
+        if above <= allowed {
+            answer = start + offset as u64;
+            above += weight;
+        } else {
+            break;
+        }
+    }
+    answer
 }
 
 #[cfg(test)]
@@ -272,18 +292,29 @@ mod tests {
 
     #[test]
     fn a_confidence_at_one_still_ends() {
-        // A float CDF may never reach 1; the tail cut-off ends the sum.
+        // A float CDF may never reach 1; the window's end ends the sum.
         let q = poisson_quantile(5.0, 1.0);
-        assert!(q > 20, "{q}");
+        assert!((20..=5 + 27 + 50).contains(&q), "{q}");
+        assert_eq!(poisson_quantile(f64::NAN, 0.99), 0);
     }
 
+    /// High confidences over a large `λ`, where summing from `e^(−λ)`
+    /// loses precision: the window is normalised instead. References are
+    /// exact (mpmath's regularised incomplete gamma); the sum may land one
+    /// above, never below.
     #[test]
-    fn ln_factorial_is_continuous_where_the_series_takes_over() {
-        let exact: f64 = (2..=20u64).map(|i| (i as f64).ln()).sum();
-        assert!((ln_factorial(20) - exact).abs() < 1e-10);
-        assert_eq!(ln_factorial(0), 0.0);
-        assert_eq!(ln_factorial(1), 0.0);
-        assert!((ln_factorial(5) - 120f64.ln()).abs() < 1e-12);
+    fn the_quantile_holds_at_high_confidence_and_large_lambda() {
+        for (lambda, confidence, exact) in [
+            (3.4e6, 0.9999, 3_406_860),
+            (4_750_922.0, 1.0 - 1e-12, 4_766_263),
+            (1e7, 0.99, 10_007_357),
+        ] {
+            let q = poisson_quantile(lambda, confidence);
+            assert!(
+                q == exact || q == exact + 1,
+                "λ = {lambda}, confidence = {confidence}: {q}, exact {exact}"
+            );
+        }
     }
 
     /// ADR-0009 decision 5's worked table: EQL v4 defaults (`k = 6`,
@@ -372,10 +403,23 @@ mod tests {
     }
 
     #[test]
-    fn want_does_not_overflow() {
+    fn a_limit_fits_a_sql_limit() {
         assert_eq!(
             Stats::declared(10).limit(u64::MAX, Some(0.5)),
-            Limit::Rows(u64::MAX)
+            Limit::Rows(MAX_ROWS)
         );
+        // `reltuples` is −1 for a table never analysed; read as a `u64` it is
+        // the largest count there is.
+        assert_eq!(
+            Stats::declared(u64::MAX).limit(10, Some(0.5)),
+            Limit::Rows(MAX_ROWS)
+        );
+    }
+
+    #[test]
+    fn histogram_counts_do_not_overflow() {
+        let stats = Stats::measured(10, [(1024, u64::MAX), (2048, u64::MAX)]);
+        let p = stats.pass_rate(1, 2048, None).unwrap();
+        assert!((p - 0.75).abs() < 1e-12, "{p}");
     }
 }

@@ -58,7 +58,7 @@ use std::marker::PhantomData;
 use stack_kms::MaybeSend;
 
 pub(crate) mod stats;
-pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE};
+pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE, MAX_ROWS};
 
 use crate::sem::{DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, QueryTokens};
 use crate::target::{Equality, Index, Match};
@@ -232,12 +232,14 @@ pub trait Probabilistic: QueryTerm {
     /// that many matches.
     ///
     /// A probabilistic bound, not a guarantee: at 99% confidence one query
-    /// in a hundred draws more false positives than it allows for. The
-    /// candidate count says which case a fetch is in. If the server
+    /// in a hundred draws more false positives than it allows for, and the
+    /// model assumes a non-matching row shares no token with the needle,
+    /// which natural text does not honour, so the confidence is nominal.
+    /// The candidate count says which case a fetch is in. If the server
     /// returned fewer rows than the limit, the predicate is exhausted, and
     /// fewer than `want` verified rows means fewer than `want` matches. If
-    /// it returned exactly the limit, the result is a page: carry on from
-    /// its last row with a cursor.
+    /// it returned exactly the limit and fewer than `want` verified, the
+    /// result is a page: carry on from its last row with a cursor.
     fn target_limit(&self, want: u64, stats: &Stats) -> Limit;
 }
 

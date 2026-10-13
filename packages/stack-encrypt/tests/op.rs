@@ -812,12 +812,22 @@ async fn target_limit_without_a_prior_needs_a_measured_column() {
             .entry(stored.terms.1.positions().len() as u32)
             .or_default() += 1;
     }
-    let stats = Stats::measured(3, histogram);
-    let Limit::Rows(rows) = query.target_limit(1, &stats) else {
+    // The pass rate the histogram gives this query, over a large table.
+    let bits = query.positions().len() as i32;
+    let rows_seen: u64 = histogram.values().sum();
+    let p = histogram
+        .iter()
+        .map(|(&set, &n)| n as f64 * (f64::from(set) / 256.0).powi(bits))
+        .sum::<f64>()
+        / rows_seen as f64;
+    let lambda = p * 1_000_000.0;
+    let stats = Stats::measured(1_000_000, histogram);
+    let Limit::Rows(rows) = query.target_limit(10, &stats) else {
         panic!("a measured column gives a finite fetch");
     };
+    let extra = (rows - 10) as f64;
     assert!(
-        (1..=4).contains(&rows),
-        "1 wanted, at most every row: {rows}"
+        extra >= lambda && extra <= lambda + 4.0 * lambda.sqrt() + 3.0,
+        "10 wanted, λ = {lambda}: {rows}"
     );
 }
