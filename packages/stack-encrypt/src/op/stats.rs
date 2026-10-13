@@ -197,10 +197,10 @@ impl Limit {
 
 /// The smallest `q` with `P(X ≤ q) ≥ confidence` for `X ~ Poisson(λ)`.
 ///
-/// The probabilities are summed over the window `[λ − 10√λ, λ + 12√λ + 50]`,
-/// which holds all but about `1e-23` of the mass, and normalised by the
-/// window's total. Each term is kept as a log relative to the window's
-/// first, so no term carries the cancellation of `−λ + k·ln λ − ln k!` at a
+/// The probabilities are summed over a window from `λ − 10√λ` (or 0) that is
+/// `22√λ + 50` wide, which holds all but about `1e-23` of the mass, and
+/// normalised by the window's total. Each term is kept as a log relative to
+/// the window's first, so no term carries the cancellation of `−λ + k·ln λ − ln k!` at a
 /// large `λ`, and the sums run from the small end, so a confidence close to
 /// 1 compares against a tail summed without losing it to rounding. The
 /// answer is exact to within one at any confidence below `1 − 1e-12`. The
@@ -217,19 +217,21 @@ pub(crate) fn poisson_quantile(lambda: f64, confidence: f64) -> u64 {
     let spread = lambda.sqrt();
     // A float-to-integer cast saturates, and maps NaN to 0.
     let start = (lambda - 10.0 * spread).floor().max(0.0) as u64;
-    let end = (lambda + 12.0 * spread + 50.0).ceil() as u64;
+    // `22√λ + 50` past `start` reaches `λ + 12√λ + 50`. Capped, so no input
+    // makes the window large: below `1e7` it is at most about 70,000 terms.
+    let width = ((22.0 * spread + 50.0).ceil() as u64).min(MAX_WINDOW);
     let ln_lambda = lambda.ln();
-    let mut weights = Vec::with_capacity((end - start + 1) as usize);
+    // Each term is `e^log` with `log` relative to the window's first term.
+    // From `λ − 10√λ` to the mode that ratio is at most about `e^50`, and
+    // from 0 to the mode of a `λ` below 100 about `e^λ`, so no term
+    // overflows and none of the mass is lost to underflow.
+    let mut weights = Vec::with_capacity(width as usize + 1);
     let mut log_term = 0.0;
-    for k in start..=end {
+    for k in start..=start + width {
         if k > start {
             log_term += ln_lambda - (k as f64).ln();
         }
-        weights.push(log_term);
-    }
-    let peak = weights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    for weight in &mut weights {
-        *weight = (*weight - peak).exp();
+        weights.push(log_term.exp());
     }
     // Summed from the top down, where the terms are smallest, so the tail a
     // high confidence compares against is not lost to rounding.
@@ -238,7 +240,7 @@ pub(crate) fn poisson_quantile(lambda: f64, confidence: f64) -> u64 {
     // Walking down from the top, `above` is the mass strictly above `k`.
     // The answer is the lowest `k` whose mass above is within what the
     // confidence allows.
-    let mut answer = end;
+    let mut answer = start + width;
     let mut above = 0.0;
     for (offset, weight) in weights.iter().enumerate().rev() {
         if above <= allowed {
@@ -250,6 +252,10 @@ pub(crate) fn poisson_quantile(lambda: f64, confidence: f64) -> u64 {
     }
     answer
 }
+
+/// The most terms [`poisson_quantile`] sums: far more than any `λ` below
+/// `1e7` needs, and a bound on the work whatever it is handed.
+const MAX_WINDOW: u64 = 1 << 20;
 
 #[cfg(test)]
 mod tests {
@@ -294,8 +300,12 @@ mod tests {
     fn a_confidence_at_one_still_ends() {
         // A float CDF may never reach 1; the window's end ends the sum.
         let q = poisson_quantile(5.0, 1.0);
-        assert!((20..=5 + 27 + 50).contains(&q), "{q}");
+        // The window starts at 0 and is `⌈22√5 + 50⌉` wide.
+        assert!((20..=100).contains(&q), "{q}");
         assert_eq!(poisson_quantile(f64::NAN, 0.99), 0);
+        // A confidence above 1 allows no mass at all: the window's end.
+        assert_eq!(poisson_quantile(5.0, 1.5), 100);
+        assert_eq!(poisson_quantile(7600.0, 1.5), 6728 + 1968);
     }
 
     /// High confidences over a large `λ`, where summing from `e^(−λ)`
