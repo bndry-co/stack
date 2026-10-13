@@ -227,9 +227,9 @@ pub(crate) fn poisson_quantile(lambda: f64, confidence: f64) -> u64 {
     // overflows and none of the mass is lost to underflow.
     let mut weights = Vec::with_capacity(width as usize + 1);
     let mut log_term = 0.0;
-    for k in start..=start + width {
-        if k > start {
-            log_term += ln_lambda - (k as f64).ln();
+    for offset in 0..=width {
+        if offset > 0 {
+            log_term += ln_lambda - ((start + offset) as f64).ln();
         }
         weights.push(log_term.exp());
     }
