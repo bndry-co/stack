@@ -1,0 +1,8 @@
+---
+'stash': minor
+'@cipherstash/migrate': minor
+---
+
+`stash decrypt status|plan|backfill|drop` moves encrypted columns back to plaintext — the encrypt lifecycle run in reverse, with the same safety rails. `decrypt plan` adds a nullable plaintext twin per EQL v3 column with its type mapped back from the domain (`text*` → `text`, `timestamp*` → `timestamptz`, `json*` → `jsonb`, …): Drizzle schema lines for `drizzle-kit generate`, or a reviewed SQL migration elsewhere. `decrypt backfill` decrypts in resumable, checkpointed chunks, one `bulkDecrypt` (one ZeroKMS request) per chunk, default 500 rows. Values bound to an end-user lock context cannot be decrypted with workspace credentials; they are skipped, counted, left NULL and reported, and `decrypt drop` refuses while any remain. `decrypt drop` re-verifies coverage at apply time, drops the indexes built on the column's EQL terms, drops the column, and with `--uninstall-eql` removes EQL v3 when it was the last encrypted column in the database.
+
+`@cipherstash/migrate`: `runBackfill` now runs on a shared chunked engine (`runChunkedMigration`), which also drives the new `runDecryptBackfill`. Forward behaviour and recorded event details are unchanged. Adds `countUndecrypted`, `fetchUndecryptedPage`, `plaintextTypeForEqlDomain`, `columnSqlType`, `listColumnIndexes`, `countEqlColumnsInDatabase`, `removeManifestColumn`, and the reverse event/phase vocabulary (`decrypt_started`, `decrypt_checkpoint`, `decrypted`, `encrypted_dropped`; `decrypt-dual-writing`, `decrypting`, `decrypted`, `encrypted-dropped`), recorded against the encrypted column. `MigrationPhase` and `MigrationEvent` gain those members, so an exhaustive `switch` over them needs the new cases.

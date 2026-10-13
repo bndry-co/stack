@@ -1,6 +1,6 @@
 ---
 name: stash-cli
-description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql preflight/install/verify/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
+description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql preflight/install/verify/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `decrypt status/plan/backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, the staged EQL v3 rollout lifecycle, and its reverse (moving encrypted columns back to plaintext).
 ---
 
 # CipherStash CLI (`stash`)
@@ -133,7 +133,7 @@ There is **no global `--non-interactive` or `--json` flag** (and no global `--ye
 | Database URL (all `db` / `eql` / `schema` commands) | `--database-url <url>` or `DATABASE_URL` |
 | Agent target (`plan`, `impl`) | `--target <claude-code\|codex\|agents-md\|lovable\|wizard>` |
 | Skills destination (`init`) | `--target <claude-code\|codex>` — selects the destination only; `init` performs no handoff |
-| Dual-write confirmation (`encrypt backfill`) | `--confirm-dual-writes-deployed` |
+| Dual-write confirmation (`encrypt backfill`, `decrypt backfill`) | `--confirm-dual-writes-deployed` |
 | Machine-readable output | `--json` on `status`, `manifest`, `auth login`, `auth regions` |
 
 When a required value is missing in a non-TTY context, the command exits non-zero with an actionable message naming the flag and env var — it never hangs.
@@ -213,7 +213,7 @@ export default defineConfig({
 | Option | Required | Default | Purpose |
 |---|---|---|---|
 | `databaseUrl` | yes | — | PostgreSQL connection string |
-| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `eql validate` and `encrypt backfill` (`schema build` only writes here; `encrypt drop` resolves against the database). **Not required in Prisma Next projects** — see below. |
+| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `eql validate`, `encrypt backfill` and `decrypt backfill` (`schema build` only writes here; `encrypt drop` and the other `decrypt` commands resolve against the database). **Not required in Prisma Next projects** — see below. |
 
 In a **Prisma Next** project there is deliberately no client file: encrypted columns are declared in the PSL contract. When the configured `client` path is missing, `encrypt backfill` — the only command that loads it — detects Prisma Next, reads the emitted `contract.json` (searched at `src/prisma/`, `prisma/`, then the project root), and derives the schemas with the adapter's own `deriveStackSchemasV3`, so the CLI's schema view matches the application's. (`encrypt status` and `encrypt drop` never read the client file; they resolve against the database.) Both `@cipherstash/stack-prisma` and `@cipherstash/stack` are resolved from *your* project, not the CLI's dependency tree. Run `prisma-next contract emit` first; if the contract declares no `cipherstash.*()` column, the command says so rather than reporting a missing client file.
 
@@ -642,6 +642,63 @@ stash encrypt drop --table users --column email
 Runs from the `backfilled` phase and drops the original plaintext `<col>`. It verifies live coverage first and refuses if any row still has plaintext set with the encrypted column NULL. Legacy EQL v2 targets are rejected; the old rename/drop lifecycle is no longer automated. The command generates a migration but does not apply it.
 
 Flags: `--table`, `--column`, `--migrations-dir <path>`.
+
+### Decrypt
+
+The reverse lifecycle: moving encrypted columns back to plaintext, for leaving CipherStash or un-encrypting a column. It mirrors `encrypt` step for step, on the same `@cipherstash/migrate` engine, and records its own events in `cipherstash.cs_migrations` — keyed by the **encrypted** column, so they never mix with the forward history kept under the plaintext name. Decryption is never charged.
+
+`decrypt-dual-writing → decrypting → decrypted → encrypted-dropped`. As with v3 encryption there is no cut-over command: the application switches reads to the plaintext column by name.
+
+**`--column` names the column being migrated away from — the encrypted one.** The plaintext twin is resolved in this order: `--plaintext-column`; the pairing a previous reverse run recorded (a flag that contradicts it is refused); the original name in `.cipherstash/migrations.json`; the name without its `_encrypted` suffix; `<column>_plaintext`.
+
+#### `decrypt status` / `decrypt plan`
+
+`status` lists every EQL v3 column in the current schema plus any reverse lifecycle on record, with the plaintext twin, phase, progress, and the count of values the backfill could not decrypt (`UNDECRYPTABLE`). Read-only.
+
+`plan` with no flags is the read-only overview: each encrypted column, its proposed twin and type, and the next command. With `--table` (optionally `--column`, `--plaintext-column`) it generates the change that adds the twins, **nullable**:
+
+- **Drizzle:** prints the schema lines (`email: text('email'),`, `bigint(…, { mode: 'bigint' })`, `timestamp(…, { withTimezone: true })`, …) for `drizzle-kit generate`. It writes no file on purpose — a `--custom` ADD COLUMN never reaches drizzle-kit's snapshot, so the next `generate` would emit it again and fail with "column already exists".
+- **Everything else:** writes `<ts>_add_plaintext_<table>_<cols>.sql` (`ADD COLUMN IF NOT EXISTS`) into `--migrations-dir`. Prisma Next projects also get the contract change to make. `--dry-run` prints it instead.
+
+Type mapping (the inverse of the forward ladder; suffixes like `_eq`/`_ord`/`_search` only add query terms and are dropped): `text*` → `text`; `integer*`, `smallint*`, `bigint*`, `numeric*`, `real*` → the same; `double*` → `double precision`; `boolean` → `boolean`; `date*` → `date`; `timestamp*` → `timestamptz` (EQL timestamps are UTC instants); `json`, `json_search` → `jsonb`. A domain the CLI does not know is refused rather than guessed — add that twin by hand.
+
+#### `decrypt backfill`
+
+```bash
+stash decrypt backfill --table users --column email_encrypted
+stash decrypt backfill --table users --column email_encrypted --plaintext-column email --chunk-size 200
+```
+
+Same engine as `encrypt backfill`: keyset pagination, one transaction per chunk with its checkpoint, SIGINT/SIGTERM finishes the chunk, re-running resumes, and the `<encrypted> IS NOT NULL AND <plaintext> IS NULL` guard makes re-runs converge. Each chunk is **one `bulkDecrypt` call — one ZeroKMS request** (default 500 rows). Values are cast to the twin's *declared* type, so a `varchar(255)` twin works as well as the suggested `text`. The twin must already exist; the command points at `decrypt plan` if not.
+
+**Lock contexts — known limitation, no bypass.** A value encrypted with an end-user lock context can only be decrypted as that user. With workspace credentials it fails *on its own row* (`bulkDecrypt` reports per row), so the backfill **skips it, counts it, leaves the twin NULL**, and reports the count and error codes; the count is also recorded in `cs_migrations` and shown by `decrypt status`. Decrypt those rows in your application on each user's behalf (writing the plaintext column), then re-run. `decrypt drop` refuses while any remain.
+
+**Whole first batch undecryptable → stop.** If the first chunk of a run decrypts nothing, the command stops before writing anything (`UndecryptableBatchError`): that is almost always credentials resolving to a different workspace or keyset. Re-run with `--continue-on-undecryptable` only when those rows really are lock-bound (or are the leftovers of an earlier run).
+
+**Credentials.** The backfill loads your encryption client exactly as `encrypt backfill` does — the client file, or the Prisma Next contract — so the **keyset precondition** above applies unchanged: export the `CS_*` values of the environment that wrote the data. Proxy-only deployments with no SDK client in the project cannot run it, exactly as they cannot run `encrypt backfill`.
+
+| Flag | Description |
+|---|---|
+| `--table` / `--column` | Required. `--column` is the encrypted column. |
+| `--plaintext-column <name>` | The twin (see resolution order above) |
+| `--chunk-size <n>` | Default 500 — rows per `bulkDecrypt` / ZeroKMS request |
+| `--pk-column <name>` | Override primary-key detection |
+| `--confirm-dual-writes-deployed` | Non-interactive equivalent of the prompt: the app writes the encrypted column **and** its plaintext twin on every insert and update |
+| `--force` | Re-decrypt rows whose plaintext is already set. Recovery path for drift. Not destructive. |
+| `--continue-on-undecryptable` | Do not stop when the first batch decrypts nothing |
+
+#### `decrypt drop`
+
+```bash
+stash decrypt drop --table users --column email_encrypted
+stash decrypt drop --table users --column email_encrypted --uninstall-eql
+```
+
+Runs from `decrypted`, against the plaintext twin the backfill **recorded** (a fully-populated but different column would make the coverage check pass vacuously). It verifies live coverage — no row with ciphertext set and plaintext NULL — then writes a migration that re-checks coverage at apply time under `ACCESS EXCLUSIVE`, **drops every index built on the encrypted column** (the EQL-term functional indexes; listed in the output), and drops the column, all in one `DO` block. It also removes the column from `.cipherstash/migrations.json`. Not applied for you; Drizzle projects get a journaled `drizzle-kit generate --custom` file.
+
+`--uninstall-eql` appends the EQL v3 uninstall (`@cipherstash/eql`'s script: `DROP SCHEMA eql_v3, eql_v3_internal … CASCADE`) to the same block, plus the `public.eql_v3_*` column domains that script deliberately leaves behind (they live outside the disposable schemas so upgrades never touch encrypted columns). Only when this is the **last** EQL v3 column in the whole database — checked now and again at apply time, because the cascade would delete any other encrypted column. `cipherstash.cs_migrations` is kept.
+
+Flags: `--table`, `--column`, `--plaintext-column`, `--migrations-dir <path>`, `--uninstall-eql`.
 
 ### Deployment
 
