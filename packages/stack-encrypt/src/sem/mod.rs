@@ -544,10 +544,19 @@ impl<O> MatchTerms<O> {
     /// false negative).
     ///
     /// An empty `query` returns `false`: containment of zero positions is
-    /// vacuously true, which would turn an empty probe into a match-every-row
+    /// vacuously true, which would turn an empty query into a match-every-row
     /// query. Term generation already refuses to build such a term
     /// ([`TermError::EmptyTermText`]); this guards any other
     /// (e.g. deserialized) source of an empty term.
+    pub fn matches(&self, query: &MatchQuery<O>) -> bool {
+        self.contains(query.filter())
+    }
+
+    /// Whether this term's positions are a superset of `other`'s, for two
+    /// terms of the same kind. [`matches`](Self::matches) is the check for
+    /// a query.
+    ///
+    /// An empty `other` returns `false`, as an empty query does.
     pub fn contains(&self, query: &MatchTerms<O>) -> bool {
         !query.positions.is_empty()
             && query
@@ -664,9 +673,8 @@ impl<O> MatchQuery<O> {
         self.terms.to_bytes()
     }
 
-    /// The needle's filter, for a caller that tests stored filters itself
-    /// ([`MatchTerms::contains`]).
-    pub fn filter(&self) -> &MatchTerms<O> {
+    /// The needle's filter.
+    pub(crate) fn filter(&self) -> &MatchTerms<O> {
         &self.terms
     }
 }

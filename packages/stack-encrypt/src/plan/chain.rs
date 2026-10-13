@@ -11,7 +11,7 @@ use super::build::{FieldPlan, FieldsBuilder, IntoLabel, Opens, PlanContext, Runs
 use super::field_ref::FieldRef;
 use super::value::{Indexed, Typed, ValuePlan, ValueShape};
 use super::PlanError;
-use crate::op::{Answers, DefaultIndex, Operator, Supports};
+use crate::op::{Answers, DefaultIndex, Operator, QueryToken, Supports};
 use crate::target::{
     ciphertext, Borrowed, CallerContext, DeclaredContext, DecryptField, Decryptable, EncryptFrom,
     Index, Indexes, Owned, Pending, PendingFuture, Select,
@@ -643,10 +643,7 @@ impl<'a, F: 'static, K: 'static> QueryUsing<'a, F, FieldPlan, K> {
         Op: Operator,
         I: Supports<Op, F>,
     {
-        QueryOp {
-            inner: self.index(index),
-            op: PhantomData,
-        }
+        QueryOp::new(self.index(index))
     }
 
     /// The term of `index`. The field must have declared it, and the query's
@@ -690,10 +687,7 @@ impl<'a, F: 'static, X: Indexes<F>, K: 'static> QueryUsing<'a, F, ValuePlan<F, I
         I: Supports<Op, F> + Clone,
         X: Select<I, At>,
     {
-        QueryOp {
-            inner: self.index::<I, At>(),
-            op: PhantomData,
-        }
+        QueryOp::new(self.index::<I, At>())
     }
 
     /// The term of the plan's index of type `I`, selected by type
@@ -741,10 +735,7 @@ where
         Op: Operator,
         I: Supports<Op, F>,
     {
-        QueryOp {
-            inner: self.index(index),
-            op: PhantomData,
-        }
+        QueryOp::new(self.index(index))
     }
 
     /// The term of `index`. The target must declare it
@@ -814,6 +805,20 @@ pub struct QueryOp<'a, F, Op, I, K> {
     op: PhantomData<fn() -> Op>,
 }
 
+impl<'a, F, Op: Operator, I: Supports<Op, F>, K: 'static> QueryOp<'a, F, Op, I, K> {
+    /// The chain for `inner`'s index, refused when awaited if the index
+    /// cannot answer `Op` as it is configured.
+    fn new(mut inner: QueryIndex<'a, F, I, K>) -> Self {
+        if let Err(error) = inner.index.check() {
+            inner.label = Err(error);
+        }
+        Self {
+            inner,
+            op: PhantomData,
+        }
+    }
+}
+
 impl<'a, F, Op, I, K: 'static> QueryOp<'a, F, Op, I, K> {
     /// Run under this keyset, as [`QueryBuilder::keyset`].
     pub fn keyset(mut self, keyset: impl Into<KeysetChoice<'a, K>>) -> Self {
@@ -857,7 +862,7 @@ where
     {
         self.inner
             .prepare(keyset, scoped)
-            .map(<I as Supports<Op, F>>::query)
+            .map(|term| I::query(term, QueryToken::new()))
     }
 }
 

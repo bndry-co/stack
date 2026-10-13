@@ -35,11 +35,15 @@
 //! - [`DefaultIndex<S>`] is on an operator, and names the index a plan that
 //!   declares its indexes, rather than a target type, answers it with.
 //!
-//! An operator a plan cannot answer is a compile error: a match query on an
-//! integer, a case-sensitive match against a case-folding index, or an
-//! operator a target type does not answer. An index the plan does not
-//! declare is refused when the query is awaited, as with
+//! What the types can see is checked at compile time: a match query on an
+//! integer, an operator a target type does not answer, and, on a one-value
+//! plan, an index the plan does not hold or a case-sensitive match against
+//! a case-folding index. A field of a fields plan is data, so there an
+//! index the field does not declare, or declares with other options, is
+//! refused when the query is awaited, as with
 //! [`index`](crate::plan::QueryUsing::index), before any key is requested.
+//! So is a match configuration whose [`MatchCase`] disagrees with its
+//! options.
 //!
 //! The module is meant to be used by path (`op::Eq`): an imported `Eq`
 //! would shadow the prelude's `Eq` trait.
@@ -51,23 +55,19 @@ use std::marker::PhantomData;
 
 use crate::sem::{DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms};
 use crate::target::{Equality, Index, Match};
+use crate::PlanError;
 
 /// A query operator: a unit type naming what a query asks of the server.
 ///
 /// The trait is open, as [`Index`] is: an operator defined in another crate
 /// is answered by the indexes that implement [`Supports`] for it.
-pub trait Operator: Copy + 'static {
-    /// The operator's name, as a binding or an error message spells it.
-    const NAME: &'static str;
-}
+pub trait Operator: Copy + 'static {}
 
 /// Equality: rows whose value equals the query's.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Eq;
 
-impl Operator for Eq {
-    const NAME: &'static str = "eq";
-}
+impl Operator for Eq {}
 
 /// Text search: rows whose text contains the needle's tokens, under the
 /// match index's tokenizer. Not containment: a Bloom match is order- and
@@ -105,15 +105,16 @@ impl<C> PartialEq for Matches<C> {
     }
 }
 impl<C> std::cmp::Eq for Matches<C> {}
+impl<C> std::hash::Hash for Matches<C> {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
 impl<C: Case> fmt::Debug for Matches<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Matches<{}>", C::NAME)
     }
 }
 
-impl<C: Case> Operator for Matches<C> {
-    const NAME: &'static str = "matches";
-}
+impl<C: Case> Operator for Matches<C> {}
 
 mod sealed {
     pub trait Sealed {}
@@ -151,9 +152,12 @@ impl Case for Sensitive {
 /// index answers are known at compile time.
 ///
 /// `Case::FOLDS` must equal the configuration's
-/// [`MatchOptions::downcase`](crate::sem::MatchOptions::downcase). A
-/// configuration that does not implement this can still store and query
-/// match terms; it cannot be queried by [`Matches`].
+/// [`MatchOptions::downcase`](crate::sem::MatchOptions::downcase): the type
+/// cannot see the options, so a query through a configuration whose two
+/// disagree is refused when it is awaited, with
+/// [`PlanError::MatchCase`]. A configuration
+/// that does not implement this can still store match terms and query them
+/// by index; it cannot be queried by [`Matches`].
 pub trait MatchCase: MatchConfig {
     /// The case the configuration's index answers.
     type Case: Case;
@@ -165,8 +169,10 @@ impl MatchCase for DefaultMatch {
 
 /// A value a query sends to the server to compare against stored terms.
 ///
-/// A term that implements this and nothing more is *exact*: the server's
-/// answer is the answer.
+/// This trait says only that a value is a query term. How far the server's
+/// answer can be trusted is said by the traits that refine it: a term that
+/// can return false positives says how a row is checked (ADR-0009,
+/// decision 4), and one that refines nothing is exact.
 pub trait QueryTerm {}
 
 impl QueryTerm for EqualityTerm {}
@@ -187,14 +193,34 @@ impl<O> QueryTerm for MatchQuery<O> {}
 pub trait Supports<Op: Operator, S>: Index<S> {
     /// What this index sends for `Op`.
     type Query: QueryTerm;
+    /// Why this index cannot answer `Op` as configured, if it cannot: a
+    /// match index whose [`MatchCase`] disagrees with its options.
+    fn check(&self) -> Result<(), PlanError>;
     /// The query term, from the term the index derived for the query's
-    /// value.
-    fn query(term: Self::Term) -> Self::Query;
+    /// value. Only a query chain calls this: `QueryToken` cannot be made
+    /// outside this crate, so a stored term cannot be passed off as a
+    /// query.
+    fn query(term: Self::Term, token: QueryToken) -> Self::Query;
+}
+
+/// Proof that [`Supports::query`] is called by a query chain. Only this
+/// crate can make one, so an index in another crate can implement
+/// [`Supports`] but no caller can turn a term into a query term by hand.
+#[derive(Debug)]
+pub struct QueryToken(());
+
+impl QueryToken {
+    pub(crate) fn new() -> Self {
+        Self(())
+    }
 }
 
 impl<S: vitaminc_prf::PrfValue> Supports<Eq, S> for Equality {
     type Query = EqualityTerm;
-    fn query(term: EqualityTerm) -> EqualityTerm {
+    fn check(&self) -> Result<(), PlanError> {
+        Ok(())
+    }
+    fn query(term: EqualityTerm, _: QueryToken) -> EqualityTerm {
         term
     }
 }
@@ -205,7 +231,18 @@ where
     O: MatchCase,
 {
     type Query = MatchQuery<O>;
-    fn query(term: MatchTerms<O>) -> MatchQuery<O> {
+    fn check(&self) -> Result<(), PlanError> {
+        let folds = O::options().downcase;
+        if folds == O::Case::FOLDS {
+            Ok(())
+        } else {
+            Err(PlanError::MatchCase {
+                declared: O::Case::NAME,
+                folds,
+            })
+        }
+    }
+    fn query(term: MatchTerms<O>, _: QueryToken) -> MatchQuery<O> {
         MatchQuery::from_terms(term)
     }
 }
@@ -272,7 +309,10 @@ impl<Op: Operator, S, T: Answers<Op, S>> Answers<Op, S> for crate::target::Encry
 ///
 /// A plan that declares a different index for the operator, such as a
 /// match index with its own configuration, names it with
-/// `.op_via(op, index)`.
+/// `.op_via(op, index)`. So does a typed field of a fields plan
+/// (`encrypt_into::<T, _>(name)`): the field's type is not known where the
+/// query is written, so its [`Answers`] impl is not consulted, and a field
+/// whose type answers through another index needs `op_via`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no default index over `{S}`",
     label = "no default index answers this operator here",
@@ -313,7 +353,7 @@ mod tests {
 
     #[test]
     fn an_operator_is_equal_to_itself() {
-        assert_eq!(Matches::<Insensitive>::new(), Matches::default());
+        assert_eq!(Matches::<Insensitive>::new(), Matches::new());
         assert_eq!(Eq, Eq);
     }
 

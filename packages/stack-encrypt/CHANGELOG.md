@@ -15,12 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operators it answers (`op::Supports`), a target type names the index that
   answers each one for it (`op::Answers`), and a plan that declares indexes
   uses the operator's default index (`op::DefaultIndex`). `.op_via(op, index)`
-  names another index, such as a match index with its own configuration. An
-  operator the plan cannot answer is a compile error; a case-sensitive
-  `Matches` against a case-folding index is one too.
+  names another index, such as a match index with its own configuration. What
+  the plan's type shows is checked at compile time: a match query on an
+  integer, an operator a target does not answer, and on a one-value plan an
+  index it does not hold or a case-sensitive `Matches` against a
+  case-folding index. On a field of a fields plan those are refused when the
+  query is awaited, before any key is requested, as is a match configuration
+  whose `op::MatchCase` disagrees with its options (`PlanError::MatchCase`).
 - **A match query has its own type, `sem::MatchQuery`.** It is the filter over
-  the needle that the server tests a stored `MatchTerms` for, and it comes
-  only from a query.
+  the needle; test a stored filter against it with
+  `MatchTerms::matches(&query)`. It comes only from a query chain:
+  `op::Supports::query` takes an `op::QueryToken` that only this crate can
+  make.
 
 - **Errors now expose stable codes, help text, and structured details.**
   All error types implement `miette::Diagnostic` with codes such as

@@ -4,7 +4,7 @@
 //! is not the stored term.
 mod common;
 
-use common::stack_cipher;
+use common::{loads_counting_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::op::{self, MatchCase};
 use stack_encrypt::plan::{Field, FieldSchema, Fields, PlanError};
@@ -109,10 +109,7 @@ async fn a_matches_query_is_a_filter_over_the_needle_that_the_stored_filter_hold
         .op(op::Matches::new())
         .await
         .unwrap();
-    assert!(
-        stored.contains(query.filter()),
-        "a case-folding index matches BOB"
-    );
+    assert!(stored.matches(&query), "a case-folding index matches BOB");
     assert!(
         query.positions().len() < stored.positions().len(),
         "the query is the needle's filter, not the value's"
@@ -127,7 +124,6 @@ async fn a_matches_query_is_a_filter_over_the_needle_that_the_stored_filter_hold
         .unwrap();
     assert_eq!(query.to_bytes(), by_index.to_bytes());
     assert_eq!(query.positions(), by_index.positions());
-    assert_eq!(query.filter(), &by_index);
     assert_eq!(query.clone(), query);
 
     let elsewhere: MatchQuery = cipher
@@ -136,7 +132,7 @@ async fn a_matches_query_is_a_filter_over_the_needle_that_the_stored_filter_hold
         .op(op::Matches::new())
         .await
         .unwrap();
-    assert!(!stored.contains(elsewhere.filter()));
+    assert!(!stored.matches(&elsewhere));
     assert_ne!(elsewhere, query);
 }
 
@@ -155,10 +151,10 @@ async fn a_match_index_with_its_own_configuration_is_named_with_op_via() {
             .op_via(op::Matches::<op::Sensitive>::new(), Match::<Exact>::new())
     };
     let hit: MatchQuery<Exact> = exact("Nguyen").await.unwrap();
-    assert!(name.terms.contains(hit.filter()));
+    assert!(name.terms.matches(&hit));
     let miss: MatchQuery<Exact> = exact("nguyen").await.unwrap();
     assert!(
-        !name.terms.contains(miss.filter()),
+        !name.terms.matches(&miss),
         "a case-sensitive index does not fold the needle"
     );
 
@@ -225,7 +221,7 @@ async fn a_one_value_plan_answers_from_its_indexes_by_type() {
         .op(op::Matches::new())
         .await
         .unwrap();
-    assert!(stored.terms.1.contains(matches.filter()));
+    assert!(stored.terms.1.matches(&matches));
 
     let exact_plan = Plan::context("users/name")
         .with::<String, _>(Match::<Exact>::new())
@@ -242,7 +238,7 @@ async fn a_one_value_plan_answers_from_its_indexes_by_type() {
         .op_via(op::Matches::<op::Sensitive>::new(), Match::<Exact>::new())
         .await
         .unwrap();
-    assert!(name.terms.contains(query.filter()));
+    assert!(name.terms.matches(&query));
 }
 
 #[tokio::test]
@@ -282,7 +278,7 @@ async fn a_target_answers_an_operator_through_the_index_it_names() {
         .op(op::Matches::new())
         .await
         .unwrap();
-    assert!(stored.contains(query.filter()));
+    assert!(stored.matches(&query));
 }
 
 #[tokio::test]
@@ -311,7 +307,7 @@ async fn a_target_with_several_terms_names_the_index_with_op_via() {
         .op_via(op::Matches::new(), Match::default())
         .await
         .unwrap();
-    assert!(stored.terms.1.contains(matches.filter()));
+    assert!(stored.terms.1.matches(&matches));
 
     // An index the target does not declare is refused when awaited.
     let one_term = Plan::value::<String>()
@@ -364,7 +360,7 @@ async fn operator_queries_settle_together_and_extend_like_the_write() {
     .await
     .unwrap();
     assert_eq!(eq, email.terms.0);
-    assert!(email.terms.1.contains(matches.filter()));
+    assert!(email.terms.1.matches(&matches));
 
     let unextended = cipher
         .query("bob@example.com")
@@ -386,4 +382,121 @@ async fn a_query_chain_debugs_without_its_value() {
     let secret = "bob@example.com";
     let shown = format!("{:?}", cipher.query(secret).using(&email_plan).op(op::Eq));
     assert_eq!(shown, "QueryOp { .. }");
+}
+
+/// A configuration whose `MatchCase` says it folds case while its options
+/// keep it: the type cannot see the options, so the query is refused.
+struct Mislabelled;
+impl MatchConfig for Mislabelled {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            downcase: false,
+            ..Default::default()
+        }
+    }
+}
+impl MatchCase for Mislabelled {
+    type Case = op::Insensitive;
+}
+
+#[tokio::test]
+async fn a_match_case_that_disagrees_with_its_options_is_refused() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/name")
+        .with::<String, _>(Match::<Mislabelled>::new())
+        .build()
+        .unwrap();
+    let refused = plan_error(
+        cipher
+            .query("Bob")
+            .using(&plan)
+            .op_via(op::Matches::new(), Match::<Mislabelled>::new())
+            .await,
+    );
+    assert_eq!(
+        refused,
+        PlanError::MatchCase {
+            declared: "Insensitive",
+            folds: false
+        }
+    );
+    assert_eq!(
+        refused.to_string(),
+        "a match configuration declares the case Insensitive but its options keep case"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_operator_query_loads_no_keyset() {
+    let (cipher, loads) = loads_counting_cipher().await;
+    let plan: Plan<Person, common::CountingSource> = Plan::context("people")
+        .fields()
+        .encrypt::<String>("email")
+        .encrypt_index::<String>("name", Match::<Exact>::new())
+        .build()
+        .unwrap();
+    let refused = cipher
+        .query("Alice")
+        .using(&plan.field("name").unwrap())
+        .op(op::Eq)
+        .keyset("tenant")
+        .await;
+    assert_eq!(
+        plan_error(refused),
+        PlanError::IndexNotDeclared {
+            field: "name".into(),
+            index: "eq"
+        }
+    );
+    assert_eq!(
+        loads.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "refused before the named keyset is loaded"
+    );
+}
+
+#[tokio::test]
+async fn a_match_query_debugs_as_its_positions() {
+    let cipher = stack_cipher().await;
+    let plan = people_plan();
+    let query = cipher
+        .query("bob")
+        .using(&plan.field("email").unwrap())
+        .op(op::Matches::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        format!("{query:?}"),
+        format!("MatchQuery {{ positions: {:?} }}", query.positions())
+    );
+}
+
+#[tokio::test]
+async fn an_operator_query_runs_under_the_keyset_it_names() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/email")
+        .with::<String, _>(Equality)
+        .build()
+        .unwrap();
+    let stored: Encrypted<EqualityTerm> = cipher
+        .encrypt(&"bob@example.com".to_owned())
+        .using(&plan)
+        .keyset("tenant")
+        .await
+        .unwrap();
+    let under_tenant = cipher
+        .query("bob@example.com")
+        .using(&plan)
+        .op(op::Eq)
+        .keyset("tenant")
+        .await
+        .unwrap();
+    assert_eq!(under_tenant, stored.terms);
+    let under_default = cipher
+        .query("bob@example.com")
+        .using(&plan)
+        .op(op::Eq)
+        .await
+        .unwrap();
+    assert_ne!(under_default, stored.terms, "another keyset, another key");
 }

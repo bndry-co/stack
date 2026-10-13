@@ -556,9 +556,11 @@ fn refusal(error: crate::Error) -> (Option<String>, Reason) {
         P::IndexNotDeclared { field, .. } | P::IndexOptions { field, .. } => {
             (Some(field), Reason::Refused)
         }
-        P::IdentityWithoutField | P::MixedCiphers | P::TwoContextSources { .. } | P::NoContext => {
-            (None, Reason::Refused)
-        }
+        P::IdentityWithoutField
+        | P::MixedCiphers
+        | P::MatchCase { .. }
+        | P::TwoContextSources { .. }
+        | P::NoContext => (None, Reason::Refused),
     }
 }
 
@@ -6795,6 +6797,15 @@ mod tests {
                     Refused,
                 ),
                 (P::NoContext.into(), None, Refused),
+                (
+                    P::MatchCase {
+                        declared: "Sensitive",
+                        folds: true,
+                    }
+                    .into(),
+                    None,
+                    Refused,
+                ),
             ];
             for (error, field, reason) in cases {
                 let shown = format!("{error:?}");

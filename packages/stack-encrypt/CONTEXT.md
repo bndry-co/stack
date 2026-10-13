@@ -234,14 +234,16 @@ package's method name, not the concept)
 What a query asks of the server — equality, text match — as a unit type
 (`op::Eq`, `op::Matches`). An index declares the operators it answers and the
 query term it sends for each; a target type names the index that answers each
-operator for it. An operator nothing answers is a compile error (ADR-0009).
+operator for it. An operator nothing answers is refused before any key is
+requested: at compile time where the plan's type shows it, when the query is
+awaited where the plan is data (ADR-0009).
 _Avoid_: query type, index (that is what answers the operator)
 
 **Query term**:
 The value a query sends to the server. It is not the stored term: equality
 sends the same HMAC it stores, but a match query is a filter over the needle,
 where the stored term is a filter over the whole value. A query term is never
-stored, and a stored term is never sent as a query.
+stored, and a query chain never sends a stored term as a query.
 _Avoid_: probe, stored term (that is what a write keeps)
 
 **Open**:
