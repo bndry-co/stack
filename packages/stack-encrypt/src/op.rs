@@ -55,7 +55,9 @@
 use std::fmt;
 use std::marker::PhantomData;
 
-use crate::sem::{DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms};
+use stack_kms::MaybeSend;
+
+use crate::sem::{DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, QueryTokens};
 use crate::target::{Equality, Index, Match};
 use crate::PlanError;
 
@@ -199,13 +201,57 @@ pub trait QueryTerm {}
 impl QueryTerm for EqualityTerm {}
 impl<O> QueryTerm for MatchQuery<O> {}
 
+/// A query term whose answer can hold **false positives and no false
+/// negatives**: a row the server returns may not match, and a row that
+/// matches is always returned.
+///
+/// [`verify`](Self::verify) is the operator's own meaning, run on a
+/// decrypted value: it decides whether a row the server returned is a real
+/// match. The library never runs a query, so it cannot drop the false
+/// positives itself; a caller filters the decrypted rows with `verify`.
+///
+/// An exact term does not implement this, so `verify` on one is a compile
+/// error rather than a method that is always `true`.
+pub trait Probabilistic: QueryTerm {
+    /// The decrypted value `verify` reads: the plaintext the index was
+    /// declared over, which is not always the value the user wrote.
+    type Plaintext: ?Sized;
+
+    /// Whether `value`, a row's decrypted value, really matches the query.
+    ///
+    /// Infallible: it runs on a value already decrypted and already the type
+    /// the index was declared over, so every outcome other than a match is
+    /// `false`, never an error.
+    fn verify(&self, value: &Self::Plaintext) -> bool;
+}
+
+/// The query terms that may answer the operator `Op`: what
+/// [`Supports::Query`] must be.
+///
+/// Most operators take any [`QueryTerm`]. One whose answer is inherently
+/// approximate requires more: a term that answers [`Matches`](struct@Matches) must be
+/// [`Probabilistic`], so an index cannot claim a text match without saying
+/// how its answer is checked. An operator defined in another crate states
+/// its own requirement by implementing this.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot answer `{Op}`",
+    label = "this query term does not meet the operator's requirement",
+    note = "a term that answers `op::Matches` must implement `op::Probabilistic`"
+)]
+pub trait TermFor<Op: Operator>: QueryTerm {}
+
+impl<T: QueryTerm> TermFor<Eq> for T {}
+impl<C: Case, T: Probabilistic> TermFor<Matches<C>> for T {}
+
 /// An index that answers the operator `Op` over plaintexts `S`, and the
 /// query term it sends for it.
 ///
 /// [`Index::Term`] is what the index derives; [`query`](Self::query) makes
-/// the query term from it. For an equality index the two are the same
-/// HMAC. For a match index they are not: the query is a filter over the
-/// query's value, and its type says so.
+/// the query term from it and from what [`carry`](Self::carry) kept of the
+/// query's value. For an equality index the two are the same HMAC and
+/// nothing is kept. For a match index they are not: the query is a filter
+/// over the query's value, and it keeps that value's tokens so it can
+/// [`verify`](Probabilistic::verify) a row.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not answer `{Op}` over `{S}`",
     label = "this index cannot answer the operator",
@@ -213,15 +259,20 @@ impl<O> QueryTerm for MatchQuery<O> {}
 )]
 pub trait Supports<Op: Operator, S>: Index<S> {
     /// What this index sends for `Op`.
-    type Query: QueryTerm;
+    type Query: TermFor<Op>;
+    /// What the query term keeps of the query's value, taken before the
+    /// value is consumed: `()` for an exact term.
+    type Carry: MaybeSend + 'static;
     /// Why this index cannot answer `Op` as configured, if it cannot: a
     /// match index whose [`MatchCase`] disagrees with its options.
     fn check(&self) -> Result<(), PlanError>;
-    /// The query term, from the term the index derived for the query's
-    /// value. Only a query chain calls this: `QueryToken` cannot be made
-    /// outside this crate, so a stored term cannot be passed off as a
-    /// query.
-    fn query(term: Self::Term, token: QueryToken) -> Self::Query;
+    /// Take what the query term keeps of `value`.
+    fn carry(&self, value: &S) -> Self::Carry;
+    /// The query term, from what was kept and the term the index derived
+    /// for the query's value. Only a query chain calls this: `QueryToken`
+    /// cannot be made outside this crate, so no caller can pair one query's tokens
+    /// with another value's filter, or pass a stored term off as a query.
+    fn query(carry: Self::Carry, term: Self::Term, token: QueryToken) -> Self::Query;
 }
 
 /// Proof that [`Supports::query`] is called by a query chain. Only this
@@ -238,10 +289,12 @@ impl QueryToken {
 
 impl<S: vitaminc_prf::PrfValue> Supports<Eq, S> for Equality {
     type Query = EqualityTerm;
+    type Carry = ();
     fn check(&self) -> Result<(), PlanError> {
         Ok(())
     }
-    fn query(term: EqualityTerm, _: QueryToken) -> EqualityTerm {
+    fn carry(&self, _: &S) {}
+    fn query((): (), term: EqualityTerm, _: QueryToken) -> EqualityTerm {
         term
     }
 }
@@ -252,6 +305,7 @@ where
     O: MatchCase,
 {
     type Query = MatchQuery<O>;
+    type Carry = QueryTokens;
     fn check(&self) -> Result<(), PlanError> {
         let folds = O::options().downcase;
         if folds == O::Case::FOLDS {
@@ -263,8 +317,11 @@ where
             })
         }
     }
-    fn query(term: MatchTerms<O>, _: QueryToken) -> MatchQuery<O> {
-        MatchQuery::from_terms(term)
+    fn carry(&self, value: &S) -> QueryTokens {
+        QueryTokens::of::<O>(value.as_ref())
+    }
+    fn query(tokens: QueryTokens, term: MatchTerms<O>, _: QueryToken) -> MatchQuery<O> {
+        MatchQuery::new(term, tokens)
     }
 }
 

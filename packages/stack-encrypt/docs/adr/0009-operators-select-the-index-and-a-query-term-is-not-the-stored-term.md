@@ -144,9 +144,11 @@ query against a case-folding index is a type error, not an empty result.
 pub trait Operator: Copy + 'static {}
 
 pub trait Supports<Op: Operator, S>: Index<S> {
-    type Query: QueryTerm;   // what this index sends for this operator
+    type Query: TermFor<Op>;   // what this index sends for `Op`
+    type Carry;                // what the query keeps of the value
     fn check(&self) -> Result<(), PlanError>;
-    fn query(term: Self::Term, token: QueryToken) -> Self::Query;
+    fn carry(&self, value: &S) -> Self::Carry;
+    fn query(carry: Self::Carry, term: Self::Term, token: QueryToken) -> Self::Query;
 }
 ```
 
@@ -164,10 +166,14 @@ ciphertext; its `Term` is left and right. A Bloom index's
 `Supports<Matches, S>::Query` is a filter over the needle (`MatchQuery`); its
 `Term` is a filter over the value (`MatchTerms`).
 
-The bound tightens per operator. `Supports<Matches, S>` requires
-`Query: Probabilistic`; `Supports<Nearest, S>` requires `Query: Ranked`. An
-index cannot claim an inexact operator without saying how its answer is
-checked.
+The bound tightens per operator, through `TermFor<Op>`: any `QueryTerm`
+answers `Eq`, but only a `Probabilistic` one answers `Matches`, and only a
+`Ranked` one will answer `Nearest`. An index cannot claim an inexact
+operator without saying how its answer is checked.
+
+`carry` takes what the query term keeps of the value before the value is
+consumed: nothing for an exact term, the query's tokens for a match query,
+which `verify` needs and the filter cannot give back.
 
 ### 3. The domain type chooses the best index for an operator
 

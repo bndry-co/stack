@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Match` is a value.** `.with((Equality, Match))` declares the match index
   under the default configuration, as `Equality` declares equality;
   `Match::<MyConfig>::new()` is another configuration.
+- **`verify` drops a match query's false positives after decrypt.** A
+  `MatchQuery` is `op::Probabilistic`: `query.verify(&value)` is `true` when
+  every token of the query's value, cut by the index's own tokenizer and
+  case folding, is a token of the decrypted value. Filter decrypted rows
+  with it. The query keeps its value's tokens to do this; they are zeroized on drop
+  and never shown by `Debug`. An exact term has no `verify`, and an index
+  can answer `op::Matches` only with a probabilistic term (`op::TermFor`).
 
 - **Errors now expose stable codes, help text, and structured details.**
   All error types implement `miette::Diagnostic` with codes such as

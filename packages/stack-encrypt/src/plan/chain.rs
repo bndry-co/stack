@@ -1015,9 +1015,10 @@ where
     where
         'a: 'p,
     {
+        let carry = self.inner.index.carry(&self.inner.value);
         self.inner
             .prepare(keyset, scoped)
-            .map(|term| I::query(term, QueryToken::new()))
+            .map(move |term| I::query(carry, term, QueryToken::new()))
     }
 }
 
