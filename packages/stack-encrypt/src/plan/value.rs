@@ -34,7 +34,7 @@ impl Plan<(), ()> {
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::sem::EqualityTerm;
-    /// use stack_encrypt::{Equality, Ore, Plan, StackCipher, StackCipherText};
+    /// use stack_encrypt::{op, Equality, Ore, Plan, StackCipher, StackCipherText};
     ///
     /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
     ///
@@ -55,7 +55,7 @@ impl Plan<(), ()> {
     ///     .query("bob@example.com")
     ///     .context("users/email")
     ///     .using(&email_plan)
-    ///     .equality()
+    ///     .op(op::Eq)
     ///     .await?;
     /// assert_eq!(query_value, eq);
     /// let back = cipher.open((c, eq)).context("users/email").using(&email_plan).await?;

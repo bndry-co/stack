@@ -11,6 +11,7 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 
 use common::{counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
+use stack_encrypt::op;
 use stack_encrypt::plan::{pick, FieldValues};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
 use stack_encrypt::target::{
@@ -131,7 +132,7 @@ async fn a_derived_record_as_a_typed_field_answers_its_queries() {
     let query_value = cipher
         .query("bob@example.com")
         .using(&users_plan.field("email").unwrap())
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(query_value, email.hm);

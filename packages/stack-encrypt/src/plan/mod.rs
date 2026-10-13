@@ -151,7 +151,7 @@
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
 //! use stack_encrypt::kms::FakeDataKeySource;
 //! use stack_encrypt::sem::{EqualityTerm, MatchTerms};
-//! use stack_encrypt::{Encrypted, Equality, Match, Ore, Plan, StackCipher};
+//! use stack_encrypt::{op, Encrypted, Equality, Match, Ore, Plan, StackCipher};
 //!
 //! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let user = User { email: "bob@example.com".into(), age: 34, notes: "hi".into(), id: 42 };
@@ -170,7 +170,7 @@
 //!
 //! // Query: derived under the label the write used, so it matches.
 //! let email_plan = users_plan.field("email")?;
-//! let query_value = cipher.query("bob@example.com").using(&email_plan).equality().await?;
+//! let query_value = cipher.query("bob@example.com").using(&email_plan).op(op::Eq).await?;
 //! assert_eq!(query_value, stored.terms.0);
 //!
 //! // Read: every field that can come back.
@@ -222,7 +222,7 @@
 //! use stack_encrypt::kms::FakeDataKeySource;
 //! use stack_encrypt::plan::pick;
 //! use stack_encrypt::sem::EqualityTerm;
-//! use stack_encrypt::{Encrypted, EncryptFrom, Plan, StackCipher, StackCipherText};
+//! use stack_encrypt::{op, Encrypted, EncryptFrom, Plan, StackCipher, StackCipherText};
 //!
 //! struct User {
 //!     email: String,
@@ -252,7 +252,7 @@
 //! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let user = User { email: "bob@example.com".into(), nickname: "bob".into() };
 //! let record: EncryptedUser = cipher.default_keyset().encrypt_as(&user, ().into()).await?;
-//! let query_value = cipher.query("bob@example.com").using(&by_hand.field("email")?).equality().await?;
+//! let query_value = cipher.query("bob@example.com").using(&by_hand.field("email")?).op(op::Eq).await?;
 //! assert_eq!(record.email.terms, query_value);
 //! # Ok(())
 //! # }
@@ -301,7 +301,7 @@
 //! | `fields()` | each field picked out of the value (by name, or by a picker's accessor as `project` does), `zip`ped |
 //! | `extend(parts)` | the [`DeclaredContext`](crate::target::DeclaredContext) the description runs under |
 //! | `using(&plan)` | [`KeysetCipher::run`](crate::KeysetCipher::run) of [`Plan::encryption`] |
-//! | `query(v).using(..).equality()` | the selected index's operation alone, `.under(label)` |
+//! | `query(v).using(..).op(op)`, `.index(x)` | the answering index's operation alone, `.under(label)`; for `op`, mapped to its query term ([`Supports::query`](crate::op::Supports::query)) |
 //! | `open(record).using(&plan)` | [`open`](crate::target::open) per field, run by `run_decryption` |
 //! | `.await`, [`all`] | `Pending::zip`, then one settle |
 //!
@@ -321,7 +321,7 @@ pub use build::{FieldKind, FieldPlan, FieldsBuilder, IntoLabel, Opens, Plan, Pla
 pub use chain::{
     all, All, Batch, EncryptBuilder, EncryptFields, EncryptIndexed, EncryptUsing,
     EncryptWithContext, KeysetChoice, OpenBuilder, OpenUsing, Operation, PlanKms, QueryBuilder,
-    QueryIndex, QueryUsing,
+    QueryIndex, QueryOp, QueryUsing,
 };
 pub use error::PlanError;
 pub use field_ref::{pick, FieldRef};

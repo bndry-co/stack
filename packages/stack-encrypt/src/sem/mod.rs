@@ -633,6 +633,68 @@ impl<O> PartialEq for MatchTerms<O> {
 
 impl<O> Eq for MatchTerms<O> {}
 
+/// The query term of a match index: a Bloom filter over the *needle's*
+/// tokens, where the stored [`MatchTerms`] is a filter over the whole
+/// value's. A row matches when its stored filter holds every position of
+/// the query's ([`MatchTerms::contains`]).
+///
+/// The two are different types because they are different things, even
+/// where their bytes share an encoding: a query is never stored, and a
+/// stored filter is never sent as a query. ADR-0009 records why. A
+/// `MatchQuery` comes from a query chain ([`op::Matches`](crate::op::Matches)),
+/// never from a target.
+pub struct MatchQuery<O = DefaultMatch> {
+    terms: MatchTerms<O>,
+}
+
+impl<O> MatchQuery<O> {
+    /// The query term of the filter `terms`, derived over a needle.
+    pub(crate) fn from_terms(terms: MatchTerms<O>) -> Self {
+        Self { terms }
+    }
+
+    /// The set positions of the needle's filter, sorted ascending, no
+    /// duplicates: what the server tests a stored filter for.
+    pub fn positions(&self) -> &[u16] {
+        self.terms.positions()
+    }
+
+    /// The transport byte encoding, as [`MatchTerms::to_bytes`].
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.terms.to_bytes()
+    }
+
+    /// The needle's filter, for a caller that tests stored filters itself
+    /// ([`MatchTerms::contains`]).
+    pub fn filter(&self) -> &MatchTerms<O> {
+        &self.terms
+    }
+}
+
+impl<O> fmt::Debug for MatchQuery<O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MatchQuery")
+            .field("positions", &self.terms.positions)
+            .finish()
+    }
+}
+
+impl<O> Clone for MatchQuery<O> {
+    fn clone(&self) -> Self {
+        Self {
+            terms: self.terms.clone(),
+        }
+    }
+}
+
+impl<O> PartialEq for MatchQuery<O> {
+    fn eq(&self, other: &Self) -> bool {
+        self.terms == other.terms
+    }
+}
+
+impl<O> Eq for MatchQuery<O> {}
+
 /// A [`PrfVisitor`] that folds a sequence of per-token PRF blocks into
 /// Bloom-filter bit positions: `k` little-endian 2-byte slices of each block,
 /// masked to the filter size.

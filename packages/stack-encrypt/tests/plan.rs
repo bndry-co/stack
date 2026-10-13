@@ -8,6 +8,7 @@ use std::sync::atomic::Ordering;
 
 use common::{counting_cipher, loads_counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::{FakeDataKeySource, IdentifiedBy};
+use stack_encrypt::op;
 use stack_encrypt::plan::{
     Field, FieldKind, FieldSchema, FieldValues, Fields, Operation, PlanError,
 };
@@ -291,7 +292,7 @@ async fn a_query_derives_under_the_label_the_write_used() {
     let eq: EqualityTerm = cipher
         .query("bob@example.com")
         .using(&email_plan)
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(
@@ -317,7 +318,7 @@ async fn a_query_derives_under_the_label_the_write_used() {
     let other = cipher
         .query("eve@example.com")
         .using(&email_plan)
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_ne!(other, email.terms.0);
@@ -341,7 +342,7 @@ async fn a_query_extended_like_the_write_matches_it() {
             Some(parts) => chain.extend(parts),
             None => chain,
         };
-        chain.equality()
+        chain.op(op::Eq)
     };
     assert_eq!(query(Some(7)).await.unwrap(), email.terms.0);
     assert_ne!(query(None).await.unwrap(), email.terms.0);
@@ -363,14 +364,14 @@ async fn a_query_against_an_undeclared_index_or_type_is_refused() {
         }
     );
     assert_eq!(
-        plan_error(cipher.query("x").using(&notes_plan).equality().await),
+        plan_error(cipher.query("x").using(&notes_plan).op(op::Eq).await),
         PlanError::IndexNotDeclared {
             field: "notes".into(),
             index: "eq"
         }
     );
     assert_eq!(
-        plan_error(cipher.query(&34u64).using(&age_plan).equality().await),
+        plan_error(cipher.query(&34u64).using(&age_plan).op(op::Eq).await),
         PlanError::FieldType {
             field: "age".into(),
             expected: "u32"
@@ -405,7 +406,7 @@ async fn a_one_value_plan_writes_queries_by_type_and_reads_back() {
     let eq = cipher
         .query(&34u32)
         .using(&age_plan)
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(eq, out.terms.0);
@@ -510,7 +511,7 @@ async fn a_one_value_plan_extended_on_write_needs_the_extension_to_query_and_ope
     assert_eq!(sent.lock().unwrap().generated(), ["(users/age)/7u64"]);
 
     let query = |parts: Option<u64>| {
-        let chain = cipher.query(&34u32).using(&age_plan).equality();
+        let chain = cipher.query(&34u32).using(&age_plan).op(op::Eq);
         match parts {
             Some(parts) => chain.extend(parts),
             None => chain,
@@ -563,7 +564,7 @@ async fn an_index_only_field_matches_its_query_and_mints_no_data_key() {
     let query = cipher
         .query("bob@example.com")
         .using(&email_plan)
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(query, eq, "the query derives under the write's label");
@@ -967,7 +968,7 @@ async fn a_passthrough_name_need_not_be_a_label_segment() {
             cipher
                 .query(&1u64)
                 .using(&passthrough_plan)
-                .equality()
+                .op(op::Eq)
                 .await
         ),
         PlanError::IndexNotDeclared {
@@ -1262,7 +1263,7 @@ async fn all_settles_several_chains_in_one_request() {
         cipher
             .query("bob@example.com")
             .using(&email_plan)
-            .equality(),
+            .op(op::Eq),
     ))
     .await
     .unwrap();
@@ -1749,7 +1750,7 @@ async fn a_chain_shows_no_value() {
         format!("{:?}", cipher.encrypt(&user()).using(&users_plan)),
         format!("{:?}", cipher.query(&secret)),
         format!("{:?}", cipher.query(&secret).using(&email_plan)),
-        format!("{:?}", cipher.query(&secret).using(&email_plan).equality()),
+        format!("{:?}", cipher.query(&secret).using(&email_plan).op(op::Eq)),
         format!("{:?}", cipher.open(secret.clone())),
         format!("{:?}", cipher.open(FieldValues::new()).using(&users_plan)),
         format!(
@@ -1874,14 +1875,14 @@ async fn every_chain_honours_its_named_keyset() {
     let under_tenant = cipher
         .query("bob@example.com")
         .using(&email_plan)
-        .equality()
+        .op(op::Eq)
         .keyset("tenant")
         .await
         .unwrap();
     let under_default = cipher
         .query("bob@example.com")
         .using(&email_plan)
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(under_tenant, email.terms.0);

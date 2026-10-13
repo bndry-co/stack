@@ -1,0 +1,22 @@
+error[E0308]: mismatched types
+  --> tests/ui/op_target_does_not_answer.rs:13:55
+   |
+13 |     let _ = cipher.query("bob").using(&email_plan).op(op::Matches::new());
+   |                                                    -- ^^^^^^^^^^^^^^^^^^ expected `Eq`, found `Matches<_>`
+   |                                                    |
+   |                                                    arguments to this method are incorrect
+   |
+   = note: expected struct `stack_encrypt::op::Eq`
+              found struct `stack_encrypt::op::Matches<_>`
+help: the return type of this call is `stack_encrypt::op::Matches<_>` due to the type of the argument passed
+  --> tests/ui/op_target_does_not_answer.rs:13:13
+   |
+13 |     let _ = cipher.query("bob").using(&email_plan).op(op::Matches::new());
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^------------------^
+   |                                                       |
+   |                                                       this argument influences the return type of `op`
+note: method defined here
+  --> src/plan/chain.rs
+   |
+   |     pub fn op<Op>(self, op: Op) -> QueryOp<'a, F, Op, T::Via, K>
+   |            ^^

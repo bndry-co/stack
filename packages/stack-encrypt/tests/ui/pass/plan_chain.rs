@@ -1,6 +1,7 @@
 //! The chain shapes that must compile: a value with a context, indexed,
 //! field by field, a saved plan over a value and a collection, a query and
 //! an opening, and several chains batched.
+use stack_encrypt::op;
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::plan::{Field, Fields};
 use stack_encrypt::{Equality, Error, Match, Ore, Plan, StackCipher};
@@ -46,14 +47,18 @@ async fn chains(cipher: &StackCipher<FakeDataKeySource>, person: &Person) -> Res
     let row = cipher.encrypt(person).using(&people_plan).await?;
     let _ = cipher.open(row).using(&people_plan).await?;
     let email_plan = people_plan.field("email")?;
-    let _ = cipher.query("bob@example.com").using(&email_plan).equality().await?;
+    let _ = cipher.query("bob@example.com").using(&email_plan).op(op::Eq).await?;
+    let name_plan = Plan::context("people/name")
+        .with::<String, _>(stack_encrypt::Match::default())
+        .build()?;
+    let _ = cipher.query("ali").using(&name_plan).op(op::Matches::new()).await?;
     let age_plan = Plan::context("people/age").with((Equality, Ore)).build()?;
     let ages = vec![1u32, 2];
     let _ = cipher.encrypt(&ages).using(&age_plan).await?;
     let _ = cipher.query(&3u32).using(&age_plan).index::<Ore, _>().await?;
     let _ = stack_encrypt::all((
         cipher.encrypt(person).using(&people_plan),
-        cipher.query(&3u32).using(&age_plan).equality(),
+        cipher.query(&3u32).using(&age_plan).op(op::Eq),
     ))
     .await?;
     Ok(())

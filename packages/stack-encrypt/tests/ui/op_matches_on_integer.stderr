@@ -1,0 +1,21 @@
+error[E0271]: type mismatch resolving `<Matches as DefaultIndex<u32>>::Via == Equality`
+ --> tests/ui/op_matches_on_integer.rs:8:51
+  |
+8 |     let _ = cipher.query(&34u32).using(&age_plan).op(op::Matches::new());
+  |                                                   ^^ expected `Equality`, found `Match`
+  |
+  = note: expected struct `stack_encrypt::Equality`
+             found struct `stack_encrypt::Match`
+
+error[E0277]: the trait bound `u32: AsRef<str>` is not satisfied
+ --> tests/ui/op_matches_on_integer.rs:8:51
+  |
+8 |     let _ = cipher.query(&34u32).using(&age_plan).op(op::Matches::new());
+  |                                                   ^^ the trait `AsRef<str>` is not implemented for `u32`
+  |
+help: the trait `DefaultIndex<S>` is implemented for `stack_encrypt::op::Matches`
+ --> src/op.rs
+  |
+  | impl<S: AsRef<str>> DefaultIndex<S> for Matches<<DefaultMatch as MatchCase>::Case> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `stack_encrypt::op::Matches` to implement `DefaultIndex<u32>`

@@ -11,9 +11,10 @@ use super::build::{FieldPlan, FieldsBuilder, IntoLabel, Opens, PlanContext, Runs
 use super::field_ref::FieldRef;
 use super::value::{Indexed, Typed, ValuePlan, ValueShape};
 use super::PlanError;
+use crate::op::{Answers, DefaultIndex, Operator, Supports};
 use crate::target::{
     ciphertext, Borrowed, CallerContext, DeclaredContext, DecryptField, Decryptable, EncryptFrom,
-    Equality, Index, Indexes, Owned, Pending, PendingFuture, Select,
+    Index, Indexes, Owned, Pending, PendingFuture, Select,
 };
 use crate::{Error, KeysetCipher, Label, LabelError, NonEmpty, StackCipher, StackCipherText};
 
@@ -280,7 +281,7 @@ impl<K: 'static> StackCipher<K> {
 
     /// Start a chain that derives a query term for `value`, to match terms
     /// a plan wrote. Name the plan with [`using`](QueryBuilder::using) and
-    /// the index with `equality()` or `index(..)`.
+    /// the operator with [`op`](QueryUsing::op): `.op(op::Eq)`.
     ///
     /// The value is copied once (`to_owned`), so `query("bob@example.com")`
     /// queries a `String` field.
@@ -625,12 +626,27 @@ pub struct QueryUsing<'a, F, P, K> {
 }
 
 impl<'a, F: 'static, K: 'static> QueryUsing<'a, F, FieldPlan, K> {
-    /// The equality term: sugar for `index(Equality)`.
-    pub fn equality(self) -> QueryIndex<'a, F, Equality, K>
+    /// The query term for the operator `op`, through the index a plan that
+    /// declares its indexes answers it with ([`DefaultIndex`]):
+    /// `.op(op::Eq)` is the equality term. The field must have declared
+    /// that index, with the same options; otherwise awaiting is
+    /// [`PlanError::IndexNotDeclared`] or [`PlanError::IndexOptions`].
+    pub fn op<Op: DefaultIndex<F>>(self, op: Op) -> QueryOp<'a, F, Op, Op::Via, K> {
+        self.op_via(op, Op::via())
+    }
+
+    /// The query term for `op` through `index`, for a field that declares
+    /// an index other than the operator's default, such as a match index
+    /// with its own configuration.
+    pub fn op_via<Op, I>(self, _op: Op, index: I) -> QueryOp<'a, F, Op, I, K>
     where
-        Equality: Index<F>,
+        Op: Operator,
+        I: Supports<Op, F>,
     {
-        self.index(Equality)
+        QueryOp {
+            inner: self.index(index),
+            op: PhantomData,
+        }
     }
 
     /// The term of `index`. The field must have declared it, and the query's
@@ -652,14 +668,32 @@ impl<'a, F: 'static, K: 'static> QueryUsing<'a, F, FieldPlan, K> {
 }
 
 impl<'a, F: 'static, X: Indexes<F>, K: 'static> QueryUsing<'a, F, ValuePlan<F, Indexed<X>>, K> {
-    /// The equality term, selected from the plan's indexes by type: a plan
-    /// with no `Equality` index does not compile here.
-    pub fn equality<At>(self) -> QueryIndex<'a, F, Equality, K>
+    /// The query term for the operator `op`, through the index a plan that
+    /// declares its indexes answers it with ([`DefaultIndex`]), selected
+    /// from the plan's indexes by type: a plan that does not hold that
+    /// index does not compile here.
+    pub fn op<Op, At>(self, op: Op) -> QueryOp<'a, F, Op, Op::Via, K>
     where
-        Equality: Index<F>,
-        X: Select<Equality, At>,
+        Op: DefaultIndex<F>,
+        Op::Via: Clone,
+        X: Select<Op::Via, At>,
     {
-        self.index::<Equality, At>()
+        self.op_via(op, Op::via())
+    }
+
+    /// The query term for `op` through the plan's index of the type of
+    /// `index`, for a plan that holds an index other than the operator's
+    /// default. The plan's own index is used; `index` names its type.
+    pub fn op_via<Op, I, At>(self, _op: Op, _index: I) -> QueryOp<'a, F, Op, I, K>
+    where
+        Op: Operator,
+        I: Supports<Op, F> + Clone,
+        X: Select<I, At>,
+    {
+        QueryOp {
+            inner: self.index::<I, At>(),
+            op: PhantomData,
+        }
     }
 
     /// The term of the plan's index of type `I`, selected by type
@@ -687,12 +721,30 @@ impl<'a, F: 'static, T, K: 'static> QueryUsing<'a, F, ValuePlan<F, Typed<T>>, K>
 where
     Typed<T>: ValueShape<F>,
 {
-    /// The equality term: sugar for `index(Equality)`.
-    pub fn equality(self) -> QueryIndex<'a, F, Equality, K>
+    /// The query term for the operator `op`, through the index the target
+    /// type answers it with ([`Answers`]). A target that does not answer
+    /// `op` does not compile here; one that answers it through an index it
+    /// does not declare is [`PlanError::IndexNotDeclared`] when awaited.
+    pub fn op<Op>(self, op: Op) -> QueryOp<'a, F, Op, T::Via, K>
     where
-        Equality: Index<F>,
+        Op: Operator,
+        T: Answers<Op, F>,
     {
-        self.index(Equality)
+        self.op_via(op, T::via())
+    }
+
+    /// The query term for `op` through `index`, which the target must
+    /// declare: for a target with no [`Answers`] impl for `op`, such as
+    /// an [`Encrypted`](crate::target::Encrypted) tuple of terms.
+    pub fn op_via<Op, I>(self, _op: Op, index: I) -> QueryOp<'a, F, Op, I, K>
+    where
+        Op: Operator,
+        I: Supports<Op, F>,
+    {
+        QueryOp {
+            inner: self.index(index),
+            op: PhantomData,
+        }
     }
 
     /// The term of `index`. The target must declare it
@@ -751,6 +803,61 @@ where
             ),
             Err(error) => Pending::failed(keyset, error.into()),
         }
+    }
+}
+
+/// A chain deriving one query term for an operator, ready to await. It
+/// resolves to the [`QueryTerm`](crate::op::QueryTerm) the index sends for
+/// the operator ([`Supports::Query`]).
+pub struct QueryOp<'a, F, Op, I, K> {
+    inner: QueryIndex<'a, F, I, K>,
+    op: PhantomData<fn() -> Op>,
+}
+
+impl<'a, F, Op, I, K: 'static> QueryOp<'a, F, Op, I, K> {
+    /// Run under this keyset, as [`QueryBuilder::keyset`].
+    pub fn keyset(mut self, keyset: impl Into<KeysetChoice<'a, K>>) -> Self {
+        self.inner = self.inner.keyset(keyset);
+        self
+    }
+
+    /// Extend the plan's every context by `parts` for this call, as
+    /// [`QueryBuilder::extend`]: the same parts the write was extended by.
+    pub fn extend(mut self, parts: impl Into<DeclaredContext>) -> Self {
+        self.inner = self.inner.extend(parts);
+        self
+    }
+}
+
+impl<F, Op, I, K> sealed::Sealed for QueryOp<'_, F, Op, I, K> {}
+
+impl<'a, F: 'static, Op: Operator, I: Supports<Op, F> + 'static, K: 'static> Operation<'a, K>
+    for QueryOp<'a, F, Op, I, K>
+where
+    I::Term: MaybeSend,
+    I::Query: MaybeSend + 'static,
+{
+    type Output = I::Query;
+    fn cipher(&self) -> &'a StackCipher<K> {
+        self.inner.cipher()
+    }
+    fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
+        self.inner.take_keyset()
+    }
+    fn check(&self) -> Result<(), Error> {
+        self.inner.check()
+    }
+    fn prepare<'p>(
+        self,
+        keyset: &'p KeysetCipher<'a, K>,
+        scoped: bool,
+    ) -> Pending<'p, Self::Output, K>
+    where
+        'a: 'p,
+    {
+        self.inner
+            .prepare(keyset, scoped)
+            .map(<I as Supports<Op, F>>::query)
     }
 }
 
@@ -846,6 +953,7 @@ settles! {
     ['a, S: 'static, K: 'static] EncryptFields<'a, S, K>;
     ['a, S: ?Sized, P, K] EncryptUsing<'a, S, P, K>;
     ['a, F, I, K] QueryIndex<'a, F, I, K>;
+    ['a, F, Op, I, K] QueryOp<'a, F, Op, I, K>;
     ['a, R, P, K] OpenUsing<'a, R, P, K>;
 }
 
@@ -869,6 +977,7 @@ opaque_debug! {
     ['a, F, K] QueryBuilder<'a, F, K>, "QueryBuilder";
     ['a, F, P, K] QueryUsing<'a, F, P, K>, "QueryUsing";
     ['a, F, I, K] QueryIndex<'a, F, I, K>, "QueryIndex";
+    ['a, F, Op, I, K] QueryOp<'a, F, Op, I, K>, "QueryOp";
     ['a, R, K] OpenBuilder<'a, R, K>, "OpenBuilder";
     ['a, R, P, K] OpenUsing<'a, R, P, K>, "OpenUsing";
 }
@@ -911,7 +1020,7 @@ impl<K, T> std::fmt::Debug for All<'_, K, T> {
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
 /// use stack_encrypt::kms::FakeDataKeySource;
-/// use stack_encrypt::{Equality, Plan, StackCipher};
+/// use stack_encrypt::{op, Equality, Plan, StackCipher};
 ///
 /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 /// let email_plan = Plan::context("users/email").with(Equality).build()?;
@@ -919,7 +1028,7 @@ impl<K, T> std::fmt::Debug for All<'_, K, T> {
 /// let email = String::from("bob@example.com");
 /// let (written, query_value) = stack_encrypt::all((
 ///     cipher.encrypt(&email).using(&email_plan),
-///     cipher.query("bob@example.com").using(&email_plan).equality(),
+///     cipher.query("bob@example.com").using(&email_plan).op(op::Eq),
 /// ))
 /// .await?;
 /// assert_eq!(written.terms, query_value);

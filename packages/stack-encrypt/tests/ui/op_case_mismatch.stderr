@@ -1,0 +1,26 @@
+error[E0308]: mismatched types
+  --> tests/ui/op_case_mismatch.rs:15:17
+   |
+15 |         .op_via(op::Matches::<op::Sensitive>::new(), Match::default());
+   |          ------ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Matches`, found `Matches<Sensitive>`
+   |          |
+   |          arguments to this method are incorrect
+   |
+   = note: expected struct `stack_encrypt::op::Matches<Insensitive>`
+              found struct `stack_encrypt::op::Matches<Sensitive>`
+help: the return type of this call is `stack_encrypt::op::Matches<Sensitive>` due to the type of the argument passed
+  --> tests/ui/op_case_mismatch.rs:12:13
+   |
+12 |       let _ = cipher
+   |  _____________^
+13 | |         .query("Ali")
+14 | |         .using(&name_plan)
+15 | |         .op_via(op::Matches::<op::Sensitive>::new(), Match::default());
+   | |_________________-----------------------------------__________________^
+   |                   |
+   |                   this argument influences the return type of `op_via`
+note: method defined here
+  --> src/plan/chain.rs
+   |
+   |     pub fn op_via<Op, I, At>(self, _op: Op, _index: I) -> QueryOp<'a, F, Op, I, K>
+   |            ^^^^^^

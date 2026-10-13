@@ -12,6 +12,7 @@ use std::sync::atomic::Ordering;
 
 use common::{counting_cipher, loads_counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
+use stack_encrypt::op;
 use stack_encrypt::plan::{pick, Field, FieldKind, FieldValues, Fields, Opens, PlanError, Runs};
 use stack_encrypt::sem::{
     EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm, Tokenizer,
@@ -144,7 +145,7 @@ async fn a_plan_built_without_a_context_takes_the_calls() {
         .query("bob@example.com")
         .context("tenants/acme")
         .using(&email_plan)
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(
@@ -155,7 +156,7 @@ async fn a_plan_built_without_a_context_takes_the_calls() {
         .query("bob@example.com")
         .context("tenants/globex")
         .using(&email_plan)
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_ne!(elsewhere, stored.terms);
@@ -187,7 +188,7 @@ async fn a_plan_run_with_no_context_is_refused_before_any_key_request() {
             cipher
                 .query("bob@example.com")
                 .using(&users_plan.field("email").unwrap())
-                .equality()
+                .op(op::Eq)
                 .await
         ),
         PlanError::NoContext
@@ -210,7 +211,7 @@ async fn a_plan_run_with_no_context_is_refused_before_any_key_request() {
         PlanError::NoContext
     );
     assert_eq!(
-        plan_error(cipher.query(&34u32).using(&age_plan).equality().await),
+        plan_error(cipher.query(&34u32).using(&age_plan).op(op::Eq).await),
         PlanError::NoContext
     );
     let age = cipher
@@ -292,7 +293,7 @@ async fn a_context_given_twice_is_refused_at_the_call_before_any_key_request() {
                 .query("bob@example.com")
                 .context("users")
                 .using(&users_plan.field("email").unwrap())
-                .equality()
+                .op(op::Eq)
                 .await
         ),
         two("the plan", "the call")
@@ -342,7 +343,7 @@ async fn a_context_given_twice_is_refused_at_the_call_before_any_key_request() {
                 .query(&34u32)
                 .context("users/age")
                 .using(&age_plan)
-                .equality()
+                .op(op::Eq)
                 .await
         ),
         two("the plan", "the call")
@@ -368,7 +369,7 @@ async fn a_call_context_that_is_not_a_label_is_refused() {
             .query("bob@example.com")
             .context("a//b")
             .using(&users_plan.field("email").unwrap())
-            .equality()
+            .op(op::Eq)
             .await
     )));
     assert!(bad(plan_error(
@@ -839,7 +840,7 @@ async fn a_context_field_is_the_context_of_every_other_field() {
         .query("bob@example.com")
         .context("tenants/acme")
         .using(&records_plan.field("email").unwrap())
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(query_value, stored.terms);
@@ -1130,7 +1131,7 @@ async fn a_typed_field_answers_the_queries_its_target_declares_and_no_other() {
     let query_value = cipher
         .query("bob@example.com")
         .using(&email_plan)
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(query_value, stored.terms.0);
@@ -1159,7 +1160,7 @@ async fn a_typed_field_answers_the_queries_its_target_declares_and_no_other() {
             cipher
                 .query(&34u32)
                 .using(&users_plan.field("age").unwrap())
-                .equality()
+                .op(op::Eq)
                 .await
         ),
         PlanError::IndexNotDeclared {
@@ -1185,7 +1186,7 @@ async fn a_typed_field_of_terms_alone_does_not_come_back() {
     let query_value = cipher
         .query("bob@example.com")
         .using(&users_plan.field("email").unwrap())
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(query_value, term);
@@ -1334,7 +1335,7 @@ async fn a_one_value_typed_plan_answers_its_targets_queries_and_no_other() {
     let query_value = cipher
         .query("bob@example.com")
         .using(&email_plan)
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(query_value, hm);
@@ -1632,7 +1633,7 @@ async fn a_pinned_identity_rescues_a_field_name_that_is_not_plain() {
     let query_value = cipher
         .query(&21u32)
         .using(&readings_plan.field("0").unwrap())
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(query_value, value.terms);
@@ -1686,7 +1687,7 @@ async fn a_pinned_identity_keys_a_call_context_plan_for_query_and_open() {
         .query(&21u32)
         .context("reading")
         .using(&readings_plan.field("0").unwrap())
-        .equality()
+        .op(op::Eq)
         .await
         .unwrap();
     assert_eq!(query_value, stored.terms);

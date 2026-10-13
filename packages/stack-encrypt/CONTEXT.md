@@ -223,11 +223,26 @@ _Avoid_: index (that is the declaration; a term is what it produces), token,
 hash
 
 **Query**:
-Deriving the terms for a plaintext under a field's plan, with no ciphertext,
-to match terms already stored. A query against an index the plan never
+Deriving the query term for a plaintext under a field's plan, with no
+ciphertext, to match terms already stored. A query names an operator, and the
+plan finds the index that answers it. A query against an index the plan never
 declared is refused, so a query cannot silently match nothing.
 _Avoid_: probe, search term, lookup, encrypt query (that is the TypeScript
 package's method name, not the concept)
+
+**Operator**:
+What a query asks of the server — equality, text match — as a unit type
+(`op::Eq`, `op::Matches`). An index declares the operators it answers and the
+query term it sends for each; a target type names the index that answers each
+operator for it. An operator nothing answers is a compile error (ADR-0009).
+_Avoid_: query type, index (that is what answers the operator)
+
+**Query term**:
+The value a query sends to the server. It is not the stored term: equality
+sends the same HMAC it stores, but a match query is a filter over the needle,
+where the stored term is a filter over the whole value. A query term is never
+stored, and a stored term is never sent as a query.
+_Avoid_: probe, stored term (that is what a write keeps)
 
 **Open**:
 Decrypting through a plan: reading back every field of a record that can

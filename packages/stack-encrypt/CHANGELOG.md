@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A query names an operator, not an index.** `cipher.query(v).using(&plan)`
+  finishes with `.op(op::Eq)` or `.op(op::Matches::new())`, and the plan
+  finds the index that answers the operator (ADR-0009). An index declares the
+  operators it answers (`op::Supports`), a target type names the index that
+  answers each one for it (`op::Answers`), and a plan that declares indexes
+  uses the operator's default index (`op::DefaultIndex`). `.op_via(op, index)`
+  names another index, such as a match index with its own configuration. An
+  operator the plan cannot answer is a compile error; a case-sensitive
+  `Matches` against a case-folding index is one too.
+- **A match query has its own type, `sem::MatchQuery`.** It is the filter over
+  the needle that the server tests a stored `MatchTerms` for, and it comes
+  only from a query.
+
 - **Errors now expose stable codes, help text, and structured details.**
   All error types implement `miette::Diagnostic` with codes such as
   `stack_encrypt::foreign_keyset`. Help text explains how to resolve
@@ -46,6 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Plan::new_with`.
 
 ### Breaking
+
+- **`QueryUsing::equality()` is removed.** Write `.op(op::Eq)`. A plan that
+  declares the equality index answers it the same way, and a target answers
+  it through `op::Answers`. `QueryUsing::index(..)` stays until the ordering
+  operators exist.
 
 - **Update pattern matches for `dynamic::Error`.** `Context`, `Plan`,
   `Source`, and `Record` now carry
