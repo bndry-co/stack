@@ -1,8 +1,8 @@
 //! Operators: what a query asks of the server, as a type.
 //!
-//! A query names an *operator* ([`Eq`](struct@Eq), [`Matches`]), and the plan it runs
-//! through finds the index that answers it. The operator is a unit type
-//! passed by value, as an index is (`.index(Ore)`):
+//! A query names an *operator* ([`Eq`](struct@Eq), [`Matches`](struct@Matches)), and the plan it
+//! runs on finds the index that answers it. The operator is a unit type
+//! passed by value, as an index is (`.via(Ore)`):
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
@@ -11,11 +11,11 @@
 //!
 //! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let email_plan = Plan::context("users/email")
-//!     .with::<String, _>((Equality, Match::default()))
+//!     .with::<String, _>((Equality, Match))
 //!     .build()?;
 //!
-//! let exact = cipher.query("bob@example.com").using(&email_plan).op(op::Eq).await?;
-//! let search = cipher.query("bob").using(&email_plan).op(op::Matches::new()).await?;
+//! let exact = cipher.query(op::Eq, "bob@example.com").on(&email_plan).await?;
+//! let search = cipher.query(op::Matches, "bob").on(&email_plan).await?;
 //! # let _ = (exact, search);
 //! # Ok(())
 //! # }
@@ -27,8 +27,9 @@
 //! - [`Supports<Op, S>`] is on an index, for each operator it can answer
 //!   over plaintexts `S`, and names the [`QueryTerm`] it sends. That term is
 //!   not the stored term: an equality index sends the same HMAC it stores,
-//!   but a match index sends a filter over the needle ([`MatchQuery`]),
-//!   where it stores a filter over the whole value ([`MatchTerms`]).
+//!   but a match index sends a filter over the query's value
+//!   ([`MatchQuery`]), where it stores a filter over the stored value
+//!   ([`MatchTerms`]).
 //! - [`Answers<Op, S>`] is on a target type, a domain type such as an EQL
 //!   type, and names the index that answers `Op` for it. It is written by
 //!   hand per type, because the choice decides what the query term reveals.
@@ -41,7 +42,8 @@
 //! a case-folding index. A field of a fields plan is data, so there an
 //! index the field does not declare, or declares with other options, is
 //! refused when the query is awaited, as with
-//! [`index`](crate::plan::QueryUsing::index), before any key is requested.
+//! [`query_index`](crate::StackCipher::query_index), before any key is
+//! requested.
 //! So is a match configuration whose [`MatchCase`] disagrees with its
 //! options.
 //!
@@ -69,21 +71,40 @@ pub struct Eq;
 
 impl Operator for Eq {}
 
-/// Text search: rows whose text contains the needle's tokens, under the
+/// Text search: rows whose text contains the query's tokens, under the
 /// match index's tokenizer. Not containment: a Bloom match is order- and
 /// multiplicity-insensitive.
 ///
-/// `C` is the case the query is asked in, [`Insensitive`] unless named
+/// `C` is the case the query is asked in, [`CaseInsensitive`] unless named
 /// otherwise. A match index answers only the case its configuration fixes
 /// ([`MatchCase`]), so asking a case-folding index for a case-sensitive
 /// match is a compile error rather than a query that quietly folds case.
-pub struct Matches<C = Insensitive>(PhantomData<fn() -> C>);
+///
+/// The value [`Matches`](constant@Matches) is the case-insensitive operator,
+/// as `PhantomData` is a value of its type; [`case_sensitive`](Matches::case_sensitive)
+/// is the other.
+pub struct Matches<C = CaseInsensitive> {
+    case: PhantomData<fn() -> C>,
+}
+
+/// The case-insensitive text search operator, as a value:
+/// `cipher.query(op::Matches, "ali")`.
+#[allow(non_upper_case_globals)]
+pub const Matches: Matches = Matches::new();
 
 impl<C> Matches<C> {
-    /// The operator. `Matches::new()` takes its case from the index it is
-    /// asked of; `Matches::<Sensitive>::new()` names it.
+    /// The operator in the case `C`: `Matches::<CaseSensitive>::new()`.
     pub const fn new() -> Self {
-        Self(PhantomData)
+        Self { case: PhantomData }
+    }
+}
+
+impl Matches {
+    /// The case-sensitive text search operator:
+    /// `cipher.query(op::Matches.case_sensitive(), "Ali")`. Only a match
+    /// index whose configuration does not fold case answers it.
+    pub const fn case_sensitive(self) -> Matches<CaseSensitive> {
+        Matches::new()
     }
 }
 
@@ -118,12 +139,12 @@ impl<C: Case> Operator for Matches<C> {}
 
 mod sealed {
     pub trait Sealed {}
-    impl Sealed for super::Insensitive {}
-    impl Sealed for super::Sensitive {}
+    impl Sealed for super::CaseInsensitive {}
+    impl Sealed for super::CaseSensitive {}
 }
 
-/// The case a text operator is asked in: [`Insensitive`] or [`Sensitive`].
-/// Sealed: there are exactly two.
+/// The case a text operator is asked in: [`CaseInsensitive`] or
+/// [`CaseSensitive`]. Sealed: there are exactly two.
 pub trait Case: sealed::Sealed + 'static {
     /// Whether text is lower-cased before it is tokenised.
     const FOLDS: bool;
@@ -133,19 +154,19 @@ pub trait Case: sealed::Sealed + 'static {
 
 /// Case-insensitive: text is lower-cased before it is tokenised.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Insensitive;
+pub struct CaseInsensitive;
 
 /// Case-sensitive: text is tokenised as written.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Sensitive;
+pub struct CaseSensitive;
 
-impl Case for Insensitive {
+impl Case for CaseInsensitive {
     const FOLDS: bool = true;
-    const NAME: &'static str = "Insensitive";
+    const NAME: &'static str = "CaseInsensitive";
 }
-impl Case for Sensitive {
+impl Case for CaseSensitive {
     const FOLDS: bool = false;
-    const NAME: &'static str = "Sensitive";
+    const NAME: &'static str = "CaseSensitive";
 }
 
 /// The case a match configuration fixes, as a type, so the operators its
@@ -157,14 +178,14 @@ impl Case for Sensitive {
 /// disagree is refused when it is awaited, with
 /// [`PlanError::MatchCase`]. A configuration
 /// that does not implement this can still store match terms and query them
-/// by index; it cannot be queried by [`Matches`].
+/// by index; it cannot be queried by [`Matches`](struct@Matches).
 pub trait MatchCase: MatchConfig {
     /// The case the configuration's index answers.
     type Case: Case;
 }
 
 impl MatchCase for DefaultMatch {
-    type Case = Insensitive;
+    type Case = CaseInsensitive;
 }
 
 /// A value a query sends to the server to compare against stored terms.
@@ -184,7 +205,7 @@ impl<O> QueryTerm for MatchQuery<O> {}
 /// [`Index::Term`] is what the index derives; [`query`](Self::query) makes
 /// the query term from it. For an equality index the two are the same
 /// HMAC. For a match index they are not: the query is a filter over the
-/// needle, and its type says so.
+/// query's value, and its type says so.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not answer `{Op}` over `{S}`",
     label = "this index cannot answer the operator",
@@ -258,20 +279,16 @@ where
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not answer `{Op}` over `{S}`",
     label = "this target type does not answer the operator",
-    note = "a target answers the operators its type implements `Answers` for; `.op_via(op, index)` names an index the target declares"
+    note = "a target answers the operators its type implements `Answers` for; `.via(index)` names an index the target declares"
 )]
 pub trait Answers<Op: Operator, S> {
-    /// The index that answers `Op` for this type.
-    type Via: Supports<Op, S>;
-    /// That index, as a value.
-    fn via() -> Self::Via;
+    /// The index that answers `Op` for this type. An index is a unit type,
+    /// so its `Default` is the index.
+    type Via: Supports<Op, S> + Default;
 }
 
 impl<S: vitaminc_prf::PrfValue> Answers<Eq, S> for EqualityTerm {
     type Via = Equality;
-    fn via() -> Equality {
-        Equality
-    }
 }
 
 impl<S, O> Answers<Matches<O::Case>, S> for MatchTerms<O>
@@ -280,63 +297,46 @@ where
     O: MatchCase,
 {
     type Via = Match<O>;
-    fn via() -> Match<O> {
-        Match::new()
-    }
 }
 
 /// A ciphertext with one term beside it, the shape of a `plaintext = ..`
 /// record without the struct, answers what its term answers.
 impl<Op: Operator, S, T: Answers<Op, S>> Answers<Op, S> for (crate::StackCipherText, T) {
     type Via = T::Via;
-    fn via() -> T::Via {
-        T::via()
-    }
 }
 
 /// A ciphertext with one term, as [`indexed`](crate::target::indexed)
 /// produces it, answers what its term answers. One with several terms
-/// names the index with `.op_via(op, index)`.
+/// names the index with `.via(index)`.
 impl<Op: Operator, S, T: Answers<Op, S>> Answers<Op, S> for crate::target::Encrypted<T> {
     type Via = T::Via;
-    fn via() -> T::Via {
-        T::via()
-    }
 }
 
 /// The index a plan that declares its indexes answers an operator with:
 /// a field of a fields plan, or a one-value plan built `with` indexes.
 ///
 /// A plan that declares a different index for the operator, such as a
-/// match index with its own configuration, names it with
-/// `.op_via(op, index)`. So does a typed field of a fields plan
-/// (`encrypt_into::<T, _>(name)`): the field's type is not known where the
-/// query is written, so its [`Answers`] impl is not consulted, and a field
-/// whose type answers through another index needs `op_via`.
+/// match index with its own configuration, names it with `.via(index)`.
+/// So does a typed field of a fields plan (`encrypt_into::<T, _>(name)`):
+/// the field's type is not known where the query is written, so its
+/// [`Answers`] impl is not consulted, and a field whose type answers
+/// through another index needs `via`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no default index over `{S}`",
     label = "no default index answers this operator here",
-    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; name another index with `.op_via(op, index)`"
+    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; name another index with `.via(index)`"
 )]
 pub trait DefaultIndex<S>: Operator {
-    /// The index.
-    type Via: Supports<Self, S>;
-    /// That index, as a value.
-    fn via() -> Self::Via;
+    /// The index. An index is a unit type, so its `Default` is the index.
+    type Via: Supports<Self, S> + Default;
 }
 
 impl<S: vitaminc_prf::PrfValue> DefaultIndex<S> for Eq {
     type Via = Equality;
-    fn via() -> Equality {
-        Equality
-    }
 }
 
 impl<S: AsRef<str>> DefaultIndex<S> for Matches<<DefaultMatch as MatchCase>::Case> {
     type Via = Match;
-    fn via() -> Match {
-        Match::default()
-    }
 }
 
 #[cfg(test)]
@@ -353,15 +353,15 @@ mod tests {
 
     #[test]
     fn an_operator_is_equal_to_itself() {
-        assert_eq!(Matches::<Insensitive>::new(), Matches::new());
+        assert_eq!(Matches::<CaseInsensitive>::new(), Matches);
         assert_eq!(Eq, Eq);
     }
 
     #[test]
     fn an_operator_debugs_with_its_case() {
         assert_eq!(
-            format!("{:?}", Matches::<Sensitive>::new()),
-            "Matches<Sensitive>"
+            format!("{:?}", Matches.case_sensitive()),
+            "Matches<CaseSensitive>"
         );
         assert_eq!(format!("{:?}", Eq), "Eq");
     }

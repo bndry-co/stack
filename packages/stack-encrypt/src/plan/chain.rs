@@ -14,7 +14,7 @@ use super::PlanError;
 use crate::op::{Answers, DefaultIndex, Operator, QueryToken, Supports};
 use crate::target::{
     ciphertext, Borrowed, CallerContext, DeclaredContext, DecryptField, Decryptable, EncryptFrom,
-    Index, Indexes, Owned, Pending, PendingFuture, Select,
+    Index, Indexes, Owned, Pending, PendingFuture, Select, Whole,
 };
 use crate::{Error, KeysetCipher, Label, LabelError, NonEmpty, StackCipher, StackCipherText};
 
@@ -279,19 +279,43 @@ impl<K: 'static> StackCipher<K> {
         }
     }
 
-    /// Start a chain that derives a query term for `value`, to match terms
-    /// a plan wrote. Name the plan with [`using`](QueryBuilder::using) and
-    /// the operator with [`op`](QueryUsing::op): `.op(op::Eq)`.
+    /// Start a chain that derives the query term for the operator `op` over
+    /// `value`, to match terms a plan wrote. Name the plan with
+    /// [`on`](QueryBuilder::on): `cipher.query(op::Eq, "bob@example.com").on(&plan)`.
+    /// The plan chooses the index that answers the operator there; an
+    /// index the plan declares beside that one is named first, with
+    /// [`via`](QueryBuilder::via).
     ///
-    /// The value is copied once (`to_owned`), so `query("bob@example.com")`
+    /// The value is copied once (`to_owned`), so `query(op::Eq, "bob@example.com")`
     /// queries a `String` field.
-    pub fn query<'a, Q>(&'a self, value: &Q) -> QueryBuilder<'a, Q::Owned, K>
+    pub fn query<'a, Op, Q>(&'a self, op: Op, value: &Q) -> QueryBuilder<'a, Op, F<Q>, K>
     where
+        Op: Operator,
         Q: ToOwned + ?Sized,
     {
         QueryBuilder {
             common: Common::new(self),
             value: value.to_owned(),
+            op,
+        }
+    }
+
+    /// Start a chain that derives the term of `index` over `value`: the
+    /// index's own term, not a query term, so nothing says what it may be
+    /// compared with. For an index no operator answers yet ([`Ore`] and
+    /// [`Ope`]); a query for an operator is [`query`](Self::query), and this
+    /// goes when the ordering operators arrive.
+    ///
+    /// [`Ore`]: crate::target::Ore
+    /// [`Ope`]: crate::target::Ope
+    pub fn query_index<'a, I, Q>(&'a self, index: I, value: &Q) -> QueryIndexBuilder<'a, I, F<Q>, K>
+    where
+        Q: ToOwned + ?Sized,
+    {
+        QueryIndexBuilder {
+            common: Common::new(self),
+            value: value.to_owned(),
+            index,
         }
     }
 
@@ -589,13 +613,18 @@ where
     }
 }
 
-/// A chain deriving a query term, before its plan is named.
-pub struct QueryBuilder<'a, F, K> {
+/// The owned form of a queried value: `String` for a `str` query.
+type F<Q> = <Q as ToOwned>::Owned;
+
+/// A chain deriving the query term for an operator, before its plan is
+/// named.
+pub struct QueryBuilder<'a, Op, F, K> {
     common: Common<'a, K>,
     value: F,
+    op: Op,
 }
 
-impl<'a, F, K: 'static> QueryBuilder<'a, F, K> {
+impl<'a, Op: Operator, F: 'static, K: 'static> QueryBuilder<'a, Op, F, K> {
     /// Name the context the term is derived under, for a plan built
     /// without one: the context the write's call named, or for a plan with
     /// a context field, the value that field held. A plan built with its
@@ -605,150 +634,241 @@ impl<'a, F, K: 'static> QueryBuilder<'a, F, K> {
         self
     }
 
-    /// Query through `plan`: a field of a fields plan
-    /// ([`Plan::field`](super::Plan::field)), or a one-value plan ([`ValuePlan`]). The term is
-    /// derived under exactly the label the write used.
-    pub fn using<P>(self, plan: &'a P) -> QueryUsing<'a, F, P, K> {
-        QueryUsing {
+    /// Answer the operator through `index` rather than the index the plan
+    /// chooses for it ([`Chooses`]): a match index with its own
+    /// configuration, or an index of a target type that has no
+    /// [`Answers`] impl for the operator. The plan named next must declare
+    /// it, as [`on`](Self::on) says.
+    pub fn via<I: Supports<Op, F>>(self, index: I) -> QueryVia<'a, Op, F, I, K> {
+        QueryVia {
             common: self.common,
             value: self.value,
-            plan,
+            op: self.op,
+            index,
         }
+    }
+
+    /// Query on `plan`: a field of a fields plan
+    /// ([`Plan::field`](super::Plan::field)), or a one-value plan
+    /// ([`ValuePlan`]). The plan chooses the index that answers the
+    /// operator ([`Chooses`]), and the term is derived under exactly the
+    /// label the write used.
+    ///
+    /// What the plan's type can see is checked here: an operator it does
+    /// not answer, or a one-value plan without the index, does not compile.
+    /// A field of a fields plan is data, so there an index the field does
+    /// not declare, or declares with other options, is refused when the
+    /// query is awaited ([`PlanError::IndexNotDeclared`],
+    /// [`PlanError::IndexOptions`]), before any key is requested.
+    pub fn on<P, At>(self, plan: &P) -> QueryOp<'a, F, Op, P::Via, K>
+    where
+        P: Chooses<Op, F, At>,
+    {
+        self.via(P::Via::default()).on(plan)
     }
 }
 
-/// A chain deriving a query term through a plan, before its index is
-/// chosen.
-pub struct QueryUsing<'a, F, P, K> {
+/// A chain deriving the query term for an operator through a named index,
+/// before its plan is named.
+pub struct QueryVia<'a, Op, F, I, K> {
     common: Common<'a, K>,
     value: F,
-    plan: &'a P,
+    op: Op,
+    index: I,
 }
 
-impl<'a, F: 'static, K: 'static> QueryUsing<'a, F, FieldPlan, K> {
-    /// The query term for the operator `op`, through the index a plan that
-    /// declares its indexes answers it with ([`DefaultIndex`]):
-    /// `.op(op::Eq)` is the equality term. The field must have declared
-    /// that index, with the same options; otherwise awaiting is
-    /// [`PlanError::IndexNotDeclared`] or [`PlanError::IndexOptions`].
-    pub fn op<Op: DefaultIndex<F>>(self, op: Op) -> QueryOp<'a, F, Op, Op::Via, K> {
-        self.op_via(op, Op::via())
-    }
-
-    /// The query term for `op` through `index`, for a field that declares
-    /// an index other than the operator's default, such as a match index
-    /// with its own configuration.
-    pub fn op_via<Op, I>(self, _op: Op, index: I) -> QueryOp<'a, F, Op, I, K>
+impl<'a, Op: Operator, F: 'static, I: Supports<Op, F>, K: 'static> QueryVia<'a, Op, F, I, K> {
+    /// Query on `plan` through the named index, which the plan must
+    /// declare ([`Resolves`]): a one-value plan without it does not
+    /// compile; a field of a fields plan without it is refused when the
+    /// query is awaited. A one-value plan built `with` indexes uses its
+    /// own index of that type, so the named index says only which.
+    pub fn on<P, At>(self, plan: &P) -> QueryOp<'a, F, Op, I, K>
     where
-        Op: Operator,
-        I: Supports<Op, F>,
+        P: Resolves<F, I, At>,
     {
-        QueryOp::new(self.index(index))
+        let QueryVia {
+            common,
+            value,
+            op,
+            index,
+        } = self;
+        let inner = plan.resolve(QueryIndexBuilder {
+            common,
+            value,
+            index,
+        });
+        QueryOp::new(inner, op)
+    }
+}
+
+/// A chain deriving an index's own term, before its plan is named. Started
+/// by [`StackCipher::query_index`].
+pub struct QueryIndexBuilder<'a, I, F, K> {
+    common: Common<'a, K>,
+    value: F,
+    index: I,
+}
+
+impl<'a, I, F: 'static, K: 'static> QueryIndexBuilder<'a, I, F, K> {
+    /// Name the context the term is derived under, as
+    /// [`QueryBuilder::context`].
+    pub fn context(mut self, context: impl IntoLabel) -> Self {
+        self.common.context = Some(context.into_label());
+        self
     }
 
-    /// The term of `index`. The field must have declared it, and the query's
-    /// plaintext must be the field's type; otherwise awaiting is
+    /// Derive the index's term on `plan`, which must declare it
+    /// ([`Resolves`]); otherwise awaiting is
     /// [`PlanError::IndexNotDeclared`] or [`PlanError::FieldType`], never a
     /// term that matches nothing.
-    pub fn index<I: Index<F>>(mut self, index: I) -> QueryIndex<'a, F, I, K> {
-        let label = self
-            .common
+    pub fn on<P, At>(self, plan: &P) -> QueryIndex<'a, F, I, K>
+    where
+        I: Index<F>,
+        P: Resolves<F, I, At>,
+    {
+        plan.resolve(self)
+    }
+}
+
+/// A plan a query for the operator `Op` over `F` runs on, and the index it
+/// answers the operator with. Sealed: the three plan shapes implement it.
+///
+/// A field of a fields plan and a one-value plan built `with` indexes
+/// answer through the operator's [`DefaultIndex`]; a one-value plan for a
+/// target type answers through the type's [`Answers`] impl. `At` is the
+/// position of that index in a plan built `with` several, and is inferred.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not answer `{Op}` over `{F}`",
+    label = "no index answers this operator on this plan",
+    note = "a field of a fields plan or a plan built `with` indexes answers an operator through its default index (`op::Eq`: `Equality`; `op::Matches`: `Match` with the default configuration, case-insensitive and over text only); a typed plan answers the operators its target type implements `Answers` for; `.via(index)` names an index the plan declares"
+)]
+pub trait Chooses<Op: Operator, F, At>: Resolves<F, Self::Via, At> {
+    /// The index that answers `Op` on this plan.
+    type Via: Supports<Op, F> + Default;
+}
+
+impl<Op: DefaultIndex<F>, F: 'static> Chooses<Op, F, Whole> for FieldPlan {
+    type Via = Op::Via;
+}
+
+impl<Op, F, X, At> Chooses<Op, F, At> for ValuePlan<F, Indexed<X>>
+where
+    Op: DefaultIndex<F>,
+    Op::Via: Clone,
+    F: 'static,
+    X: Indexes<F> + Select<Op::Via, At>,
+{
+    type Via = Op::Via;
+}
+
+impl<Op, F, T> Chooses<Op, F, Whole> for ValuePlan<F, Typed<T>>
+where
+    Op: Operator,
+    F: 'static,
+    T: Answers<Op, F>,
+    T::Via: Default,
+    Typed<T>: ValueShape<F>,
+{
+    type Via = T::Via;
+}
+
+mod plan_sealed {
+    use super::{FieldPlan, Indexed, Typed, ValuePlan};
+    pub trait Sealed {}
+    impl Sealed for FieldPlan {}
+    impl<F, X> Sealed for ValuePlan<F, Indexed<X>> {}
+    impl<F, T> Sealed for ValuePlan<F, Typed<T>> {}
+}
+
+/// A plan the index `I` over `F` can be queried on. Sealed: the three plan
+/// shapes implement it, and each finds the label the write used.
+///
+/// A field of a fields plan ([`Plan::field`](super::Plan::field)) and a
+/// one-value plan for a target type take the index as given, and refuse
+/// one the plan does not declare when the query is awaited
+/// ([`PlanError::IndexNotDeclared`]). A one-value plan built `with`
+/// indexes selects its own index of that type ([`Indexes::select`]), at
+/// the position `At`, which is inferred; a plan without that index does
+/// not compile.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be queried through `{I}` over `{F}`",
+    label = "this plan does not declare the index, or is not a plan a query runs on",
+    note = "query on a field of a fields plan (`plan.field(..)`) or on a one-value plan; a plan built `with` indexes must hold one of this type"
+)]
+pub trait Resolves<F, I, At>: plan_sealed::Sealed {
+    /// The chain for the index's term on this plan, under the label the
+    /// write used.
+    fn resolve<'a, K: 'static>(
+        &self,
+        query: QueryIndexBuilder<'a, I, F, K>,
+    ) -> QueryIndex<'a, F, I, K>;
+}
+
+impl<F: 'static, I: Index<F>> Resolves<F, I, Whole> for FieldPlan {
+    fn resolve<'a, K: 'static>(
+        &self,
+        query: QueryIndexBuilder<'a, I, F, K>,
+    ) -> QueryIndex<'a, F, I, K> {
+        let QueryIndexBuilder {
+            mut common,
+            value,
+            index,
+        } = query;
+        let label = common
             .call_context()
-            .and_then(|call| self.plan.query_label::<F>(&index.spec(), call));
+            .and_then(|call| self.query_label::<F>(&index.spec(), call));
         QueryIndex {
-            common: self.common,
-            value: self.value,
+            common,
+            value,
             index,
             label,
         }
     }
 }
 
-impl<'a, F: 'static, X: Indexes<F>, K: 'static> QueryUsing<'a, F, ValuePlan<F, Indexed<X>>, K> {
-    /// The query term for the operator `op`, through the index a plan that
-    /// declares its indexes answers it with ([`DefaultIndex`]), selected
-    /// from the plan's indexes by type: a plan that does not hold that
-    /// index does not compile here.
-    pub fn op<Op, At>(self, op: Op) -> QueryOp<'a, F, Op, Op::Via, K>
-    where
-        Op: DefaultIndex<F>,
-        Op::Via: Clone,
-        X: Select<Op::Via, At>,
-    {
-        self.op_via(op, Op::via())
-    }
-
-    /// The query term for `op` through the plan's index of the type of
-    /// `index`, for a plan that holds an index other than the operator's
-    /// default. The plan's own index is used; `index` names its type.
-    pub fn op_via<Op, I, At>(self, _op: Op, _index: I) -> QueryOp<'a, F, Op, I, K>
-    where
-        Op: Operator,
-        I: Supports<Op, F> + Clone,
-        X: Select<I, At>,
-    {
-        QueryOp::new(self.index::<I, At>())
-    }
-
-    /// The term of the plan's index of type `I`, selected by type
-    /// ([`Indexes::select`]); `At` is inferred: `.index::<Ore, _>()`.
-    pub fn index<I, At>(mut self) -> QueryIndex<'a, F, I, K>
-    where
-        I: Index<F> + Clone,
-        X: Select<I, At>,
-    {
-        let index = self.plan.indexes().select::<I, At>().clone();
-        let label = self
-            .common
-            .call_context()
-            .and_then(|call| self.plan.resolve(call));
+impl<F: 'static, X, I, At> Resolves<F, I, At> for ValuePlan<F, Indexed<X>>
+where
+    X: Indexes<F> + Select<I, At>,
+    I: Index<F> + Clone,
+{
+    fn resolve<'a, K: 'static>(
+        &self,
+        query: QueryIndexBuilder<'a, I, F, K>,
+    ) -> QueryIndex<'a, F, I, K> {
+        let QueryIndexBuilder {
+            mut common, value, ..
+        } = query;
+        let index = self.indexes().select::<I, At>().clone();
+        let label = common.call_context().and_then(|call| self.resolve(call));
         QueryIndex {
-            common: self.common,
-            value: self.value,
+            common,
+            value,
             index,
             label,
         }
     }
 }
 
-impl<'a, F: 'static, T, K: 'static> QueryUsing<'a, F, ValuePlan<F, Typed<T>>, K>
+impl<F: 'static, T, I: Index<F>> Resolves<F, I, Whole> for ValuePlan<F, Typed<T>>
 where
     Typed<T>: ValueShape<F>,
 {
-    /// The query term for the operator `op`, through the index the target
-    /// type answers it with ([`Answers`]). A target that does not answer
-    /// `op` does not compile here; one that answers it through an index it
-    /// does not declare is [`PlanError::IndexNotDeclared`] when awaited.
-    pub fn op<Op>(self, op: Op) -> QueryOp<'a, F, Op, T::Via, K>
-    where
-        Op: Operator,
-        T: Answers<Op, F>,
-    {
-        self.op_via(op, T::via())
-    }
-
-    /// The query term for `op` through `index`, which the target must
-    /// declare: for a target with no [`Answers`] impl for `op`, such as
-    /// an [`Encrypted`](crate::target::Encrypted) tuple of terms.
-    pub fn op_via<Op, I>(self, _op: Op, index: I) -> QueryOp<'a, F, Op, I, K>
-    where
-        Op: Operator,
-        I: Supports<Op, F>,
-    {
-        QueryOp::new(self.index(index))
-    }
-
-    /// The term of `index`. The target must declare it
-    /// ([`EncryptFrom::indexes`]); otherwise awaiting is
-    /// [`PlanError::IndexNotDeclared`], never a term that matches nothing.
-    pub fn index<I: Index<F>>(mut self, index: I) -> QueryIndex<'a, F, I, K> {
-        let label = self
-            .common
+    fn resolve<'a, K: 'static>(
+        &self,
+        query: QueryIndexBuilder<'a, I, F, K>,
+    ) -> QueryIndex<'a, F, I, K> {
+        let QueryIndexBuilder {
+            mut common,
+            value,
+            index,
+        } = query;
+        let label = common
             .call_context()
-            .and_then(|call| self.plan.query_label(&index.spec(), call));
+            .and_then(|call| self.query_label(&index.spec(), call));
         QueryIndex {
-            common: self.common,
-            value: self.value,
+            common,
+            value,
             index,
             label,
         }
@@ -808,7 +928,7 @@ pub struct QueryOp<'a, F, Op, I, K> {
 impl<'a, F, Op: Operator, I: Supports<Op, F>, K: 'static> QueryOp<'a, F, Op, I, K> {
     /// The chain for `inner`'s index, refused when awaited if the index
     /// cannot answer `Op` as it is configured.
-    fn new(mut inner: QueryIndex<'a, F, I, K>) -> Self {
+    fn new(mut inner: QueryIndex<'a, F, I, K>, _op: Op) -> Self {
         if let Err(error) = inner.index.check() {
             inner.label = Err(error);
         }
@@ -945,8 +1065,9 @@ chain_options! {
     ['a, S, X, K: 'static] EncryptIndexed<'a, S, X, K>;
     ['a, S: 'static, K: 'static] EncryptFields<'a, S, K>;
     ['a, S: ?Sized, P, K: 'static] EncryptUsing<'a, S, P, K>;
-    ['a, F, K: 'static] QueryBuilder<'a, F, K>;
-    ['a, F, P, K: 'static] QueryUsing<'a, F, P, K>;
+    ['a, Op, F, K: 'static] QueryBuilder<'a, Op, F, K>;
+    ['a, Op, F, I, K: 'static] QueryVia<'a, Op, F, I, K>;
+    ['a, I, F, K: 'static] QueryIndexBuilder<'a, I, F, K>;
     ['a, F, I, K: 'static] QueryIndex<'a, F, I, K>;
     ['a, R, K: 'static] OpenBuilder<'a, R, K>;
     ['a, R, P, K: 'static] OpenUsing<'a, R, P, K>;
@@ -979,8 +1100,9 @@ opaque_debug! {
     ['a, S, X, K] EncryptIndexed<'a, S, X, K>, "EncryptIndexed";
     ['a, S: 'static, K: 'static] EncryptFields<'a, S, K>, "EncryptFields";
     ['a, S: ?Sized, P, K] EncryptUsing<'a, S, P, K>, "EncryptUsing";
-    ['a, F, K] QueryBuilder<'a, F, K>, "QueryBuilder";
-    ['a, F, P, K] QueryUsing<'a, F, P, K>, "QueryUsing";
+    ['a, Op, F, K] QueryBuilder<'a, Op, F, K>, "QueryBuilder";
+    ['a, Op, F, I, K] QueryVia<'a, Op, F, I, K>, "QueryVia";
+    ['a, I, F, K] QueryIndexBuilder<'a, I, F, K>, "QueryIndexBuilder";
     ['a, F, I, K] QueryIndex<'a, F, I, K>, "QueryIndex";
     ['a, F, Op, I, K] QueryOp<'a, F, Op, I, K>, "QueryOp";
     ['a, R, K] OpenBuilder<'a, R, K>, "OpenBuilder";
@@ -1033,7 +1155,7 @@ impl<K, T> std::fmt::Debug for All<'_, K, T> {
 /// let email = String::from("bob@example.com");
 /// let (written, query_value) = stack_encrypt::all((
 ///     cipher.encrypt(&email).using(&email_plan),
-///     cipher.query("bob@example.com").using(&email_plan).op(op::Eq),
+///     cipher.query(op::Eq, "bob@example.com").on(&email_plan),
 /// ))
 /// .await?;
 /// assert_eq!(written.terms, query_value);

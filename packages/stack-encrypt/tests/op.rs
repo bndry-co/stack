@@ -24,7 +24,7 @@ impl MatchConfig for Exact {
     }
 }
 impl MatchCase for Exact {
-    type Case = op::Sensitive;
+    type Case = op::CaseSensitive;
 }
 
 #[derive(Clone)]
@@ -64,7 +64,7 @@ fn person() -> Person {
 fn people_plan() -> Plan<Person, FakeDataKeySource> {
     Plan::context("people")
         .fields()
-        .encrypt_index::<String>("email", (Equality, Match::default()))
+        .encrypt_index::<String>("email", (Equality, Match))
         .encrypt_index::<String>("name", Match::<Exact>::new())
         .build()
         .expect("a valid plan")
@@ -86,16 +86,15 @@ async fn an_eq_query_is_the_stored_equality_term() {
     let email: Encrypted<(EqualityTerm, MatchTerms)> = row.take("email").unwrap();
 
     let query: EqualityTerm = cipher
-        .query("bob@example.com")
-        .using(&plan.field("email").unwrap())
-        .op(op::Eq)
+        .query(op::Eq, "bob@example.com")
+        .on(&plan.field("email").unwrap())
         .await
         .unwrap();
     assert_eq!(query, email.terms.0, "HMAC equality sends what it stores");
 }
 
 #[tokio::test]
-async fn a_matches_query_is_a_filter_over_the_needle_that_the_stored_filter_holds() {
+async fn a_matches_query_is_a_filter_over_the_query_value_that_the_stored_filter_holds() {
     let cipher = stack_cipher().await;
     let plan = people_plan();
     let mut row = cipher.encrypt(&person()).using(&plan).await.unwrap();
@@ -104,22 +103,20 @@ async fn a_matches_query_is_a_filter_over_the_needle_that_the_stored_filter_hold
     let email_plan = plan.field("email").unwrap();
 
     let query: MatchQuery = cipher
-        .query("BOB")
-        .using(&email_plan)
-        .op(op::Matches::new())
+        .query(op::Matches, "BOB")
+        .on(&email_plan)
         .await
         .unwrap();
     assert!(stored.matches(&query), "a case-folding index matches BOB");
     assert!(
         query.positions().len() < stored.positions().len(),
-        "the query is the needle's filter, not the value's"
+        "the query is the query value's filter, not the stored value's"
     );
 
     // The operator derives the term the index does, under the same label.
     let by_index: MatchTerms = cipher
-        .query("BOB")
-        .using(&email_plan)
-        .index(Match::default())
+        .query_index(Match, "BOB")
+        .on(&email_plan)
         .await
         .unwrap();
     assert_eq!(query.to_bytes(), by_index.to_bytes());
@@ -127,9 +124,8 @@ async fn a_matches_query_is_a_filter_over_the_needle_that_the_stored_filter_hold
     assert_eq!(query.clone(), query);
 
     let elsewhere: MatchQuery = cipher
-        .query("zzz")
-        .using(&email_plan)
-        .op(op::Matches::new())
+        .query(op::Matches, "zzz")
+        .on(&email_plan)
         .await
         .unwrap();
     assert!(!stored.matches(&elsewhere));
@@ -144,30 +140,24 @@ async fn a_match_index_with_its_own_configuration_is_named_with_op_via() {
     let name: Encrypted<MatchTerms<Exact>> = row.take("name").unwrap();
     let name_plan = plan.field("name").unwrap();
 
-    let exact = |needle: &'static str| {
+    let exact = |value: &'static str| {
         cipher
-            .query(needle)
-            .using(&name_plan)
-            .op_via(op::Matches::<op::Sensitive>::new(), Match::<Exact>::new())
+            .query(op::Matches.case_sensitive(), value)
+            .via(Match::<Exact>::new())
+            .on(&name_plan)
     };
     let hit: MatchQuery<Exact> = exact("Nguyen").await.unwrap();
     assert!(name.terms.matches(&hit));
     let miss: MatchQuery<Exact> = exact("nguyen").await.unwrap();
     assert!(
         !name.terms.matches(&miss),
-        "a case-sensitive index does not fold the needle"
+        "a case-sensitive index does not fold the query"
     );
 
     // The operator's default index is the default configuration, which
     // this field does not declare.
     assert_eq!(
-        plan_error(
-            cipher
-                .query("Nguyen")
-                .using(&name_plan)
-                .op(op::Matches::new())
-                .await
-        ),
+        plan_error(cipher.query(op::Matches, "Nguyen").on(&name_plan).await),
         PlanError::IndexOptions {
             field: "name".into(),
             declared: IndexSpec::Match(Exact::options()),
@@ -183,9 +173,8 @@ async fn an_operator_the_field_has_no_index_for_is_refused_when_awaited() {
     assert_eq!(
         plan_error(
             cipher
-                .query("Alice")
-                .using(&plan.field("name").unwrap())
-                .op(op::Eq)
+                .query(op::Eq, "Alice")
+                .on(&plan.field("name").unwrap())
                 .await
         ),
         PlanError::IndexNotDeclared {
@@ -199,7 +188,7 @@ async fn an_operator_the_field_has_no_index_for_is_refused_when_awaited() {
 async fn a_one_value_plan_answers_from_its_indexes_by_type() {
     let cipher = stack_cipher().await;
     let plan = Plan::context("users/email")
-        .with::<String, _>((Equality, Match::default()))
+        .with::<String, _>((Equality, Match))
         .build()
         .unwrap();
     let stored: Encrypted<(EqualityTerm, MatchTerms)> = cipher
@@ -209,16 +198,14 @@ async fn a_one_value_plan_answers_from_its_indexes_by_type() {
         .unwrap();
 
     let eq = cipher
-        .query("bob@example.com")
-        .using(&plan)
-        .op(op::Eq)
+        .query(op::Eq, "bob@example.com")
+        .on(&plan)
         .await
         .unwrap();
     assert_eq!(eq, stored.terms.0);
     let matches = cipher
-        .query("example")
-        .using(&plan)
-        .op(op::Matches::new())
+        .query(op::Matches, "example")
+        .on(&plan)
         .await
         .unwrap();
     assert!(stored.terms.1.matches(&matches));
@@ -233,9 +220,9 @@ async fn a_one_value_plan_answers_from_its_indexes_by_type() {
         .await
         .unwrap();
     let query = cipher
-        .query("Ali")
-        .using(&exact_plan)
-        .op_via(op::Matches::<op::Sensitive>::new(), Match::<Exact>::new())
+        .query(op::Matches.case_sensitive(), "Ali")
+        .via(Match::<Exact>::new())
+        .on(&exact_plan)
         .await
         .unwrap();
     assert!(name.terms.matches(&query));
@@ -255,9 +242,8 @@ async fn a_target_answers_an_operator_through_the_index_it_names() {
         .await
         .unwrap();
     let query = cipher
-        .query("bob@example.com")
-        .using(&eq_plan)
-        .op(op::Eq)
+        .query(op::Eq, "bob@example.com")
+        .on(&eq_plan)
         .await
         .unwrap();
     assert_eq!(query, stored);
@@ -273,9 +259,8 @@ async fn a_target_answers_an_operator_through_the_index_it_names() {
         .await
         .unwrap();
     let query = cipher
-        .query("bob")
-        .using(&match_plan)
-        .op(op::Matches::new())
+        .query(op::Matches, "bob")
+        .on(&match_plan)
         .await
         .unwrap();
     assert!(stored.matches(&query));
@@ -295,16 +280,16 @@ async fn a_target_with_several_terms_names_the_index_with_op_via() {
         .await
         .unwrap();
     let eq = cipher
-        .query("bob@example.com")
-        .using(&plan)
-        .op_via(op::Eq, Equality)
+        .query(op::Eq, "bob@example.com")
+        .via(Equality)
+        .on(&plan)
         .await
         .unwrap();
     assert_eq!(eq, stored.terms.0);
     let matches = cipher
-        .query("bob")
-        .using(&plan)
-        .op_via(op::Matches::new(), Match::default())
+        .query(op::Matches, "bob")
+        .via(Match)
+        .on(&plan)
         .await
         .unwrap();
     assert!(stored.terms.1.matches(&matches));
@@ -318,9 +303,9 @@ async fn a_target_with_several_terms_names_the_index_with_op_via() {
     assert_eq!(
         plan_error(
             cipher
-                .query("bob")
-                .using(&one_term)
-                .op_via(op::Matches::new(), Match::default())
+                .query(op::Matches, "bob")
+                .via(Match)
+                .on(&one_term)
                 .await
         ),
         PlanError::IndexNotDeclared {
@@ -328,7 +313,7 @@ async fn a_target_with_several_terms_names_the_index_with_op_via() {
             index: "match"
         }
     );
-    let eq = cipher.query("bob").using(&one_term).op(op::Eq).await;
+    let eq = cipher.query(op::Eq, "bob").on(&one_term).await;
     assert!(eq.is_ok(), "one term answers what the term answers");
 }
 
@@ -347,14 +332,12 @@ async fn operator_queries_settle_together_and_extend_like_the_write() {
 
     let (eq, matches) = stack_encrypt::all((
         cipher
-            .query("bob@example.com")
-            .using(&email_plan)
-            .op(op::Eq)
+            .query(op::Eq, "bob@example.com")
+            .on(&email_plan)
             .extend(7u64),
         cipher
-            .query("bob")
-            .using(&email_plan)
-            .op(op::Matches::new())
+            .query(op::Matches, "bob")
+            .on(&email_plan)
             .extend(7u64),
     ))
     .await
@@ -363,9 +346,8 @@ async fn operator_queries_settle_together_and_extend_like_the_write() {
     assert!(email.terms.1.matches(&matches));
 
     let unextended = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .op(op::Eq)
+        .query(op::Eq, "bob@example.com")
+        .on(&email_plan)
         .await
         .unwrap();
     assert_ne!(
@@ -380,7 +362,7 @@ async fn a_query_chain_debugs_without_its_value() {
     let plan = people_plan();
     let email_plan = plan.field("email").unwrap();
     let secret = "bob@example.com";
-    let shown = format!("{:?}", cipher.query(secret).using(&email_plan).op(op::Eq));
+    let shown = format!("{:?}", cipher.query(op::Eq, secret).on(&email_plan));
     assert_eq!(shown, "QueryOp { .. }");
 }
 
@@ -396,7 +378,7 @@ impl MatchConfig for Mislabelled {
     }
 }
 impl MatchCase for Mislabelled {
-    type Case = op::Insensitive;
+    type Case = op::CaseInsensitive;
 }
 
 #[tokio::test]
@@ -408,21 +390,21 @@ async fn a_match_case_that_disagrees_with_its_options_is_refused() {
         .unwrap();
     let refused = plan_error(
         cipher
-            .query("Bob")
-            .using(&plan)
-            .op_via(op::Matches::new(), Match::<Mislabelled>::new())
+            .query(op::Matches, "Bob")
+            .via(Match::<Mislabelled>::new())
+            .on(&plan)
             .await,
     );
     assert_eq!(
         refused,
         PlanError::MatchCase {
-            declared: "Insensitive",
+            declared: "CaseInsensitive",
             folds: false
         }
     );
     assert_eq!(
         refused.to_string(),
-        "a match configuration declares the case Insensitive but its options keep case"
+        "a match configuration declares the case CaseInsensitive but its options keep case"
     );
 }
 
@@ -436,9 +418,8 @@ async fn a_refused_operator_query_loads_no_keyset() {
         .build()
         .unwrap();
     let refused = cipher
-        .query("Alice")
-        .using(&plan.field("name").unwrap())
-        .op(op::Eq)
+        .query(op::Eq, "Alice")
+        .on(&plan.field("name").unwrap())
         .keyset("tenant")
         .await;
     assert_eq!(
@@ -460,9 +441,8 @@ async fn a_match_query_debugs_as_its_positions() {
     let cipher = stack_cipher().await;
     let plan = people_plan();
     let query = cipher
-        .query("bob")
-        .using(&plan.field("email").unwrap())
-        .op(op::Matches::new())
+        .query(op::Matches, "bob")
+        .on(&plan.field("email").unwrap())
         .await
         .unwrap();
     assert_eq!(
@@ -485,17 +465,15 @@ async fn an_operator_query_runs_under_the_keyset_it_names() {
         .await
         .unwrap();
     let under_tenant = cipher
-        .query("bob@example.com")
-        .using(&plan)
-        .op(op::Eq)
+        .query(op::Eq, "bob@example.com")
+        .on(&plan)
         .keyset("tenant")
         .await
         .unwrap();
     assert_eq!(under_tenant, stored.terms);
     let under_default = cipher
-        .query("bob@example.com")
-        .using(&plan)
-        .op(op::Eq)
+        .query(op::Eq, "bob@example.com")
+        .on(&plan)
         .await
         .unwrap();
     assert_ne!(under_default, stored.terms, "another keyset, another key");

@@ -115,7 +115,7 @@ impl fmt::Display for IndexSpec {
 ///
 /// Implemented for exactly the plaintexts the index's scheme is defined
 /// over, which is what makes an inapplicable index a compile error: there is
-/// no `Index<u32>` for [`Match`], because match is defined over text.
+/// no `Index<u32>` for [`Match`](struct@Match), because match is defined over text.
 ///
 /// An index does not seal anything. [`indexed`] puts a ciphertext beside the
 /// indexes of a field; [`operation`](Self::operation) on its own is the term
@@ -163,18 +163,29 @@ pub struct Ope;
 /// The full-text match index, over text only, with the tokenizer and filter
 /// parameters its [`MatchConfig`] `O` fixes.
 ///
-/// `Match::default()` is the default configuration ([`DefaultMatch`]);
-/// `Match::<MyConfig>::new()` is another. The configuration is on the type so
-/// that a stored field and the query probing it agree on it by construction.
-pub struct Match<O = DefaultMatch>(PhantomData<fn() -> O>);
+/// The value [`Match`](constant@Match) is the index under the default
+/// configuration ([`DefaultMatch`]), as `PhantomData` is a value of its
+/// type; `Match::<MyConfig>::new()` is another. The configuration is on the
+/// type so that a stored field and the query probing it agree on it by
+/// construction.
+pub struct Match<O = DefaultMatch> {
+    config: PhantomData<fn() -> O>,
+}
+
+/// The match index under the default configuration, as a value:
+/// `.with((Equality, Match))`.
+#[allow(non_upper_case_globals)]
+pub const Match: Match = Match::new();
 
 impl<O> Match<O> {
     /// The match index under the configuration `O`.
     pub const fn new() -> Self {
-        Self(PhantomData)
+        Self {
+            config: PhantomData,
+        }
     }
 }
-impl Default for Match {
+impl<O> Default for Match<O> {
     fn default() -> Self {
         Self::new()
     }

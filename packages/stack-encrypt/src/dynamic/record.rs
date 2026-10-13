@@ -6799,7 +6799,7 @@ mod tests {
                 (P::NoContext.into(), None, Refused),
                 (
                     P::MatchCase {
-                        declared: "Sensitive",
+                        declared: "CaseSensitive",
                         folds: true,
                     }
                     .into(),

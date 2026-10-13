@@ -642,27 +642,27 @@ impl<O> PartialEq for MatchTerms<O> {
 
 impl<O> Eq for MatchTerms<O> {}
 
-/// The query term of a match index: a Bloom filter over the *needle's*
+/// The query term of a match index: a Bloom filter over the *query's*
 /// tokens, where the stored [`MatchTerms`] is a filter over the whole
-/// value's. A row matches when its stored filter holds every position of
+/// stored value's. A row matches when its stored filter holds every position of
 /// the query's ([`MatchTerms::contains`]).
 ///
 /// The two are different types because they are different things, even
 /// where their bytes share an encoding: a query is never stored, and a
 /// stored filter is never sent as a query. ADR-0009 records why. A
-/// `MatchQuery` comes from a query chain ([`op::Matches`](crate::op::Matches)),
+/// `MatchQuery` comes from a query chain ([`op::Matches`](struct@crate::op::Matches)),
 /// never from a target.
 pub struct MatchQuery<O = DefaultMatch> {
     terms: MatchTerms<O>,
 }
 
 impl<O> MatchQuery<O> {
-    /// The query term of the filter `terms`, derived over a needle.
+    /// The query term of the filter `terms`, derived over the query's value.
     pub(crate) fn from_terms(terms: MatchTerms<O>) -> Self {
         Self { terms }
     }
 
-    /// The set positions of the needle's filter, sorted ascending, no
+    /// The set positions of the query's filter, sorted ascending, no
     /// duplicates: what the server tests a stored filter for.
     pub fn positions(&self) -> &[u16] {
         self.terms.positions()
@@ -673,7 +673,7 @@ impl<O> MatchQuery<O> {
         self.terms.to_bytes()
     }
 
-    /// The needle's filter.
+    /// The query's filter.
     pub(crate) fn filter(&self) -> &MatchTerms<O> {
         &self.terms
     }

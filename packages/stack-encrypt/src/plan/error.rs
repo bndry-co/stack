@@ -192,10 +192,10 @@ pub enum PlanError {
     )]
     #[diagnostic(
         code(stack_encrypt::plan_match_case),
-        help("Make `MatchCase::Case` agree with `MatchConfig::options().downcase`: `Insensitive` when it is true, `Sensitive` when it is false.")
+        help("Make `MatchCase::Case` agree with `MatchConfig::options().downcase`: `CaseInsensitive` when it is true, `CaseSensitive` when it is false.")
     )]
     MatchCase {
-        /// The case `MatchCase::Case` names: `Insensitive` or `Sensitive`.
+        /// The case `MatchCase::Case` names: `CaseInsensitive` or `CaseSensitive`.
         declared: &'static str,
         /// Whether the configuration's options fold case.
         folds: bool,

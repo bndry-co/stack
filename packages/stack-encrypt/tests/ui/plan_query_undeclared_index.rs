@@ -6,7 +6,7 @@ use stack_encrypt::{Ore, Plan, StackCipher};
 
 async fn query(cipher: &StackCipher<FakeDataKeySource>) {
     let age_plan = Plan::context("users/age").with::<u32, _>(Ore).build().unwrap();
-    let _ = cipher.query(&34u32).using(&age_plan).op(op::Eq);
+    let _ = cipher.query(op::Eq, &34u32).on(&age_plan);
 }
 
 fn main() {}

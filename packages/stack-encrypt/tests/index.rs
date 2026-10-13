@@ -241,7 +241,7 @@ mod given_a_set_of_indexes {
         assert_eq!(<Ore as Indexes<u32>>::specs(&Ore), [IndexSpec::Ore]);
         assert_eq!(<Ope as Indexes<u32>>::specs(&Ope), [IndexSpec::Ope]);
         assert_eq!(
-            <Match as Indexes<String>>::specs(&Match::default()),
+            <Match as Indexes<String>>::specs(&Match),
             [IndexSpec::Match(MatchOptions::default())]
         );
         assert_eq!(
@@ -275,7 +275,7 @@ mod given_a_set_of_indexes {
 
     #[test]
     fn a_match_index_debugs_by_name_whatever_its_configuration() {
-        assert_eq!(format!("{:?}", Match::default()), "Match");
+        assert_eq!(format!("{:?}", Match), "Match");
         assert_eq!(format!("{:?}", Match::<Words>::new()), "Match");
         let copied = Match::<Words>::new();
         let again = copied;
@@ -433,7 +433,7 @@ mod given_a_set_of_indexes {
             .unwrap();
         assert_eq!(q, ope_t, "position 2");
 
-        let four = (Equality, Ore, Ope, Match::default());
+        let four = (Equality, Ore, Ope, Match);
         assert_eq!(
             Index::<String>::spec(Indexes::<String>::select::<Match, _>(&four)),
             IndexSpec::Match(MatchOptions::default()),
@@ -662,7 +662,7 @@ mod given_encrypted_terms_as_a_target {
     #[tokio::test]
     async fn every_term_alone_lowers_to_its_index() {
         same_bytes::<u32, EqualityTerm, _>(7, Equality).await;
-        same_bytes::<String, MatchTerms, _>("hello world".into(), Match::default()).await;
+        same_bytes::<String, MatchTerms, _>("hello world".into(), Match).await;
         same_bytes::<String, MatchTerms<Words>, _>("Hello World".into(), Match::<Words>::new())
             .await;
         same_bytes::<u32, OreTerm<u32>, _>(7, Ore).await;
@@ -702,7 +702,7 @@ mod given_encrypted_terms_as_a_target {
             _,
         >(
             "Hello World".into(),
-            (Equality, Match::default(), Ore, Ope, Match::<Words>::new()),
+            (Equality, Match, Ore, Ope, Match::<Words>::new()),
         )
         .await;
     }

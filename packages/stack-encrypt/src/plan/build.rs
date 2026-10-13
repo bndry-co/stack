@@ -259,10 +259,9 @@ pub(crate) fn check_declared(
 /// // A query and a read name the same context.
 /// let email_plan = users_plan.field("email")?;
 /// let query_value = cipher
-///     .query("bob@example.com")
+///     .query(op::Eq, "bob@example.com")
 ///     .context("tenants/acme/users")
-///     .using(&email_plan)
-///     .op(op::Eq)
+///     .on(&email_plan)
 ///     .await?;
 /// # let _ = query_value;
 /// let back = cipher.open(record).context("tenants/acme/users").using(&users_plan).await?;
@@ -928,7 +927,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// let email: Encrypted<(EqualityTerm, MatchTerms)> = record.take("email")?;
     ///
     /// // The target declares an equality index, so the field answers it.
-    /// let query_value = cipher.query("bob@example.com").using(&users_plan.field("email")?).op(op::Eq).await?;
+    /// let query_value = cipher.query(op::Eq, "bob@example.com").on(&users_plan.field("email")?).await?;
     /// assert_eq!(query_value, email.terms.0);
     /// # Ok(())
     /// # }

@@ -1,26 +1,37 @@
-error[E0308]: mismatched types
-  --> tests/ui/op_case_mismatch.rs:15:17
+error[E0271]: type mismatch resolving `<DefaultMatch as MatchCase>::Case == CaseSensitive`
+  --> tests/ui/op_case_mismatch.rs:14:14
    |
-15 |         .op_via(op::Matches::<op::Sensitive>::new(), Match::default());
-   |          ------ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Matches`, found `Matches<Sensitive>`
+14 |         .via(Match)
+   |          --- ^^^^^ expected `CaseSensitive`, found `CaseInsensitive`
    |          |
-   |          arguments to this method are incorrect
+   |          required by a bound introduced by this call
    |
-   = note: expected struct `stack_encrypt::op::Matches<Insensitive>`
-              found struct `stack_encrypt::op::Matches<Sensitive>`
-help: the return type of this call is `stack_encrypt::op::Matches<Sensitive>` due to the type of the argument passed
-  --> tests/ui/op_case_mismatch.rs:12:13
-   |
-12 |       let _ = cipher
-   |  _____________^
-13 | |         .query("Ali")
-14 | |         .using(&name_plan)
-15 | |         .op_via(op::Matches::<op::Sensitive>::new(), Match::default());
-   | |_________________-----------------------------------__________________^
-   |                   |
-   |                   this argument influences the return type of `op_via`
-note: method defined here
+note: required by a bound in `QueryBuilder::<'a, Op, F, K>::via`
   --> src/plan/chain.rs
    |
-   |     pub fn op_via<Op, I, At>(self, _op: Op, _index: I) -> QueryOp<'a, F, Op, I, K>
-   |            ^^^^^^
+   |     pub fn via<I: Supports<Op, F>>(self, index: I) -> QueryVia<'a, Op, F, I, K> {
+   |                   ^^^^^^^^^^^^^^^ required by this bound in `QueryBuilder::<'a, Op, F, K>::via`
+
+error[E0599]: the method `on` exists for struct `QueryVia<'_, stack_encrypt::op::Matches<CaseSensitive>, std::string::String, stack_encrypt::Match, FakeDataKeySource>`, but its trait bounds were not satisfied
+  --> tests/ui/op_case_mismatch.rs:15:10
+   |
+12 |       let _ = cipher
+   |  _____________-
+13 | |         .query(op::Matches.case_sensitive(), "Ali")
+14 | |         .via(Match)
+15 | |         .on(&name_plan);
+   | |_________-^^
+   |
+  ::: src/target/index.rs
+   |
+   |   pub struct Match<O = DefaultMatch> {
+   |   ---------------------------------- doesn't satisfy `_: Supports<Matches<CaseSensitive>, String>`
+   |
+  ::: src/sem/mod.rs
+   |
+   |   pub struct DefaultMatch;
+   |   ----------------------- doesn't satisfy `<_ as MatchCase>::Case = CaseSensitive`
+   |
+   = note: the following trait bounds were not satisfied:
+           `<DefaultMatch as stack_encrypt::op::MatchCase>::Case = CaseSensitive`
+           which is required by `stack_encrypt::Match: Supports<stack_encrypt::op::Matches<CaseSensitive>, std::string::String>`

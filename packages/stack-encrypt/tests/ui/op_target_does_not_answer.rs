@@ -10,7 +10,7 @@ async fn query(cipher: &StackCipher<FakeDataKeySource>) {
         .encrypt_into::<EqualityTerm>()
         .build()
         .unwrap();
-    let _ = cipher.query("bob").using(&email_plan).op(op::Matches::new());
+    let _ = cipher.query(op::Matches, "bob").on(&email_plan);
 }
 
 fn main() {}

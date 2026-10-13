@@ -241,8 +241,8 @@ _Avoid_: query type, index (that is what answers the operator)
 
 **Query term**:
 The value a query sends to the server. It is not the stored term: equality
-sends the same HMAC it stores, but a match query is a filter over the needle,
-where the stored term is a filter over the whole value. A query term is never
+sends the same HMAC it stores, but a match query is a filter over the query's
+value, where the stored term is a filter over the whole stored value. A query term is never
 stored, and a query chain never sends a stored term as a query.
 _Avoid_: probe, stored term (that is what a write keeps)
 

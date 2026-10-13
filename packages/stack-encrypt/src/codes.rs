@@ -150,7 +150,7 @@ mod tests {
                 }),
             },
             PlanError::MatchCase { .. } => PlanError::MatchCase {
-                declared: "Insensitive",
+                declared: "CaseInsensitive",
                 folds: false,
             },
             PlanError::TwoContextSources { .. } => PlanError::TwoContextSources {

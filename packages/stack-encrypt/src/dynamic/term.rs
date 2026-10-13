@@ -1206,7 +1206,7 @@ mod wire_form {
     fn every_typed_index_round_trips_through_the_wire_form() {
         let specs = [
             Index::<String>::spec(&Equality),
-            Index::<String>::spec(&Match::default()),
+            Index::<String>::spec(&Match),
             Index::<String>::spec(&Match::<Words>::new()),
             Index::<String>::spec(&Ore),
             Index::<String>::spec(&Ope),
@@ -1222,7 +1222,7 @@ mod wire_form {
 
     #[test]
     fn a_default_match_index_is_the_bare_match_key() {
-        let spec = Index::<String>::spec(&Match::default());
+        let spec = Index::<String>::spec(&Match);
         assert!(matches!(
             spec.to_value(),
             FfiValue::String(key) if super::utf8(&key) == Some("match")
