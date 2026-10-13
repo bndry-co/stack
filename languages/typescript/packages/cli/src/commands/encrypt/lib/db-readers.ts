@@ -128,3 +128,42 @@ export async function fetchPhysicalColumns(
   }
   return out
 }
+
+/**
+ * The table's single-column primary key, for keyset pagination. Throws an
+ * author-facing error for a table with no PK or a composite one — both
+ * backfill directions then ask for `--pk-column`.
+ */
+export async function detectPkColumn(
+  db: pg.ClientBase,
+  tableName: string,
+): Promise<string> {
+  const [schema, table] = tableName.includes('.')
+    ? tableName.split('.')
+    : [null, tableName]
+
+  const result = await db.query<{ column_name: string }>(
+    `SELECT a.attname AS column_name
+     FROM pg_index i
+     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+     JOIN pg_class c ON c.oid = i.indrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE i.indisprimary
+       AND c.relname = $1
+       AND ($2::text IS NULL OR n.nspname = $2)
+     ORDER BY a.attnum ASC`,
+    [table, schema],
+  )
+
+  if (result.rows.length === 0) {
+    throw new Error(
+      `Could not detect a primary key on ${tableName}. Pass --pk-column <name>.`,
+    )
+  }
+  if (result.rows.length > 1) {
+    throw new Error(
+      `${tableName} has a composite primary key; composite keys are not yet supported. Pass --pk-column <name> to override.`,
+    )
+  }
+  return result.rows[0]?.column_name
+}
