@@ -312,7 +312,9 @@ GROUP BY 1
 computes `p = Σ count_i · (bits_i / m)^b / Σ count_i` for whatever `b` the
 query has. The sample bounds the cost on a large table; `TABLESAMPLE` is a
 page sample, which is fine for a distribution and unsuited to an exact count.
-`rows` comes from `SELECT reltuples FROM pg_class WHERE oid =
+It is also a sample of pages, so on a table of a few thousand rows a 1%
+sample can select none; below that size the clause is dropped and the whole
+table is read, which costs nothing worth saving. `rows` comes from `SELECT reltuples FROM pg_class WHERE oid =
 'users'::regclass`, a catalog read.
 
 Where the numbers live and who keeps them in step was asked on the review,
@@ -726,23 +728,28 @@ which is which, and the Rust types make it impossible to forget.
 ADR-0007 says a binding reaches the engine through a plan lowered from data,
 and ADR-0008 says a language SDK is what users of that language touch, which
 is never the plan. This appendix asks what each of those gains from the
-model above, in the two languages that have an SDK today, and what a query
-then looks like in the SQL libraries those languages use. It is a check on
-the model, not a decision; the decisions for the bindings come with the
-ADR-0007 amendment.
+model above, in two languages: Go, which has a Stack Encrypt SDK today, and
+TypeScript, which does not. The TypeScript half is a sketch of a binding and
+an SDK built on Stack Encrypt and EQL v4, written to check that the Rust
+model will support them well; it is not the existing `@cipherstash/stack`,
+which runs on cipherstash-client through `@cipherstash/protect-ffi` and
+writes EQL v3. It is a check on the model, not a decision; the decisions for
+the bindings come with the ADR-0007 amendment.
 
 ### What crosses the binding
 
 Today the Go guest has one query export: `Cipher.Query(plan, field, value)`
 returns the JSON of the field's query operand, and the engine picks the term
-by the field's EQL type. The TypeScript binding (`@cipherstash/protect-ffi`)
+by the field's EQL type. The existing TypeScript binding, for comparison,
 has `encryptQuery(value, { table, column, queryType })`, where `queryType`
-names an index flavour (`equality`, `freeTextSearch`, `orderAndRange`, the
-`steVec*` forms). Both name an index, which is the problem statement.
+names an index flavour (`equality`, `freeTextSearch`, `orderAndRange`). Both
+name an index, which is the problem statement.
 
-Under this ADR four things cross, all as data, and each is a capability the
-data grammar does not have yet, added once (ADR-0007, last bullet of the
-decision):
+A Stack Encrypt binding for TypeScript would be the guest the Go SDK embeds,
+or a napi build of the same crate, and would take the same plan the Go SDK
+lowers (ADR-0007). Under this ADR four more things cross it, all as data,
+and each is a capability the data grammar does not have yet, added once
+(ADR-0007, last bullet of the decision):
 
 1. **An operator name with its input**, in place of the index:
    `{"op": "matches", "input": "ali"}`, `{"op": "between", "input": [18, 65]}`,
@@ -762,13 +769,14 @@ decision):
    same reason: the arithmetic is small, but `b` is a property of the term the
    engine built, and the fill formula belongs beside the index configuration.
 
-What does *not* cross is the fidelity as a runtime value. The generator asks
-the engine, at `go generate` or at build time, which operators each EQL type
-answers and whether each is exact, probabilistic or ranked, the way `stashgen`
-already asks `eql.Types` whether a type is producible. The generated code then
-has `Verify` only where there is something to verify, which is the
-compile-time property decision 4 wants, reconstructed in a language without
-traits.
+What does *not* cross is the fidelity as a runtime value. Something on the
+language side asks the engine, before the program runs, which operators each
+EQL type answers and whether each is exact, probabilistic or ranked, the way
+`stashgen` already asks `eql.Types` whether a type is producible. In Go that
+something is the generator; in TypeScript it can be the type system, as the
+TypeScript section shows. Either way the code a user writes has `verify`
+only where there is something to verify, which is the compile-time property
+decision 4 wants, reconstructed in a language without traits.
 
 ### Go
 
@@ -825,68 +833,170 @@ is refused at compile time, as it is at generate time for the field.
 
 ### TypeScript
 
-The binding call that names an operator replaces the one that names a
-query type:
+Go needs a generator because its type system cannot derive a field's
+methods from a declaration. TypeScript can, so the sketch below has no
+generate step: the schema is a value, its type is the plan, and the
+operators a column answers are read off that type. The names are
+placeholders; the shapes are the point.
+
+**The schema is the plan.** A table is declared with the EQL v4 types, which
+is the data grammar of ADR-0007 written as TypeScript, and the match index
+carries its `expectedTokens` prior from decision 5:
 
 ```ts
-const term = await client.encryptQuery('ali', { table: 'users', column: 'name', operator: 'matches' })
-// term.verify(value): present on a probabilistic term's type, absent on an exact one
-// term.targetLimit(want, stats)
+import { table, passthrough, eql } from '@cipherstash/stack-encrypt'   // placeholder name
+
+const users = table('users', {
+  id:      passthrough<number>(),
+  email:   eql.TextEq(),
+  name:    eql.TextMatch({ expectedTokens: 20 }),
+  age:     eql.IntegerOrdOre(),
+  profile: eql.Json(),
+})
+
+const client = await StackEncrypt.connect()          // the guest, through napi or wasm
+const cipher = client.keyset('tenant-42')
 ```
 
-TypeScript has no traits, but it has discriminated unions: the return type
-of `encryptQuery` narrows on `operator`, so `term.verify` type-checks for
-`'matches'` and is a type error for `'eq'`. The engine does the verifying
-through the FFI, batched per page, for the reason given above.
+**An operator is a method on the column, and only the answered ones exist.**
+`cipher.query(column)` returns an object whose methods are the operators the
+column's EQL type answers, each taking that operator's input:
 
-In the SQL libraries TypeScript programs use, the operator already exists on
-the SDK side and the change is what it emits and what comes back:
+```ts
+const email = await cipher.query(users.email).eq('bob@example.com')      // EqTerm
+const age   = await cipher.query(users.age).lt(40)                        // LtTerm
+const range = await cipher.query(users.age).between(18, 65)               // BetweenTerm: bounds()
+const name  = await cipher.query(users.name).matches('ali')               // MatchesTerm
+const city  = await cipher.query(users.profile).atPath('$.address.city').eq('Sydney')
 
-- **Drizzle** (`@cipherstash/stack-drizzle`): `ops.matches(users.name,
-  'ali')` already names the operator rather than the index, and emits the
-  `@@` form with the query-domain cast. It gains `ops.matches(..).limit(10,
-  stats)` to size the fetch, and the rows come back through
-  `client.decryptModels` and `term.verify`, which the operator helper can
-  return beside the SQL so the application never handles the term itself:
+cipher.query(users.email).matches('bob')   // type error: TextEq answers eq and neq
+cipher.query(users.age).lt('40')           // type error: IntegerOrdOre takes a number
+```
 
-  ```ts
-  const q = await ops.matches(users.name, 'ali')
-  const rows = await db.select().from(users).where(q.sql).orderBy(users.id).limit(q.limit(10, stats))
-  const hits = (await client.bulkDecryptModels(rows)).data.filter((u) => q.verify(u.name)).slice(0, 10)
-  ```
+The type behind it is the `Answers<Op>` table of decision 3, as a mapped
+type over the column's EQL type:
 
-  `ops.between(users.age, 18, 65)` is one call that binds two parameters,
-  which is what it does today.
-- **Prisma** (`@cipherstash/stack-prisma`): `u.name.eqlMatch('ali')` is the
-  operator; the verification step is the same `filter` over the decrypted
-  result, and `eqlBetween(lo, hi)` is one call and two parameters.
-- **Kysely**, **postgres.js**, **pg**: the term is a parameter with the cast
-  in the SQL text, exactly as in Go.
+```ts
+type Query<C extends EqlColumn> = {
+  [Op in AnswersOf<C>]: (input: InputOf<C, Op>) => Promise<TermOf<C, Op>>
+}
+```
 
-One difference from Go. The TypeScript SDK writes EQL v3 today and the Rust
-engine writes v4, so the casts a TypeScript query emits are
-`eql_v3.query_*` until the SDK moves. The model does not change with the
-version; the domain names do.
+and `TermOf` carries the fidelity of decision 4 as the presence of methods,
+not as a flag:
+
+```ts
+interface Term<P>          { readonly domain: string; toJSON(): unknown }   // exact: nothing else
+interface Probabilistic<P> extends Term<P> { verify(value: P): boolean; targetLimit(want: number, stats: Stats): Limit }
+interface Ranked<P>        extends Term<P> { score(value: P): number;   targetLimit(want: number): number }
+```
+
+`name.verify('Alice')` type-checks; `email.verify(..)` does not exist. The
+engine does the verifying through the binding, batched per page, for the
+reason given above; the method on the term is a thin call. `verify` returns
+`boolean`, never throws, as decision 4 says.
+
+**The term binds as a parameter, and the cast is in the SQL.** A term
+serialises to the JSON its query domain takes (`toJSON`), so every PostgreSQL
+driver binds it unchanged. The statement from decision 6, in the drivers
+TypeScript programs use:
+
+```ts
+// pg
+const limit = name.targetLimit(10, stats).fetch()
+const { rows } = await pool.query(
+  'SELECT id, name FROM users WHERE name @@ $1::eql_v4.query_text_match ORDER BY id LIMIT $2',
+  [name, limit],
+)
+
+// postgres.js
+const rows = await sql`
+  SELECT id, name FROM users
+  WHERE name @@ ${name}::eql_v4.query_text_match ORDER BY id LIMIT ${limit}`
+
+// Kysely
+const rows = await db.selectFrom('users').select(['id', 'name'])
+  .where(sql`name @@ ${name}::eql_v4.query_text_match`)
+  .orderBy('id').limit(limit).execute()
+```
+
+Decrypt and verify are the same two steps in each:
+
+```ts
+const people = await cipher.decrypt(users, rows)        // typed by the schema: name is a string
+const hits = people.filter((p) => name.verify(p.name)).slice(0, 10)
+const exhausted = rows.length < limit
+```
+
+`Between` is one call and two parameters, because every driver binds one
+value per placeholder:
+
+```ts
+const [lo, hi] = range.bounds()
+await pool.query(
+  'SELECT id, age FROM users WHERE age BETWEEN $1::eql_v4.query_integer_ord_ore AND $2::eql_v4.query_integer_ord_ore',
+  [lo, hi],
+)
+```
+
+**The ORM integrations are the same terms with the SQL written for them.**
+A Drizzle integration maps the schema to `customType` columns and gives each
+operator a helper that returns the SQL fragment and the term together, so the
+application never handles the term itself:
+
+```ts
+const q = await ops.matches(users.name, 'ali')          // { sql, verify, targetLimit }
+const rows = await db.select().from(users)
+  .where(q.sql)                                         // name @@ '…'::eql_v4.query_text_match
+  .orderBy(users.id)
+  .limit(q.targetLimit(10, stats).fetch())
+const hits = (await cipher.decrypt(users, rows)).filter((u) => q.verify(u.name)).slice(0, 10)
+```
+
+`ops.eq` returns `{ sql }` and no `verify`, by the same types. A Prisma
+integration spells the operator on the field (`u.name.eqlMatches('ali')`)
+and returns the term beside the query the same way. In both, `between` is
+one helper that binds two parameters.
+
+**Stats** come from the two statements of decision 5, run by the
+application, or from the declared prior:
+
+```ts
+const stats = Stats.measured(
+  (await pool.query("SELECT reltuples::bigint AS rows FROM pg_class WHERE oid = 'users'::regclass")).rows[0].rows,
+  (await pool.query('SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*) FROM users TABLESAMPLE SYSTEM (1) GROUP BY 1')).rows,
+)
+const prior = Stats.declared(1_000_000)   // uses users.name's expectedTokens
+```
+
+**The runtime-schema case.** The `wasm-inline` path today takes a schema
+loaded at runtime, with no TypeScript type behind it. There `cipher.query`
+cannot narrow, every operator method exists, and the engine's refusal of an
+unsupported operator is the check, on the first query rather than at build
+time. That is where the Go SDK was before `stashgen`, and the same fix
+applies if it matters: a generator that reads the schema and emits the
+declaration above.
 
 ### What the two languages say about the model
 
-Three things survive the translation, and one does not.
+Four things survive the translation, and one does not.
 
-The operator-not-index call survives, and is already how both language SDKs
-spell a query: `ops.matches`, `eqlBetween`, `eqlJsonPathGte`. The Rust API is
-catching up to its own bindings.
+The operator-not-index call survives, and the existing TypeScript SDK
+already spells its queries that way (`ops.matches`, `eqlBetween`,
+`eqlJsonPathGte`): the Rust API is catching up to its own bindings.
 
 The split between an exact and a probabilistic term survives as the presence
-or absence of a `verify` method, decided by a generator in Go and a union
-type in TypeScript, both fed by the engine's catalog. Neither language needs
-a `Fidelity` enum either.
+or absence of `verify`, decided by a generator in Go and by a mapped type in
+TypeScript, both fed by the engine's catalog. Neither language needs a
+`Fidelity` enum either.
 
 The "one term, two parameters" shape of `Between` survives, because every
-driver binds one value per placeholder and both SDKs already do it.
+driver binds one value per placeholder.
 
-What does not translate is the compile error for an unsupported operator in
-TypeScript when the schema is only known at runtime, which is the
-`wasm-inline` path with a declared schema. There the engine's refusal is the
-check, and it fires on the first query rather than at build time. That is
-the same place the Go SDK was before `stashgen`, and the same fix applies if
-it matters: a generator that reads the schema.
+The declared prior survives as one field in the schema (`expectedTokens`),
+which is where a TypeScript user would expect to write it.
+
+What does not translate is the compile error for an unsupported operator
+when the schema is only known at runtime. There the engine's refusal is the
+check, and nothing about the Rust model makes it fire earlier; only a
+generator does.
