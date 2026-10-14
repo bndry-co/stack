@@ -470,11 +470,11 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p
 // locateTermFailure names the row, field and index behind an ErrTerm from a
 // record call. The guest's error says what was wrong with the term but not
 // which value or field it came from, so the host asks the engine again, one
-// term at a time, which costs no key request: a term derives locally. The engine defines no match term for text that yields no
-// token (empty, separator-only, or shorter than the n-gram), because an
-// empty term would match every row; a program hands such a field a value or
-// drops the match index. p is the plan without this cipher's extension,
-// which Derive adds.
+// term at a time, which costs no key request: a term derives locally. A
+// stored value is never refused for its text (text with no token is stored
+// as the empty filter), so a term failure on a record is the scheme refusing
+// the value's kind under that index. p is the plan without this cipher's
+// extension, which Derive adds.
 func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows []record.Source, err error) error {
 	for i, row := range rows {
 		for _, f := range p.Fields {
@@ -483,7 +483,7 @@ func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows [
 					continue
 				}
 				if _, derr := cph.Derive(ctx, p, f.Name, o, row[f.Name]); errors.Is(derr, ErrTerm) {
-					return fmt.Errorf("%w: value %d, field %q: the engine derives no %s term for this value (a match index needs text with at least one token; an empty or separator-only string has none)", err, i, f.Name, indexWord(o))
+					return fmt.Errorf("%w: value %d, field %q: the engine derives no %s term for this value", err, i, f.Name, indexWord(o))
 				}
 			}
 		}

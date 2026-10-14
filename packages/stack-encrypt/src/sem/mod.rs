@@ -187,18 +187,20 @@ pub enum TermError {
     #[error("invalid match options: {0}")]
     #[diagnostic(code(stack_encrypt::invalid_match_options))]
     InvalidOptions(&'static str),
-    /// The text produced no tokens under the configured tokenizer — empty or
-    /// separator-only text, or (for n-grams, as in the v1 match indexer) text
-    /// shorter than the n-gram length. Rejected at generation time for both
-    /// the write and query paths: an empty term used as a query would
-    /// vacuously match every stored row, and a sub-gram-length probe could
-    /// never match anything (a silent false negative).
+    /// A match query's text produced no tokens under the index's tokenizer:
+    /// empty or separator-only text, or (for n-grams, as in the v1 match
+    /// indexer) text shorter than the n-gram length. A query with no tokens
+    /// would match every row, so the query chain refuses it when the query
+    /// is awaited, before a term exists. A *stored* value with no tokens is
+    /// not refused: it is stored as the empty filter, which no query
+    /// matches, so a short or empty value is a valid thing to hold in a
+    /// match column (ADR-0009).
     #[error(
-        "text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
+        "the query's text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
     )]
     #[diagnostic(
         code(stack_encrypt::empty_term_text),
-        help("A match term needs text with at least one token: a query with none would match every row, and one shorter than the n-gram length could match none. Match on longer text, or skip the match condition for this value.")
+        help("A match query needs text with at least one token: a query with none would match every row, and one shorter than the n-gram length could match none. Query on longer text, or leave the match condition out.")
     )]
     EmptyTermText,
     /// Term bytes do not decode under the term kind's frozen encoding — see
@@ -556,9 +558,11 @@ impl<O> MatchTerms<O> {
     ///
     /// An empty `query` returns `false`: containment of zero positions is
     /// vacuously true, which would turn an empty query into a match-every-row
-    /// query. Term generation already refuses to build such a term
-    /// ([`TermError::EmptyTermText`]); this guards any other
-    /// (e.g. deserialized) source of an empty term.
+    /// query. A query chain already refuses to build such a query
+    /// ([`TermError::EmptyTermText`]); this guards any other (e.g.
+    /// deserialized) source of an empty one. The stored side is the other
+    /// way round: a value with no tokens is stored as the empty filter, and
+    /// holds no query's positions, so no query matches it.
     pub fn matches(&self, query: &MatchQuery<O>) -> bool {
         self.contains(query.filter())
     }
@@ -782,12 +786,22 @@ pub struct QueryTokens(Zeroizing<Vec<String>>);
 impl QueryTokens {
     /// The tokens of `text` under `O`'s tokenizer and case folding.
     pub(crate) fn of<O: MatchConfig>(text: &str) -> Self {
-        let options = O::options();
+        Self::under(text, &O::options())
+    }
+
+    /// The tokens of `text` under `options`' tokenizer and case folding.
+    pub(crate) fn under(text: &str, options: &MatchOptions) -> Self {
         Self(Zeroizing::new(tokenize::tokenize(
             text,
             options.tokenizer,
             options.downcase,
         )))
+    }
+
+    /// Whether the text cut no token at all: the one query the library
+    /// refuses, because its filter would match every row.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -840,6 +854,13 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
 
 /// Derive a match term. Synchronous — see [`equality`]: validation and
 /// tokenization run before the PRF, the visitor folds blocks into positions.
+///
+/// Text that cuts no token (empty, separator-only, or shorter than the
+/// n-gram length) is the empty filter: no position set, no PRF call. Stored,
+/// it is a value no query matches, since a query always has at least one
+/// token and the empty filter holds none of its positions. This is the
+/// *stored* side's answer; a query of such text is refused by the query
+/// chain before it gets here ([`TermError::EmptyTermText`]).
 fn match_term<O>(
     prf: &HmacSha256Prf,
     text: &str,
@@ -849,7 +870,7 @@ fn match_term<O>(
     let mask = options.validate()?;
     let tokens = tokenize::tokenize(text, options.tokenizer, options.downcase);
     if tokens.is_empty() {
-        return Err(TermError::EmptyTermText);
+        return Ok(MatchTerms::normalised(Vec::new()));
     }
     let context = Context::pae(&[MATCH_DOMAIN, context.as_bytes()]);
 
@@ -1278,15 +1299,15 @@ impl<K> KeysetCipher<'_, K> {
     /// to the target-directed path for the same `O`. For custom options,
     /// define a marker type implementing [`MatchConfig`].
     ///
-    /// The same call serves both write time (index the stored text) and query
-    /// time (index the probe text, then test [`MatchTerms::contains`]
-    /// server-side).
-    ///
-    /// Fails with [`TermError::EmptyTermText`] — as
-    /// [`Error::Term`], once awaited — when the text
-    /// yields no tokens: empty or separator-only text, or an n-gram probe
-    /// shorter than the gram length (which could never match; see
-    /// [`Tokenizer::Ngram`]).
+    /// This derives the *stored* filter. Text that yields no tokens (empty
+    /// or separator-only text, or text shorter than the n-gram length; see
+    /// [`Tokenizer::Ngram`]) is the empty filter, which no query matches,
+    /// so a short value can be stored. A query is the other type,
+    /// [`MatchQuery`], and comes from the query chain
+    /// (`cipher.query(op::Matches, ..)`), which refuses a query of such
+    /// text ([`TermError::EmptyTermText`]) because its filter would match
+    /// every row; this method does not know which it is deriving and
+    /// refuses nothing.
     pub fn match_terms<'c, O>(
         &self,
         text: &str,

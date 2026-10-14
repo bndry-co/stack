@@ -96,6 +96,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under it. `FieldPlan::with_target`, `FieldPlan::target()`,
   `Plan::new_with`.
 
+### Changed
+
+- **A match value with no tokens is stored as the empty filter; only a query
+  with none is refused.** Text that cuts no token under the match index's
+  tokenizer (empty or separator-only text, or text shorter than the n-gram
+  length) used to fail term derivation on both sides, so one two-letter name
+  failed a whole row. Now the stored term is the empty filter (`bf: []`),
+  which no query matches, and the value seals and opens as any other; the
+  `dynamic` record path stores it the same way. A *query* of such text is
+  still refused, with `TermError::EmptyTermText` as before, because its
+  filter would match every row: `cipher.query(op::Matches, ..)` refuses it
+  when the query is awaited, before a term exists and before any keyset is
+  loaded (`op::Supports::check` now takes the query's value), and
+  `dynamic::term` refuses it for a match kind. `KeysetCipher::match_terms`
+  derives the stored filter and no longer fails on such text (ADR-0009).
+
 ### Breaking
 
 - **The query chain starts with the operator.** `cipher.query(op, v)`

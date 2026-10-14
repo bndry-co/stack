@@ -45,7 +45,13 @@
 //! [`query_index`](crate::StackCipher::query_index), before any key is
 //! requested.
 //! So is a match configuration whose [`MatchCase`] disagrees with its
-//! options.
+//! options, and so is the one query value the library refuses: text that
+//! cuts no token under the match index's tokenizer, whose filter would
+//! match every row ([`TermError::EmptyTermText`]). The stored side has no
+//! such refusal: a value with no tokens is stored as the empty filter,
+//! which no query matches.
+//!
+//! [`TermError::EmptyTermText`]: crate::sem::TermError::EmptyTermText
 //!
 //! The module is meant to be used by path (`op::Eq`): an imported `Eq`
 //! would shadow the prelude's `Eq` trait.
@@ -60,9 +66,11 @@ use stack_kms::MaybeSend;
 pub(crate) mod stats;
 pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE, MAX_ROWS};
 
-use crate::sem::{DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, QueryTokens};
+use crate::sem::{
+    DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, QueryTokens, TermError,
+};
 use crate::target::{Equality, Index, Match};
-use crate::PlanError;
+use crate::{Error, PlanError};
 
 /// A query operator: a unit type naming what a query asks of the server.
 ///
@@ -294,9 +302,13 @@ pub trait Supports<Op: Operator, S>: Index<S> {
     /// its own text holds all three. The filter cannot give the tokens back,
     /// so without the verifier a Bloom false positive would reach the caller.
     type Verifier: MaybeSend + 'static;
-    /// Why this index cannot answer `Op` as configured, if it cannot: a
-    /// match index whose [`MatchCase`] disagrees with its options.
-    fn check(&self) -> Result<(), PlanError>;
+    /// Why this index cannot answer `Op` as configured, or over `value`, if
+    /// it cannot: a match index whose [`MatchCase`] disagrees with its
+    /// options ([`PlanError::MatchCase`]), or a match query of text that
+    /// cuts no token ([`TermError::EmptyTermText`]), whose filter would
+    /// match every row. Run when the query is awaited, before any key is
+    /// requested; an index that refuses nothing returns `Ok(())`.
+    fn check(&self, value: &S) -> Result<(), Error>;
     /// The verifier of the query's plaintext `value`.
     fn verifier(&self, value: &S) -> Self::Verifier;
     /// The query term, from the verifier and the term the index derived for
@@ -321,7 +333,7 @@ impl QueryToken {
 impl<S: vitaminc_prf::PrfValue> Supports<Eq, S> for Equality {
     type Query = EqualityTerm;
     type Verifier = ();
-    fn check(&self) -> Result<(), PlanError> {
+    fn check(&self, _: &S) -> Result<(), Error> {
         Ok(())
     }
     fn verifier(&self, _: &S) {}
@@ -337,16 +349,22 @@ where
 {
     type Query = MatchQuery<O>;
     type Verifier = QueryTokens;
-    fn check(&self) -> Result<(), PlanError> {
+    fn check(&self, value: &S) -> Result<(), Error> {
         let folds = O::options().downcase;
-        if folds == O::Case::FOLDS {
-            Ok(())
-        } else {
-            Err(PlanError::MatchCase {
+        if folds != O::Case::FOLDS {
+            return Err(PlanError::MatchCase {
                 declared: O::Case::NAME,
                 folds,
-            })
+            }
+            .into());
         }
+        // A query with no tokens would match every row. The stored side
+        // keeps such a value as the empty filter; the query side refuses it
+        // here, before any term is derived.
+        if QueryTokens::of::<O>(value.as_ref()).is_empty() {
+            return Err(TermError::EmptyTermText.into());
+        }
+        Ok(())
     }
     fn verifier(&self, value: &S) -> QueryTokens {
         QueryTokens::of::<O>(value.as_ref())
