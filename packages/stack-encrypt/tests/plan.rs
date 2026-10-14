@@ -304,7 +304,7 @@ async fn a_query_derives_under_the_label_the_write_used() {
         .await
         .unwrap();
     assert_eq!(matching.to_bytes(), email.terms.1.to_bytes());
-    let ore: OreTerm<u32> = cipher.query_index(Ore, &34u32).on(&age_plan).await.unwrap();
+    let ore: OreTerm<u32> = cipher.query(op::Lt, &34u32).on(&age_plan).await.unwrap();
     assert_eq!(ore.to_bytes(), age.terms.1.to_bytes());
 
     // A different value is a different term: the query is not a constant.
@@ -349,7 +349,7 @@ async fn a_query_against_an_undeclared_index_or_type_is_refused() {
     let notes_plan = users_plan.field("notes").unwrap();
 
     assert_eq!(
-        plan_error(cipher.query_index(Ope, &34u32).on(&age_plan).await),
+        plan_error(cipher.query(op::Lt, &34u32).via(Ope).on(&age_plan).await),
         PlanError::IndexNotDeclared {
             field: "age".into(),
             index: "ope"
@@ -397,7 +397,7 @@ async fn a_one_value_plan_writes_queries_by_type_and_reads_back() {
 
     let eq = cipher.query(op::Eq, &34u32).on(&age_plan).await.unwrap();
     assert_eq!(eq, out.terms.0);
-    let ore = cipher.query_index(Ore, &34u32).on(&age_plan).await.unwrap();
+    let ore = cipher.query(op::Gte, &34u32).on(&age_plan).await.unwrap();
     assert_eq!(ore.to_bytes(), out.terms.1.to_bytes());
 
     // Byte-identical to the combinator, under the same label.
@@ -843,7 +843,8 @@ async fn a_refused_chain_never_loads_the_keyset_it_names() {
     assert!(matches!(
         plan_error(
             cipher
-                .query_index(Ope, &34u32)
+                .query(op::Gt, &34u32)
+                .via(Ope)
                 .on(&age_plan)
                 .keyset("tenant")
                 .await
@@ -1199,7 +1200,7 @@ async fn match_options_must_agree_for_a_query_to_be_declared() {
             }
         }
     }
-    impl op::MatchCase for Shingles {
+    impl stack_encrypt::op::MatchCase for Shingles {
         type Case = op::CaseSensitive;
     }
     let cipher = stack_cipher().await;
@@ -1725,8 +1726,10 @@ async fn a_chain_shows_no_value() {
         format!("{:?}", cipher.query(op::Eq, &secret)),
         format!("{:?}", cipher.query(op::Eq, &secret).via(Equality)),
         format!("{:?}", cipher.query(op::Eq, &secret).on(&email_plan)),
-        format!("{:?}", cipher.query_index(Ore, &secret)),
-        format!("{:?}", cipher.query_index(Ore, &secret).on(&email_plan)),
+        format!(
+            "{:?}",
+            cipher.query(op::Between, &(secret.clone(), secret.clone()))
+        ),
         format!("{:?}", cipher.open(secret.clone())),
         format!("{:?}", cipher.open(FieldValues::new()).using(&users_plan)),
         format!(

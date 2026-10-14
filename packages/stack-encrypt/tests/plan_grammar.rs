@@ -1132,17 +1132,18 @@ async fn a_typed_field_answers_the_queries_its_target_declares_and_no_other() {
         .on(&email_plan)
         .await
         .unwrap();
-    assert_eq!(matched.to_bytes(), stored.terms.1.to_bytes());
+    assert_eq!(matched.positions(), stored.terms.1.positions());
     assert_eq!(
         plan_error(
             cipher
-                .query_index(Ore, "bob@example.com")
-                .on(&email_plan)
+                .query(op::Lt, &34u32)
+                .via(Ope)
+                .on(&users_plan.field("age").unwrap())
                 .await
         ),
         PlanError::IndexNotDeclared {
-            field: "email".into(),
-            index: "ore"
+            field: "age".into(),
+            index: "ope"
         }
     );
     assert_eq!(
@@ -1329,13 +1330,14 @@ async fn a_one_value_typed_plan_answers_its_targets_queries_and_no_other() {
     assert_eq!(
         plan_error(
             cipher
-                .query_index(Ore, "bob@example.com")
+                .query(op::Matches, "bob")
+                .via(Match)
                 .on(&email_plan)
                 .await
         ),
         PlanError::IndexNotDeclared {
             field: "the value".into(),
-            index: "ore"
+            index: "match"
         }
     );
 }
@@ -1354,8 +1356,9 @@ async fn a_one_value_plan_quotes_no_call_context_in_its_refusals() {
 
     let error = plan_error(
         cipher
-            .query_index(Ore, "bob@example.com")
+            .query(op::Matches, "bob")
             .context(marker)
+            .via(Match)
             .on(&plan)
             .await,
     );
@@ -1363,7 +1366,7 @@ async fn a_one_value_plan_quotes_no_call_context_in_its_refusals() {
         error,
         PlanError::IndexNotDeclared {
             field: "the value".into(),
-            index: "ore"
+            index: "match"
         }
     );
     let message = error.to_string();

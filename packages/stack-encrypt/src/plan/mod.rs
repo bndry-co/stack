@@ -301,7 +301,7 @@
 //! | `fields()` | each field picked out of the value (by name, or by a picker's accessor as `project` does), `zip`ped |
 //! | `extend(parts)` | the [`DeclaredContext`](crate::target::DeclaredContext) the description runs under |
 //! | `using(&plan)` | [`KeysetCipher::run`](crate::KeysetCipher::run) of [`Plan::encryption`] |
-//! | `query(op, v).on(..)`, `query_index(x, v).on(..)` | the answering index's operation alone, `.under(label)`; for `op`, mapped to its query term ([`Supports::query`](crate::op::Supports::query)) |
+//! | `query(op, v).on(..)` | the answering index's operation alone, `.under(label)`, once per plaintext the operator takes ([`Input`](crate::op::Input)), mapped to its query term ([`Supports::query`](crate::op::Supports::query)) |
 //! | `open(record).using(&plan)` | [`open`](crate::target::open) per field, run by `run_decryption` |
 //! | `.await`, [`all`] | `Pending::zip`, then one settle |
 //!
@@ -321,7 +321,7 @@ pub use build::{FieldKind, FieldPlan, FieldsBuilder, IntoLabel, Opens, Plan, Pla
 pub use chain::{
     all, All, Batch, Chooses, EncryptBuilder, EncryptFields, EncryptIndexed, EncryptUsing,
     EncryptWithContext, KeysetChoice, OpenBuilder, OpenUsing, Operation, PlanKms, QueryBuilder,
-    QueryIndex, QueryIndexBuilder, QueryOp, QueryVia, Resolves, Unanswered,
+    QueryOp, QueryVia, Resolves,
 };
 pub use error::PlanError;
 pub use field_ref::{pick, FieldRef};

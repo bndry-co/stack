@@ -45,6 +45,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copies of the text. An exact term has no `verify`, and none of this
   crate's indexes can answer `op::Matches` but with a probabilistic term
   (`op::TermFor`).
+- **The ordering operators, and `Between` as one term.** `op::Lt`, `Lte`,
+  `Gt` and `Gte` take one value and `op::Between` a pair of bounds,
+  `cipher.query(op::Between, &(18, 65)).on(&age_plan)`, inclusive at both
+  ends. They are answered over the integer types (`op::Ordered`) by the
+  `Ore` index by default and by `Ope` through `.via(Ope)`; an ordering on
+  text does not compile. A comparison's query term is the index's own term
+  for the value (`OreTerm`, `OpeTerm`); a range's is one `sem::RangeQuery`
+  carrying both bounds' terms, read with `lo()` and `hi()`, so no statement
+  can pair the low bound of one query with the high bound of another. A
+  range whose low bound is above its high bound is refused when the query
+  is awaited, before either term is derived (`TermError::InvertedRange`).
+  What a query takes is the operator's `op::Arity` (`op::One` or
+  `op::Pair`), and `op::Input` relates the value given to the plaintext the
+  plan is checked against (ADR-0009, decision 7).
 - **`target_limit` says how many rows a match query should fetch.**
   `query.target_limit(want, &stats)` is `want` plus the false positives
   expected at the confidence `stats` names (99% by default), as an
@@ -118,6 +132,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value is empty, separator-only or shorter than the n-gram length
   (ADR-0009).
 
+- **`StackCipher::query_index` is gone**, with `QueryIndexBuilder` and
+  `QueryIndex`: every index a plan can declare is reachable through an
+  operator now that the orderings have arrived. `query_index(Ore, &v)` is
+  `query(op::Lt, &v)` (or any ordering; the term is the same), and
+  `query_index(Match, text)` is `query(op::Matches, text)`, whose
+  `MatchQuery` carries the same filter.
+- **`op::Supports`, `op::Answers` and `op::DefaultIndex` are keyed by the
+  query's input**, `Supports<Op, In>` with `In: Input<Op::Arity>`, in
+  place of the plaintext; for every operator but `Between` the input is
+  the plaintext, so `Supports<Eq, S>` reads as before. `Supports::check`
+  takes the input and returns `Error`, and `Supports::query` takes the
+  input's terms (`In::Terms<Self::Term>`: one term, or a pair for a
+  range). `plan::Resolves::resolve` takes the index and the call's context
+  and returns the index and the label.
 - **The query chain starts with the operator.** `cipher.query(op, v)`
   replaces `cipher.query(v)`: `cipher.query(op::Eq, v).on(&plan)` replaces
   `cipher.query(v).using(&plan).equality()`, and `on` replaces `using` for

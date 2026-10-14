@@ -18,7 +18,8 @@
 //!   construction.
 //! * [`OreTerm`] / [`OpeTerm`] — CLLW order-revealing / order-preserving
 //!   ciphertexts produced *inside the PRF visitor* from a per-context key
-//!   derived through the PRF; range queries.
+//!   derived through the PRF; range queries. A `Between` query sends both
+//!   bounds' terms as one [`RangeQuery`].
 //!
 //! Every term type here is built on exactly one thing the cipher exposes
 //! publicly — its PRF ([`KeysetCipher::prf`], keyed by the index key of the
@@ -203,6 +204,16 @@ pub enum TermError {
         help("A match query needs text with at least one token: a query with none would match every row, and one shorter than the n-gram length could match none. Query on longer text, or leave the match condition out.")
     )]
     EmptyTermText,
+    /// A `Between` query's low bound is above its high bound, so the range
+    /// holds nothing. Refused when the query is awaited, before a term
+    /// exists. The range is inclusive at both ends, so equal bounds are one
+    /// value, not an error.
+    #[error("the range's low bound is above its high bound")]
+    #[diagnostic(
+        code(stack_encrypt::inverted_range),
+        help("Give `op::Between` its bounds as `(lo, hi)` with `lo <= hi`. The range is inclusive at both ends, so one value is `(v, v)`.")
+    )]
+    InvertedRange,
     /// Term bytes do not decode under the term kind's frozen encoding — see
     /// [`TermBytesError`].
     #[error(transparent)]
@@ -214,9 +225,11 @@ impl crate::ErrorPayload for TermError {
     fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
         match self {
             Self::Bytes(error) => error.payload(),
-            Self::Prf(_) | Self::Ore(_) | Self::InvalidOptions(_) | Self::EmptyTermText => {
-                serde_json::Map::new()
-            }
+            Self::Prf(_)
+            | Self::Ore(_)
+            | Self::InvalidOptions(_)
+            | Self::EmptyTermText
+            | Self::InvertedRange => serde_json::Map::new(),
         }
     }
 }
@@ -771,6 +784,49 @@ impl<O> PartialEq for MatchQuery<O> {
 }
 
 impl<O> Eq for MatchQuery<O> {}
+
+/// The query term of [`op::Between`](crate::op::Between): the index's
+/// terms for both bounds, as one value. Inclusive at both ends.
+///
+/// One query derives both bounds under one context, and the term stays
+/// one value in SQL (ADR-0009, decision 7), so no statement can pair the
+/// low bound of one query with the high bound of another, or bind them the
+/// wrong way round. `T` is the index's term: `OreTerm<u32>` for a range
+/// over an ORE index of `u32`, `OpeTerm<i64>` over an OPE index. The
+/// bounds are read with [`lo`](Self::lo) and [`hi`](Self::hi), each the
+/// term the index would send for that value alone, which is how a query
+/// domain that carries a range serialises it.
+///
+/// It comes only from a query chain: a range is never stored, and the
+/// chain refuses one whose low bound is above its high bound
+/// ([`TermError::InvertedRange`]) before either term is derived.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RangeQuery<T> {
+    lo: T,
+    hi: T,
+}
+
+impl<T> RangeQuery<T> {
+    /// The range `lo..=hi`, from the index's terms for its bounds.
+    pub(crate) fn new(lo: T, hi: T) -> Self {
+        Self { lo, hi }
+    }
+
+    /// The term of the low bound, inclusive.
+    pub fn lo(&self) -> &T {
+        &self.lo
+    }
+
+    /// The term of the high bound, inclusive.
+    pub fn hi(&self) -> &T {
+        &self.hi
+    }
+
+    /// The two bounds' terms, low then high.
+    pub fn into_bounds(self) -> (T, T) {
+        (self.lo, self.hi)
+    }
+}
 
 /// The query's tokens, as a match index cuts them from the query's value:
 /// a match query's verifier, which a [`MatchQuery`] keeps to verify a row. Plaintext, so it is

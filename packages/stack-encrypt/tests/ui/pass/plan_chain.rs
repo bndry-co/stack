@@ -61,7 +61,8 @@ async fn chains(cipher: &StackCipher<FakeDataKeySource>, person: &Person) -> Res
     let age_plan = Plan::context("people/age").with((Equality, Ore)).build()?;
     let ages = vec![1u32, 2];
     let _ = cipher.encrypt(&ages).using(&age_plan).await?;
-    let _ = cipher.query_index(Ore, &3u32).on(&age_plan).await?;
+    let _ = cipher.query(op::Lt, &3u32).on(&age_plan).await?;
+    let _ = cipher.query(op::Between, &(1u32, 5)).on(&age_plan).await?;
     let _ = stack_encrypt::all((
         cipher.encrypt(person).using(&people_plan),
         cipher.query(op::Eq, &3u32).on(&age_plan),

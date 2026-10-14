@@ -1,22 +1,27 @@
 //! Operators: what a query asks of the server, as a type.
 //!
-//! A query names an *operator* ([`Eq`](struct@Eq), [`Matches`](struct@Matches)), and the plan it
-//! runs on finds the index that answers it. The operator is a unit type
-//! passed by value, as an index is (`.via(Ore)`):
+//! A query names an *operator* ([`Eq`](struct@Eq), [`Lt`], [`Between`],
+//! [`Matches`](struct@Matches)), and the plan it runs on finds the index
+//! that answers it. The operator is a unit type passed by value, as an
+//! index is (`.via(Ore)`), and it decides what the query takes: one value
+//! for most, a pair of bounds for `Between`:
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
 //! use stack_encrypt::kms::FakeDataKeySource;
-//! use stack_encrypt::{op, Equality, Match, Plan, StackCipher};
+//! use stack_encrypt::{op, Equality, Match, Ore, Plan, StackCipher};
 //!
 //! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let email_plan = Plan::context("users/email")
 //!     .with::<String, _>((Equality, Match))
 //!     .build()?;
+//! let age_plan = Plan::context("users/age").with::<u32, _>(Ore).build()?;
 //!
 //! let exact = cipher.query(op::Eq, "bob@example.com").on(&email_plan).await?;
 //! let search = cipher.query(op::Matches, "bob").on(&email_plan).await?;
-//! # let _ = (exact, search);
+//! let under = cipher.query(op::Lt, &40u32).on(&age_plan).await?;
+//! let range = cipher.query(op::Between, &(18u32, 65)).on(&age_plan).await?;
+//! # let _ = (exact, search, under, range);
 //! # Ok(())
 //! # }
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
@@ -24,34 +29,42 @@
 //!
 //! Three traits connect an operator to an index, and ADR-0009 records why:
 //!
-//! - [`Supports<Op, S>`] is on an index, for each operator it can answer
-//!   over plaintexts `S`, and names the [`QueryTerm`] it sends. That term is
-//!   not the stored term: an equality index sends the same HMAC it stores,
-//!   but a match index sends a filter over the query's value
-//!   ([`MatchQuery`]), where it stores a filter over the stored value
-//!   ([`MatchTerms`]).
-//! - [`Answers<Op, S>`] is on a target type, a domain type such as an EQL
+//! - [`Supports<Op, In>`] is on an index, for each operator it can answer
+//!   and the input `In` the query takes, and names the [`QueryTerm`] it
+//!   sends. That term is not the stored term: an equality index sends the
+//!   same HMAC it stores, but a match index sends a filter over the query's
+//!   value ([`MatchQuery`]), where it stores a filter over the stored value
+//!   ([`MatchTerms`]), and an ORE index sends one [`RangeQuery`] for
+//!   `Between`, carrying both bounds, where it stores one term per value.
+//! - [`Answers<Op, In>`] is on a target type, a domain type such as an EQL
 //!   type, and names the index that answers `Op` for it. It is written by
 //!   hand per type, because the choice decides what the query term reveals.
-//! - [`DefaultIndex<S>`] is on an operator, and names the index a plan that
+//! - [`DefaultIndex<In>`] is on an operator, and names the index a plan that
 //!   declares its indexes, rather than a target type, answers it with.
 //!
+//! What a query takes is the operator's [`Arity`]: [`One`] plaintext, or a
+//! [`Pair`] of them as a tuple. [`Input<A>`] says, for the value a query is
+//! given, which plaintext the index is declared over (`S` for `(S, S)`),
+//! so the plan's type is checked against it.
+//!
 //! What the types can see is checked at compile time: a match query on an
-//! integer, an operator a target type does not answer, and, on a one-value
-//! plan, an index the plan does not hold or a case-sensitive match against
-//! a case-folding index. A field of a fields plan is data, so there an
-//! index the field does not declare, or declares with other options, is
-//! refused when the query is awaited, as with
-//! [`query_index`](crate::StackCipher::query_index), before any key is
-//! requested.
-//! So is a match configuration whose [`MatchCase`] disagrees with its
-//! options, and so is the one query value the library refuses: text that
-//! cuts no token under the match index's tokenizer, whose filter would
-//! match every row ([`TermError::EmptyTermText`]). The stored side has no
-//! such refusal: a value with no tokens is stored as the empty filter,
-//! which no query matches.
+//! integer, an ordering on text, an operator a target type does not answer,
+//! and, on a one-value plan, an index the plan does not hold or a
+//! case-sensitive match against a case-folding index. A field of a fields
+//! plan is data, so there an index the field does not declare, or declares
+//! with other options, is refused when the query is awaited, before any
+//! key is requested. So is a match configuration whose [`MatchCase`]
+//! disagrees with its options, and so are the two query values the library
+//! refuses: match text that cuts no token under the index's tokenizer,
+//! whose filter would match every row ([`TermError::EmptyTermText`]), and
+//! a `Between` whose low bound is above its high bound
+//! ([`TermError::InvertedRange`]). The stored side has no such refusal: a
+//! value with no tokens is stored as the empty filter, which no query
+//! matches.
 //!
 //! [`TermError::EmptyTermText`]: crate::sem::TermError::EmptyTermText
+//! [`TermError::InvertedRange`]: crate::sem::TermError::InvertedRange
+//! [`RangeQuery`]: crate::sem::RangeQuery
 //!
 //! The module is meant to be used by path (`op::Eq`): an imported `Eq`
 //! would shadow the prelude's `Eq` trait.
@@ -66,21 +79,195 @@ use stack_kms::MaybeSend;
 pub(crate) mod stats;
 pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE, MAX_ROWS};
 
-use crate::sem::{DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, QueryTokens};
-use crate::target::{Equality, Index, Match};
-use crate::{Error, PlanError};
+use crate::sem::{
+    CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, EqualityTerm, MatchConfig, MatchQuery,
+    MatchTerms, OpeTerm, OreTerm, QueryTokens, RangeQuery, TermError,
+};
+use crate::target::{DeclaredContext, Equality, Index, Match, Ope, Ore, Owned, Pending};
+use crate::{Error, KeysetCipher, Label, NonEmpty, PlanError};
 
-/// A query operator: a unit type naming what a query asks of the server.
+/// A query operator: a unit type naming what a query asks of the server,
+/// and how many plaintexts it asks about ([`Arity`]).
 ///
 /// The trait is open, as [`Index`] is: an operator defined in another crate
 /// is answered by the indexes that implement [`Supports`] for it.
-pub trait Operator: Copy + 'static {}
+pub trait Operator: Copy + 'static {
+    /// What a query for this operator takes: [`One`] plaintext, or a
+    /// [`Pair`] of them as a tuple.
+    type Arity: Arity;
+}
 
 /// Equality: rows whose value equals the query's.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Eq;
 
-impl Operator for Eq {}
+impl Operator for Eq {
+    type Arity = One;
+}
+
+/// Less than: rows whose value is below the query's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Lt;
+
+/// Less than or equal: rows whose value is at or below the query's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Lte;
+
+/// Greater than: rows whose value is above the query's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Gt;
+
+/// Greater than or equal: rows whose value is at or above the query's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Gte;
+
+/// A range: rows whose value is between the query's two bounds, inclusive
+/// at both ends. It takes a [`Pair`], `cipher.query(op::Between, &(lo, hi))`,
+/// derives both bounds under one context, and sends them as one term
+/// ([`RangeQuery`]), so no statement can pair the
+/// low bound of one query with the high bound of another. A pair whose low
+/// bound is above its high bound is refused when the query is awaited
+/// ([`TermError::InvertedRange`]); one
+/// value is `(v, v)`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Between;
+
+impl Operator for Lt {
+    type Arity = One;
+}
+impl Operator for Lte {
+    type Arity = One;
+}
+impl Operator for Gt {
+    type Arity = One;
+}
+impl Operator for Gte {
+    type Arity = One;
+}
+impl Operator for Between {
+    type Arity = Pair;
+}
+
+/// How many plaintexts a query for an operator takes: [`One`] or a
+/// [`Pair`]. Sealed: the chain derives a term per plaintext and joins them
+/// as the arity says, so there are exactly these two.
+pub trait Arity: sealed::Sealed + 'static {}
+
+/// One plaintext: the query is given an `S` (`Eq`, `Lt`, `Matches`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct One;
+
+/// Two plaintexts: the query is given an `(S, S)` (`Between`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Pair;
+
+impl Arity for One {}
+impl Arity for Pair {}
+
+/// What a query of arity `A` is given, and the plaintext its index is
+/// declared over: an `S` is an input of [`One`] over `S`, and an `(S, S)`
+/// an input of [`Pair`] over `S`. The chain's value type is the input, and
+/// the plan is checked against the plaintext.
+///
+/// Those are the two impls. The arity decides how the chain derives terms
+/// from the input, which is what [`derive`](Self::derive) does.
+pub trait Input<A: Arity>: Sized + 'static {
+    /// The plaintext the index is declared over.
+    type Plaintext: 'static;
+    /// The index's terms for this input: one, or a pair of them.
+    type Terms<T: 'static>: 'static;
+
+    /// Derive the index's term for each plaintext of the input under
+    /// `label`, as one pending. Only a query chain calls this.
+    #[doc(hidden)]
+    fn derive<'a, 'p, I, K>(
+        self,
+        index: &I,
+        keyset: &'p KeysetCipher<'a, K>,
+        label: Label,
+        extend: DeclaredContext,
+    ) -> Pending<'p, Self::Terms<I::Term>, K>
+    where
+        I: Index<Self::Plaintext>,
+        K: 'static;
+}
+
+impl<S: 'static> Input<One> for S {
+    type Plaintext = S;
+    type Terms<T: 'static> = T;
+
+    fn derive<'a, 'p, I, K>(
+        self,
+        index: &I,
+        keyset: &'p KeysetCipher<'a, K>,
+        label: Label,
+        extend: DeclaredContext,
+    ) -> Pending<'p, I::Term, K>
+    where
+        I: Index<S>,
+        K: 'static,
+    {
+        keyset.run(
+            index.operation::<K, Owned>().under(NonEmpty::from(label)),
+            self,
+            extend,
+        )
+    }
+}
+
+/// Both bounds under the one label, settled together.
+impl<S: 'static> Input<Pair> for (S, S) {
+    type Plaintext = S;
+    type Terms<T: 'static> = (T, T);
+
+    fn derive<'a, 'p, I, K>(
+        self,
+        index: &I,
+        keyset: &'p KeysetCipher<'a, K>,
+        label: Label,
+        extend: DeclaredContext,
+    ) -> Pending<'p, (I::Term, I::Term), K>
+    where
+        I: Index<S>,
+        K: 'static,
+    {
+        let (lo, hi) = self;
+        let lo = keyset.run(
+            index
+                .operation::<K, Owned>()
+                .under(NonEmpty::from(label.clone())),
+            lo,
+            extend.clone(),
+        );
+        let hi = keyset.run(
+            index.operation::<K, Owned>().under(NonEmpty::from(label)),
+            hi,
+            extend,
+        );
+        lo.zip(hi)
+    }
+}
+
+/// A plaintext the ordering operators ([`Lt`], [`Lte`], [`Gt`], [`Gte`],
+/// [`Between`]) are answered over: the integer types, whose ORE and OPE
+/// terms order as the values do and whose order key is the value itself.
+/// Text is not one: its order term is a catalog question (ADR-0009, ADR-0002),
+/// and an ordering on a text plan does not compile.
+pub trait Ordered:
+    PartialOrd
+    + CllwOreEncrypt<Output: Send + 'static>
+    + CllwOpeEncrypt<Output: Send + 'static>
+    + Send
+    + 'static
+{
+}
+
+macro_rules! ordered {
+    ($($int:ty),+ $(,)?) => {$(
+        impl Ordered for $int {}
+    )+};
+}
+ordered!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
 
 /// Text search: rows whose text contains the query's tokens, under the
 /// match index's tokenizer. Not containment: a Bloom match is order- and
@@ -146,12 +333,16 @@ impl<C: Case> fmt::Debug for Matches<C> {
     }
 }
 
-impl<C: Case> Operator for Matches<C> {}
+impl<C: Case> Operator for Matches<C> {
+    type Arity = One;
+}
 
 mod sealed {
     pub trait Sealed {}
     impl Sealed for super::CaseInsensitive {}
     impl Sealed for super::CaseSensitive {}
+    impl Sealed for super::One {}
+    impl Sealed for super::Pair {}
 }
 
 /// The case a text operator is asked in: [`CaseInsensitive`] or
@@ -209,6 +400,9 @@ pub trait QueryTerm {}
 
 impl QueryTerm for EqualityTerm {}
 impl<O> QueryTerm for MatchQuery<O> {}
+impl<S: CllwOreEncrypt> QueryTerm for OreTerm<S> {}
+impl<S: CllwOpeEncrypt> QueryTerm for OpeTerm<S> {}
+impl<T: QueryTerm> QueryTerm for RangeQuery<T> {}
 
 /// A query term whose answer can hold **false positives and no false
 /// negatives**: a row the server returns may not match, and a row that
@@ -270,28 +464,40 @@ pub trait Probabilistic: QueryTerm {
 pub trait TermFor<Op: Operator>: QueryTerm {}
 
 impl<T: QueryTerm> TermFor<Eq> for T {}
+impl<T: QueryTerm> TermFor<Lt> for T {}
+impl<T: QueryTerm> TermFor<Lte> for T {}
+impl<T: QueryTerm> TermFor<Gt> for T {}
+impl<T: QueryTerm> TermFor<Gte> for T {}
+impl<T: QueryTerm> TermFor<Between> for T {}
 impl<C: Case, T: Probabilistic> TermFor<Matches<C>> for T {}
 
-/// An index that answers the operator `Op` over plaintexts `S`, and the
+/// An index that answers the operator `Op` for the input `In`, and the
 /// query term it sends for it.
 ///
-/// [`Index::Term`] is what the index derives; [`query`](Self::query) makes
-/// the query term from it and from the query's [`Verifier`](Self::Verifier).
-/// For an equality index the two are the same HMAC and there is nothing to
-/// verify. For a match index they are not: the query is a filter over the
-/// query's value, which matches some rows that do not hold the value, so
-/// the query keeps that value's tokens to
-/// [`verify`](Probabilistic::verify) each decrypted row.
+/// `In` is what the query is given: the plaintext the index is declared
+/// over for an operator of arity [`One`] (`Supports<Eq, S>`), a pair of
+/// them for [`Between`] (`Supports<Between, (S, S)>`); [`Input`] relates
+/// the two.
+///
+/// [`Index::Term`] is what the index derives, once per plaintext of the
+/// input; [`query`](Self::query) makes the query term from those and from
+/// the query's [`Verifier`](Self::Verifier). For an equality index the two
+/// are the same HMAC and there is nothing to verify. For a match index they
+/// are not: the query is a filter over the query's value, which matches
+/// some rows that do not hold the value, so the query keeps that value's
+/// tokens to [`verify`](Probabilistic::verify) each decrypted row.
+/// For `Between` the two terms of the bounds become one
+/// [`RangeQuery`].
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` does not answer `{Op}` over `{S}`",
-    label = "this index cannot answer the operator",
-    note = "an equality index answers `op::Eq`; a match index answers `op::Matches` over text, in the case its configuration fixes"
+    message = "`{Self}` does not answer `{Op}` given `{In}`",
+    label = "this index cannot answer the operator for this input",
+    note = "an equality index answers `op::Eq`; a match index answers `op::Matches` over text, in the case its configuration fixes; an ORE or OPE index answers `op::Lt`, `Lte`, `Gt` and `Gte` over an integer, and `op::Between` over a pair of them"
 )]
-pub trait Supports<Op: Operator, S>: Index<S> {
+pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     /// What this index sends for `Op`.
     type Query: TermFor<Op>;
-    /// What the query term keeps of the query's plaintext so that it can
-    /// later check a decrypted row, taken before the plaintext is consumed.
+    /// What the query term keeps of its input so that it can later check a
+    /// decrypted row, taken before the input is consumed.
     ///
     /// An exact term checks nothing, so its verifier is `()`. A match
     /// query's is [`crate::sem::QueryTokens`]: `Supports<Matches,
@@ -300,29 +506,32 @@ pub trait Supports<Op: Operator, S>: Index<S> {
     /// its own text holds all three. The filter cannot give the tokens back,
     /// so without the verifier a Bloom false positive would reach the caller.
     type Verifier: MaybeSend + 'static;
-    /// Why this index cannot answer `Op` as configured, or over `value`, if
+    /// Why this index cannot answer `Op` as configured, or for `input`, if
     /// it cannot: a match index whose [`MatchCase`] disagrees with its
-    /// options ([`PlanError::MatchCase`]), or a match query of text that
-    /// cuts no token ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)), whose filter would
-    /// match every row. Run when the query is awaited, before any key is
-    /// requested; an index that refuses nothing returns `Ok(())`.
-    fn check(&self, value: &S) -> Result<(), Error>;
-    /// The verifier of the query's plaintext `value`.
-    fn verifier(&self, value: &S) -> Self::Verifier;
+    /// options ([`PlanError::MatchCase`]), a match query of text that cuts
+    /// no token ([`TermError::EmptyTermText`]), whose filter would match
+    /// every row, or a range whose low bound is above its high bound
+    /// ([`TermError::InvertedRange`]).
+    /// Run when the query is awaited, before any key is requested; an
+    /// index that refuses nothing returns `Ok(())`.
+    fn check(&self, input: &In) -> Result<(), Error>;
+    /// The verifier of the query's `input`.
+    fn verifier(&self, input: &In) -> Self::Verifier;
     /// [`check`](Self::check), then [`verifier`](Self::verifier): the query's
-    /// verifier of `value`, or why the index refuses it. A query chain
+    /// verifier of `input`, or why the index refuses it. A query chain
     /// calls this when it derives the term. An index whose check and verifier
     /// do the same work overrides it to do that work once: a match index
     /// tokenises the query's value for both.
-    fn admit(&self, value: &S) -> Result<Self::Verifier, Error> {
-        self.check(value)?;
-        Ok(self.verifier(value))
+    fn admit(&self, input: &In) -> Result<Self::Verifier, Error> {
+        self.check(input)?;
+        Ok(self.verifier(input))
     }
-    /// The query term, from the verifier and the term the index derived for
-    /// the query's value. Only a query chain calls this: `QueryToken`
-    /// cannot be made outside this crate, so no caller can pair one query's tokens
-    /// with another value's filter, or pass a stored term off as a query.
-    fn query(verifier: Self::Verifier, term: Self::Term, token: QueryToken) -> Self::Query;
+    /// The query term, from the verifier and the terms the index derived
+    /// for the input's plaintexts. Only a query chain calls this:
+    /// `QueryToken` cannot be made outside this crate, so no caller can
+    /// pair one query's tokens with another value's filter, or pass a
+    /// stored term off as a query.
+    fn query(verifier: Self::Verifier, terms: In::Terms<Self::Term>, token: QueryToken) -> Self::Query;
 }
 
 /// Proof that [`Supports::query`] is called by a query chain. Only this
@@ -337,7 +546,7 @@ impl QueryToken {
     }
 }
 
-impl<S: vitaminc_prf::PrfValue> Supports<Eq, S> for Equality {
+impl<S: vitaminc_prf::PrfValue + 'static> Supports<Eq, S> for Equality {
     type Query = EqualityTerm;
     type Verifier = ();
     fn check(&self, _: &S) -> Result<(), Error> {
@@ -351,7 +560,7 @@ impl<S: vitaminc_prf::PrfValue> Supports<Eq, S> for Equality {
 
 impl<S, O> Supports<Matches<O::Case>, S> for Match<O>
 where
-    S: AsRef<str>,
+    S: AsRef<str> + 'static,
     O: MatchCase,
 {
     type Query = MatchQuery<O>;
@@ -383,7 +592,68 @@ where
     }
 }
 
-/// A target type that answers the operator `Op` over plaintexts `S`, and
+/// The ordering operators on the ORE and OPE indexes, over the integer
+/// types ([`Ordered`]). The query term for a comparison is the index's own
+/// term for the value: this crate's ORE is CLLW, whose ciphertext has no
+/// left half to send alone, so what is sent is what is stored, as for an
+/// HMAC. `Between` sends both bounds' terms as one `RangeQuery`.
+macro_rules! orders {
+    ($($index:ident => $term:ident),+ $(,)?) => {$(
+        orders!(@one $index => $term; Lt, Lte, Gt, Gte);
+        impl<S: Ordered> Supports<Between, (S, S)> for $index {
+            type Query = RangeQuery<$term<S>>;
+            type Verifier = ();
+            fn check(&self, (lo, hi): &(S, S)) -> Result<(), Error> {
+                if lo > hi {
+                    Err(TermError::InvertedRange.into())
+                } else {
+                    Ok(())
+                }
+            }
+            fn verifier(&self, _: &(S, S)) {}
+            fn query((): (), (lo, hi): ($term<S>, $term<S>), _: QueryToken) -> Self::Query {
+                RangeQuery::new(lo, hi)
+            }
+        }
+        impl<S: Ordered> Answers<Between, (S, S)> for $term<S> {
+            type Via = $index;
+        }
+    )+};
+    (@one $index:ident => $term:ident; $($op:ident),+) => {$(
+        impl<S: Ordered> Supports<$op, S> for $index {
+            type Query = $term<S>;
+            type Verifier = ();
+            fn check(&self, _: &S) -> Result<(), Error> {
+                Ok(())
+            }
+            fn verifier(&self, _: &S) {}
+            fn query((): (), term: $term<S>, _: QueryToken) -> $term<S> {
+                term
+            }
+        }
+        impl<S: Ordered> Answers<$op, S> for $term<S> {
+            type Via = $index;
+        }
+    )+};
+}
+orders!(Ore => OreTerm, Ope => OpeTerm);
+
+/// The ordering operators default to the ORE index; an OPE index is named
+/// with `.via(Ope)`.
+macro_rules! default_ore {
+    ($($op:ident),+ $(,)?) => {$(
+        impl<S: Ordered> DefaultIndex<S> for $op {
+            type Via = Ore;
+        }
+    )+};
+}
+default_ore!(Lt, Lte, Gt, Gte);
+
+impl<S: Ordered> DefaultIndex<(S, S)> for Between {
+    type Via = Ore;
+}
+
+/// A target type that answers the operator `Op` for the input `In`, and
 /// the index it answers it with.
 ///
 /// Written by hand per type: a type with two indexes that both answer an
@@ -392,23 +662,23 @@ where
 /// that does not answer an operator has no impl, and the query does not
 /// compile.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` does not answer `{Op}` over `{S}`",
+    message = "`{Self}` does not answer `{Op}` given `{In}`",
     label = "this target type does not answer the operator",
     note = "a target answers the operators its type implements `Answers` for; `.via(index)` names an index the target declares"
 )]
-pub trait Answers<Op: Operator, S> {
+pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
     /// The index that answers `Op` for this type. An index is a unit type,
     /// so its `Default` is the index.
-    type Via: Supports<Op, S> + Default;
+    type Via: Supports<Op, In> + Default;
 }
 
-impl<S: vitaminc_prf::PrfValue> Answers<Eq, S> for EqualityTerm {
+impl<S: vitaminc_prf::PrfValue + 'static> Answers<Eq, S> for EqualityTerm {
     type Via = Equality;
 }
 
 impl<S, O> Answers<Matches<O::Case>, S> for MatchTerms<O>
 where
-    S: AsRef<str>,
+    S: AsRef<str> + 'static,
     O: MatchCase,
 {
     type Via = Match<O>;
@@ -416,14 +686,18 @@ where
 
 /// A ciphertext with one term beside it, the shape of a `plaintext = ..`
 /// record without the struct, answers what its term answers.
-impl<Op: Operator, S, T: Answers<Op, S>> Answers<Op, S> for (crate::StackCipherText, T) {
+impl<Op: Operator, In: Input<Op::Arity>, T: Answers<Op, In>> Answers<Op, In>
+    for (crate::StackCipherText, T)
+{
     type Via = T::Via;
 }
 
 /// A ciphertext with one term, as [`indexed`](crate::target::indexed)
 /// produces it, answers what its term answers. One with several terms
 /// names the index with `.via(index)`.
-impl<Op: Operator, S, T: Answers<Op, S>> Answers<Op, S> for crate::target::Encrypted<T> {
+impl<Op: Operator, In: Input<Op::Arity>, T: Answers<Op, In>> Answers<Op, In>
+    for crate::target::Encrypted<T>
+{
     type Via = T::Via;
 }
 
@@ -437,20 +711,20 @@ impl<Op: Operator, S, T: Answers<Op, S>> Answers<Op, S> for crate::target::Encry
 /// [`Answers`] impl is not consulted, and a field whose type answers
 /// through another index needs `via`.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` has no default index over `{S}`",
+    message = "`{Self}` has no default index given `{In}`",
     label = "no default index answers this operator here",
-    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; name another index with `.via(index)`"
+    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; name another index, such as `Ope`, with `.via(index)`"
 )]
-pub trait DefaultIndex<S>: Operator {
+pub trait DefaultIndex<In: Input<Self::Arity>>: Operator {
     /// The index. An index is a unit type, so its `Default` is the index.
-    type Via: Supports<Self, S> + Default;
+    type Via: Supports<Self, In> + Default;
 }
 
-impl<S: vitaminc_prf::PrfValue> DefaultIndex<S> for Eq {
+impl<S: vitaminc_prf::PrfValue + 'static> DefaultIndex<S> for Eq {
     type Via = Equality;
 }
 
-impl<S: AsRef<str>> DefaultIndex<S> for Matches<<DefaultMatch as MatchCase>::Case> {
+impl<S: AsRef<str> + 'static> DefaultIndex<S> for Matches<<DefaultMatch as MatchCase>::Case> {
     type Via = Match;
 }
 
@@ -479,5 +753,22 @@ mod tests {
             "Matches<CaseSensitive>"
         );
         assert_eq!(format!("{:?}", Eq), "Eq");
+        assert_eq!(format!("{:?}", Between), "Between");
+    }
+
+    /// The ordering operators default to ORE, and a range is refused only
+    /// when its bounds are the wrong way round: `(v, v)` is one value.
+    #[test]
+    fn a_range_is_checked_before_any_term_is_derived() {
+        let ok = |pair: (u32, u32)| Supports::<Between, (u32, u32)>::check(&Ore, &pair).is_ok();
+        assert!(ok((1, 2)));
+        assert!(ok((2, 2)));
+        assert!(!ok((3, 2)));
+        assert!(matches!(
+            Supports::<Between, (i64, i64)>::check(&Ope, &(1, -1)),
+            Err(Error::Term(TermError::InvertedRange))
+        ));
+        assert!(Supports::<Lt, u8>::check(&Ore, &7).is_ok());
+        assert!(Supports::<Gte, i128>::check(&Ope, &-7).is_ok());
     }
 }
