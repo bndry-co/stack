@@ -4,6 +4,7 @@ import {
   appendEvent,
   type MigrationEvent,
   type MigrationPhase,
+  type MigrationStateRow,
   progress,
 } from './state.js'
 
@@ -105,6 +106,13 @@ export interface ChunkedRunOptions<Row extends { pk: string }> {
    * key. Off for the forward backfill, whose resume behaviour is pinned.
    */
   resumeFromError?: boolean
+  /**
+   * Called with the event a run is about to resume from. Return `false` to
+   * start a fresh pass instead; throw to refuse the run before anything is
+   * recorded. Lets a direction refuse to resume a pass that ran in a
+   * different mode (the reverse backfill's `force`).
+   */
+  canResume?: (last: MigrationStateRow) => boolean
   onProgress?: (progress: ChunkedRunProgress) => void
 }
 
@@ -144,14 +152,15 @@ export async function runChunkedMigration<Row extends { pk: string }>(
   const trackSkipped = options.trackSkipped ?? false
 
   const last = await progress(db, tableName, stateColumn)
+  const resumable =
+    last !== null &&
+    (last.event === events.checkpoint ||
+      (options.resumeFromError === true &&
+        last.event === 'error' &&
+        last.phase === events.runningPhase &&
+        last.cursorValue !== null))
   const resumedFrom =
-    last?.event === events.checkpoint ||
-    (options.resumeFromError === true &&
-      last?.event === 'error' &&
-      last.phase === events.runningPhase &&
-      last.cursorValue !== null)
-      ? last
-      : null
+    resumable && (options.canResume?.(last) ?? true) ? last : null
   const resumeCursor = resumedFrom ? resumedFrom.cursorValue : null
   const resumed = resumeCursor !== null
   const priorProcessed = resumedFrom ? (resumedFrom.rowsProcessed ?? 0) : 0

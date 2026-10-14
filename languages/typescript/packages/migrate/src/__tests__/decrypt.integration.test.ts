@@ -25,6 +25,7 @@ import { columnHasValues, countUndecrypted } from '../cursor.js'
 import {
   type BulkDecryptItem,
   type DecryptionClientLike,
+  ForcedPassIncompleteError,
   MAX_DECRYPT_CHUNK_SIZE,
   PlaintextWriteError,
   runDecryptBackfill,
@@ -307,6 +308,66 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     expect(fixed.rowsProcessed).toBe(300)
     expect(stubClient.calls).toEqual([100])
     expect(await plaintextCount()).toBe(300)
+  })
+
+  it('will not finish an interrupted --force pass without --force', async () => {
+    await seed(300)
+    // Stale plaintext everywhere: the case --force exists for.
+    await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
+
+    const controller = new AbortController()
+    await run({
+      force: true,
+      signal: controller.signal,
+      onProgress: (p) => {
+        if (p.rowsProcessed >= 100) controller.abort()
+      },
+    })
+    const db = await pool.connect()
+    let before: string | undefined
+    try {
+      before = (await progress(db, TABLE, 'email_encrypted'))?.id
+    } finally {
+      db.release()
+    }
+
+    // A plain re-run would resume at row 101 and keep rows 101-300 stale.
+    await expect(run()).rejects.toBeInstanceOf(ForcedPassIncompleteError)
+    const after = await pool.connect()
+    try {
+      expect((await progress(after, TABLE, 'email_encrypted'))?.id).toBe(before)
+    } finally {
+      after.release()
+    }
+
+    const finished = await run({ force: true })
+    expect(finished.resumed).toBe(true)
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ${TABLE} WHERE email = 'stale@example.com'`,
+    )
+    expect(rows[0]?.n).toBe('0')
+  })
+
+  it('a --force run does not resume an unforced pass: it starts from the first row', async () => {
+    await seed(300)
+    await pool.query(
+      `UPDATE ${TABLE} SET email = 'stale@example.com' WHERE id <= 50`,
+    )
+
+    const controller = new AbortController()
+    await run({
+      signal: controller.signal,
+      onProgress: (p) => {
+        if (p.rowsProcessed >= 100) controller.abort()
+      },
+    })
+
+    const forced = await run({ force: true })
+    expect(forced.resumed).toBe(false)
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ${TABLE} WHERE email = 'stale@example.com'`,
+    )
+    expect(rows[0]?.n).toBe('0')
   })
 
   it('never puts a decrypted value in a write error, its message or the error event', async () => {

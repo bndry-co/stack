@@ -100,6 +100,25 @@ export class PlaintextWriteError extends Error {
 }
 
 /**
+ * Thrown, before anything is recorded, when a run without `force` would
+ * resume a pass that was started WITH it. That pass was overwriting every
+ * row's plaintext from the ciphertext; continuing it without `force` would
+ * leave every row after the cursor with whatever plaintext it already had,
+ * which is exactly what `force` was chosen to replace. Names only.
+ */
+export class ForcedPassIncompleteError extends Error {
+  constructor(
+    readonly tableName: string,
+    readonly encryptedColumn: string,
+  ) {
+    super(
+      `The decrypt pass in progress for ${tableName}.${encryptedColumn} was started with --force and has not finished. Re-run with --force to finish it: without it, the rows it has not reached would keep their existing plaintext instead of being overwritten from the ciphertext.`,
+    )
+    this.name = 'ForcedPassIncompleteError'
+  }
+}
+
+/**
  * The largest chunk one write can carry. Each decrypted row binds TWO
  * parameters in the chunk's `UPDATE … FROM (VALUES ($1, $2), …)` (the primary
  * key and the value), and Postgres's wire protocol caps a statement at 65535
@@ -241,7 +260,10 @@ const REVERSE_EVENTS = {
  *
  * **Resume.** A run resumes from its last checkpoint, and also from an
  * `error` event, which records the last committed cursor; a failed run does
- * not throw away the progress before it.
+ * not throw away the progress before it. A pass keeps the mode it started
+ * in: resuming a `force` pass without `force` throws
+ * {@link ForcedPassIncompleteError}, and a `force` run over an unforced pass
+ * starts from the first row.
  *
  * **Write errors.** A failed chunk write throws {@link PlaintextWriteError},
  * never the database's own message, which can contain the decrypted value.
@@ -281,8 +303,17 @@ export async function runDecryptBackfill(
     events: REVERSE_EVENTS,
     trackSkipped: true,
     resumeFromError: true,
-    baseDetails: { plaintextColumn },
-    startedDetails: force ? { force: true } : {},
+    // `force` on every event, so a resume knows which mode the pass ran in.
+    baseDetails: force ? { plaintextColumn, force: true } : { plaintextColumn },
+    canResume: (last) => {
+      const lastForced = last.details?.force === true
+      if (lastForced && !force) {
+        throw new ForcedPassIncompleteError(tableName, encryptedColumn)
+      }
+      // A forced run never resumes an unforced pass: the rows before its
+      // cursor were never overwritten. It starts over from the first row.
+      return lastForced === force
+    },
     countPending: (after) =>
       countUndecrypted(
         db,

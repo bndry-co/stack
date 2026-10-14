@@ -8,6 +8,7 @@
 
 import {
   type DecryptBackfillResult,
+  ForcedPassIncompleteError,
   PlaintextWriteError,
   UndecryptableBatchError,
 } from '@cipherstash/migrate'
@@ -487,6 +488,20 @@ describe('decrypt backfill', () => {
 
     expect(p.log.error).toHaveBeenCalledWith(
       expect.stringContaining('"email" (integer): SQLSTATE 22P02'),
+    )
+    exitSpy.mockRestore()
+  })
+
+  it('prints a ForcedPassIncompleteError verbatim — finishing a --force pass needs --force', async () => {
+    migrateMocks.runDecryptBackfill.mockRejectedValueOnce(
+      new ForcedPassIncompleteError('users', 'email_encrypted'),
+    )
+    const exitSpy = spyExit()
+
+    await decryptBackfillCommand({ table: 'users', column: 'email_encrypted' })
+
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('Re-run with --force to finish it'),
     )
     exitSpy.mockRestore()
   })
