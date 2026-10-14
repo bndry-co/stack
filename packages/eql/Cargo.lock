@@ -1236,6 +1236,7 @@ name = "eql-encryption-tests"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "cipherstash-client",
  "eql-bindings",
  "eql-domains",
  "postgres",

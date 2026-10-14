@@ -1,7 +1,7 @@
 //! SteVec **entry** view type for the behaviour matrix. A `JsonbEntryInteger`
 //! reuses the `i32` plaintext oracle (`expected_forward`, pivots,
 //! `fixture_values`) but reaches its comparable value by extracting the entry
-//! at `v3_doc_integer::SELECTOR` and casting to `public.eql_v3_json_entry`, so the
+//! at the fixture's `$.field` op selector and casting to `public.eql_v3_json_entry`, so the
 //! matrix's correctness/ordering/null/order-by/count/index generators run
 //! against jsonb-entry comparisons instead of whole-column scalar casts.
 //!
@@ -59,7 +59,7 @@ impl ScalarType for JsonbEntryInteger {
 
     /// The scalar-shaped document fixture, not `fixtures.eql_v3_integer`.
     fn fixture_table_name() -> String {
-        "fixtures.v3_doc_integer".to_string()
+        v3_doc_integer::TABLE.to_string()
     }
 
     /// Single entry domain, variant-independent.
@@ -67,13 +67,22 @@ impl ScalarType for JsonbEntryInteger {
         "public.eql_v3_json_entry".to_string()
     }
 
-    /// Extract the entry at the pinned selector. `->` already yields
+    /// Extract the entry at the `$.field` op selector. `->` already yields
     /// `public.eql_v3_json_entry`; the call sites' `::public.eql_v3_json_entry` cast is
-    /// a no-op. The selector literal is explicitly typed as text so Postgres
+    /// a no-op. The selector operand is explicitly typed as text so Postgres
     /// resolves the `public.eql_v3_json_search -> text` operator instead of native jsonb path
     /// lookup. Parenthesised by the call sites (`({col})::{d}`).
+    ///
+    /// The selector is keyed by the CipherStash workspace, so it is not a
+    /// literal: this seam is static and called synchronously by the shared
+    /// matrix macros, so the expression reads the selector from the loaded
+    /// fixture in SQL (`v3_doc_integer::field_op_selector_subquery`, an
+    /// uncorrelated subquery Postgres evaluates once per statement).
     fn column_expr() -> String {
-        format!("payload -> '{}'::text", v3_doc_integer::SELECTOR)
+        format!(
+            "payload -> {}::text",
+            v3_doc_integer::field_op_selector_subquery()
+        )
     }
 
     fn to_sql_literal(value: &Self) -> String {
@@ -133,11 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn extracts_entry_at_selector() {
-        assert_eq!(
-            <JsonbEntryInteger as ScalarType>::column_expr(),
-            format!("payload -> '{}'::text", v3_doc_integer::SELECTOR),
-        );
+    fn entry_domain_and_ord_extractor() {
         assert_eq!(
             <JsonbEntryInteger as ScalarType>::sql_domain(Variant::Ord),
             "public.eql_v3_json_entry",

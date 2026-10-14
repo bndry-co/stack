@@ -562,21 +562,25 @@ monorepo, which is where the silent failures are.
   would pass if added — and this is the workspace whose `Cargo.lock` the
   lockstep bump actually moves. Left open only because it means editing the
   subtree's `mise.toml`.
-- **Two SQLx test constants are keyed to this repo's CI workspace.** SteVec
-  selectors are MACs over (column context, JSONPath) under a *workspace keyset*,
-  so `SELECTOR` in `tests/sqlx/src/fixtures/v3_doc_integer.rs` and `SEL_HELLO_OP`
-  in `tests/sqlx/src/fixtures/v3_ste_vec.rs` changed value — with no change to
-  Rust, SQL or fixture logic — the moment CI moved to this repo's
-  `CS_WORKSPACE_CRN` (`9467cc5d`, `da141339`). Each has a drift guard that
-  prints the candidate selectors and their discriminators rather than inferring
-  a replacement, because guessing wrong re-pins to the wrong leaf silently —
-  which had already happened once, `SEL_HELLO_OP` naming `$.number` while
-  claiming `$.hello` and surviving because an equality-only assertion cannot
-  separate them. **If you run the suite against your own CipherStash workspace
-  the guards will fire: do not commit your local value.** Rotating
-  `CS_WORKSPACE_CRN` re-pins both. `tests/sqlx/src/selectors.rs` holds five more
-  workspace-keyed constants with no consumers and no guard — delete or guard
-  them before using any of them.
+- **SteVec selectors in the SQLx suite are read from the fixtures, never
+  pinned.** A selector is a MAC over (column context, JSONPath) under the
+  *workspace keyset*, so the same path has a different selector in every
+  CipherStash workspace. Two pinned constants broke the whole suite each time
+  CI's `CS_WORKSPACE_CRN` changed (#1200). Tests now call
+  `fixtures::v3_doc_integer::field_op_selector` and
+  `fixtures::v3_ste_vec::hello_op_selector`, which apply a written rule to the
+  loaded fixture and fail, listing every candidate, when zero or several
+  selectors match. `tests/sqlx/tests/selector_literal_guard.rs` fails on a
+  random-looking standalone 32-hex run anywhere in the crate's source, SQL and
+  escaped JSON strings included, and runs DB-free in `mise run test:schema` so
+  fork PRs get it too; a forged selector must be
+  visibly fake (`"00000000000000000000000000000001"`). The suite passes against
+  any workspace. That a keyset and path still produce the same selector bytes is
+  pinned separately, in the encryption test crate
+  (`packages/eql/tests/encryption/tests/ste_vec_selectors.rs`, regenerated only
+  with `EQL_UPDATE_STE_VEC_SELECTORS=1`). It pins the cipherstash-client version
+  the EQL workspace resolves; protect-ffi resolves its own from its own
+  lockfile, so the pin covers protect-ffi's only while the two versions agree.
 - **`FROZEN_PUBLISHERS` is what stops this repo publishing a package whose
   publisher lives elsewhere, and it is a mechanism, not a status.** `scripts/release-gate.mjs` carries a map of every
   package that lives here but is published from another repository. For each,
