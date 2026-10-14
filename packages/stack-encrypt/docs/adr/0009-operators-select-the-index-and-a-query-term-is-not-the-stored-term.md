@@ -51,10 +51,12 @@ HMAC equality is the one index whose query term is byte-for-byte the stored
 term, and whose comparison means plaintext equality. OPE comes close only when
 its order key is lossless, as it is for integers. The others differ in kind.
 The order key is `orderable-bytes`' order-preserving encoding of the value,
-applied after whatever transform the column declares for the kind (ADR-0002
-defines a text fold; the encoding is pluggable, and what the term means
-follows it). The Rust library does not use cllw-ore's `orderize_string`,
-which an earlier draft of this ADR named.
+applied after whatever transform the column declares for the kind (the
+system
+[ADR-0002](../../../../docs/adr/0002-one-value-model-three-encodings-and-eql-v4-by-producer.md),
+not this directory's, defines a text fold; the encoding is pluggable, and
+what the term means follows it). The Rust library does not use cllw-ore's
+`orderize_string`, which an earlier draft of this ADR named.
 
 The term is a function of the index *and the operator*, not of the index
 alone. An ORE index answers `=`, `<` and a range with different query shapes;
@@ -103,16 +105,21 @@ loop are yours.
 ### 1. The caller names an operator; the operator is a type
 
 ```rust
-let term = cipher.query::<Eq>("bob@example.com").on(&users::email)?;
-let term = cipher.query::<Lt>(40).on(&users::age)?;
-let term = cipher.query::<Between>((18, 65)).on(&users::age)?;
-let term = cipher.query::<Matches>("ali").on(&users::name)?;
-let term = cipher.query::<AtPath<Eq>>(("$.address.city", "Sydney")).on(&users::profile)?;
+use stack_encrypt::op;
+
+let term = cipher.query(op::Eq, "bob@example.com").on(&users::email).await?;
+let term = cipher.query(op::Lt, 40).on(&users::age).await?;
+let term = cipher.query(op::Between, (18, 65)).on(&users::age).await?;
+let term = cipher.query(op::Matches, "ali").on(&users::name).await?;
+let term = cipher.query(op::AtPath(op::Eq), ("$.address.city", "Sydney")).on(&users::profile).await?;
 ```
 
-Operators are unit types, as in the original client, not a runtime enum. An
-operator carries its own input type: `Eq` takes one value, `Between` a pair,
-`Nearest` an embedding, `AtPath<Op>` a path and `Op`'s input.
+Operators are unit types, as in the original client, not a runtime enum, and
+a query passes one by value, as a plan passes an index (`.via(Ore)`). They are
+used by path (`op::Eq`), because an imported `Eq` would shadow the prelude's
+`Eq` trait. An operator carries its own input type: `Eq` takes one value,
+`Between` a pair, `Nearest` an embedding, `AtPath<Op>` a path and `Op`'s
+input. The query is awaited because deriving the term can retrieve a key.
 
 Operators come in three kinds. A **predicate** (`Eq`, `Lt`, `Lte`, `Gt`,
 `Gte`, `Between`, `Matches`, `StartsWith`, JSON `Contains`, `ContainedBy`)
@@ -126,41 +133,52 @@ match is not a containment. The accessor is `AtPath`, not `At`, because `At`
 alone does not say what it is at.
 
 Case is a parameter of the text operators, defaulting to the common case:
-`Matches<C = Insensitive>`, `StartsWith<C = Insensitive>`. A Bloom index
-implements the variant its configuration fixes (`downcase` on or off), so a
-case-sensitive query against a case-folding index is a type error, not an
-empty result.
+`Matches<C = CaseInsensitive>`, `StartsWith<C = CaseInsensitive>`, with
+`op::Matches.case_sensitive()` for the other. A Bloom index implements the
+variant its configuration fixes (`downcase` on or off), so a case-sensitive
+query against a case-folding index is a type error, not an empty result.
 
 ### 2. An index declares the operators it supports, and the query term for each
 
 ```rust
-trait Index { type Stored; }
+pub trait Operator: Copy + 'static {}
 
-trait Supports<Op>: Index {
-    type Input;            // what the operator takes: T, (T, T), an embedding …
-    type Query: Term;      // what this index sends for this operator
+pub trait Supports<Op: Operator, S>: Index<S> {
+    type Query: QueryTerm;   // what this index sends for this operator
+    fn check(&self) -> Result<(), PlanError>;
+    fn query(term: Self::Term, token: QueryToken) -> Self::Query;
 }
 ```
 
-`Query` is the query term, and decision 3 says what it must be. `Term` and
-the two traits that refine it are defined in decision 4. `Query` is not
-`Stored`. An ORE index's `Supports<Lt>::Query` is the left ciphertext; its
-`Stored` is left and right. A Bloom index's `Supports<Matches>::Query` is a
-filter over the needle; its `Stored` is a filter over the value.
+`S` is the plaintext type the index is over, and `Index<S>::Term` is the
+stored term it derives. `Query` is the query term, and `query` makes it from
+the term the index derived for the query's value. `QueryToken` can be made
+only inside the crate, so only a query chain calls `query`, and no caller can
+turn a stored term into a query term by hand. `check` refuses a configuration
+that cannot answer `Op` although its type says it can: a match index whose
+declared case disagrees with its `downcase` option.
 
-The bound tightens per operator. `Supports<Matches>` requires
-`Query: Probabilistic`; `Supports<Nearest>` requires `Query: Ranked`. An
+`QueryTerm` and the two traits that refine it are defined in decision 4.
+`Query` is not `Term`. An ORE index's `Supports<Lt, S>::Query` is the left
+ciphertext; its `Term` is left and right. A Bloom index's
+`Supports<Matches, S>::Query` is a filter over the needle (`MatchQuery`); its
+`Term` is a filter over the value (`MatchTerms`).
+
+The bound tightens per operator. `Supports<Matches, S>` requires
+`Query: Probabilistic`; `Supports<Nearest, S>` requires `Query: Ranked`. An
 index cannot claim an inexact operator without saying how its answer is
 checked.
 
 ### 3. The domain type chooses the best index for an operator
 
 ```rust
-trait Answers<Op> { type Via: Supports<Op>; }
+pub trait Answers<Op: Operator, S> {
+    type Via: Supports<Op, S> + Default;   // an index is a unit type, so its Default is the index
+}
 
-impl Answers<Eq>      for TextSearch { type Via = Hmac; }
-impl Answers<Lt>      for TextSearch { type Via = Ore;  }
-impl Answers<Matches> for TextSearch { type Via = Bloom<EqlMatch>; }
+impl Answers<op::Eq, String>      for TextSearch { type Via = Equality; }
+impl Answers<op::Lt, String>      for TextSearch { type Via = Ore; }
+impl Answers<op::Matches, String> for TextSearch { type Via = Match<EqlMatch>; }
 ```
 
 "Best" is defined per domain type, by hand, and means the most efficient or
@@ -169,28 +187,41 @@ dictate. A domain with both HMAC and ORE answers `Eq` with HMAC: cheaper to
 compare, and the ORE term reveals order. This is the decision the original
 client made by accident (first after a sort) and this ADR makes on purpose.
 
-A domain that does not answer an operator has no `Answers<Op>` impl, and the
-query is a compile error.
+A domain that does not answer an operator has no `Answers<Op, S>` impl, and
+the query is a compile error.
+
+A plan that declares its indexes rather than a domain type (a field of a
+fields plan, or a one-value plan built `with` indexes) has no type to hold
+`Answers`, so the operator names its own default, and a plan that declared
+another index for it names that one with `.via(index)`:
+
+```rust
+pub trait DefaultIndex<S>: Operator {
+    type Via: Supports<Self, S> + Default;
+}
+```
 
 ### 4. A query term is one of three things, and the trait it implements is its fidelity
 
 ```rust
-pub trait Term: Serialize { type Plaintext; }
+pub trait QueryTerm {}
 
-pub trait Probabilistic: Term {
+pub trait Probabilistic: QueryTerm {
+    type Plaintext;
     fn verify(&self, value: &Self::Plaintext) -> bool;
     fn target_limit(&self, want: u64, stats: &Stats) -> Limit;
 }
 
-pub trait Ranked: Term {
+pub trait Ranked: QueryTerm {
+    type Plaintext;
     fn score(&self, value: &Self::Plaintext) -> Score;
     fn target_limit(&self, want: u64) -> u64;
 }
 ```
 
-- A term that implements `Term` only is **exact**. The server's answer is the
-  answer. HMAC `Eq`, ORE and OPE on every kind, text included (`Lt`,
-  `Between`), JSON `AtPath<Eq>`.
+- A term that implements `QueryTerm` only is **exact**. The server's answer
+  is the answer. HMAC `Eq`, ORE and OPE (`Lt`, `Between`) on numbers and on
+  text, JSON `AtPath<Eq>`.
 - A `Probabilistic` term can return **false positives and no false
   negatives**. `verify` is the operator's own meaning, run on a decrypted
   value: it decides whether a row the server returned is a real match. Bloom
@@ -221,7 +252,7 @@ except dropping the row, which is `false` by another name. The one input the
 library refuses, a needle too short to tokenise, is refused at
 `cipher.query`, before a term exists.
 
-`Term::Plaintext` is the decrypted value the term is defined over, and that
+`Plaintext` is the decrypted value the term is defined over, and that
 is not always the value the user wrote. For `Matches` it is the text. For
 `Nearest` over a similarity index it is the stored embedding, or the LSH
 sketch when only the sketch is stored; `score` is exact with respect to what
@@ -238,12 +269,17 @@ says so.
 `AtPath<Lt>` are exact, as `Eq` and `Lt` are, and an accessor over a
 probabilistic leaf operator, should one be added, is `Probabilistic`.
 
+`QueryTerm` is a marker today, and the two refinements are added to it as
+the indexes that need them land. A term serialises to the JSON its query
+domain takes (decision 8), which is a property of each term type rather than
+of the trait.
+
 ### 5. Verification is the caller's, after decrypt; the library supplies the predicate and the bound
 
 The library never runs a query, so it cannot filter the result. What it gives
 a caller of a `Probabilistic` term is two things.
 
-`verify` is the predicate. For `Matches<Insensitive>`, it folds case,
+`verify` is the predicate. For `Matches<CaseInsensitive>`, it folds case,
 tokenises both sides with the index's own tokenizer and checks that the
 needle's n-grams occur in the value. Whether that check is n-gram containment
 or a substring test (they differ once the query is longer than one n-gram)
@@ -360,26 +396,29 @@ say so before the query runs. `λ` is also the number of decrypts a query will
 waste, which gives the Bloom parameters a number to be tuned against. Taking
 the bad row: a needle one character longer (`alic`, two 3-grams, `b = 12`)
 brings `λ` to 58; doubling `m` to 4,096 brings it to 268 at `b = 6`, and
-`m = 8,192` to 6. Halving `k` to 3 at `m = 2,048` also gives 268, since fewer
-hashes set fewer bits, but it weakens the filter against longer needles. The
-cheapest lever is often a minimum needle length for long-text columns, which
-a `Probabilistic` term can report from `target_limit` alone.
+`m = 8,192` to 6. A smaller `k` makes it worse, not better: at `k = 3` the
+needle `ali` sets 3 bits, so `b = 3`, and although the fill falls to
+`1 − e^(−3·200/2048) = 0.254`, `p = 0.254³ = 0.016` and `λ` is about 16,400,
+twice the `k = 6` figure. For one-gram needles the best `k` is near
+`(m/n)·ln 2 ≈ 7`, so `k = 6` is close to it already. The cheapest lever is
+often a minimum needle length for long-text columns, which a `Probabilistic`
+term can report from `target_limit` alone.
 
 #### Text ordering
 
-`Lt` on text is exact, decision 4, so none of the above applies to it: no
-`p`, no `verify`, no `target_limit`. The term is an order term over the
-column's order key, which is `orderable-bytes`' encoding of the value after
-the text transform the column declares (ADR-0002's fold, or another, since
-the encoding is pluggable), and the server compares keys. Two values with
-one key tie; that is what the column declared, and an earlier draft of this
-ADR was wrong to call it a false positive and put the term under
-`Probabilistic`. Its use is ordering and cursor paging on names (`ORDER BY
-name`, "the page after Nguyen"), and EQL v4 carries `query_text_ord` and
-`query_text_ord_ore` for it. Whether the Rust library produces the term is a
-catalog question (`TextOrdOre` is unproducible today, pending ADR-0002);
-nothing else in this ADR depends on it, and if text ordering is dropped this
-paragraph goes with it.
+`Lt` on text is exact, decision 4, so none of the above applies to it: no `p`,
+no `verify`, no `target_limit`. The term is an order term over the column's
+order key, which is `orderable-bytes`' encoding of the value after the text
+transform the column declares (the system ADR-0002's fold, or another, since
+the encoding is pluggable), and the server compares keys. Two values with one
+key tie; that is what the column declared, and an earlier draft of this ADR
+was wrong to call it a false positive and put the term under `Probabilistic`.
+Its use is ordering and cursor paging on names (`ORDER BY name`, "the page
+after Nguyen"), and EQL v4 carries `query_text_ord` and `query_text_ord_ore`
+for it. Whether the Rust library produces the term is a catalog question
+(`TextOrdOre` is unproducible today, pending the system ADR-0002); nothing
+else in this ADR depends on it, and if text ordering is dropped this paragraph
+goes with it.
 
 A `Ranked` term's `target_limit` applies the index's configured recall
 factor and needs no `Stats`.
@@ -390,7 +429,7 @@ A `Probabilistic` term composes with the caller's query library like this. One
 shot, with a bound, and the completeness check from decision 5:
 
 ```rust
-let term  = cipher.query::<Matches>("ali").on(&users::name)?;
+let term  = cipher.query(op::Matches, "ali").on(&users::name).await?;
 let fetch = term.target_limit(10, &stats).fetch();
 
 let rows: Vec<UserRow> = sqlx::query_as(
@@ -413,7 +452,7 @@ an exactly ordered column, carried into the next page as `WHERE id > $cursor`
 instead of an `OFFSET`:
 
 ```rust
-let term = cipher.query::<Matches>("ali").on(&users::name)?;
+let term = cipher.query(op::Matches, "ali").on(&users::name).await?;
 let (mut hits, mut after, page) = (Vec::new(), 0_i64, 50_i64);
 
 while hits.len() < 10 {
@@ -445,7 +484,7 @@ the ranked loop is worth packaging; it is deferred, not refused.
 
 ### 7. `Between` is one term and one operand
 
-`cipher.query::<Between>((lo, hi))` produces one term carrying both ORE left
+`cipher.query(op::Between, (lo, hi))` produces one term carrying both ORE left
 ciphertexts, inclusive at both ends, and the client refuses `lo > hi`. One
 call derives both bounds, under one context, so a caller cannot pair a bound
 from one column with a bound from another.
@@ -481,10 +520,10 @@ together.
 The EQL v4 side carries one query domain per (type family, term), such as
 `eql_v4.query_text_match` and `eql_v4.query_integer_ord_ore`, rather than one
 per operator or one per stored domain. This is the "option B" of the design
-discussion and is recorded here so the Rust side's `Supports<Op>::Query` has a
-fixed target: the query term for an (index, operator) serialises to exactly
-one of those domains. `Between` serialises to one value of the family's range
-domain, which carries both bounds (decision 7).
+discussion and is recorded here so the Rust side's `Supports<Op, S>::Query`
+has a fixed target: the query term for an (index, operator) serialises to
+exactly one of those domains. `Between` serialises to one value of the
+family's range domain, which carries both bounds (decision 7).
 
 ## Considered options
 
@@ -514,8 +553,8 @@ is a non-match.
 own `LIMIT` and paging, and need a driver. That is a query interface, which
 this library is not.
 
-**A range as two terms**, `query::<Gte>(lo)` and `query::<Lte>(hi)` bound as
-two predicates. Rejected in favour of one `Between` term, decision 7. `Gte`
+**A range as two terms**, `query(op::Gte, lo)` and `query(op::Lte, hi)` bound
+as two predicates. Rejected in favour of one `Between` term, decision 7. `Gte`
 and `Lte` themselves stay; they are the open-ended comparisons, and a range
 is not two of them.
 
@@ -532,7 +571,7 @@ measured, and it costs one number in the index declaration. Decision 5.
 ADR-0004 decision 5 is superseded. Its rule — a stored term goes through a
 target, a query term comes from the query path — stands, but its
 justification was wrong and is replaced: the two differ for every index but
-HMAC and lossless OPE, and the query path is `cipher.query::<Op>(..)`, which
+HMAC and lossless OPE, and the query path is `cipher.query(op, ..)`, which
 produces a term the stored side never would.
 
 ADR-0007 needs an amendment once this ADR is accepted. The plan a binding
@@ -563,20 +602,21 @@ separately, so a `Nearest` query must select the embedding, or the sketch,
 as well.
 
 Text ordering needs no special case: `Lt` on text is an exact term over the
-order key, and what that key folds is ADR-0002's decision (the value model,
-#1139), which keeps equality off the order term for the same reason.
+order key, and what that key folds is the system ADR-0002's decision (the
+value model, linked above), which keeps equality off the order term for the
+same reason.
 
 EQL v4 gains `eql_v4.between(column, range)` and a range query domain per
 ordered family, under the inlining requirement of decision 7. That is
 EQL-side work this ADR asks for, not a deferral.
 
 It is a breaking change to the query chain. `QueryUsing::index(..)` goes;
-`QueryUsing::equality()` becomes `query::<Eq>`. The write side (`encrypt`,
-targets, plans) does not change.
+`QueryUsing::equality()` becomes `query(op::Eq, ..)`. The write side
+(`encrypt`, targets, plans) does not change.
 
 ## Deferred
 
-- Whether `Nearest` is `cipher.query::<Nearest>(..)` or a separate
+- Whether `Nearest` is `cipher.query(op::Nearest, ..)` or a separate
   `cipher.nearest(..)` entry, and whether a ranked query can carry further
   predicates. The latter is possible only when the server can join candidates
   to rows (the `ByRow` similarity mode), not in the per-band pseudonymous mode.
@@ -602,7 +642,7 @@ request, and yields `User`s.
 **`Eq`, exact.** The term is an HMAC; the operator is `=`. Nothing to verify.
 
 ```rust
-let term = cipher.query::<Eq>("bob@example.com").on(&users::email)?;
+let term = cipher.query(op::Eq, "bob@example.com").on(&users::email).await?;
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, email, name FROM users WHERE email = $1::eql_v4.query_text_eq",
@@ -616,7 +656,7 @@ let users = cipher.open(rows).using(&users_plan).await?;
 operator is `<`. `Lte`, `Gt` and `Gte` are the same shape.
 
 ```rust
-let term = cipher.query::<Lt>(40).on(&users::age)?;
+let term = cipher.query(op::Lt, 40).on(&users::age).await?;
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, email, name, age FROM users WHERE age < $1::eql_v4.query_integer_ord_ore ORDER BY age",
@@ -628,7 +668,7 @@ let rows: Vec<UserRow> = sqlx::query_as(
 **`Between`, exact, one term and one parameter** (decision 7).
 
 ```rust
-let term = cipher.query::<Between>((18, 65)).on(&users::age)?;
+let term = cipher.query(op::Between, (18, 65)).on(&users::age).await?;
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, email, name, age FROM users
@@ -645,7 +685,7 @@ the operator is `@@`, column on the left. The query selects the ciphertext
 `LIMIT` comes from `target_limit`:
 
 ```rust
-let term  = cipher.query::<Matches>("ali").on(&users::name)?;
+let term  = cipher.query(op::Matches, "ali").on(&users::name).await?;
 let fetch = term.target_limit(10, &stats).fetch();
 
 let rows: Vec<UserRow> = sqlx::query_as(
@@ -683,8 +723,8 @@ or, before anyone has measured, `Stats::declared(1_000_000)`, which uses the
 verified; `age` is exact and the server's answer stands:
 
 ```rust
-let name = cipher.query::<Matches>("ali").on(&users::name)?;
-let age  = cipher.query::<Gt>(30).on(&users::age)?;
+let name = cipher.query(op::Matches, "ali").on(&users::name).await?;
+let age  = cipher.query(op::Gt, 30).on(&users::age).await?;
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, name, age FROM users
@@ -705,7 +745,7 @@ containment, `@>`, which a GIN index serves. The row is a match when the
 document holds that value at that path, and nothing is verified.
 
 ```rust
-let term = cipher.query::<AtPath<Eq>>(("$.address.city", "Sydney")).on(&users::profile)?;
+let term = cipher.query(op::AtPath(op::Eq), ("$.address.city", "Sydney")).on(&users::profile).await?;
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, profile FROM users WHERE profile @> $1::eql_v3.query_json",
@@ -719,7 +759,7 @@ selector and a leaf term, because the SQL is `col -> selector >= term`. The
 accessor term exposes both:
 
 ```rust
-let term = cipher.query::<AtPath<Gte>>(("$.score", 80)).on(&users::profile)?;
+let term = cipher.query(op::AtPath(op::Gte), ("$.score", 80)).on(&users::profile).await?;
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, profile FROM users WHERE profile -> $1::text >= $2::eql_v3.query_double_ord",
@@ -738,7 +778,7 @@ the server returns candidates by token overlap; `score` re-ranks on the
 decrypted embedding, which the query must select:
 
 ```rust
-let term  = cipher.query::<Nearest>(embedding).on(&docs::vector)?;
+let term  = cipher.query(op::Nearest, embedding).on(&docs::vector).await?;
 let fetch = term.target_limit(10);
 
 let rows: Vec<DocRow> = sqlx::query_as(
@@ -790,7 +830,7 @@ and each is a capability the data grammar does not have yet, added once
 1. **An operator name with its input**, in place of the index:
    `{"op": "matches", "input": "ali"}`, `{"op": "between", "input": [18, 65]}`,
    `{"op": "at_path", "path": "$.score", "inner": {"op": "gte", "input": 80}}`.
-   The engine resolves `Answers<Op>` for the field's type and refuses an
+   The engine resolves `Answers<Op, S>` for the field's type and refuses an
    operator the type does not answer, with the same shape of error a
    mistyped field gets today.
 2. **The term back**, as the JSON its query domain takes, plus which domain
@@ -910,7 +950,7 @@ cipher.query(users.email).matches('bob')   // type error: TextEq answers eq and 
 cipher.query(users.age).lt('40')           // type error: IntegerOrdOre takes a number
 ```
 
-The type behind it is the `Answers<Op>` table of decision 3, as a mapped
+The type behind it is the `Answers<Op, S>` table of decision 3, as a mapped
 type over the column's EQL type:
 
 ```ts
