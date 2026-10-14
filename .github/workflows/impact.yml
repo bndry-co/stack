@@ -63,6 +63,8 @@ jobs:
       # repository-wide fallback: another release branch has different history.
       # Saves append the run to the commit's key (see "Save baselines"), so the
       # first restore key finds this commit's newest pair before any ancestor's.
+      # No entry is ever saved under the primary key itself, so it never matches:
+      # it is kept only to supply cache-primary-key to REFRESH and the save key.
       - name: Restore baselines
         id: restore
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
