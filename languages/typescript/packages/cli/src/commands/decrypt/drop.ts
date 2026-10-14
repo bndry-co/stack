@@ -8,7 +8,6 @@ import {
   listColumnIndexes,
   qualifyTable,
   quoteIdent,
-  removeManifestColumn,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import { BackfillConfigError } from '@/commands/encrypt/backfill.js'
@@ -71,6 +70,13 @@ export interface DecryptDropOptions {
  * check drops nothing even under a non-transactional runner. With
  * `--uninstall-eql`, the EQL v3 schemas are removed in the same block when,
  * and only when, no EQL v3 column remains anywhere in the database.
+ *
+ * Generating records `encrypted_dropped` (as `encrypt drop` records
+ * `dropped`), which stops a second migration being generated for the same
+ * column. It does NOT touch `.cipherstash/migrations.json`: the migration has
+ * not run yet, and its apply-time check can still abort it. The user removes
+ * the entry once it is applied; until then `stash encrypt status` reports the
+ * column as `reversed` rather than as drift.
  */
 export async function decryptDropCommand(options: DecryptDropOptions) {
   p.intro(runnerCommand(detectPackageManager(), 'stash decrypt drop'))
@@ -124,7 +130,7 @@ export async function decryptDropCommand(options: DecryptDropOptions) {
     )
     if (undecrypted > 0) {
       p.log.error(
-        `Refusing to generate the drop migration: ${undecrypted} row(s) in ${options.table} have "${options.column}" set but "${plaintextColumn}" NULL — dropping "${options.column}" would permanently destroy that data. Two causes:\n  - rows written without dual-writes since the backfill: re-run\n      stash decrypt backfill --table ${options.table} --column ${options.column}\n  - values the backfill could not decrypt (typically bound to an end-user lock context): decrypt them in your application as each user and write "${plaintextColumn}", then re-run the backfill.\nThen generate the drop again.`,
+        `Refusing to generate the drop migration: ${undecrypted} row(s) in ${options.table} have "${options.column}" set but "${plaintextColumn}" NULL — dropping "${options.column}" would permanently destroy that data. Possible causes:\n  - rows written to "${options.column}" alone since the backfill (dual-writes not deployed everywhere): re-run\n      stash decrypt backfill --table ${options.table} --column ${options.column}\n  - values the backfill could not decrypt (typically bound to an end-user lock context, or reported as NULL_PLAINTEXT): see the backfill's report. Decrypt lock-bound rows in your application as each user and write "${plaintextColumn}", then re-run the backfill.\n  - values your application CLEARED in "${plaintextColumn}" after it stopped writing "${options.column}". Do NOT re-run the backfill for these: it would write the old value back. Restore dual-writes, then set "${options.column}" to NULL on those rows.\nThen generate the drop again.`,
       )
       exitCode = 1
       return
@@ -186,29 +192,31 @@ export async function decryptDropCommand(options: DecryptDropOptions) {
       },
     })
 
-    // The intent to encrypt this column is withdrawn. Left behind, the entry
-    // would make `stash encrypt status` report the encrypted column's
-    // intentional absence as drift.
+    // The forward manifest entry stays until the migration is APPLIED: this
+    // file has not run, and its apply-time coverage check can still abort it.
+    // `stash encrypt status` shows the entry as `reversed` meanwhile.
     const manifestColumn = await manifestPlaintextFor(
       options.table,
       options.column,
     )
-    if (manifestColumn !== undefined) {
-      await removeManifestColumn(options.table, manifestColumn)
-      p.log.info(
-        `Removed ${options.table}.${manifestColumn} from .cipherstash/migrations.json — it is no longer an encryption target.`,
-      )
-    }
 
     p.log.success(`Migration written to ${filePath}`)
     p.note(
       [
         nextStep,
         '',
+        `Keep writing BOTH ${options.column} and ${plaintextColumn} until it is applied. The migration re-checks coverage when it runs and drops nothing if a row has ciphertext without plaintext.`,
+        '',
         `Once applied, remove ${options.column} from your schema:`,
         `  - Drizzle: delete the ${options.column} column from the table definition. If the next \`drizzle-kit generate\` emits a DROP COLUMN for it, delete that statement — this migration already drops it.`,
         `  - Prisma Next: remove the cipherstash.* field from the contract and re-emit it.`,
         `  - Remove the table/column from your encryption client schema if nothing else on it is encrypted.`,
+        ...(manifestColumn !== undefined
+          ? [
+              `  - Remove the ${options.table}.${manifestColumn} entry from .cipherstash/migrations.json: it is no longer an encryption target.`,
+            ]
+          : []),
+        '  - Then stop writing the encrypted column.',
       ].join('\n'),
       'Next',
     )

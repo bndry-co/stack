@@ -32,6 +32,7 @@ const migrateMocks = vi.hoisted(() => ({
   countEqlColumnsInDatabase: vi.fn(async () => 1),
   appendEvent: vi.fn(async () => {}),
   removeManifestColumn: vi.fn(async () => true),
+  columnHasValues: vi.fn(async () => false),
   readManifest: vi.fn(async (): Promise<unknown> => null),
   listEncryptedColumns: vi.fn(async () => [
     { column: 'email_encrypted', domain: 'eql_v3_text_search', version: 3 },
@@ -110,7 +111,27 @@ function pair(overrides: Partial<DecryptPair> = {}): DecryptPair {
     via: 'recorded',
     plaintextSqlType: 'text',
     state: decrypted('email'),
+    // A recorded reverse event means a lifecycle in progress, unless a test
+    // says otherwise.
+    lifecycleActive: 'state' in overrides ? overrides.state !== null : true,
+    forwardState: null,
     ...overrides,
+  }
+}
+
+/** A forward event recorded under the plaintext twin's name. */
+function forward(phase: MigrationStateRow['phase']): MigrationStateRow {
+  return {
+    id: '3',
+    tableName: 'users',
+    columnName: 'email',
+    event: phase === 'backfilled' ? 'backfilled' : 'dual_writing',
+    phase,
+    cursorValue: null,
+    rowsProcessed: null,
+    rowsTotal: null,
+    details: null,
+    createdAt: new Date(0),
   }
 }
 
@@ -213,6 +234,13 @@ describe('decrypt drop', () => {
     expect(p.log.error).toHaveBeenCalledWith(
       expect.stringContaining('lock context'),
     )
+    // A value cleared in the plaintext column after writes to the encrypted
+    // column stopped must not be "fixed" by a backfill that restores it.
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Do NOT re-run the backfill for these: it would write the old value back',
+      ),
+    )
     expect(writeFileMock).not.toHaveBeenCalled()
     expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(1)
@@ -314,7 +342,7 @@ describe('decrypt drop', () => {
     )
   })
 
-  it('withdraws the forward manifest entry for the column', async () => {
+  it('keeps the forward manifest entry until the migration is applied, and says to remove it then', async () => {
     migrateMocks.readManifest.mockResolvedValue({
       version: 1,
       tables: {
@@ -324,9 +352,16 @@ describe('decrypt drop', () => {
 
     await decryptDropCommand({ table: 'users', column: 'email_encrypted' })
 
-    expect(migrateMocks.removeManifestColumn).toHaveBeenCalledWith(
-      'users',
-      'email',
+    // Generating is not applying: the apply-time check can still abort.
+    expect(migrateMocks.removeManifestColumn).not.toHaveBeenCalled()
+    const next = vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Next')?.[0]
+    expect(next).toContain(
+      'Remove the users.email entry from .cipherstash/migrations.json',
+    )
+    expect(next).toContain(
+      'Keep writing BOTH email_encrypted and email until it is applied',
     )
   })
 
@@ -362,6 +397,7 @@ describe('decrypt plan', () => {
     vi.clearAllMocks()
     detectMocks.detectDrizzle.mockReturnValue(false)
     detectMocks.detectPrismaNext.mockReturnValue(false)
+    migrateMocks.columnHasValues.mockResolvedValue(false)
     resolveMock.mockResolvedValue(
       pair({ plaintextSqlType: null, state: null, via: 'convention' }),
     )
@@ -421,7 +457,7 @@ describe('decrypt plan', () => {
     )
   })
 
-  it('adds nothing for a twin that already exists', async () => {
+  it('adds nothing for an empty twin that already exists', async () => {
     resolveMock.mockResolvedValue(pair({ state: null }))
 
     await decryptPlanCommand({ table: 'users' })
@@ -430,6 +466,53 @@ describe('decrypt plan', () => {
     expect(p.log.info).toHaveBeenCalledWith(
       expect.stringContaining('already exists'),
     )
+    expect(p.log.warn).not.toHaveBeenCalled()
+  })
+
+  it('warns, with the backfill refusal text, when an existing twin already holds values', async () => {
+    resolveMock.mockResolvedValue(pair({ state: null }))
+    migrateMocks.columnHasValues.mockResolvedValueOnce(true)
+
+    await decryptPlanCommand({ table: 'users' })
+
+    expect(writeFileMock).not.toHaveBeenCalled()
+    const warning = vi.mocked(p.log.warn).mock.calls[0]?.[0] ?? ''
+    expect(warning).toContain('users.email already holds values')
+    expect(warning).toContain('--force')
+    expect(warning).toContain('--confirm-plaintext-current')
+    expect(p.note).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'stash decrypt backfill --table users --column email_encrypted <--force | --confirm-plaintext-current>',
+      ),
+      'Next',
+    )
+  })
+
+  it('warns when the twin is the source of a forward encryption that was never dropped', async () => {
+    resolveMock.mockResolvedValue(
+      pair({ state: null, forwardState: forward('backfilled') }),
+    )
+    migrateMocks.columnHasValues.mockResolvedValueOnce(true)
+
+    await decryptPlanCommand({ table: 'users' })
+
+    const warning = vi.mocked(p.log.warn).mock.calls[0]?.[0] ?? ''
+    expect(warning).toContain(
+      "forward phase 'backfilled' in cipherstash.cs_migrations",
+    )
+    expect(warning).toContain('every row updated since then has a stale value')
+  })
+
+  it('does not second-guess a twin the reverse lifecycle in progress filled', async () => {
+    resolveMock.mockResolvedValue(
+      pair({ state: { ...decrypted('email'), phase: 'decrypting' } }),
+    )
+    migrateMocks.columnHasValues.mockResolvedValue(true)
+
+    await decryptPlanCommand({ table: 'users' })
+
+    expect(migrateMocks.columnHasValues).not.toHaveBeenCalled()
+    expect(p.log.warn).not.toHaveBeenCalled()
   })
 
   it('overview: one line per EQL v3 column, surfacing pairings it cannot resolve', async () => {

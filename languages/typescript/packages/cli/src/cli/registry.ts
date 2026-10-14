@@ -91,7 +91,7 @@ const PLAINTEXT_COLUMN_FLAG: Flag = {
   name: '--plaintext-column',
   value: '<name>',
   description:
-    "The plaintext twin. Default: the pairing a previous run recorded, else the original name from .cipherstash/migrations.json, else the column name without its '_encrypted' suffix.",
+    "The plaintext twin. Default: the pairing the reverse migration in progress recorded, else the original name from .cipherstash/migrations.json, else the column name without its '_encrypted' suffix, else '<column>_plaintext'.",
 }
 
 /**
@@ -694,6 +694,12 @@ export const registry: CommandGroup[] = [
           'Values that cannot be decrypted with these credentials, typically ones',
           'bound to an end-user lock context, are skipped, counted, left NULL and',
           'reported; `decrypt drop` refuses while any remain.',
+          '',
+          'The first run refuses a plaintext column that already holds values, or',
+          'that a forward encryption started from and never dropped: the backfill',
+          'only fills NULLs, so stale values would survive. Pass --force to',
+          'overwrite them from the ciphertext, or --confirm-plaintext-current to',
+          'keep them. Keep writing both columns until the drop is applied.',
         ].join('\n'),
         examples: [
           'decrypt backfill --table users --column email_encrypted',
@@ -714,7 +720,8 @@ export const registry: CommandGroup[] = [
           {
             name: '--chunk-size',
             value: '<n>',
-            description: 'Rows decrypted per batch — one ZeroKMS request each.',
+            description:
+              'Rows decrypted per batch — one ZeroKMS request each. A whole number from 1 to 32767.',
             default: '500',
           },
           {
@@ -725,7 +732,12 @@ export const registry: CommandGroup[] = [
           {
             name: '--force',
             description:
-              'Re-decrypt rows whose plaintext is already set (drift recovery).',
+              'Re-decrypt rows whose plaintext is already set and overwrite it. Safe only while dual-writes are live.',
+          },
+          {
+            name: '--confirm-plaintext-current',
+            description:
+              'First run only: keep the values a plaintext column already holds, asserting they are current.',
           },
           {
             name: '--continue-on-undecryptable',

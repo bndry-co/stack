@@ -1,9 +1,11 @@
 import {
   columnExists,
+  columnHasValues,
   columnSqlType,
   detectColumnEqlVersion,
   isReverseMigrationPhase,
   listEncryptedColumns,
+  type MigrationPhase,
   type MigrationStateRow,
   type PlaintextTypeMapping,
   plaintextTypeForEqlDomain,
@@ -45,8 +47,20 @@ export interface DecryptPair {
    * `null`. Present means `stash decrypt plan` has nothing left to add.
    */
   plaintextSqlType: string | null
-  /** Latest REVERSE event for this encrypted column, if any. */
+  /**
+   * Latest REVERSE event for this encrypted column, if any. It can belong to
+   * an earlier, finished lifecycle; {@link lifecycleActive} says whether it
+   * is the one in progress.
+   */
   state: MigrationStateRow | null
+  /** Whether {@link state} belongs to the reverse lifecycle in progress. */
+  lifecycleActive: boolean
+  /**
+   * Latest FORWARD event recorded under the plaintext twin's name: the
+   * forward lifecycle that encrypted it, when there was one. Forward events
+   * are keyed by the plaintext column, so this is where they live.
+   */
+  forwardState: MigrationStateRow | null
 }
 
 /**
@@ -77,6 +91,72 @@ export async function reverseState(
   return last && isReverseMigrationPhase(last.phase) ? last : null
 }
 
+/**
+ * The forward lifecycle's state for a plaintext column: its latest event, but
+ * only when that event is a forward one. `null` when there is no history or
+ * no `cs_migrations` table yet.
+ */
+export async function forwardState(
+  client: pg.ClientBase,
+  table: string,
+  plaintextColumn: string,
+): Promise<MigrationStateRow | null> {
+  const last = await progress(client, table, plaintextColumn).catch(
+    (error: unknown) => {
+      if (
+        error instanceof Error &&
+        /cs_migrations|schema "cipherstash"/i.test(error.message)
+      ) {
+        return null
+      }
+      throw error
+    },
+  )
+  return last && !isReverseMigrationPhase(last.phase) ? last : null
+}
+
+/**
+ * Whether the latest reverse event belongs to the lifecycle in progress, as
+ * opposed to an earlier one that finished.
+ *
+ * `decrypt-dual-writing`, `decrypting` and `decrypted` are always current.
+ * `encrypted-dropped` is recorded when the drop migration is GENERATED, and
+ * the encrypted column still exists (it is being resolved), so it means one
+ * of two things: the migration has not been applied, or its apply-time check
+ * aborted. That is still the same lifecycle. Or the column was dropped and
+ * later encrypted again: then the forward lifecycle that re-encrypted it has
+ * recorded events under the twin's name AFTER the drop. Event ids are
+ * monotonic, so the order tells them apart.
+ */
+export function isActiveReverseLifecycle(
+  state: MigrationStateRow | null,
+  forwardOfRecordedTwin: MigrationStateRow | null,
+): boolean {
+  if (state === null) return false
+  if (state.phase !== 'encrypted-dropped') return true
+  return (
+    forwardOfRecordedTwin === null ||
+    BigInt(forwardOfRecordedTwin.id) < BigInt(state.id)
+  )
+}
+
+/**
+ * The plaintext name derived from the encrypted column's own name when
+ * nothing better is known: the `<name>_encrypted` convention stripped, else
+ * `<encrypted>_plaintext`, so a derived name never collides with the
+ * encrypted column itself. Shared by every command that shows a twin name.
+ */
+export function derivePlaintextName(encryptedColumn: string): {
+  name: string
+  via: 'convention' | 'fallback'
+} {
+  const suffix = '_encrypted'
+  return encryptedColumn.endsWith(suffix) &&
+    encryptedColumn.length > suffix.length
+    ? { name: encryptedColumn.slice(0, -suffix.length), via: 'convention' }
+    : { name: `${encryptedColumn}_plaintext`, via: 'fallback' }
+}
+
 /** `details.plaintextColumn` from a reverse event, when it recorded one. */
 export function recordedPlaintextColumn(
   state: MigrationStateRow | null,
@@ -93,10 +173,11 @@ export function recordedPlaintextColumn(
  * decided in this order:
  *
  * 1. `--plaintext-column`, when given;
- * 2. the pairing a previous reverse run RECORDED in `cs_migrations` — a flag
- *    that disagrees with it is refused rather than silently switching which
- *    column the lifecycle fills (and which column `decrypt drop`'s coverage
- *    gate then checks);
+ * 2. the pairing the reverse lifecycle IN PROGRESS recorded in
+ *    `cs_migrations` — a flag that disagrees with it is refused rather than
+ *    silently switching which column the lifecycle fills (and which column
+ *    `decrypt drop`'s coverage gate then checks). A pairing from an earlier,
+ *    finished lifecycle is not binding (see {@link isActiveReverseLifecycle});
  * 3. the forward manifest's entry whose `encryptedColumn` is this column —
  *    the original plaintext name, which is what most reversals want back;
  * 4. the `<name>_encrypted` convention, stripped;
@@ -131,7 +212,13 @@ export async function resolveDecryptPair(
   }
 
   const state = await reverseState(client, table, encryptedColumn)
-  const recorded = recordedPlaintextColumn(state)
+  const recordedTwin = recordedPlaintextColumn(state)
+  const recordedForward =
+    recordedTwin === undefined
+      ? null
+      : await forwardState(client, table, recordedTwin)
+  const lifecycleActive = isActiveReverseLifecycle(state, recordedForward)
+  const recorded = lifecycleActive ? recordedTwin : undefined
 
   let plaintextColumn: string
   let via: PlaintextResolution
@@ -151,15 +238,8 @@ export async function resolveDecryptPair(
     if (fromManifest) {
       plaintextColumn = fromManifest
       via = 'manifest'
-    } else if (
-      encryptedColumn.endsWith('_encrypted') &&
-      encryptedColumn.length > '_encrypted'.length
-    ) {
-      plaintextColumn = encryptedColumn.slice(0, -'_encrypted'.length)
-      via = 'convention'
     } else {
-      plaintextColumn = `${encryptedColumn}_plaintext`
-      via = 'fallback'
+      ;({ name: plaintextColumn, via } = derivePlaintextName(encryptedColumn))
     }
   }
 
@@ -183,7 +263,89 @@ export async function resolveDecryptPair(
     via,
     plaintextSqlType: await columnSqlType(client, table, plaintextColumn),
     state,
+    lifecycleActive,
+    forwardState:
+      plaintextColumn === recordedTwin
+        ? recordedForward
+        : await forwardState(client, table, plaintextColumn),
   }
+}
+
+/**
+ * Why a plaintext twin that already exists cannot be trusted as-is when a
+ * reverse lifecycle starts:
+ *
+ * - `forward-source` — it is the column a forward encryption started from,
+ *   and that lifecycle never reached `dropped`. Its values are the plaintext
+ *   from before the switch, stale for every row the application updated
+ *   after it stopped writing this column.
+ * - `prepopulated` — it already holds values, from wherever.
+ *
+ * The reverse backfill only fills NULLs, so either way it would keep those
+ * values, record `decrypted`, and let `decrypt drop` destroy the only current
+ * copy, in the encrypted column.
+ */
+export type TwinHazard =
+  | {
+      kind: 'forward-source'
+      forwardPhase: MigrationPhase
+      hasValues: boolean
+    }
+  | { kind: 'prepopulated' }
+
+/**
+ * Check a twin before the FIRST reverse run trusts it. Returns `null` when
+ * there is nothing to check (the twin does not exist yet, or a reverse
+ * lifecycle is already in progress, so its values came from this lifecycle's
+ * own backfill and dual-writes) or nothing wrong.
+ */
+export async function assessExistingTwin(
+  client: pg.ClientBase,
+  pair: DecryptPair,
+): Promise<TwinHazard | null> {
+  if (pair.lifecycleActive || pair.plaintextSqlType === null) return null
+  const hasValues = await columnHasValues(
+    client,
+    pair.table,
+    pair.plaintextColumn,
+  )
+  if (pair.forwardState !== null && pair.forwardState.phase !== 'dropped') {
+    return {
+      kind: 'forward-source',
+      forwardPhase: pair.forwardState.phase,
+      hasValues,
+    }
+  }
+  return hasValues ? { kind: 'prepopulated' } : null
+}
+
+/** The two ways past a {@link TwinHazard}, as `decrypt backfill` flags. */
+export const TWIN_HAZARD_FLAGS = {
+  overwrite: '--force',
+  keep: '--confirm-plaintext-current',
+} as const
+
+/**
+ * The refusal (in `decrypt backfill`) or warning (in `decrypt plan`) for a
+ * {@link TwinHazard}. Names and phases only, never a value.
+ */
+export function twinHazardMessage(
+  pair: Pick<DecryptPair, 'table' | 'encryptedColumn' | 'plaintextColumn'>,
+  hazard: TwinHazard,
+): string {
+  const twin = `${pair.table}.${pair.plaintextColumn}`
+  const source = `${pair.table}.${pair.encryptedColumn}`
+  const why =
+    hazard.kind === 'forward-source'
+      ? `${twin} is the source column of a forward encryption into ${pair.encryptedColumn} that was never dropped (forward phase '${hazard.forwardPhase}' in cipherstash.cs_migrations).${hazard.hasValues ? ' It still holds the plaintext from before reads moved to the encrypted column.' : ''} If your application stopped writing ${pair.plaintextColumn} at that switch, every row updated since then has a stale value in it.`
+      : `${twin} already holds values, and no reverse migration is in progress for ${source}. Nothing records where they came from or whether they are current.`
+  return [
+    why,
+    `The reverse backfill only fills rows where ${pair.plaintextColumn} is NULL, so it would keep those values, mark the column decrypted, and \`stash decrypt drop\` would then drop ${pair.encryptedColumn}: the only current copy.`,
+    'Choose one, once the application writes BOTH columns on every insert and update:',
+    `  ${TWIN_HAZARD_FLAGS.overwrite}  overwrite every row of ${pair.plaintextColumn} with the decrypted ciphertext (the safe choice when in doubt).`,
+    `  ${TWIN_HAZARD_FLAGS.keep}  keep the existing values. Only when the application has written ${pair.plaintextColumn} on every insert and update for the whole time ${pair.encryptedColumn} existed.`,
+  ].join('\n')
 }
 
 /**

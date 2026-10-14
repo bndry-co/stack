@@ -20,7 +20,14 @@ const probes = vi.hoisted(() => ({
   columnExists: vi.fn(async () => true),
   detectColumnEqlVersion: vi.fn(async (): Promise<2 | 3 | null> => null),
   columnSqlType: vi.fn(async (): Promise<string | null> => null),
-  progress: vi.fn(async (): Promise<Partial<MigrationStateRow> | null> => null),
+  columnHasValues: vi.fn(async () => false),
+  progress: vi.fn(
+    async (
+      _client: unknown,
+      _table: string,
+      _column: string,
+    ): Promise<Partial<MigrationStateRow> | null> => null,
+  ),
   readManifest: vi.fn(async (): Promise<unknown> => null),
 }))
 vi.mock('@cipherstash/migrate', async (importOriginal) => ({
@@ -34,7 +41,13 @@ vi.mock('@/commands/encrypt/context.js', () => ({
 
 import type pg from 'pg'
 import { BackfillConfigError } from '@/commands/encrypt/backfill.js'
-import { resolveDecryptPair } from '../lib/resolve-pair.js'
+import {
+  assessExistingTwin,
+  type DecryptPair,
+  derivePlaintextName,
+  resolveDecryptPair,
+  twinHazardMessage,
+} from '../lib/resolve-pair.js'
 
 const db = {} as pg.ClientBase
 const EMAIL_ENC: EncryptedColumnInfo = {
@@ -63,8 +76,72 @@ describe('resolveDecryptPair', () => {
     probes.listEncryptedColumns.mockResolvedValue([EMAIL_ENC])
     probes.detectColumnEqlVersion.mockResolvedValue(null)
     probes.columnSqlType.mockResolvedValue(null)
+    probes.columnHasValues.mockResolvedValue(false)
     probes.progress.mockResolvedValue(null)
     probes.readManifest.mockResolvedValue(null)
+  })
+
+  /** `progress` answers per column: reverse history under the encrypted
+   * column, forward history under the plaintext name. */
+  function history(byColumn: Record<string, Partial<MigrationStateRow>>) {
+    probes.progress.mockImplementation(
+      async (_client, _table, column) => byColumn[column] ?? null,
+    )
+  }
+
+  it('reads the forward history recorded under the twin’s name', async () => {
+    history({ email: { id: '3', event: 'backfilled', phase: 'backfilled' } })
+
+    const pair = await resolveDecryptPair(db, {
+      table: 'users',
+      encryptedColumn: 'email_encrypted',
+    })
+    expect(pair.forwardState?.phase).toBe('backfilled')
+    expect(pair.lifecycleActive).toBe(false)
+  })
+
+  it('a drop generated in THIS lifecycle (not yet applied, or aborted) keeps it active', async () => {
+    history({
+      email_encrypted: {
+        id: '10',
+        event: 'encrypted_dropped',
+        phase: 'encrypted-dropped',
+        details: { plaintextColumn: 'contact_email' },
+      },
+      // Older than the drop: the forward history that preceded the reversal.
+      contact_email: { id: '4', event: 'backfilled', phase: 'backfilled' },
+    })
+
+    const pair = await resolveDecryptPair(db, {
+      table: 'users',
+      encryptedColumn: 'email_encrypted',
+    })
+    expect(pair.lifecycleActive).toBe(true)
+    expect(pair).toMatchObject({
+      plaintextColumn: 'contact_email',
+      via: 'recorded',
+    })
+  })
+
+  it('a lifecycle that finished before the column was encrypted again neither binds nor counts as active', async () => {
+    history({
+      email_encrypted: {
+        id: '10',
+        event: 'encrypted_dropped',
+        phase: 'encrypted-dropped',
+        details: { plaintextColumn: 'contact_email' },
+      },
+      // A forward rollout AFTER the drop re-created the encrypted column.
+      contact_email: { id: '12', event: 'dual_writing', phase: 'dual-writing' },
+    })
+
+    const pair = await resolveDecryptPair(db, {
+      table: 'users',
+      encryptedColumn: 'email_encrypted',
+      plaintextColumn: 'email',
+    })
+    expect(pair.lifecycleActive).toBe(false)
+    expect(pair).toMatchObject({ plaintextColumn: 'email', via: 'flag' })
   })
 
   it('maps the domain back to its plaintext type', async () => {
@@ -203,5 +280,140 @@ describe('resolveDecryptPair', () => {
       encryptedColumn: 'email_encrypted',
     })
     expect(pair.plaintextSqlType).toBe('character varying(255)')
+  })
+})
+
+describe('derivePlaintextName', () => {
+  it('strips the _encrypted convention', () => {
+    expect(derivePlaintextName('email_encrypted')).toEqual({
+      name: 'email',
+      via: 'convention',
+    })
+  })
+
+  it('never derives an empty name from a column called exactly _encrypted', () => {
+    expect(derivePlaintextName('_encrypted')).toEqual({
+      name: '_encrypted_plaintext',
+      via: 'fallback',
+    })
+    expect(derivePlaintextName('secret')).toEqual({
+      name: 'secret_plaintext',
+      via: 'fallback',
+    })
+  })
+})
+
+describe('assessExistingTwin', () => {
+  const db = {} as pg.ClientBase
+
+  function twin(overrides: Partial<DecryptPair> = {}): DecryptPair {
+    return {
+      table: 'users',
+      encryptedColumn: 'email_encrypted',
+      domain: 'eql_v3_text_search',
+      mapping: null,
+      plaintextColumn: 'email',
+      via: 'manifest',
+      plaintextSqlType: 'text',
+      state: null,
+      lifecycleActive: false,
+      forwardState: null,
+      ...overrides,
+    }
+  }
+
+  function forwardAt(phase: MigrationStateRow['phase']): MigrationStateRow {
+    return {
+      id: '3',
+      tableName: 'users',
+      columnName: 'email',
+      event: 'backfilled',
+      phase,
+      cursorValue: null,
+      rowsProcessed: null,
+      rowsTotal: null,
+      details: null,
+      createdAt: new Date(0),
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    probes.columnHasValues.mockResolvedValue(false)
+  })
+
+  it('trusts a twin the reverse lifecycle in progress filled, without scanning it', async () => {
+    probes.columnHasValues.mockResolvedValue(true)
+
+    expect(await assessExistingTwin(db, twin({ lifecycleActive: true }))).toBe(
+      null,
+    )
+    expect(probes.columnHasValues).not.toHaveBeenCalled()
+  })
+
+  it('has nothing to check before the twin exists', async () => {
+    expect(
+      await assessExistingTwin(db, twin({ plaintextSqlType: null })),
+    ).toBeNull()
+  })
+
+  it('accepts an empty twin with no forward history', async () => {
+    expect(await assessExistingTwin(db, twin())).toBeNull()
+  })
+
+  it('flags a twin that already holds values', async () => {
+    probes.columnHasValues.mockResolvedValue(true)
+
+    expect(await assessExistingTwin(db, twin())).toEqual({
+      kind: 'prepopulated',
+    })
+  })
+
+  it.each(['dual-writing', 'backfilling', 'backfilled'] as const)(
+    'flags the forward source column at %s, values or not',
+    async (phase) => {
+      expect(
+        await assessExistingTwin(db, twin({ forwardState: forwardAt(phase) })),
+      ).toEqual({
+        kind: 'forward-source',
+        forwardPhase: phase,
+        hasValues: false,
+      })
+    },
+  )
+
+  it("a forward lifecycle at 'dropped' is no longer the source, but its values still count", async () => {
+    expect(
+      await assessExistingTwin(
+        db,
+        twin({ forwardState: forwardAt('dropped') }),
+      ),
+    ).toBeNull()
+
+    // `dropped` is recorded when the drop is generated; if it was never
+    // applied the old column is still there, full.
+    probes.columnHasValues.mockResolvedValue(true)
+    expect(
+      await assessExistingTwin(
+        db,
+        twin({ forwardState: forwardAt('dropped') }),
+      ),
+    ).toEqual({ kind: 'prepopulated' })
+  })
+
+  it('explains both ways forward, with names only', () => {
+    const message = twinHazardMessage(twin(), {
+      kind: 'forward-source',
+      forwardPhase: 'backfilled',
+      hasValues: true,
+    })
+    expect(message).toContain('users.email is the source column')
+    expect(message).toContain("forward phase 'backfilled'")
+    expect(message).toContain(
+      '--force  overwrite every row of email with the decrypted ciphertext',
+    )
+    expect(message).toContain(
+      '--confirm-plaintext-current  keep the existing values',
+    )
   })
 })

@@ -17,7 +17,14 @@ import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
 import { drizzleColumnLine, drizzleImports } from './lib/orm-hints.js'
-import { type DecryptPair, resolveDecryptPair } from './lib/resolve-pair.js'
+import {
+  assessExistingTwin,
+  type DecryptPair,
+  resolveDecryptPair,
+  TWIN_HAZARD_FLAGS,
+  type TwinHazard,
+  twinHazardMessage,
+} from './lib/resolve-pair.js'
 
 /**
  * Options accepted by `stash decrypt plan`. With no `table` the command is a
@@ -62,6 +69,12 @@ export interface DecryptPlanOptions {
  * Twins are added NULLABLE: existing rows have no plaintext until
  * `stash decrypt backfill` fills them. Restore a NOT NULL afterwards if the
  * original column had one.
+ *
+ * A twin that already exists is checked the way `decrypt backfill`'s first
+ * run checks it ({@link assessExistingTwin}): when it holds values, or is the
+ * source of a forward encryption that was never dropped, plan warns with the
+ * same text the backfill refuses with, and names the flag the backfill will
+ * need. Plan writes nothing for such a twin, so it warns rather than fails.
  */
 export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
   p.intro(runnerCommand(detectPackageManager(), 'stash decrypt plan'))
@@ -115,9 +128,18 @@ export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
     }
 
     const existing = pairs.filter((pair) => pair.plaintextSqlType !== null)
+    const hazards = new Map<DecryptPair, TwinHazard>()
     for (const pair of existing) {
-      p.log.info(
-        `${options.table}.${pair.plaintextColumn} already exists (${pair.plaintextSqlType}) — nothing to add for ${pair.encryptedColumn}.`,
+      const hazard = await assessExistingTwin(client, pair)
+      if (hazard === null) {
+        p.log.info(
+          `${options.table}.${pair.plaintextColumn} already exists (${pair.plaintextSqlType}) — nothing to add for ${pair.encryptedColumn}.`,
+        )
+        continue
+      }
+      hazards.set(pair, hazard)
+      p.log.warn(
+        `${options.table}.${pair.plaintextColumn} already exists (${pair.plaintextSqlType}), but it cannot be trusted as the plaintext twin of ${pair.encryptedColumn} as it stands. \`stash decrypt backfill\` will refuse it until you choose:\n${twinHazardMessage(pair, hazard)}`,
       )
     }
     const toAdd = pairs.filter(
@@ -132,7 +154,7 @@ export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
     }
 
     if (toAdd.length === 0) {
-      p.note(nextSteps(options.table, pairs), 'Next')
+      p.note(nextSteps(options.table, pairs, hazards), 'Next')
       p.outro('Plaintext twins already in place.')
       return
     }
@@ -153,11 +175,11 @@ export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
           '',
           `Then generate and apply the migration:\n  ${runnerCommand(detectPackageManager(), 'drizzle-kit generate')}\n  ${runnerCommand(detectPackageManager(), 'drizzle-kit migrate')}`,
           '',
-          'Keep the encrypted column declared until `stash decrypt drop` — the application dual-writes both during the backfill.',
+          'Keep the encrypted column declared, and keep writing it, until the `stash decrypt drop` migration is applied. The application dual-writes both columns from now until then.',
         ].join('\n'),
         'Drizzle schema change',
       )
-      p.note(nextSteps(options.table, pairs), 'Next')
+      p.note(nextSteps(options.table, pairs, hazards), 'Next')
       p.outro(
         'Plan ready. No files written (drizzle-kit generates the migration).',
       )
@@ -193,7 +215,7 @@ export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
       migrationsDir: options.migrationsDir,
     })
     p.log.success(`Migration written to ${filePath}`)
-    p.note(`${nextStep}\n\n${nextSteps(options.table, pairs)}`, 'Next')
+    p.note(`${nextStep}\n\n${nextSteps(options.table, pairs, hazards)}`, 'Next')
     p.outro('Plaintext-twin migration generated.')
   } catch (error) {
     p.log.error(error instanceof Error ? error.message : 'Plan failed.')
@@ -251,19 +273,27 @@ function describeVia(pair: DecryptPair): string {
   }
 }
 
-function nextSteps(table: string, pairs: readonly DecryptPair[]): string {
+function nextSteps(
+  table: string,
+  pairs: readonly DecryptPair[],
+  hazards: ReadonlyMap<DecryptPair, TwinHazard> = new Map(),
+): string {
   const runner = (command: string) =>
     runnerCommand(detectPackageManager(), command)
   const pinTarget = (pair: DecryptPair) =>
     pair.via === 'flag' ? ` --plaintext-column ${pair.plaintextColumn}` : ''
+  const choice = (pair: DecryptPair) =>
+    hazards.has(pair)
+      ? ` <${TWIN_HAZARD_FLAGS.overwrite} | ${TWIN_HAZARD_FLAGS.keep}>`
+      : ''
   return [
     '1. Apply the migration, then deploy application code that writes BOTH the encrypted column and its plaintext twin on every insert/update.',
     '2. Backfill the plaintext:',
     ...pairs.map(
       (pair) =>
-        `     ${runner(`stash decrypt backfill --table ${table} --column ${pair.encryptedColumn}${pinTarget(pair)}`)}`,
+        `     ${runner(`stash decrypt backfill --table ${table} --column ${pair.encryptedColumn}${pinTarget(pair)}${choice(pair)}`)}`,
     ),
-    '3. Switch reads to the plaintext column(s) and deploy, then generate the encrypted-column drop:',
+    '3. Switch reads to the plaintext column(s) and deploy, still writing BOTH columns, then generate the encrypted-column drop (keep dual-writing until it is applied):',
     ...pairs.map(
       (pair) =>
         `     ${runner(`stash decrypt drop --table ${table} --column ${pair.encryptedColumn}`)}`,
@@ -302,7 +332,9 @@ async function renderOverview(
         continue
       }
       const target = `${pair.plaintextColumn} ${pair.plaintextSqlType ?? pair.mapping?.sqlType ?? '(unknown type)'}`
-      const phase = pair.state?.phase
+      // An `encrypted-dropped` from an earlier, finished lifecycle is history,
+      // not where this column stands now.
+      const phase = pair.lifecycleActive ? pair.state?.phase : undefined
 
       if (phase === 'encrypted-dropped') {
         lines.push(
@@ -317,8 +349,11 @@ async function renderOverview(
           `  → ${key} → ${pair.plaintextColumn}: ${phase} → ${runner(`stash decrypt backfill --table ${table} --column ${column}`)}`,
         )
       } else if (pair.plaintextSqlType !== null) {
+        const hazard = await assessExistingTwin(client, pair)
         lines.push(
-          `  → ${key} → ${target}: twin exists → ${runner(`stash decrypt backfill --table ${table} --column ${column}`)}`,
+          hazard === null
+            ? `  → ${key} → ${target}: twin exists → ${runner(`stash decrypt backfill --table ${table} --column ${column}`)}`
+            : `  ! ${key} → ${target}: ${hazard.kind === 'forward-source' ? `twin is the source of a forward encryption still at '${hazard.forwardPhase}'` : 'twin already holds values'}; the backfill needs ${TWIN_HAZARD_FLAGS.overwrite} or ${TWIN_HAZARD_FLAGS.keep} — see ${runner(`stash decrypt plan --table ${table} --column ${column}`)}`,
         )
       } else if (pair.mapping === null) {
         lines.push(

@@ -190,10 +190,11 @@ export async function setManifestTargetPhase(
  * Remove one column's entry from the manifest, deleting the table key when it
  * empties. No-op when there is no manifest or no such entry.
  *
- * Used by `stash decrypt drop`: once the encrypted column is gone the intent
- * to encrypt that column is withdrawn, and leaving the entry behind would make
- * `stash encrypt status` report the now-intentional absence of the encrypted
- * column as drift (`encrypted-col-missing`).
+ * For tooling that withdraws the intent to encrypt a column once its
+ * encrypted column is gone. `stash decrypt drop` deliberately does not call
+ * it: it only GENERATES the drop, whose apply-time check can still abort, so
+ * it leaves the entry for the user to remove after applying (meanwhile
+ * `stash encrypt status` shows it as reversed rather than as drift).
  */
 export async function removeManifestColumn(
   table: string,

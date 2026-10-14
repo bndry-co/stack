@@ -62,6 +62,8 @@ export async function statusCommand() {
         for (const column of columns) {
           const key: `${string}.${string}` = `${tableName}.${column.column}`
           seen.add(key)
+          const encryptedName =
+            column.encryptedColumn ?? `${column.column}_encrypted`
           rows.push(
             renderRow({
               tableName,
@@ -72,6 +74,12 @@ export async function statusCommand() {
               physicalColumns: physicalCols.get(tableName) ?? new Map(),
               eqlVersion: column.eqlVersion,
               encryptedColumn: column.encryptedColumn,
+              // `stash decrypt drop` records this against the ENCRYPTED
+              // column; the manifest entry is the user's to remove once that
+              // migration is applied.
+              reversed:
+                stateMap.get(`${tableName}.${encryptedName}`)?.phase ===
+                'encrypted-dropped',
             }),
           )
         }
@@ -131,6 +139,11 @@ function renderRow(input: {
   /** The encrypted counterpart's name from the manifest, when recorded.
    * `<column>_encrypted` is only the conventional fallback. */
   encryptedColumn?: string
+  /**
+   * `stash decrypt drop` generated the encrypted column's drop. Its absence
+   * is then intended, not drift.
+   */
+  reversed?: boolean
   state: {
     phase: MigrationPhase
     rowsProcessed: number | null
@@ -184,7 +197,11 @@ function renderRow(input: {
   // rename that creates `<col>_plaintext`.
   if (!isV3 && intentIndexes && !eqlColumn) flags.push('not-registered')
   if (intentIndexes && !physicalColumns.has(encryptedName)) {
-    flags.push('encrypted-col-missing')
+    flags.push(
+      input.reversed
+        ? 'reversed (remove from migrations.json)'
+        : 'encrypted-col-missing',
+    )
   }
   if (
     !isV3 &&

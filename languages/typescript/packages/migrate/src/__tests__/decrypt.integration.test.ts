@@ -21,7 +21,7 @@
 import 'dotenv/config'
 import pg from 'pg'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { countUndecrypted } from '../cursor.js'
+import { columnHasValues, countUndecrypted } from '../cursor.js'
 import {
   type BulkDecryptItem,
   type DecryptionClientLike,
@@ -394,6 +394,20 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     expect(result.rowsSkipped).toBe(1)
     expect(result.skippedByCode).toEqual({ NULL_PLAINTEXT: 1 })
     expect(result.nullPlaintextPks).toEqual(['1'])
+  })
+
+  it('tells an empty plaintext twin from one that already holds values', async () => {
+    await seed(3)
+    const db = await pool.connect()
+    try {
+      expect(await columnHasValues(db, TABLE, 'email')).toBe(false)
+      await db.query(
+        `UPDATE ${TABLE} SET email = 'stale@example.com' WHERE id = 2`,
+      )
+      expect(await columnHasValues(db, TABLE, 'email')).toBe(true)
+    } finally {
+      db.release()
+    }
   })
 
   it('is idempotent: a re-run rewrites nothing and only retries the skipped rows', async () => {

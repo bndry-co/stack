@@ -1,7 +1,11 @@
 import {
   appendEvent,
+  type DecryptBackfillResult,
   formatCodes,
   installMigrationsSchema,
+  PlaintextWriteError,
+  qualifyTable,
+  quoteIdent,
   runDecryptBackfill,
   UndecryptableBatchError,
 } from '@cipherstash/migrate'
@@ -13,7 +17,17 @@ import { detectPkColumn } from '@/commands/encrypt/lib/db-readers.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { buildPgClientConfig, explainTlsError } from '@/db/client.js'
-import { type DecryptPair, resolveDecryptPair } from './lib/resolve-pair.js'
+import {
+  InvalidDecryptChunkSizeError,
+  parseDecryptChunkSize,
+} from './lib/chunk-size.js'
+import {
+  assessExistingTwin,
+  type DecryptPair,
+  resolveDecryptPair,
+  type TwinHazard,
+  twinHazardMessage,
+} from './lib/resolve-pair.js'
 
 /** Default rows per chunk — and so per `bulkDecrypt` ZeroKMS request. */
 export const DEFAULT_DECRYPT_CHUNK_SIZE = 500
@@ -40,7 +54,9 @@ export interface DecryptBackfillCommandOptions {
   pkColumn?: string
   /**
    * Rows per chunk, and so per `bulkDecrypt` call — one ZeroKMS request per
-   * chunk. Default {@link DEFAULT_DECRYPT_CHUNK_SIZE}.
+   * chunk. Default {@link DEFAULT_DECRYPT_CHUNK_SIZE}; at most
+   * `MAX_DECRYPT_CHUNK_SIZE` (32767), because each row binds two parameters
+   * in the chunk's write.
    */
   chunkSize?: number
   /**
@@ -49,8 +65,19 @@ export interface DecryptBackfillCommandOptions {
    * first run, as for the forward backfill.
    */
   confirmDualWritesDeployed?: boolean
-  /** Re-decrypt rows whose plaintext is already set (drift recovery). */
+  /**
+   * Re-decrypt rows whose plaintext is already set and overwrite it (drift
+   * recovery, or replacing plaintext that predates the reverse lifecycle).
+   * Safe only while dual-writes are live: a row the application wrote to the
+   * plaintext column alone gets the older ciphertext's value back.
+   */
   force?: boolean
+  /**
+   * Assert that a plaintext twin which already holds values before the first
+   * reverse run is current, and keep those values. Without it (or `force`)
+   * the first run refuses such a twin; see {@link TwinHazard}.
+   */
+  confirmPlaintextCurrent?: boolean
   /**
    * Keep going when the first chunk decrypts nothing (see
    * `UndecryptableBatchError`) — for leading rows that really are all
@@ -73,15 +100,27 @@ export interface DecryptBackfillCommandOptions {
  * bound to an end-user lock context, which only that user can decrypt — are
  * skipped, counted, left NULL, and reported. There is deliberately no bypass;
  * see the lock-context limitation in the `stash-cli` docs.
+ *
+ * On the first run, a twin that already holds values (or is the source of a
+ * forward encryption that was never dropped) is refused unless the operator
+ * passes `--force` (overwrite it from the ciphertext) or
+ * `--confirm-plaintext-current` (keep it). The backfill only fills NULLs, so
+ * trusting stale values silently would let `decrypt drop` destroy the only
+ * current copy.
  */
 export async function decryptBackfillCommand(
   options: DecryptBackfillCommandOptions,
 ) {
   p.intro(runnerCommand(detectPackageManager(), 'stash decrypt backfill'))
 
-  const chunkSize = options.chunkSize ?? DEFAULT_DECRYPT_CHUNK_SIZE
-  if (!Number.isInteger(chunkSize) || chunkSize < 1) {
-    p.log.error('--chunk-size must be a positive whole number.')
+  let chunkSize: number
+  try {
+    chunkSize = parseDecryptChunkSize(
+      options.chunkSize ?? DEFAULT_DECRYPT_CHUNK_SIZE,
+    )
+  } catch (error) {
+    if (!(error instanceof InvalidDecryptChunkSizeError)) throw error
+    p.log.error(error.message)
     process.exit(1)
   }
 
@@ -138,18 +177,23 @@ export async function decryptBackfillCommand(
       `${options.table}.${pair.encryptedColumn} is ${pair.domain} — reversing into ${pair.plaintextColumn} (${plaintextSqlType}). Lifecycle: backfill → switch the app to ${pair.plaintextColumn} by name → stash decrypt drop.`,
     )
 
-    const okToProceed = await ensureReverseDualWritesDeployed(db, {
-      pair,
-      confirmFlag: options.confirmDualWritesDeployed === true,
-    })
-    if (!okToProceed) {
-      p.outro('Aborted.')
-      return
+    // Before anything is recorded: once the dual-write gate writes its event,
+    // later runs treat the twin's values as this lifecycle's own.
+    const hazard = await assessExistingTwin(db, pair)
+    if (hazard !== null) {
+      if (!options.force && !options.confirmPlaintextCurrent) {
+        throw new BackfillConfigError(twinHazardMessage(pair, hazard))
+      }
+      if (!options.force) {
+        p.log.warn(
+          `Proceeding under --confirm-plaintext-current: keeping the values already in ${options.table}.${pair.plaintextColumn} and decrypting only the rows where it is NULL. You are asserting those values are current.`,
+        )
+      }
     }
 
     if (options.force) {
       p.log.warn(
-        `--force will re-decrypt every row of ${options.table}.${pair.encryptedColumn}, overwriting ${pair.plaintextColumn} values that already exist. This is the recovery path for drift; expensive but not destructive.`,
+        `--force will re-decrypt every row of ${options.table}.${pair.encryptedColumn} and overwrite the ${pair.plaintextColumn} values that already exist. Safe only while dual-writes are live: any row your application wrote to ${pair.plaintextColumn} alone (a newer value, or one cleared on purpose) gets the older ciphertext's value back.`,
       )
       const proceed = await p.confirm({
         message: 'Continue with --force?',
@@ -159,6 +203,22 @@ export async function decryptBackfillCommand(
         p.outro('Aborted.')
         return
       }
+    }
+
+    const okToProceed = await ensureReverseDualWritesDeployed(db, {
+      pair,
+      confirmFlag: options.confirmDualWritesDeployed === true,
+      acknowledgedHazard:
+        hazard === null
+          ? undefined
+          : {
+              hazard,
+              via: options.force ? 'force' : 'confirm-plaintext-current',
+            },
+    })
+    if (!okToProceed) {
+      p.outro('Aborted.')
+      return
     }
 
     p.log.info(
@@ -191,6 +251,14 @@ export async function decryptBackfillCommand(
       },
     })
 
+    // The closing count, when the last chunk did not already print it (rows
+    // inserted during the run move the total after it was counted).
+    if (result.completed && lastLogged !== result.rowsProcessed) {
+      p.log.step(
+        `${result.rowsProcessed.toLocaleString()} rows${result.rowsSkipped > 0 ? ` (${result.rowsSkipped.toLocaleString()} skipped)` : ''}`,
+      )
+    }
+
     if (result.rowsSkipped > 0) {
       p.log.warn(skippedReport(options.table, pair, result))
     }
@@ -213,7 +281,8 @@ export async function decryptBackfillCommand(
   } catch (error) {
     if (
       error instanceof BackfillConfigError ||
-      error instanceof UndecryptableBatchError
+      error instanceof UndecryptableBatchError ||
+      error instanceof PlaintextWriteError
     ) {
       // Author-controlled diagnostics carrying only names, counts and error
       // codes — never a value — so they print verbatim.
@@ -255,14 +324,24 @@ function requirePlaintextTwin(pair: DecryptPair): string {
  * application writes DURING the backfill must land in both columns, or they
  * end up encrypted-only and the drop coverage check later refuses. Records a
  * `decrypt_dual_writing` event on first acceptance so re-runs skip the prompt.
+ *
+ * Only the reverse lifecycle IN PROGRESS passes the gate: an
+ * `encrypted-dropped` event from an earlier lifecycle (the column was dropped
+ * and later encrypted again) asks again.
  */
 async function ensureReverseDualWritesDeployed(
   db: pg.PoolClient,
-  opts: { pair: DecryptPair; confirmFlag: boolean },
+  opts: {
+    pair: DecryptPair
+    confirmFlag: boolean
+    acknowledgedHazard?: {
+      hazard: TwinHazard
+      via: 'force' | 'confirm-plaintext-current'
+    }
+  },
 ): Promise<boolean> {
   const { pair } = opts
-  // Any recorded reverse event means the gate was already passed.
-  if (pair.state !== null) return true
+  if (pair.lifecycleActive) return true
 
   const isInteractive =
     Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
@@ -293,23 +372,68 @@ async function ensureReverseDualWritesDeployed(
     columnName: pair.encryptedColumn,
     event: 'decrypt_dual_writing',
     phase: 'decrypt-dual-writing',
-    details: { plaintextColumn: pair.plaintextColumn },
+    details: {
+      plaintextColumn: pair.plaintextColumn,
+      // The audit trail for a twin that held values before this lifecycle:
+      // what was found and which flag the operator chose.
+      ...(opts.acknowledgedHazard
+        ? {
+            existingPlaintext: opts.acknowledgedHazard.hazard.kind,
+            acknowledgedWith: opts.acknowledgedHazard.via,
+          }
+        : {}),
+    },
   })
   p.log.success(`${target} marked as 'decrypt-dual-writing' in cs_migrations.`)
   return true
 }
 
-/** The warning printed when rows were skipped as undecryptable. */
+/**
+ * The warning printed when rows were skipped. Two different situations, with
+ * different remedies, so they are reported apart:
+ *
+ * - rows that did not decrypt (typically lock-context bound): only the end
+ *   user's identity can decrypt them;
+ * - `NULL_PLAINTEXT` rows, whose ciphertext decrypts to an empty value that a
+ *   non-JSON column can only store as the same NULL that means "not
+ *   decrypted yet". Lock contexts have nothing to do with them.
+ */
 export function skippedReport(
   table: string,
-  pair: Pick<DecryptPair, 'encryptedColumn' | 'plaintextColumn'>,
-  result: { rowsSkipped: number; skippedByCode: Record<string, number> },
+  pair: Pick<
+    DecryptPair,
+    'encryptedColumn' | 'plaintextColumn' | 'plaintextSqlType'
+  >,
+  result: Pick<
+    DecryptBackfillResult,
+    'rowsSkipped' | 'skippedByCode' | 'nullPlaintextPks'
+  >,
 ): string {
-  const codes =
-    Object.keys(result.skippedByCode).length > 0
-      ? ` This run: ${formatCodes(result.skippedByCode)}.`
-      : ''
-  return `${result.rowsSkipped.toLocaleString()} row(s) of ${table}.${pair.encryptedColumn} could not be decrypted with these credentials and were left with ${pair.plaintextColumn} NULL.${codes} The usual cause is a value bound to an end-user lock context: only that user's identity can decrypt it, and the CLI has no way to act as them. Decrypt those rows in your application on behalf of each user (writing ${pair.plaintextColumn}), then re-run this backfill. \`stash decrypt drop\` refuses while any of them remain, because dropping ${pair.encryptedColumn} would destroy their only copy.`
+  const { NULL_PLAINTEXT: nullThisRun = 0, ...failedCodes } =
+    result.skippedByCode
+  const failed = result.rowsSkipped - nullThisRun
+  const paragraphs: string[] = []
+
+  if (failed > 0) {
+    const codes =
+      Object.keys(failedCodes).length > 0
+        ? ` This run: ${formatCodes(failedCodes)}.`
+        : ''
+    paragraphs.push(
+      `${failed.toLocaleString()} row(s) of ${table}.${pair.encryptedColumn} could not be decrypted with these credentials and were left with ${pair.plaintextColumn} NULL.${codes} The usual cause is a value bound to an end-user lock context: only that user's identity can decrypt it, and the CLI has no way to act as them. Decrypt those rows in your application on behalf of each user (writing ${pair.plaintextColumn}), then re-run this backfill. \`stash decrypt drop\` refuses while any of them remain, because dropping ${pair.encryptedColumn} would destroy their only copy.`,
+    )
+  }
+
+  if (nullThisRun > 0) {
+    const sample = result.nullPlaintextPks
+    const more =
+      nullThisRun > sample.length ? ` (first ${sample.length} shown)` : ''
+    paragraphs.push(
+      `${nullThisRun.toLocaleString()} row(s) of ${table}.${pair.encryptedColumn} hold ciphertext that decrypts to an empty (null) value. ${pair.plaintextColumn}${pair.plaintextSqlType ? ` (${pair.plaintextSqlType})` : ''} can only store that as NULL, which is also what "not decrypted yet" looks like, so they were left NULL. This is not a credentials or lock-context problem, and re-running will not change it. \`stash decrypt drop\` refuses while they hold ciphertext. Once you have confirmed in your application that these values really are empty, clear their ciphertext and generate the drop:\n  UPDATE ${qualifyTable(table)} SET ${quoteIdent(pair.encryptedColumn)} = NULL WHERE ${quoteIdent(pair.plaintextColumn)} IS NULL AND <primary key> IN (...);\nPrimary keys${more}: ${sample.join(', ')}`,
+    )
+  }
+
+  return paragraphs.join('\n\n')
 }
 
 function cutoverSteps(
@@ -320,10 +444,10 @@ function cutoverSteps(
   const drop = `stash decrypt drop --table ${table} --column ${pair.encryptedColumn}`
   return [
     `1. Point your application's reads at ${pair.plaintextColumn} and deploy:`,
-    `   - Drizzle: query ${pair.plaintextColumn} directly (no decryptModel), and stop writing ${pair.encryptedColumn} once reads are switched.`,
+    `   - Drizzle: query ${pair.plaintextColumn} directly (no decryptModel).`,
     `   - Prisma Next: read the plain ${pair.plaintextColumn} field instead of the cipherstash.* one.`,
     `   - Other: select ${pair.plaintextColumn} instead of decrypting ${pair.encryptedColumn}.`,
-    `   Keep the encrypted column declared until the drop migration is applied.`,
+    `   Keep writing BOTH ${pair.encryptedColumn} and ${pair.plaintextColumn} on every insert and update until the drop migration is applied. If writes to ${pair.encryptedColumn} stop early, a value cleared in ${pair.plaintextColumn} leaves its old ciphertext behind: \`decrypt drop\` then refuses, and a re-run of this backfill (or --force) writes the old value back.`,
     rowsSkipped > 0
       ? `2. Resolve the ${rowsSkipped.toLocaleString()} undecryptable row(s) first (see the warning above), then: ${drop}`
       : `2. Generate the encrypted-column drop: ${drop}`,

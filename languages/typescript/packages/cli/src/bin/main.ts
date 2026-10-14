@@ -503,16 +503,33 @@ async function runDecryptCommand(
       const { decryptBackfillCommand } = await requireStack(
         () => import('../commands/decrypt/backfill.js'),
       )
+      // Through requireStack: the bound comes from @cipherstash/migrate,
+      // which imports @cipherstash/stack.
+      const { InvalidDecryptChunkSizeError, parseDecryptChunkSize } =
+        await requireStack(
+          () => import('../commands/decrypt/lib/chunk-size.js'),
+        )
+      let chunkSize: number | undefined
+      if (values['chunk-size'] !== undefined) {
+        // Parsed here, where the raw text is still in hand, so the error can
+        // quote exactly what was typed.
+        try {
+          chunkSize = parseDecryptChunkSize(values['chunk-size'])
+        } catch (error) {
+          if (!(error instanceof InvalidDecryptChunkSizeError)) throw error
+          p.log.error(error.message)
+          throw new CliExit(1)
+        }
+      }
       await decryptBackfillCommand({
         table,
         column,
         plaintextColumn: values['plaintext-column'],
         pkColumn: values['pk-column'],
-        chunkSize: values['chunk-size']
-          ? Number(values['chunk-size'])
-          : undefined,
+        chunkSize,
         confirmDualWritesDeployed: flags['confirm-dual-writes-deployed'],
         force: flags.force,
+        confirmPlaintextCurrent: flags['confirm-plaintext-current'],
         continueOnUndecryptable: flags['continue-on-undecryptable'],
       })
       break
