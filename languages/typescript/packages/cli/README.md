@@ -318,8 +318,9 @@ Leaving CipherStash is the encrypt lifecycle run backwards, with the same safety
 decrypt plan      add a plaintext twin per encrypted column (type mapped back from its EQL domain)
   → deploy dual-writes (app writes the encrypted column AND its plaintext twin)
 decrypt backfill  decrypt every row into the twin — resumable, one ZeroKMS request per chunk
-  → switch reads to the plaintext column and deploy
+  → switch reads to the plaintext column and deploy (keep writing BOTH columns)
 decrypt drop      generate the migration that drops the encrypted column and its EQL indexes
+  → apply it, then stop writing the encrypted column
 decrypt status    where each column stands
 ```
 
@@ -331,7 +332,11 @@ npx stash decrypt drop --table users --column email_encrypted [--uninstall-eql]
 npx stash decrypt status
 ```
 
-`--column` always names the column being migrated away from — the encrypted one here. The plaintext twin defaults to the original name recorded in `.cipherstash/migrations.json`, else the column name without `_encrypted`; override with `--plaintext-column`. Plaintext types: `text*` → `text`, `integer*`/`smallint*`/`bigint*`/`numeric*`/`real*` → the same type, `double*` → `double precision`, `boolean` → `boolean`, `date*` → `date`, `timestamp*` → `timestamptz` (EQL timestamps are instants), `json`/`json_search` → `jsonb`. The backfill casts to whatever type the twin actually has, so you can widen or narrow it in the migration.
+`--column` always names the column being migrated away from — the encrypted one here. The plaintext twin defaults to the pairing the reverse migration in progress recorded, then the original name recorded in `.cipherstash/migrations.json`, else the column name without `_encrypted`, else `<column>_plaintext`; override with `--plaintext-column`. Plaintext types: `text*` → `text`, `integer*`/`smallint*`/`bigint*`/`numeric*`/`real*` → the same type, `double*` → `double precision`, `boolean` → `boolean`, `date*` → `date`, `timestamp*` → `timestamptz` (EQL timestamps are instants), `json`/`json_search` → `jsonb`. The backfill casts to whatever type the twin actually has, so you can widen or narrow it in the migration.
+
+**Keep dual-writing until the drop is applied.** Unlike the forward rollout, the application keeps writing both the encrypted column and the plaintext column until the `decrypt drop` migration has run. `decrypt backfill --force` and the drop's coverage check depend on it: if writes to the encrypted column stop early, a value cleared in the plaintext column keeps its old ciphertext, and a re-run of the backfill writes the old value back.
+
+**A plaintext column that already holds values is refused on the first run.** Reversing before `encrypt drop` usually means the original plaintext column still exists, stale for every row updated after reads moved to the encrypted column. The backfill only fills NULLs, so it refuses such a column (or the source of any forward encryption not yet dropped) until you pass `--force` (overwrite it from the ciphertext) or `--confirm-plaintext-current` (keep it; only if it was written on every change). `decrypt plan` warns about the same columns.
 
 **Values bound to a lock context are not decrypted.** A value encrypted with an end-user lock context can only be decrypted as that user. The backfill skips those rows, counts them, leaves the twin NULL and reports them; `decrypt drop` refuses while any remain, because dropping the encrypted column would destroy their only copy. Decrypt them in your application on each user's behalf, then re-run the backfill.
 

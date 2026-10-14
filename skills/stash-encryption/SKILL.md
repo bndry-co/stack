@@ -968,6 +968,8 @@ Once dual-writes are recorded as live in `cs_migrations`:
 
 **Create functional indexes between backfill and the read switch.** Build the `eql_v3.*` extractor indexes for every queried capability and run `ANALYZE`.
 
+**Reversing, back to plaintext.** `stash decrypt plan` / `backfill` / `drop` run this lifecycle backwards; the Decrypt section of `stash-cli` is the reference. Two differences to plan for. In reverse, the application keeps writing BOTH columns until the encrypted column's drop migration is applied, including after reads move to the plaintext column. And once the dual-write code above is removed, the original plaintext column (until `encrypt drop` removes it) stops being updated, so `stash decrypt backfill` refuses to reuse it as-is on its first run: pass `--force` to overwrite it from the ciphertext, or `--confirm-plaintext-current` only if it was written on every change. Values encrypted under an end-user lock context cannot be decrypted by the CLI (see `stash-auth`).
+
 ### State storage
 
 Two current sources of truth, kept separate on purpose:
