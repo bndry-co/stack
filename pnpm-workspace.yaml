@@ -162,7 +162,9 @@ overrides:
   # 0.35.0 (published 2026-06-10).
   # #210 GHSA-rgj7-g3m4-5g8c — raised to 0.35.4 (published 2026-08-26); the
   # ceiling moves with the pin so 0.35.0-0.35.3 cannot resolve.
-  'sharp@<0.35.4': '0.35.4'
+  # #246 GHSA-wq5f-xc86-pv6w / CVE-2026-96889 — bundled librsvg memory-safety
+  # bug (possible RCE); raised to 0.35.5 (published 2026-09-27).
+  'sharp@<0.35.5': '0.35.5'
 
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated
