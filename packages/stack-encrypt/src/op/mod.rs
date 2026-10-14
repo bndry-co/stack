@@ -148,9 +148,44 @@ impl Operator for Between {
     type Arity = Pair;
 }
 
+/// JSON containment: rows whose document contains the query's document
+/// (`@>`). Exact. Declared by ADR-0009 and answered by no index yet: this
+/// crate has no JSON index, so a query with it does not compile until one
+/// exists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Contains;
+
+/// JSON containment the other way: rows whose document is contained by
+/// the query's (`<@`). Exact, and answered by no index yet, as
+/// [`Contains`] is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ContainedBy;
+
+/// The accessor: `Op` applied at a JSON path, `op::AtPath(op::Eq)`. It
+/// takes a path and `Op`'s input, and inherits the fidelity of `Op`
+/// ([`TermFor`]): `AtPath<Eq>` and `AtPath<Lt>` are exact, and an accessor
+/// over a probabilistic leaf operator would be `Probabilistic`.
+///
+/// Its arity is [`Pathed`], which no input has yet: the path becomes a
+/// selector only a JSON index can derive, and this crate has none, so a
+/// query with `AtPath` does not compile until that index exists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct AtPath<Op>(pub Op);
+
+impl Operator for Contains {
+    type Arity = One;
+}
+impl Operator for ContainedBy {
+    type Arity = One;
+}
+impl<Op: Operator> Operator for AtPath<Op> {
+    type Arity = Pathed;
+}
+
 /// How many plaintexts a query for an operator takes: [`One`] or a
-/// [`Pair`]. Sealed: the chain derives a term per plaintext and joins them
-/// as the arity says, so there are exactly these two.
+/// [`Pair`], or for an accessor a path and its leaf's input ([`Pathed`]).
+/// Sealed: the chain derives a term per plaintext and joins them as the
+/// arity says, so there are exactly these.
 pub trait Arity: sealed::Sealed + 'static {}
 
 /// One plaintext: the query is given an `S` (`Eq`, `Lt`, `Matches`).
@@ -161,8 +196,15 @@ pub struct One;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Pair;
 
+/// A path and a leaf operator's input: what [`AtPath<Op>`] takes. No
+/// [`Input`] of this arity exists yet; it arrives with the JSON index,
+/// whose selector the path becomes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Pathed;
+
 impl Arity for One {}
 impl Arity for Pair {}
+impl Arity for Pathed {}
 
 /// What a query of arity `A` is given, and the plaintext its index is
 /// declared over: an `S` is an input of [`One`] over `S`, and an `(S, S)`
@@ -382,6 +424,7 @@ mod sealed {
     impl Sealed for super::CaseSensitive {}
     impl Sealed for super::One {}
     impl Sealed for super::Pair {}
+    impl Sealed for super::Pathed {}
 }
 
 /// The case a text operator is asked in: [`CaseInsensitive`] or
@@ -510,7 +553,12 @@ impl<T: QueryTerm> TermFor<Lte> for T {}
 impl<T: QueryTerm> TermFor<Gt> for T {}
 impl<T: QueryTerm> TermFor<Gte> for T {}
 impl<T: QueryTerm> TermFor<Between> for T {}
+impl<T: QueryTerm> TermFor<Contains> for T {}
+impl<T: QueryTerm> TermFor<ContainedBy> for T {}
 impl<C: Case, T: Probabilistic> TermFor<Matches<C>> for T {}
+/// An accessor inherits its leaf's requirement: what answers `Op` at a
+/// path is held to what answers `Op`.
+impl<Op: Operator, T: TermFor<Op>> TermFor<AtPath<Op>> for T {}
 
 /// An index that answers the operator `Op` for the input `In`, and the
 /// query term it sends for it.
@@ -799,6 +847,25 @@ mod tests {
         );
         assert_eq!(format!("{:?}", Eq), "Eq");
         assert_eq!(format!("{:?}", Between), "Between");
+        assert_eq!(format!("{:?}", AtPath(Gte)), "AtPath(Gte)");
+        assert_eq!(AtPath(Matches.case_sensitive()).0, Matches.case_sensitive());
+    }
+
+    /// An accessor is held to its leaf's requirement: an exact term
+    /// answers `AtPath<Eq>` and `AtPath<Lt>`, and only a probabilistic one
+    /// answers `AtPath<Matches>`. Containment takes any term.
+    #[test]
+    fn an_accessor_inherits_the_fidelity_of_its_leaf() {
+        fn answers<Op: Operator, T: TermFor<Op>>() {}
+        answers::<AtPath<Eq>, EqualityTerm>();
+        answers::<AtPath<Lt>, OreTerm<u32>>();
+        answers::<AtPath<Between>, RangeQuery<OpeTerm<i64>>>();
+        answers::<AtPath<Matches>, MatchQuery>();
+        answers::<AtPath<AtPath<Eq>>, EqualityTerm>();
+        answers::<Contains, EqualityTerm>();
+        answers::<ContainedBy, EqualityTerm>();
+        // `answers::<AtPath<Matches>, EqualityTerm>()` does not compile:
+        // `tests/ui/op_at_path_inherits_fidelity.rs`.
     }
 
     /// The ordering operators default to ORE, and a range is refused only

@@ -1,0 +1,29 @@
+error[E0277]: `Contains` has no default index given `std::string::String`
+  --> tests/ui/op_json_not_answered.rs:13:46
+   |
+13 |     let _ = cipher.query(op::Contains, "{}").on(&profile_plan);
+   |                                              ^^ no default index answers this operator here
+   |
+   = help: the trait `DefaultIndex<std::string::String>` is not implemented for `Contains`
+   = note: `op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; name another index, such as `Ope`, with `.via(index)`
+   = help: the following other types implement trait `DefaultIndex<In>`:
+             `Between` implements `DefaultIndex<(S, S)>`
+             `Gt` implements `DefaultIndex<S>`
+             `Gte` implements `DefaultIndex<S>`
+             `Lt` implements `DefaultIndex<S>`
+             `Lte` implements `DefaultIndex<S>`
+             `stack_encrypt::op::Eq` implements `DefaultIndex<S>`
+             `stack_encrypt::op::Matches<<DefaultMatch as stack_encrypt::op::MatchCase>::Case>` implements `DefaultIndex<S>`
+   = note: required for `ValuePlan<std::string::String, Indexed<stack_encrypt::Equality>>` to implement `Chooses<Contains, std::string::String, Whole>`
+
+error[E0599]: the method `on` exists for struct `QueryBuilder<'_, AtPath<stack_encrypt::op::Eq>, (&str, &str), FakeDataKeySource>`, but its trait bounds were not satisfied
+  --> tests/ui/op_json_not_answered.rs:16:10
+   |
+14 |       let _ = cipher
+   |  _____________-
+15 | |         .query(op::AtPath(op::Eq), &("$.address.city", "Sydney"))
+16 | |         .on(&profile_plan);
+   | |_________-^^
+   |
+   = note: the following trait bounds were not satisfied:
+           `(&str, &str): Input<Pathed>`
