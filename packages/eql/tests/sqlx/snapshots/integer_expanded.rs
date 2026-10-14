@@ -349,6 +349,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -359,7 +363,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "=",
                             lit,
@@ -449,6 +453,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -459,7 +467,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "=",
                             lit,
@@ -549,6 +557,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -559,7 +571,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "=",
                             lit,
@@ -649,6 +661,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -659,7 +675,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<>",
                             lit,
@@ -749,6 +765,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -759,7 +779,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<>",
                             lit,
@@ -849,6 +869,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -859,7 +883,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<>",
                             lit,
@@ -949,6 +973,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -959,7 +987,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "=",
                             lit,
@@ -1049,6 +1077,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -1059,7 +1091,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "=",
                             lit,
@@ -1149,6 +1181,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -1159,7 +1195,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "=",
                             lit,
@@ -1249,6 +1285,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -1259,7 +1299,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<>",
                             lit,
@@ -1349,6 +1389,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -1359,7 +1403,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<>",
                             lit,
@@ -1449,6 +1493,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -1459,7 +1507,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<>",
                             lit,
@@ -1551,6 +1599,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -1561,7 +1613,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "=",
                             lit,
@@ -1653,6 +1705,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -1663,7 +1719,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "=",
                             lit,
@@ -1755,6 +1811,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -1765,7 +1825,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "=",
                             lit,
@@ -1857,6 +1917,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -1867,7 +1931,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<>",
                             lit,
@@ -1959,6 +2023,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -1969,7 +2037,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<>",
                             lit,
@@ -2061,6 +2129,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -2071,7 +2143,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<>",
                             lit,
@@ -2161,6 +2233,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -2171,7 +2247,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<",
                             lit,
@@ -2261,6 +2337,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -2271,7 +2351,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<",
                             lit,
@@ -2361,6 +2441,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -2371,7 +2455,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<",
                             lit,
@@ -2461,6 +2545,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -2471,7 +2559,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<=",
                             lit,
@@ -2561,6 +2649,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -2571,7 +2663,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<=",
                             lit,
@@ -2661,6 +2753,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -2671,7 +2767,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<=",
                             lit,
@@ -2761,6 +2857,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -2771,7 +2871,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">",
                             lit,
@@ -2861,6 +2961,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -2871,7 +2975,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">",
                             lit,
@@ -2961,6 +3065,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -2971,7 +3079,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">",
                             lit,
@@ -3061,6 +3169,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -3071,7 +3183,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">=",
                             lit,
@@ -3161,6 +3273,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -3171,7 +3287,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">=",
                             lit,
@@ -3261,6 +3377,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -3271,7 +3391,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">=",
                             lit,
@@ -3363,6 +3483,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -3373,7 +3497,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<",
                             lit,
@@ -3465,6 +3589,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -3475,7 +3603,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<",
                             lit,
@@ -3567,6 +3695,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -3577,7 +3709,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<",
                             lit,
@@ -3669,6 +3801,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -3679,7 +3815,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<=",
                             lit,
@@ -3771,6 +3907,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -3781,7 +3921,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<=",
                             lit,
@@ -3873,6 +4013,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -3883,7 +4027,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<=",
                             lit,
@@ -3975,6 +4119,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -3985,7 +4133,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">",
                             lit,
@@ -4077,6 +4225,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -4087,7 +4239,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">",
                             lit,
@@ -4179,6 +4331,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -4189,7 +4345,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">",
                             lit,
@@ -4281,6 +4437,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -4291,7 +4451,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">=",
                             lit,
@@ -4383,6 +4543,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -4393,7 +4557,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">=",
                             lit,
@@ -4485,6 +4649,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -4495,7 +4663,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "({0})::{1} {2} {3}::jsonb::{1}",
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">=",
                             lit,
@@ -4563,9 +4731,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -4585,6 +4753,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -4602,7 +4774,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -4731,9 +4903,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -4753,6 +4925,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -4770,7 +4946,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -4899,9 +5075,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -4921,6 +5097,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -4938,7 +5118,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -5067,9 +5247,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -5089,6 +5269,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -5106,7 +5290,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -5235,9 +5419,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -5257,6 +5441,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -5274,7 +5462,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -5403,9 +5591,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -5425,6 +5613,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -5442,7 +5634,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -5571,9 +5763,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -5593,6 +5785,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -5610,7 +5806,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -5739,9 +5935,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -5761,6 +5957,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -5778,7 +5978,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -5907,9 +6107,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -5929,6 +6129,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -5946,7 +6150,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -6075,9 +6279,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -6097,6 +6301,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -6114,7 +6322,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -6243,9 +6451,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -6265,6 +6473,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -6282,7 +6494,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -6411,9 +6623,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -6433,6 +6645,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -6450,7 +6666,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -6579,9 +6795,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -6603,6 +6819,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -6620,7 +6840,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -6749,9 +6969,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -6773,6 +6993,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -6790,7 +7014,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -6919,9 +7143,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -6943,6 +7167,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -6960,7 +7188,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -7089,9 +7317,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -7113,6 +7341,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -7130,7 +7362,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -7259,9 +7491,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -7283,6 +7515,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -7300,7 +7536,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -7429,9 +7665,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -7453,6 +7689,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -7470,7 +7710,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -7599,9 +7839,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -7621,6 +7861,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -7638,7 +7882,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -7767,9 +8011,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -7789,6 +8033,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -7806,7 +8054,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -7935,9 +8183,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -7957,6 +8205,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -7974,7 +8226,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -8103,9 +8355,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -8125,6 +8377,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -8142,7 +8398,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -8271,9 +8527,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -8293,6 +8549,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -8310,7 +8570,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -8439,9 +8699,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -8461,6 +8721,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -8478,7 +8742,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -8607,9 +8871,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -8629,6 +8893,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -8646,7 +8914,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -8775,9 +9043,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -8797,6 +9065,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -8814,7 +9086,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -8943,9 +9215,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -8965,6 +9237,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -8982,7 +9258,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -9111,9 +9387,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9133,6 +9409,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -9150,7 +9430,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -9279,9 +9559,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9301,6 +9581,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -9318,7 +9602,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -9447,9 +9731,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9469,6 +9753,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -9486,7 +9774,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -9615,9 +9903,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9639,6 +9927,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -9656,7 +9948,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -9785,9 +10077,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9809,6 +10101,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -9826,7 +10122,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -9955,9 +10251,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9979,6 +10275,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -9996,7 +10296,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -10125,9 +10425,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10149,6 +10449,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -10166,7 +10470,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -10295,9 +10599,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10319,6 +10623,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -10336,7 +10644,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -10465,9 +10773,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10489,6 +10797,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -10506,7 +10818,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -10635,9 +10947,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10659,6 +10971,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -10676,7 +10992,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -10805,9 +11121,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10829,6 +11145,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -10846,7 +11166,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -10975,9 +11295,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10999,6 +11319,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -11016,7 +11340,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -11145,9 +11469,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -11169,6 +11493,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -11186,7 +11514,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -11315,9 +11643,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -11339,6 +11667,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -11356,7 +11688,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -11485,9 +11817,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 908usize,
+            start_line: 910usize,
             start_col: 22usize,
-            end_line: 908usize,
+            end_line: 910usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -11509,6 +11841,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let pivot: i32 = <i32 as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
                 let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
                     i32,
@@ -11526,7 +11862,7 @@ pub mod integer {
                     )
                     .len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     (
                         "d_d",
@@ -11655,9 +11991,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -11748,9 +12084,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -11841,9 +12177,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -11934,9 +12270,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12027,9 +12363,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12120,9 +12456,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12213,9 +12549,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12306,9 +12642,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12399,9 +12735,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12492,9 +12828,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12585,9 +12921,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12678,9 +13014,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12771,9 +13107,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12864,9 +13200,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 965usize,
+            start_line: 969usize,
             start_col: 22usize,
-            end_line: 965usize,
+            end_line: 969usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -12957,9 +13293,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -13094,9 +13430,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -13231,9 +13567,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -13368,9 +13704,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -13505,9 +13841,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -13642,9 +13978,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -13779,9 +14115,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -13916,9 +14252,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -14051,9 +14387,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -14186,9 +14522,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -14321,9 +14657,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -14456,9 +14792,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -14593,9 +14929,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -14730,9 +15066,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -14867,9 +15203,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -15004,9 +15340,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -15141,9 +15477,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -15278,9 +15614,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1033usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1033usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -15415,9 +15751,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1096usize,
+            start_line: 1100usize,
             start_col: 22usize,
-            end_line: 1096usize,
+            end_line: 1100usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -15557,9 +15893,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1096usize,
+            start_line: 1100usize,
             start_col: 22usize,
-            end_line: 1096usize,
+            end_line: 1100usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -15699,9 +16035,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1096usize,
+            start_line: 1100usize,
             start_col: 22usize,
-            end_line: 1096usize,
+            end_line: 1100usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -15841,9 +16177,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1096usize,
+            start_line: 1100usize,
             start_col: 22usize,
-            end_line: 1096usize,
+            end_line: 1100usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -15983,9 +16319,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1169usize,
+            start_line: 1173usize,
             start_col: 22usize,
-            end_line: 1169usize,
+            end_line: 1173usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -16086,9 +16422,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1169usize,
+            start_line: 1173usize,
             start_col: 22usize,
-            end_line: 1169usize,
+            end_line: 1173usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -16189,9 +16525,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1169usize,
+            start_line: 1173usize,
             start_col: 22usize,
-            end_line: 1169usize,
+            end_line: 1173usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -16292,9 +16628,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1169usize,
+            start_line: 1173usize,
             start_col: 22usize,
-            end_line: 1169usize,
+            end_line: 1173usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -16395,9 +16731,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1226usize,
+            start_line: 1230usize,
             start_col: 22usize,
-            end_line: 1226usize,
+            end_line: 1230usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -16484,9 +16820,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1226usize,
+            start_line: 1230usize,
             start_col: 22usize,
-            end_line: 1226usize,
+            end_line: 1230usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -16573,9 +16909,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1226usize,
+            start_line: 1230usize,
             start_col: 22usize,
-            end_line: 1226usize,
+            end_line: 1230usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -16662,9 +16998,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1226usize,
+            start_line: 1230usize,
             start_col: 22usize,
-            end_line: 1226usize,
+            end_line: 1230usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -16751,9 +17087,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1301usize,
+            start_line: 1305usize,
             start_col: 22usize,
-            end_line: 1301usize,
+            end_line: 1305usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -16975,9 +17311,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1301usize,
+            start_line: 1305usize,
             start_col: 22usize,
-            end_line: 1301usize,
+            end_line: 1305usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -17199,9 +17535,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1301usize,
+            start_line: 1305usize,
             start_col: 22usize,
-            end_line: 1301usize,
+            end_line: 1305usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -17423,9 +17759,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1301usize,
+            start_line: 1305usize,
             start_col: 22usize,
-            end_line: 1301usize,
+            end_line: 1305usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -17647,9 +17983,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1404usize,
+            start_line: 1408usize,
             start_col: 22usize,
-            end_line: 1404usize,
+            end_line: 1408usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -18018,9 +18354,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1404usize,
+            start_line: 1408usize,
             start_col: 22usize,
-            end_line: 1404usize,
+            end_line: 1408usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -18319,9 +18655,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1404usize,
+            start_line: 1408usize,
             start_col: 22usize,
-            end_line: 1404usize,
+            end_line: 1408usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -18480,9 +18816,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1404usize,
+            start_line: 1408usize,
             start_col: 22usize,
-            end_line: 1404usize,
+            end_line: 1408usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -18641,9 +18977,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1485usize,
+            start_line: 1489usize,
             start_col: 22usize,
-            end_line: 1485usize,
+            end_line: 1489usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -18805,9 +19141,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1485usize,
+            start_line: 1489usize,
             start_col: 22usize,
-            end_line: 1485usize,
+            end_line: 1489usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -18969,9 +19305,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1485usize,
+            start_line: 1489usize,
             start_col: 22usize,
-            end_line: 1485usize,
+            end_line: 1489usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -19133,9 +19469,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1485usize,
+            start_line: 1489usize,
             start_col: 22usize,
-            end_line: 1485usize,
+            end_line: 1489usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -19297,9 +19633,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1485usize,
+            start_line: 1489usize,
             start_col: 22usize,
-            end_line: 1485usize,
+            end_line: 1489usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -19461,9 +19797,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2459usize,
+            start_line: 2463usize,
             start_col: 22usize,
-            end_line: 2459usize,
+            end_line: 2463usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -19483,6 +19819,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let extractor = ::eql_tests::scalar_domains::combo_extractor(
                     &spec,
                     &["="],
@@ -19510,7 +19850,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {3}(plaintext, value) SELECT plaintext, ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     &spec.sql_domain,
                                     fixture_table,
                                     table,
@@ -19641,9 +19981,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2459usize,
+            start_line: 2463usize,
             start_col: 22usize,
-            end_line: 2459usize,
+            end_line: 2463usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -19663,6 +20003,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let extractor = ::eql_tests::scalar_domains::combo_extractor(
                     &spec,
                     &["="],
@@ -19690,7 +20034,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {3}(plaintext, value) SELECT plaintext, ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     &spec.sql_domain,
                                     fixture_table,
                                     table,
@@ -19821,9 +20165,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2459usize,
+            start_line: 2463usize,
             start_col: 22usize,
-            end_line: 2459usize,
+            end_line: 2463usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -19843,6 +20187,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let extractor = ::eql_tests::scalar_domains::combo_extractor(
                     &spec,
                     &["=", "<", "<=", ">", ">="],
@@ -19870,7 +20218,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {3}(plaintext, value) SELECT plaintext, ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     &spec.sql_domain,
                                     fixture_table,
                                     table,
@@ -20121,9 +20469,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2459usize,
+            start_line: 2463usize,
             start_col: 22usize,
-            end_line: 2459usize,
+            end_line: 2463usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -20143,6 +20491,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let extractor = ::eql_tests::scalar_domains::combo_extractor(
                     &spec,
                     &["=", "<", "<=", ">", ">="],
@@ -20170,7 +20522,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {3}(plaintext, value) SELECT plaintext, ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     &spec.sql_domain,
                                     fixture_table,
                                     table,
@@ -20421,9 +20773,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1805usize,
+            start_line: 1809usize,
             start_col: 22usize,
-            end_line: 1805usize,
+            end_line: 1809usize,
             end_col: 86usize,
             compile_fail: false,
             no_run: false,
@@ -20625,9 +20977,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1896usize,
+            start_line: 1900usize,
             start_col: 22usize,
-            end_line: 1896usize,
+            end_line: 1900usize,
             end_col: 55usize,
             compile_fail: false,
             no_run: false,
@@ -21031,9 +21383,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2079usize,
+            start_line: 2083usize,
             start_col: 22usize,
-            end_line: 2079usize,
+            end_line: 2083usize,
             end_col: 86usize,
             compile_fail: false,
             no_run: false,
@@ -21305,9 +21657,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2079usize,
+            start_line: 2083usize,
             start_col: 22usize,
-            end_line: 2079usize,
+            end_line: 2083usize,
             end_col: 86usize,
             compile_fail: false,
             no_run: false,
@@ -21579,9 +21931,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2396usize,
+            start_line: 2400usize,
             start_col: 22usize,
-            end_line: 2396usize,
+            end_line: 2400usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -21681,9 +22033,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2939usize,
+            start_line: 2951usize,
             start_col: 22usize,
-            end_line: 2939usize,
+            end_line: 2951usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -21704,8 +22056,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let extremum: i32 = <i32 as ScalarType>::fixture_values()
                     .iter()
@@ -21863,9 +22219,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3001usize,
+            start_line: 3015usize,
             start_col: 22usize,
-            end_line: 3001usize,
+            end_line: 3015usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -21975,9 +22331,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3026usize,
+            start_line: 3040usize,
             start_col: 22usize,
-            end_line: 3026usize,
+            end_line: 3040usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -22074,9 +22430,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3052usize,
+            start_line: 3066usize,
             start_col: 22usize,
-            end_line: 3052usize,
+            end_line: 3066usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -22097,8 +22453,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let values: &[i32] = <i32 as ScalarType>::fixture_values();
                 if ::anyhow::__private::not(values.len() >= 2) {
@@ -22262,9 +22622,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2939usize,
+            start_line: 2951usize,
             start_col: 22usize,
-            end_line: 2939usize,
+            end_line: 2951usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -22285,8 +22645,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let extremum: i32 = <i32 as ScalarType>::fixture_values()
                     .iter()
@@ -22444,9 +22808,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3001usize,
+            start_line: 3015usize,
             start_col: 22usize,
-            end_line: 3001usize,
+            end_line: 3015usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -22556,9 +22920,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3026usize,
+            start_line: 3040usize,
             start_col: 22usize,
-            end_line: 3026usize,
+            end_line: 3040usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -22655,9 +23019,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3052usize,
+            start_line: 3066usize,
             start_col: 22usize,
-            end_line: 3052usize,
+            end_line: 3066usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -22678,8 +23042,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let values: &[i32] = <i32 as ScalarType>::fixture_values();
                 if ::anyhow::__private::not(values.len() >= 2) {
@@ -22843,9 +23211,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2939usize,
+            start_line: 2951usize,
             start_col: 22usize,
-            end_line: 2939usize,
+            end_line: 2951usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -22866,8 +23234,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let extremum: i32 = <i32 as ScalarType>::fixture_values()
                     .iter()
@@ -23025,9 +23397,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3001usize,
+            start_line: 3015usize,
             start_col: 22usize,
-            end_line: 3001usize,
+            end_line: 3015usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -23137,9 +23509,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3026usize,
+            start_line: 3040usize,
             start_col: 22usize,
-            end_line: 3026usize,
+            end_line: 3040usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -23236,9 +23608,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3052usize,
+            start_line: 3066usize,
             start_col: 22usize,
-            end_line: 3052usize,
+            end_line: 3066usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -23261,8 +23633,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let values: &[i32] = <i32 as ScalarType>::fixture_values();
                 if ::anyhow::__private::not(values.len() >= 2) {
@@ -23426,9 +23802,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2939usize,
+            start_line: 2951usize,
             start_col: 22usize,
-            end_line: 2939usize,
+            end_line: 2951usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -23449,8 +23825,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let extremum: i32 = <i32 as ScalarType>::fixture_values()
                     .iter()
@@ -23608,9 +23988,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3001usize,
+            start_line: 3015usize,
             start_col: 22usize,
-            end_line: 3001usize,
+            end_line: 3015usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -23720,9 +24100,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3026usize,
+            start_line: 3040usize,
             start_col: 22usize,
-            end_line: 3026usize,
+            end_line: 3040usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -23819,9 +24199,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3052usize,
+            start_line: 3066usize,
             start_col: 22usize,
-            end_line: 3052usize,
+            end_line: 3066usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -23844,8 +24224,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let values: &[i32] = <i32 as ScalarType>::fixture_values();
                 if ::anyhow::__private::not(values.len() >= 2) {
@@ -24009,9 +24393,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3233usize,
+            start_line: 3249usize,
             start_col: 22usize,
-            end_line: 3233usize,
+            end_line: 3249usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -24032,8 +24416,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let values: &[i32] = <i32 as ScalarType>::fixture_values();
                 if ::anyhow::__private::not(values.len() >= 5) {
@@ -24262,9 +24650,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3233usize,
+            start_line: 3249usize,
             start_col: 22usize,
-            end_line: 3233usize,
+            end_line: 3249usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -24285,8 +24673,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let values: &[i32] = <i32 as ScalarType>::fixture_values();
                 if ::anyhow::__private::not(values.len() >= 5) {
@@ -24515,9 +24907,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3233usize,
+            start_line: 3249usize,
             start_col: 22usize,
-            end_line: 3233usize,
+            end_line: 3249usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -24538,8 +24930,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let values: &[i32] = <i32 as ScalarType>::fixture_values();
                 if ::anyhow::__private::not(values.len() >= 5) {
@@ -24768,9 +25164,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3233usize,
+            start_line: 3249usize,
             start_col: 22usize,
-            end_line: 3233usize,
+            end_line: 3249usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -24791,8 +25187,12 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let values: &[i32] = <i32 as ScalarType>::fixture_values();
                 if ::anyhow::__private::not(values.len() >= 5) {
@@ -25021,9 +25421,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3148usize,
+            start_line: 3164usize,
             start_col: 22usize,
-            end_line: 3148usize,
+            end_line: 3164usize,
             end_col: 77usize,
             compile_fail: false,
             no_run: false,
@@ -25130,9 +25530,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3148usize,
+            start_line: 3164usize,
             start_col: 22usize,
-            end_line: 3148usize,
+            end_line: 3164usize,
             end_col: 77usize,
             compile_fail: false,
             no_run: false,
@@ -25239,9 +25639,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3392usize,
+            start_line: 3410usize,
             start_col: 22usize,
-            end_line: 3392usize,
+            end_line: 3410usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -25407,9 +25807,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3392usize,
+            start_line: 3410usize,
             start_col: 22usize,
-            end_line: 3392usize,
+            end_line: 3410usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -25575,9 +25975,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3392usize,
+            start_line: 3410usize,
             start_col: 22usize,
-            end_line: 3392usize,
+            end_line: 3410usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -25743,9 +26143,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3392usize,
+            start_line: 3410usize,
             start_col: 22usize,
-            end_line: 3392usize,
+            end_line: 3410usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -25911,9 +26311,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3392usize,
+            start_line: 3410usize,
             start_col: 22usize,
-            end_line: 3392usize,
+            end_line: 3410usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -26079,9 +26479,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3392usize,
+            start_line: 3410usize,
             start_col: 22usize,
-            end_line: 3392usize,
+            end_line: 3410usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -26247,9 +26647,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3392usize,
+            start_line: 3410usize,
             start_col: 22usize,
-            end_line: 3392usize,
+            end_line: 3410usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -26415,9 +26815,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3392usize,
+            start_line: 3410usize,
             start_col: 22usize,
-            end_line: 3392usize,
+            end_line: 3410usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -26583,9 +26983,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3506usize,
+            start_line: 3524usize,
             start_col: 22usize,
-            end_line: 3506usize,
+            end_line: 3524usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -26606,6 +27006,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Storage);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
@@ -26627,7 +27031,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO typed_count(value) SELECT ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     d,
                                     fixture,
                                 ),
@@ -26712,9 +27116,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3540usize,
+            start_line: 3560usize,
             start_col: 22usize,
-            end_line: 3540usize,
+            end_line: 3560usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -26735,6 +27139,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Storage);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
@@ -26742,7 +27150,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT COUNT(({0})::{1}) FROM {2}",
-                            &spec.column_expr,
+                            &column_expr,
                             d,
                             fixture,
                         ),
@@ -26756,7 +27164,7 @@ pub mod integer {
                                 ::alloc::fmt::format(
                                     format_args!(
                                         "COUNT(({0})::{1}) on {2}: want {3}, got {4}; SQL={5}",
-                                        &spec.column_expr,
+                                        &column_expr,
                                         d,
                                         fixture,
                                         expected,
@@ -26822,9 +27230,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3584usize,
+            start_line: 3606usize,
             start_col: 22usize,
-            end_line: 3584usize,
+            end_line: 3606usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -26851,6 +27259,10 @@ pub mod integer {
                 let Some(extractor) = spec.extractor_expr("value") else {
                     return Ok(());
                 };
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
                 let mut tx = pool.begin().await?;
@@ -26871,7 +27283,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO distinct_count(value) SELECT ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     d,
                                     fixture,
                                 ),
@@ -26962,9 +27374,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3506usize,
+            start_line: 3524usize,
             start_col: 22usize,
-            end_line: 3506usize,
+            end_line: 3524usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -26985,6 +27397,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
@@ -27006,7 +27422,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO typed_count(value) SELECT ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     d,
                                     fixture,
                                 ),
@@ -27091,9 +27507,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3540usize,
+            start_line: 3560usize,
             start_col: 22usize,
-            end_line: 3540usize,
+            end_line: 3560usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -27114,6 +27530,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Eq);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
@@ -27121,7 +27541,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT COUNT(({0})::{1}) FROM {2}",
-                            &spec.column_expr,
+                            &column_expr,
                             d,
                             fixture,
                         ),
@@ -27135,7 +27555,7 @@ pub mod integer {
                                 ::alloc::fmt::format(
                                     format_args!(
                                         "COUNT(({0})::{1}) on {2}: want {3}, got {4}; SQL={5}",
-                                        &spec.column_expr,
+                                        &column_expr,
                                         d,
                                         fixture,
                                         expected,
@@ -27201,9 +27621,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3584usize,
+            start_line: 3606usize,
             start_col: 22usize,
-            end_line: 3584usize,
+            end_line: 3606usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -27228,6 +27648,10 @@ pub mod integer {
                 let Some(extractor) = spec.extractor_expr("value") else {
                     return Ok(());
                 };
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
                 let mut tx = pool.begin().await?;
@@ -27248,7 +27672,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO distinct_count(value) SELECT ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     d,
                                     fixture,
                                 ),
@@ -27339,9 +27763,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3506usize,
+            start_line: 3524usize,
             start_col: 22usize,
-            end_line: 3506usize,
+            end_line: 3524usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -27362,6 +27786,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
@@ -27383,7 +27811,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO typed_count(value) SELECT ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     d,
                                     fixture,
                                 ),
@@ -27468,9 +27896,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3540usize,
+            start_line: 3560usize,
             start_col: 22usize,
-            end_line: 3540usize,
+            end_line: 3560usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -27491,6 +27919,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
@@ -27498,7 +27930,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT COUNT(({0})::{1}) FROM {2}",
-                            &spec.column_expr,
+                            &column_expr,
                             d,
                             fixture,
                         ),
@@ -27512,7 +27944,7 @@ pub mod integer {
                                 ::alloc::fmt::format(
                                     format_args!(
                                         "COUNT(({0})::{1}) on {2}: want {3}, got {4}; SQL={5}",
-                                        &spec.column_expr,
+                                        &column_expr,
                                         d,
                                         fixture,
                                         expected,
@@ -27578,9 +28010,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3584usize,
+            start_line: 3606usize,
             start_col: 22usize,
-            end_line: 3584usize,
+            end_line: 3606usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -27605,6 +28037,10 @@ pub mod integer {
                 let Some(extractor) = spec.extractor_expr("value") else {
                     return Ok(());
                 };
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
                 let mut tx = pool.begin().await?;
@@ -27625,7 +28061,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO distinct_count(value) SELECT ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     d,
                                     fixture,
                                 ),
@@ -27716,9 +28152,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3506usize,
+            start_line: 3524usize,
             start_col: 22usize,
-            end_line: 3506usize,
+            end_line: 3524usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -27739,6 +28175,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
@@ -27760,7 +28200,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO typed_count(value) SELECT ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     d,
                                     fixture,
                                 ),
@@ -27845,9 +28285,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3540usize,
+            start_line: 3560usize,
             start_col: 22usize,
-            end_line: 3540usize,
+            end_line: 3560usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -27868,6 +28308,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
@@ -27875,7 +28319,7 @@ pub mod integer {
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT COUNT(({0})::{1}) FROM {2}",
-                            &spec.column_expr,
+                            &column_expr,
                             d,
                             fixture,
                         ),
@@ -27889,7 +28333,7 @@ pub mod integer {
                                 ::alloc::fmt::format(
                                     format_args!(
                                         "COUNT(({0})::{1}) on {2}: want {3}, got {4}; SQL={5}",
-                                        &spec.column_expr,
+                                        &column_expr,
                                         d,
                                         fixture,
                                         expected,
@@ -27955,9 +28399,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3584usize,
+            start_line: 3606usize,
             start_col: 22usize,
-            end_line: 3584usize,
+            end_line: 3606usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -27984,6 +28428,10 @@ pub mod integer {
                 let Some(extractor) = spec.extractor_expr("value") else {
                     return Ok(());
                 };
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture = <i32 as ScalarType>::fixture_table_name();
                 let expected = <i32 as ScalarType>::fixture_values().len() as i64;
                 let mut tx = pool.begin().await?;
@@ -28004,7 +28452,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO distinct_count(value) SELECT ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     d,
                                     fixture,
                                 ),
@@ -28095,9 +28543,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2609usize,
+            start_line: 2615usize,
             start_col: 22usize,
-            end_line: 2609usize,
+            end_line: 2615usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -28118,6 +28566,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ScalarType>::fixture_table_name();
                 let mid: i32 = <i32 as OrderedScalar>::mid_pivot();
                 let gt_mid = "all" == "gt_mid";
@@ -28133,7 +28585,7 @@ pub mod integer {
                 } else {
                     String::new()
                 };
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let d = &spec.sql_domain;
                 let ord = spec
                     .ord_extractor_expr(
@@ -28238,9 +28690,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2609usize,
+            start_line: 2615usize,
             start_col: 22usize,
-            end_line: 2609usize,
+            end_line: 2615usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -28261,6 +28713,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ScalarType>::fixture_table_name();
                 let mid: i32 = <i32 as OrderedScalar>::mid_pivot();
                 let gt_mid = "all" == "gt_mid";
@@ -28276,7 +28732,7 @@ pub mod integer {
                 } else {
                     String::new()
                 };
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let d = &spec.sql_domain;
                 let ord = spec
                     .ord_extractor_expr(
@@ -28381,9 +28837,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2609usize,
+            start_line: 2615usize,
             start_col: 22usize,
-            end_line: 2609usize,
+            end_line: 2615usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -28404,6 +28860,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ScalarType>::fixture_table_name();
                 let mid: i32 = <i32 as OrderedScalar>::mid_pivot();
                 let gt_mid = "gt_mid" == "gt_mid";
@@ -28419,7 +28879,7 @@ pub mod integer {
                 } else {
                     String::new()
                 };
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let d = &spec.sql_domain;
                 let ord = spec
                     .ord_extractor_expr(
@@ -28524,9 +28984,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2609usize,
+            start_line: 2615usize,
             start_col: 22usize,
-            end_line: 2609usize,
+            end_line: 2615usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -28547,6 +29007,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ScalarType>::fixture_table_name();
                 let mid: i32 = <i32 as OrderedScalar>::mid_pivot();
                 let gt_mid = "gt_mid" == "gt_mid";
@@ -28562,7 +29026,7 @@ pub mod integer {
                 } else {
                     String::new()
                 };
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let d = &spec.sql_domain;
                 let ord = spec
                     .ord_extractor_expr(
@@ -28667,9 +29131,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2609usize,
+            start_line: 2615usize,
             start_col: 22usize,
-            end_line: 2609usize,
+            end_line: 2615usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -28690,6 +29154,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ScalarType>::fixture_table_name();
                 let mid: i32 = <i32 as OrderedScalar>::mid_pivot();
                 let gt_mid = "all" == "gt_mid";
@@ -28705,7 +29173,7 @@ pub mod integer {
                 } else {
                     String::new()
                 };
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let d = &spec.sql_domain;
                 let ord = spec
                     .ord_extractor_expr(
@@ -28810,9 +29278,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2609usize,
+            start_line: 2615usize,
             start_col: 22usize,
-            end_line: 2609usize,
+            end_line: 2615usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -28833,6 +29301,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ScalarType>::fixture_table_name();
                 let mid: i32 = <i32 as OrderedScalar>::mid_pivot();
                 let gt_mid = "all" == "gt_mid";
@@ -28848,7 +29320,7 @@ pub mod integer {
                 } else {
                     String::new()
                 };
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let d = &spec.sql_domain;
                 let ord = spec
                     .ord_extractor_expr(
@@ -28953,9 +29425,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2609usize,
+            start_line: 2615usize,
             start_col: 22usize,
-            end_line: 2609usize,
+            end_line: 2615usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -28976,6 +29448,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ScalarType>::fixture_table_name();
                 let mid: i32 = <i32 as OrderedScalar>::mid_pivot();
                 let gt_mid = "gt_mid" == "gt_mid";
@@ -28991,7 +29467,7 @@ pub mod integer {
                 } else {
                     String::new()
                 };
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let d = &spec.sql_domain;
                 let ord = spec
                     .ord_extractor_expr(
@@ -29096,9 +29572,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2609usize,
+            start_line: 2615usize,
             start_col: 22usize,
-            end_line: 2609usize,
+            end_line: 2615usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -29121,6 +29597,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ScalarType>::fixture_table_name();
                 let mid: i32 = <i32 as OrderedScalar>::mid_pivot();
                 let gt_mid = "gt_mid" == "gt_mid";
@@ -29136,7 +29616,7 @@ pub mod integer {
                 } else {
                     String::new()
                 };
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let d = &spec.sql_domain;
                 let ord = spec
                     .ord_extractor_expr(
@@ -29241,9 +29721,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2723usize,
+            start_line: 2731usize,
             start_col: 22usize,
-            end_line: 2723usize,
+            end_line: 2731usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -29264,6 +29744,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let table = "matrix_integer_ord_order_by_asc_nulls_first";
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
@@ -29288,7 +29772,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {2}(plaintext, value) SELECT plaintext, ({0})::{3} FROM {1}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     fixture_table,
                                     table,
                                     d,
@@ -29420,9 +29904,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2723usize,
+            start_line: 2731usize,
             start_col: 22usize,
-            end_line: 2723usize,
+            end_line: 2731usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -29443,6 +29927,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let table = "matrix_integer_ord_order_by_asc_nulls_last";
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
@@ -29467,7 +29955,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {2}(plaintext, value) SELECT plaintext, ({0})::{3} FROM {1}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     fixture_table,
                                     table,
                                     d,
@@ -29599,9 +30087,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2723usize,
+            start_line: 2731usize,
             start_col: 22usize,
-            end_line: 2723usize,
+            end_line: 2731usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -29622,6 +30110,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let table = "matrix_integer_ord_order_by_desc_nulls_first";
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
@@ -29646,7 +30138,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {2}(plaintext, value) SELECT plaintext, ({0})::{3} FROM {1}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     fixture_table,
                                     table,
                                     d,
@@ -29778,9 +30270,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2723usize,
+            start_line: 2731usize,
             start_col: 22usize,
-            end_line: 2723usize,
+            end_line: 2731usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -29801,6 +30293,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let table = "matrix_integer_ord_order_by_desc_nulls_last";
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
@@ -29825,7 +30321,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {2}(plaintext, value) SELECT plaintext, ({0})::{3} FROM {1}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     fixture_table,
                                     table,
                                     d,
@@ -29957,9 +30453,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2723usize,
+            start_line: 2731usize,
             start_col: 22usize,
-            end_line: 2723usize,
+            end_line: 2731usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -29982,6 +30478,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let table = "matrix_integer_ord_ore_order_by_asc_nulls_first";
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
@@ -30006,7 +30506,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {2}(plaintext, value) SELECT plaintext, ({0})::{3} FROM {1}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     fixture_table,
                                     table,
                                     d,
@@ -30138,9 +30638,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2723usize,
+            start_line: 2731usize,
             start_col: 22usize,
-            end_line: 2723usize,
+            end_line: 2731usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -30161,6 +30661,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let table = "matrix_integer_ord_ore_order_by_asc_nulls_last";
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
@@ -30185,7 +30689,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {2}(plaintext, value) SELECT plaintext, ({0})::{3} FROM {1}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     fixture_table,
                                     table,
                                     d,
@@ -30317,9 +30821,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2723usize,
+            start_line: 2731usize,
             start_col: 22usize,
-            end_line: 2723usize,
+            end_line: 2731usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -30342,6 +30846,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let table = "matrix_integer_ord_ore_order_by_desc_nulls_first";
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
@@ -30366,7 +30874,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {2}(plaintext, value) SELECT plaintext, ({0})::{3} FROM {1}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     fixture_table,
                                     table,
                                     d,
@@ -30498,9 +31006,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2723usize,
+            start_line: 2731usize,
             start_col: 22usize,
-            end_line: 2723usize,
+            end_line: 2731usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -30523,6 +31031,10 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let table = "matrix_integer_ord_ore_order_by_desc_nulls_last";
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
@@ -30547,7 +31059,7 @@ pub mod integer {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO {2}(plaintext, value) SELECT plaintext, ({0})::{3} FROM {1}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     fixture_table,
                                     table,
                                     d,
@@ -30679,9 +31191,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2849usize,
+            start_line: 2859usize,
             start_col: 22usize,
-            end_line: 2849usize,
+            end_line: 2859usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -30701,13 +31213,17 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
                 let sql = ::alloc::__export::must_use({
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT plaintext FROM {0} ORDER BY ({1})::{2} USING {3}",
                             fixture_table,
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<",
                         ),
@@ -30783,9 +31299,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2849usize,
+            start_line: 2859usize,
             start_col: 22usize,
-            end_line: 2849usize,
+            end_line: 2859usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -30805,13 +31321,17 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
                 let sql = ::alloc::__export::must_use({
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT plaintext FROM {0} ORDER BY ({1})::{2} USING {3}",
                             fixture_table,
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<=",
                         ),
@@ -30887,9 +31407,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2849usize,
+            start_line: 2859usize,
             start_col: 22usize,
-            end_line: 2849usize,
+            end_line: 2859usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -30909,13 +31429,17 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
                 let sql = ::alloc::__export::must_use({
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT plaintext FROM {0} ORDER BY ({1})::{2} USING {3}",
                             fixture_table,
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">",
                         ),
@@ -30991,9 +31515,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2849usize,
+            start_line: 2859usize,
             start_col: 22usize,
-            end_line: 2849usize,
+            end_line: 2859usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -31013,13 +31537,17 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::Ord);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
                 let sql = ::alloc::__export::must_use({
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT plaintext FROM {0} ORDER BY ({1})::{2} USING {3}",
                             fixture_table,
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">=",
                         ),
@@ -31095,9 +31623,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2849usize,
+            start_line: 2859usize,
             start_col: 22usize,
-            end_line: 2849usize,
+            end_line: 2859usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -31119,13 +31647,17 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
                 let sql = ::alloc::__export::must_use({
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT plaintext FROM {0} ORDER BY ({1})::{2} USING {3}",
                             fixture_table,
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<",
                         ),
@@ -31201,9 +31733,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2849usize,
+            start_line: 2859usize,
             start_col: 22usize,
-            end_line: 2849usize,
+            end_line: 2859usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -31225,13 +31757,17 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
                 let sql = ::alloc::__export::must_use({
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT plaintext FROM {0} ORDER BY ({1})::{2} USING {3}",
                             fixture_table,
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             "<=",
                         ),
@@ -31307,9 +31843,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2849usize,
+            start_line: 2859usize,
             start_col: 22usize,
-            end_line: 2849usize,
+            end_line: 2859usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -31331,13 +31867,17 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
                 let sql = ::alloc::__export::must_use({
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT plaintext FROM {0} ORDER BY ({1})::{2} USING {3}",
                             fixture_table,
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">",
                         ),
@@ -31413,9 +31953,9 @@ pub mod integer {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2849usize,
+            start_line: 2859usize,
             start_col: 22usize,
-            end_line: 2849usize,
+            end_line: 2859usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -31437,13 +31977,17 @@ pub mod integer {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     i32,
                 >(::eql_tests::scalar_domains::Variant::OrdOre);
+                let column_expr = <i32 as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture_table = <i32 as ::eql_tests::scalar_domains::ScalarType>::fixture_table_name();
                 let sql = ::alloc::__export::must_use({
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT plaintext FROM {0} ORDER BY ({1})::{2} USING {3}",
                             fixture_table,
-                            &spec.column_expr,
+                            &column_expr,
                             &spec.sql_domain,
                             ">=",
                         ),

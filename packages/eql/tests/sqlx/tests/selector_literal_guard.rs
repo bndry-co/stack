@@ -65,6 +65,24 @@ fn left_bounded(bytes: &[u8], start: usize) -> bool {
     }
 }
 
+/// Whether the `0x`-prefixed run `start..end` ends in a Rust integer suffix
+/// (`u128`, `_u128`, …) that is itself standalone, as in `0x<hex>u128`.
+fn int_suffix_follows(bytes: &[u8], start: usize, end: usize) -> bool {
+    const SUFFIXES: [&str; 12] = [
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+    ];
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    if start < 2 || bytes[start - 2] != b'0' || !matches!(bytes[start - 1], b'x' | b'X') {
+        return false;
+    }
+    let rest = &bytes[end..];
+    let rest = rest.strip_prefix(b"_").unwrap_or(rest);
+    SUFFIXES.iter().any(|suffix| {
+        rest.strip_prefix(suffix.as_bytes())
+            .is_some_and(|after| after.first().is_none_or(|b| !is_word(*b)))
+    })
+}
+
 /// Every standalone 32-hex run on `line` that looks like a real selector.
 fn selector_literals(line: &str) -> Vec<&str> {
     let bytes = line.as_bytes();
@@ -80,7 +98,7 @@ fn selector_literals(line: &str) -> Vec<&str> {
         while i < bytes.len() && bytes[i].is_ascii_hexdigit() {
             i += 1;
         }
-        if i < bytes.len() && is_word(bytes[i]) {
+        if i < bytes.len() && is_word(bytes[i]) && !int_suffix_follows(bytes, start, i) {
             continue;
         }
         let run = &line[start..i];
@@ -208,8 +226,16 @@ mod classifier {
             let int = format!("    const S: u128 = {prefix}{r};");
             assert_eq!(selector_literals(&int), vec![r.as_str()], "{int}");
         }
+        // A Rust integer suffix after a `0x` run does not hide it.
+        for suffix in ["u128", "_u128", "i128"] {
+            let int = format!("    const S: u128 = 0x{r}{suffix};");
+            assert_eq!(selector_literals(&int), vec![r.as_str()], "{int}");
+        }
         // A `0x` inside a longer word is not a prefix.
         assert!(selector_literals(&format!("a0x{r}")).is_empty());
+        // A suffix-shaped tail is only a suffix after `0x`, and only standalone.
+        assert!(selector_literals(&format!("{r}u128")).is_empty());
+        assert!(selector_literals(&format!("0x{r}u128x")).is_empty());
     }
 
     /// Uppercase and mixed-case hex selectors are flagged too (E3b).
