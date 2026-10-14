@@ -40,8 +40,8 @@ Decision 5 of ADR-0004 assumed they were. In general they are not:
 | index | stored term | query term |
 | --- | --- | --- |
 | HMAC | the HMAC | the same HMAC |
-| ORE | left and right ciphertext (right only, in future) | the left ciphertext only |
-| OPE | the OPE value of the order key | the same value, when the order encoding is lossless; for text the key is collated first (cllw-ore's `orderize_string` folds `café` and `cafe` together), so equal terms do not mean equal plaintexts |
+| ORE | left and right ciphertext | the left ciphertext only |
+| OPE | the OPE value of the order key | the same value; equal terms mean equal order keys, which is plaintext equality only when the key is lossless (it is for integers, and not for text after the column's declared transform) |
 | Bloom match | one filter over every n-gram of the value | a filter over the n-grams of the needle: a subset, or bits the stored filter lacks |
 | Bloom prefix (planned) | an HMAC per edge n-gram | one HMAC |
 | JSON path | a selector and, per leaf, that leaf's term | a selector, or a selector plus a leaf query term |
@@ -49,10 +49,15 @@ Decision 5 of ADR-0004 assumed they were. In general they are not:
 
 HMAC equality is the one index whose query term is byte-for-byte the stored
 term, and whose comparison means plaintext equality. OPE comes close only when
-its encoding is lossless, as it is for integers. The others differ in kind.
+its order key is lossless, as it is for integers. The others differ in kind.
+The order key is `orderable-bytes`' order-preserving encoding of the value,
+applied after whatever transform the column declares for the kind (ADR-0002
+defines a text fold; the encoding is pluggable, and what the term means
+follows it). The Rust library does not use cllw-ore's `orderize_string`,
+which an earlier draft of this ADR named.
 
 The term is a function of the index *and the operator*, not of the index
-alone. An ORE index answers `=`, `<` and `BETWEEN` with different query shapes;
+alone. An ORE index answers `=`, `<` and a range with different query shapes;
 a Bloom index answers `Matches` and (if used for ranked search) `Nearest` with
 the same stored filter and different queries.
 
@@ -76,10 +81,8 @@ index, and the operator is implied. That has three costs.
 ### The server's answer is sometimes approximate, and the library says nothing
 
 A Bloom filter is probabilistic. A row whose filter happens to contain every
-bit of the query passes `@@` without containing the needle. The collating
-`orderize_string` transform behind text ordering folds case and diacritics, so
-`<` on text returns false positives at the boundary. A similarity index returns
-candidates by construction.
+bit of the query passes `@@` without containing the needle. A similarity index
+returns candidates by construction.
 
 The library has never said which terms are exact. A caller who wants ten real
 matches has no way to know how many rows to fetch, and no help deciding, after
@@ -186,13 +189,16 @@ pub trait Ranked: Term {
 ```
 
 - A term that implements `Term` only is **exact**. The server's answer is the
-  answer. HMAC `Eq`, ORE and OPE on numbers (`Lt`, `Between`), JSON
-  `AtPath<Eq>`.
+  answer. HMAC `Eq`, ORE and OPE on every kind, text included (`Lt`,
+  `Between`), JSON `AtPath<Eq>`.
 - A `Probabilistic` term can return **false positives and no false
   negatives**. `verify` is the operator's own meaning, run on a decrypted
   value: it decides whether a row the server returned is a real match. Bloom
-  `Matches` and `StartsWith`, and `Lt` on text through the collating
-  `orderize_string` (the ties).
+  `Matches` and `StartsWith`. Bloom filters are the only index this applies
+  to today, and the trait is not a home for an order term: an order term
+  over text compares order keys, and two values with one key tie by the
+  term's definition, not by error, so there is nothing a decrypted value
+  could be checked against.
 - A `Ranked` term returns **candidates in approximate order**. `score` is the
   exact score on a decrypted value, for re-ranking. `Nearest` over a
   similarity index, and `Nearest` over a Bloom index if used for ranked text
@@ -228,8 +234,9 @@ write `term.verify(..)` for an HMAC term: verification would pass for every
 row the server returned, so the method would say nothing, and the compiler
 says so.
 
-`AtPath<Op>` inherits the fidelity of the leaf: `AtPath<Lt>` on a text leaf is
-`Probabilistic`, as `Lt` on a text column is.
+`AtPath<Op>` inherits the fidelity of `Op` on the leaf: `AtPath<Eq>` and
+`AtPath<Lt>` are exact, as `Eq` and `Lt` are, and an accessor over a
+probabilistic leaf operator, should one be added, is `Probabilistic`.
 
 ### 5. Verification is the caller's, after decrypt; the library supplies the predicate and the bound
 
@@ -238,9 +245,12 @@ a caller of a `Probabilistic` term is two things.
 
 `verify` is the predicate. For `Matches<Insensitive>`, it folds case,
 tokenises both sides with the index's own tokenizer and checks that the
-needle's n-grams occur in the value. It lives on the term because the term
-already carries the operator's input and the index's configuration, so it
-cannot disagree with what was stored.
+needle's n-grams occur in the value. Whether that check is n-gram containment
+or a substring test (they differ once the query is longer than one n-gram)
+is the implementation's choice; both are sound against a Bloom match, and
+the ADR fixes neither. It lives on the term because the term already carries
+the operator's input and the index's configuration, so it cannot disagree
+with what was stored.
 
 `target_limit` is how many rows to ask for to expect `want` real matches.
 For a Bloom filter it is computable from what the client knows, plus what
@@ -284,9 +294,9 @@ returned row correct; only the candidate count makes the result complete.
 
 #### Declared and measured statistics
 
-`N` and the fill distribution come from the server, always. The library
-takes them as numbers in `Stats` and does not care where they came from.
-There are two sources, and a column has the first one from the day it is
+Measured statistics come from the server; the declared prior comes from the
+index declaration. The library takes either as numbers in `Stats` and does
+not care which it was given. A column has the prior from the day it is
 declared.
 
 **Declared.** A match index declares `expected_tokens`, the typical token
@@ -357,14 +367,19 @@ a `Probabilistic` term can report from `target_limit` alone.
 
 #### Text ordering
 
-`Lt` on text has no `p`: the false positives are the rows that collapse onto
-the boundary key, which depends on the data. Its `target_limit` is
-`Limit::Unbounded`, and the caller uses the cursor loop below. Its use is
-ordering and cursor paging on names (`ORDER BY name`, "the page after
-Nguyen"), and EQL v4 ships `query_text_ord` for it. Whether the Rust library
-produces that term is a catalog question (`TextOrdOre` is unproducible
-today, pending cllw-ore); nothing else in this ADR depends on it, and if
-text ordering is dropped this paragraph goes with it.
+`Lt` on text is exact, decision 4, so none of the above applies to it: no
+`p`, no `verify`, no `target_limit`. The term is an order term over the
+column's order key, which is `orderable-bytes`' encoding of the value after
+the text transform the column declares (ADR-0002's fold, or another, since
+the encoding is pluggable), and the server compares keys. Two values with
+one key tie; that is what the column declared, and an earlier draft of this
+ADR was wrong to call it a false positive and put the term under
+`Probabilistic`. Its use is ordering and cursor paging on names (`ORDER BY
+name`, "the page after Nguyen"), and EQL v4 carries `query_text_ord` and
+`query_text_ord_ore` for it. Whether the Rust library produces the term is a
+catalog question (`TextOrdOre` is unproducible today, pending ADR-0002);
+nothing else in this ADR depends on it, and if text ordering is dropped this
+paragraph goes with it.
 
 A `Ranked` term's `target_limit` applies the index's configured recall
 factor and needs no `Stats`.
@@ -386,7 +401,7 @@ let rows: Vec<UserRow> = sqlx::query_as(
 .fetch_all(&pool).await?;
 
 let exhausted = (rows.len() as u64) < fetch;
-let users = cipher.decrypt_all(rows).await?;
+let users = cipher.open(rows).using(&users_plan).await?;
 let hits: Vec<User> = users.into_iter().filter(|u| term.verify(&u.name)).take(10).collect();
 // hits.len() < 10 && exhausted: there are no more matches.
 // hits.len() < 10 && !exhausted: page on from the last id.
@@ -409,7 +424,7 @@ while hits.len() < 10 {
     .fetch_all(&pool).await?;
     if rows.is_empty() { break; }
     after = rows.last().unwrap().id;
-    hits.extend(cipher.decrypt_all(rows).await?.into_iter().filter(|u| term.verify(&u.name)));
+    hits.extend(cipher.open(rows).using(&users_plan).await?.into_iter().filter(|u| term.verify(&u.name)));
 }
 hits.truncate(10);
 ```
@@ -428,25 +443,38 @@ The library ships `verify` and `target_limit`. It does not ship the loop,
 because the loop runs queries. That may change when Stack Similarity lands and
 the ranked loop is worth packaging; it is deferred, not refused.
 
-### 7. `Between` is one term, spelled `BETWEEN`
+### 7. `Between` is one term and one operand
 
 `cipher.query::<Between>((lo, hi))` produces one term carrying both ORE left
 ciphertexts, inclusive at both ends, and the client refuses `lo > hi`. One
 call derives both bounds, under one context, so a caller cannot pair a bound
 from one column with a bound from another.
 
-In SQL it is the native `BETWEEN`, with the term's two halves bound in order:
+In SQL the term stays one operand. EQL v4 gains a function that takes the
+column and the range, and a range query domain beside each ordered family's
+`ord` domain to carry it (shown here as `query_integer_range_ore`; the
+catalog names it):
 
 ```sql
-WHERE age BETWEEN $1::eql_v4.query_integer_ord_ore AND $2::eql_v4.query_integer_ord_ore
+WHERE eql_v4.between(age, $1::eql_v4.query_integer_range_ore)
 ```
 
-PostgreSQL rewrites `a BETWEEN x AND y` to `a >= x AND a <= y` when it parses
-the statement, so there is no range the planner could see and this spelling
-could hide; an earlier draft of this decision said otherwise and was wrong. A
-btree over the ORE term uses both bounds as one range scan either way. The
-term exposes its halves (`let (lo, hi) = term.bounds();`) for drivers that
-bind one value per parameter, which is all of them.
+The term is as indivisible in SQL as it is in Rust: one placeholder, so no
+statement can bind the low bound of one term with the high bound of another
+or bind them in the wrong order, and a binding hands back one value for the
+term as it does for every other (appendix B). An earlier draft spelled the
+range as the native `BETWEEN` with the term's two halves as two parameters;
+this one withdraws it, because it split in SQL the one thing the Rust side
+had just joined, and every SDK had to grow a `bounds()` to feed it.
+
+What the one-operand form asks of EQL is that the planner still see a range.
+`eql_v4.between` must be a SQL function PostgreSQL inlines at planning time
+(`LANGUAGE sql`, one expression, `$1 >= lo($2) AND $1 <= hi($2)` with
+immutable accessors), so that a btree over the ORE term serves it as one
+range scan. A function the planner cannot inline is a call per row on a
+sequential scan, which no index can rescue. That is an EQL-side requirement
+with an EQL-side test, and it is why the function and the domain arrive
+together.
 
 ### 8. One query operand domain per (family, term) in EQL v4
 
@@ -455,7 +483,8 @@ The EQL v4 side carries one query domain per (type family, term), such as
 per operator or one per stored domain. This is the "option B" of the design
 discussion and is recorded here so the Rust side's `Supports<Op>::Query` has a
 fixed target: the query term for an (index, operator) serialises to exactly
-one of those domains. `Between` serialises to two values of one domain.
+one of those domains. `Between` serialises to one value of the family's range
+domain, which carries both bounds (decision 7).
 
 ## Considered options
 
@@ -489,6 +518,10 @@ this library is not.
 two predicates. Rejected in favour of one `Between` term, decision 7. `Gte`
 and `Lte` themselves stay; they are the open-ended comparisons, and a range
 is not two of them.
+
+**Native `BETWEEN` with the term's halves as two parameters.** The previous
+draft of decision 7. Dropped: it splits one operand across two placeholders,
+and every binding has to hand back halves to feed it.
 
 **`expected_tokens` deferred until the stats query exists.** Dropped: the
 declared prior is what makes `target_limit` usable on a column nobody has
@@ -529,9 +562,13 @@ JSON column's query already selects it. A similarity index stores its vector
 separately, so a `Nearest` query must select the embedding, or the sketch,
 as well.
 
-The collating text-order case falls out without a special case: EQL's
-ADR-0002 (the value model, #1139) already refuses equality through
-`orderize`, and `Lt` on text is now simply a `Probabilistic` term.
+Text ordering needs no special case: `Lt` on text is an exact term over the
+order key, and what that key folds is ADR-0002's decision (the value model,
+#1139), which keeps equality off the order term for the same reason.
+
+EQL v4 gains `eql_v4.between(column, range)` and a range query domain per
+ordered family, under the inlining requirement of decision 7. That is
+EQL-side work this ADR asks for, not a deferral.
 
 It is a breaking change to the query chain. `QueryUsing::index(..)` goes;
 `QueryUsing::equality()` becomes `query::<Eq>`. The write side (`encrypt`,
@@ -558,8 +595,9 @@ EQL v4's query domains (decision 8), as the v4 tests bind them today:
 `$1::eql_v4.query_text_eq`, with the JSON text of the term as the parameter.
 The JSON operators are spelled as EQL v3 ships them, since v4 does not carry
 `json` yet. `UserRow` is the row as the driver returns it, with the EQL
-columns as `sqlx::types::Json<EqlValue>`, and `cipher.decrypt_all` turns rows
-into `User`s.
+columns as `sqlx::types::Json<EqlValue>`, and `cipher.open(rows).using(&users_plan)`
+opens every row under the plan the table was written with, in one key
+request, and yields `User`s.
 
 **`Eq`, exact.** The term is an HMAC; the operator is `=`. Nothing to verify.
 
@@ -571,7 +609,7 @@ let rows: Vec<UserRow> = sqlx::query_as(
 )
 .bind(sqlx::types::Json(&term))
 .fetch_all(&pool).await?;
-let users = cipher.decrypt_all(rows).await?;
+let users = cipher.open(rows).using(&users_plan).await?;
 ```
 
 **`Lt` on an integer, exact.** The term is the ORE left ciphertext; the
@@ -587,18 +625,16 @@ let rows: Vec<UserRow> = sqlx::query_as(
 .fetch_all(&pool).await?;
 ```
 
-**`Between`, exact, one term and two parameters** (decision 7).
+**`Between`, exact, one term and one parameter** (decision 7).
 
 ```rust
 let term = cipher.query::<Between>((18, 65)).on(&users::age)?;
-let (lo, hi) = term.bounds();
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, email, name, age FROM users
-     WHERE age BETWEEN $1::eql_v4.query_integer_ord_ore AND $2::eql_v4.query_integer_ord_ore",
+     WHERE eql_v4.between(age, $1::eql_v4.query_integer_range_ore)",
 )
-.bind(sqlx::types::Json(lo))
-.bind(sqlx::types::Json(hi))
+.bind(sqlx::types::Json(&term))
 .fetch_all(&pool).await?;
 ```
 
@@ -620,7 +656,7 @@ let rows: Vec<UserRow> = sqlx::query_as(
 .fetch_all(&pool).await?;
 
 let exhausted = (rows.len() as u64) < fetch;
-let hits: Vec<User> = cipher.decrypt_all(rows).await?
+let hits: Vec<User> = cipher.open(rows).using(&users_plan).await?
     .into_iter()
     .filter(|u| term.verify(&u.name))
     .take(10)
@@ -659,7 +695,7 @@ let rows: Vec<UserRow> = sqlx::query_as(
 .bind(sqlx::types::Json(&age))
 .bind(name.target_limit(10, &stats).fetch() as i64)
 .fetch_all(&pool).await?;
-let hits: Vec<User> = cipher.decrypt_all(rows).await?
+let hits: Vec<User> = cipher.open(rows).using(&users_plan).await?
     .into_iter().filter(|u| name.verify(&u.name)).take(10).collect();
 ```
 
@@ -693,9 +729,8 @@ let rows: Vec<UserRow> = sqlx::query_as(
 .fetch_all(&pool).await?;
 ```
 
-`AtPath<Lt>` on a text leaf is `Probabilistic` and verifies like `Lt` on a
-text column: `term.verify(&user.profile)` applies the comparison at the path
-on the decrypted document.
+`AtPath<Lt>` on a text leaf is exact, as `Lt` on a text column is: the
+leaf's order term compares order keys, and there is nothing to verify.
 
 **`Nearest`, ranked.** Stack Similarity has no EQL spelling yet, so this is
 the shape and not a statement that runs. The term is a set of band tokens;
@@ -712,7 +747,7 @@ let rows: Vec<DocRow> = sqlx::query_as(
 .bind(sqlx::types::Json(&term)).bind(fetch as i64)
 .fetch_all(&pool).await?;
 
-let mut docs = cipher.decrypt_all(rows).await?;
+let mut docs = cipher.open(rows).using(&docs_plan).await?;
 docs.sort_by_key(|d| std::cmp::Reverse(term.score(&d.vector)));
 docs.truncate(10);
 ```
@@ -759,7 +794,7 @@ and each is a capability the data grammar does not have yet, added once
    operator the type does not answer, with the same shape of error a
    mistyped field gets today.
 2. **The term back**, as the JSON its query domain takes, plus which domain
-   that is. The `Between` term comes back as its two halves.
+   that is. A `Between` term is one value like any other.
 3. **`verify`** as an export: `(term, decrypted value) → bool`, batched as
    `(term, [values]) → [bool]` so a page costs one crossing. The value has
    already come out of the guest as a decrypt, so sending it back in is no
@@ -787,7 +822,7 @@ operator the type answers, with the operator's input in the signature:
 ```go
 q, err := users.Fields.Email.Eq(ctx, cipher, "bob@example.com")   // eql.TextEqQuery
 q, err := users.Fields.Age.Lt(ctx, cipher, int32(40))              // eql.IntegerOrdOreQuery
-q, err := users.Fields.Age.Between(ctx, cipher, int32(18), int32(65)) // eql.IntegerRangeQuery: Lo(), Hi()
+q, err := users.Fields.Age.Between(ctx, cipher, int32(18), int32(65)) // eql.IntegerRangeOreQuery, one value
 q, err := users.Fields.Name.Matches(ctx, cipher, "ali")            // eql.TextMatchQuery
 ```
 
@@ -867,7 +902,7 @@ column's EQL type answers, each taking that operator's input:
 ```ts
 const email = await cipher.query(users.email).eq('bob@example.com')      // EqTerm
 const age   = await cipher.query(users.age).lt(40)                        // LtTerm
-const range = await cipher.query(users.age).between(18, 65)               // BetweenTerm: bounds()
+const range = await cipher.query(users.age).between(18, 65)               // BetweenTerm, one value
 const name  = await cipher.query(users.name).matches('ali')               // MatchesTerm
 const city  = await cipher.query(users.profile).atPath('$.address.city').eq('Sydney')
 
@@ -930,14 +965,12 @@ const hits = people.filter((p) => name.verify(p.name)).slice(0, 10)
 const exhausted = rows.length < limit
 ```
 
-`Between` is one call and two parameters, because every driver binds one
-value per placeholder:
+`Between` is one call and one parameter, like every other term:
 
 ```ts
-const [lo, hi] = range.bounds()
 await pool.query(
-  'SELECT id, age FROM users WHERE age BETWEEN $1::eql_v4.query_integer_ord_ore AND $2::eql_v4.query_integer_ord_ore',
-  [lo, hi],
+  'SELECT id, age FROM users WHERE eql_v4.between(age, $1::eql_v4.query_integer_range_ore)',
+  [range],
 )
 ```
 
@@ -958,7 +991,7 @@ const hits = (await cipher.decrypt(users, rows)).filter((u) => q.verify(u.name))
 `ops.eq` returns `{ sql }` and no `verify`, by the same types. A Prisma
 integration spells the operator on the field (`u.name.eqlMatches('ali')`)
 and returns the term beside the query the same way. In both, `between` is
-one helper that binds two parameters.
+one helper that binds one parameter.
 
 **Stats** come from the two statements of decision 5, run by the
 application, or from the declared prior:
@@ -992,8 +1025,8 @@ or absence of `verify`, decided by a generator in Go and by a mapped type in
 TypeScript, both fed by the engine's catalog. Neither language needs a
 `Fidelity` enum either.
 
-The "one term, two parameters" shape of `Between` survives, because every
-driver binds one value per placeholder.
+The one-operand `Between` survives unchanged: one term, one placeholder, in
+every driver and every ORM.
 
 The declared prior survives as one field in the schema (`expectedTokens`),
 which is where a TypeScript user would expect to write it.
