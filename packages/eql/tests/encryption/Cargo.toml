@@ -31,8 +31,10 @@ postgres = "0.19"
 # JSON index yet, so the selector computation customers' stored documents
 # depend on lives in cipherstash-client, which protect-ffi encrypts through.
 # Its `JsonIndexer` runs offline over a supplied index key. The same exact pin
-# tests/sqlx names, so the lockfile gains no second copy; bumping it moves
-# both, and the pinned fixture is what notices a changed computation.
+# tests/sqlx names, so this workspace's lockfile gains no second copy.
+# protect-ffi resolves cipherstash-client from its own workspace and lockfile,
+# so the pin covers the version named here, not necessarily the one protect-ffi
+# ships: a protect-ffi bump is covered once this line moves to match it.
 cipherstash-client = "=0.42.0"
 # The tampering test decodes a stored body, changes one byte and re-encodes
 # it. The same line eql-bindings uses, so the lockfile gains no second copy.

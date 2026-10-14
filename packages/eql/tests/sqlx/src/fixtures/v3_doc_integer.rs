@@ -146,11 +146,11 @@ mod tests {
         }
     }
 
+    /// `TABLE` is the table the generator writes for `NAME`: the matrix's
+    /// `fixture_table_name()` and the selector subquery both read `TABLE`, so
+    /// the two cannot name different tables.
     #[test]
-    fn field_op_selector_subquery_reads_the_fixture() {
-        let sql = field_op_selector_subquery();
-        assert!(sql.starts_with('(') && sql.ends_with(')'), "{sql}");
-        assert!(sql.contains("FROM fixtures.v3_doc_integer f"), "{sql}");
-        assert!(sql.contains("WHERE e ? 'op'"), "{sql}");
+    fn table_is_the_generated_fixture_table() {
+        assert_eq!(TABLE, format!("fixtures.{NAME}"));
     }
 }

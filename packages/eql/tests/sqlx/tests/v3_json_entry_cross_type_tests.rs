@@ -140,8 +140,11 @@ async fn json_entry_cross_operators_are_public_ranges_and_blocked_equality(
 /// `$.field` `op` leaf: extract the entry's CLLW-OPE (`op`) term and wrap it
 /// term-only (`{v, i, op}`, no `c`). `op` carries the field's selector context,
 /// so `ord_term(operand)` is comparable to every leaf's `ord_term`.
-async fn field_context_ord_operand(tx: &mut sqlx::PgConnection, id: i64) -> Result<String> {
-    let sel = field_op_selector(&mut *tx).await?;
+async fn field_context_ord_operand(
+    tx: &mut sqlx::PgConnection,
+    sel: &str,
+    id: i64,
+) -> Result<String> {
     let operand: String = sqlx::query_scalar(&format!(
         "SELECT jsonb_build_object('v', '3', 'i', (payload::jsonb -> 'i'), 'op', \
                 (payload -> '{sel}'::text)::jsonb -> 'op')::text \
@@ -184,8 +187,7 @@ async fn median_pivot_id(tx: &mut sqlx::PgConnection) -> Result<i64> {
 
 /// Extract every row's `$.field` entry into a temp table (id, plaintext, value)
 /// and return a functional btree name on `ord_term(value)`.
-async fn build_entry_table(tx: &mut sqlx::PgConnection) -> Result<()> {
-    let sel = field_op_selector(&mut *tx).await?;
+async fn build_entry_table(tx: &mut sqlx::PgConnection, sel: &str) -> Result<()> {
     sqlx::query(
         "CREATE TEMP TABLE entry_x (id bigint, plaintext integer, value public.eql_v3_json_entry) \
          ON COMMIT DROP",
@@ -215,8 +217,9 @@ async fn build_entry_table(tx: &mut sqlx::PgConnection) -> Result<()> {
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_doc_integer")))]
 async fn json_entry_ord_cross_type_engages_index(pool: PgPool) -> Result<()> {
     let mut tx = pool.begin().await?;
-    let operand = field_context_ord_operand(&mut tx, 1).await?;
-    build_entry_table(&mut tx).await?;
+    let sel = field_op_selector(&mut *tx).await?;
+    let operand = field_context_ord_operand(&mut tx, &sel, 1).await?;
+    build_entry_table(&mut tx, &sel).await?;
     sqlx::query("SET LOCAL enable_seqscan = off")
         .execute(&mut *tx)
         .await?;
@@ -250,13 +253,14 @@ async fn json_entry_ord_cross_type_engages_index(pool: PgPool) -> Result<()> {
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_doc_integer")))]
 async fn json_entry_ord_cross_type_operator_equals_function(pool: PgPool) -> Result<()> {
     let mut tx = pool.begin().await?;
-    build_entry_table(&mut tx).await?;
+    let sel = field_op_selector(&mut *tx).await?;
+    build_entry_table(&mut tx, &sel).await?;
     // Pivot on the MEDIAN row, not row 1: row 1 is the fixture's minimum
     // (i32::MIN), which makes the `<` comparison vacuous — both sides count an
     // empty set and 0 == 0 proves nothing. A mid-range pivot gives every
     // operator a non-degenerate split to agree on.
     let pivot_id = median_pivot_id(&mut tx).await?;
-    let operand = field_context_ord_operand(&mut tx, pivot_id).await?;
+    let operand = field_context_ord_operand(&mut tx, &sel, pivot_id).await?;
 
     let esc = operand.replace('\'', "''");
     for (op, func) in [(">", "gt"), (">=", "gte"), ("<", "lt"), ("<=", "lte")] {
@@ -303,9 +307,10 @@ async fn json_entry_ord_cross_type_operator_equals_function(pool: PgPool) -> Res
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_doc_integer")))]
 async fn json_entry_range_cross_type_matches_plaintext_ordering(pool: PgPool) -> Result<()> {
     let mut tx = pool.begin().await?;
-    build_entry_table(&mut tx).await?;
+    let sel = field_op_selector(&mut *tx).await?;
+    build_entry_table(&mut tx, &sel).await?;
     let pivot_id = median_pivot_id(&mut tx).await?;
-    let operand = field_context_ord_operand(&mut tx, pivot_id).await?;
+    let operand = field_context_ord_operand(&mut tx, &sel, pivot_id).await?;
     let esc = operand.replace('\'', "''");
 
     let total: i64 = sqlx::query_scalar("SELECT count(*) FROM entry_x")

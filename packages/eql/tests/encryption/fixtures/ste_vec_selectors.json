@@ -1,14 +1,29 @@
 {
-  "_comment": "The SteVec selectors cipherstash-client's JsonIndexer derives for the document under FakeDataKeySource's index key (keyset nil). A change here breaks queries over SteVec documents customers have already stored: it is a breaking change, not a refresh. Regenerate with EQL_UPDATE_FIXTURES=1 only alongside a changeset explaining the break; do not edit by hand.",
+  "_comment": "The SteVec selectors and op terms cipherstash-client's JsonIndexer derives for the document under FakeDataKeySource's index key (keyset nil), with the ste_vec index config @cipherstash/stack sends. A change here breaks queries over SteVec documents customers have already stored: it is a breaking change, not a refresh. Regenerate with EQL_UPDATE_STE_VEC_SELECTORS=1 only alongside a changeset on @cipherstash/protect-ffi explaining the break; do not edit by hand.",
   "document": {
+    "active": true,
     "field": 1,
-    "hello": "world"
+    "hello": "world",
+    "missing": null,
+    "nested": {
+      "deep": "value"
+    },
+    "ratio": 1.5,
+    "roles": [
+      "admin",
+      "user"
+    ]
   },
   "entries": [
     {
       "op": null,
       "query": "path $",
       "s": "1af5523addab3ba61ec51cf59fceadfc"
+    },
+    {
+      "op": null,
+      "query": "path $.active",
+      "s": "660152072223441bad8095dbac44f8d6"
     },
     {
       "op": "00bef3cc24f1b23fbdb304796611a587fea81269d746ba726f5602bc4de61a4dac1dda8c9552ee518f3bfe07d24eb65d82d56621814757348e7b9feff8ba7234ad42",
@@ -22,8 +37,58 @@
     },
     {
       "op": null,
+      "query": "path $.missing",
+      "s": "defe55d58247d59d6d230ce10412e33e"
+    },
+    {
+      "op": null,
+      "query": "path $.nested",
+      "s": "b08062618d267971da0d5b61cee116fc"
+    },
+    {
+      "op": "013e128054c9ec902ccc337c37b4f5cdb2b9712172b693805aa10e5a52cf0a45296b035e972dc2bbb47139f1c702b4e7c5d5",
+      "query": "path $.nested.deep",
+      "s": "11cd5d58d2fd9c3e413689fc3606e165"
+    },
+    {
+      "op": "00bef3cc24f1b23fbdb30479661225cfad26aa15b22173cd5b8b55b67da0688e2efe90bf094a628b08950c1aeea73c3d1b3ea7da6546238604cfe16af0bc9e62d5de",
+      "query": "path $.ratio",
+      "s": "19893fdae73e38f040c8929b04a16979"
+    },
+    {
+      "op": null,
+      "query": "path $.roles",
+      "s": "3506cd9af1a021e3f22ea3893256cbc3"
+    },
+    {
+      "op": "013e12805449076862ce108161fd59bd1cee03310a93a5843a579c1545333033c74407cf45df6e786a97316fd327f37876d3",
+      "query": null,
+      "s": "59fa9664f7b735ecff792562eb23c173"
+    },
+    {
+      "op": "013e12805449076862ce108161fd59bd1cee03310a93a5843a579c1545333033c74407cf45df6e786a97316fd327f37876d3",
+      "query": "path $.roles[*]",
+      "s": "51f80734ee46cd385c009384a7f24f45"
+    },
+    {
+      "op": "013e128054c9ec8facb98ba59df7c04158b461a61bab7188cce889bc0054af79788b0e4ac2a514809d92",
+      "query": null,
+      "s": "59fa9664f7b735ecff792562eb23c173"
+    },
+    {
+      "op": "013e128054c9ec8facb98ba59df7c04158b461a61bab7188cce889bc0054af79788b0e4ac2a514809d92",
+      "query": "path $.roles[*]",
+      "s": "51f80734ee46cd385c009384a7f24f45"
+    },
+    {
+      "op": null,
       "query": null,
       "s": "d74b8bf2a52a486634f5d4f97486993d"
+    },
+    {
+      "op": null,
+      "query": "value $.active == true",
+      "s": "eb2161e4a0b783e2d324306a42d53802"
     },
     {
       "op": null,
@@ -34,15 +99,79 @@
       "op": null,
       "query": "value $.hello == \"world\"",
       "s": "348c025840e46d46ff679c84f9221771"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "140ae8c400aeb59be65ff2929ef91d1b"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "a21d4e062b97f5fcc86ad51ee0628452"
+    },
+    {
+      "op": null,
+      "query": "value $.nested.deep == \"value\"",
+      "s": "f8f9458bf969cf467b619564fab142a9"
+    },
+    {
+      "op": null,
+      "query": "value $.ratio == 1.5",
+      "s": "9fd3256643055ccf86fe160860436af5"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "c1298c8b04ed1bda656ff2eb4f76f34e"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "d41432ed8fc1209e3fb0256663972850"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "4317b066ae5255e6d6de25c14319db58"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "d29a7f7b25c832243a5dd6e5ee594336"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "d88e1ca75d2da1bf69a66f33f5aaa43b"
     }
   ],
-  "mode": "Compat",
+  "index_config": {
+    "array_index_mode": {
+      "item": true,
+      "position": false,
+      "wildcard": true
+    },
+    "kind": "ste-vec",
+    "mode": "compat",
+    "prefix": "users/profile"
+  },
   "prefix": "users/profile",
   "selectors": {
     "path $": "1af5523addab3ba61ec51cf59fceadfc",
+    "path $.active": "660152072223441bad8095dbac44f8d6",
     "path $.field": "b574cc826b75501996ab23b8cdf5d3f5",
     "path $.hello": "d0a825c9949392215b3ff40dc7dcd9b0",
+    "path $.missing": "defe55d58247d59d6d230ce10412e33e",
+    "path $.nested": "b08062618d267971da0d5b61cee116fc",
+    "path $.nested.deep": "11cd5d58d2fd9c3e413689fc3606e165",
+    "path $.ratio": "19893fdae73e38f040c8929b04a16979",
+    "path $.roles": "3506cd9af1a021e3f22ea3893256cbc3",
+    "path $.roles[*]": "51f80734ee46cd385c009384a7f24f45",
+    "value $.active == true": "eb2161e4a0b783e2d324306a42d53802",
     "value $.field == 1": "b6e19d2e81c567eec77865b5035fc936",
-    "value $.hello == \"world\"": "348c025840e46d46ff679c84f9221771"
+    "value $.hello == \"world\"": "348c025840e46d46ff679c84f9221771",
+    "value $.nested.deep == \"value\"": "f8f9458bf969cf467b619564fab142a9",
+    "value $.ratio == 1.5": "9fd3256643055ccf86fe160860436af5"
   }
 }

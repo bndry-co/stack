@@ -16,21 +16,31 @@
 //! workspace does not enter into it.
 //!
 //! The computation lives in cipherstash-client's `JsonIndexer` (stack-encrypt
-//! has no JSON index yet); `ScopedCipher` hands it the keyset's index key
-//! unchanged, so passing it the fake index key is the production path with
-//! the key swapped. The prefix is `table/column`, which is how
-//! `@cipherstash/stack` builds every JSON column's `ste_vec` index, and the
-//! mode is `Compat` (CLLW-OPE `op` terms), the only mode EQL v3 stores.
+//! has no JSON index yet). The indexer is built the way production builds it:
+//! `JsonIndexer::try_init` over an `IndexType::SteVec` deserialized from the
+//! exact `ste_vec` index config `@cipherstash/stack` sends for an EQL v3
+//! searchable JSON column (`eql/v3/columns.ts`): prefix `table/column`,
+//! `array_index_mode` item + wildcard without position, mode `compat`
+//! (CLLW-OPE `op` terms). `ScopedCipher` hands the indexer the keyset's index
+//! key unchanged, so only the key is swapped. The document covers every JSON
+//! shape the indexer branches on: numbers (integer and float), a string, a
+//! bool, null, a nested object and an array.
 //!
-//! Regenerate with `EQL_UPDATE_FIXTURES=1` — and read the failure message
+//! What it pins is the cipherstash-client version this EQL workspace resolves.
+//! protect-ffi, which writes customers' documents, resolves cipherstash-client
+//! from its own workspace and lockfile, so a bump there is not covered until
+//! this workspace moves to the same version.
+//!
+//! Regenerate with `EQL_UPDATE_STE_VEC_SELECTORS=1`, deliberately not the
+//! crate's routine `EQL_UPDATE_FIXTURES` switch, and read the failure message
 //! below before doing so.
 
 use std::borrow::Cow;
 use std::path::PathBuf;
 
 use cipherstash_client::ejsonpath::Selector;
-use cipherstash_client::encryption::{JsonIndexer, JsonIndexerOptions, SteVec, TokenizedSelector};
-use cipherstash_client::schema::column::{ArrayIndexMode, SteVecMode};
+use cipherstash_client::encryption::{IndexerInit, JsonIndexer, SteVec, TokenizedSelector};
+use cipherstash_client::schema::column::IndexType;
 use cipherstash_client::zerokms;
 use serde_json::{json, Value};
 use stack_kms::{DataKeySource, FakeDataKeySource, GenerateKeyPayload, IndexKeySource};
@@ -47,16 +57,32 @@ fn prefix() -> String {
 }
 
 fn document() -> Value {
-    json!({"field": 1, "hello": "world"})
+    json!({
+        "field": 1,
+        "hello": "world",
+        "ratio": 1.5,
+        "active": true,
+        "missing": null,
+        "nested": {"deep": "value"},
+        "roles": ["admin", "user"],
+    })
+}
+
+/// The `ste_vec` index config `@cipherstash/stack` sends for an EQL v3
+/// searchable JSON column, with its `prefix: 'enabled'` sentinel already
+/// rewritten to `table/column` as the table's `build()` does.
+fn index_config() -> Value {
+    json!({
+        "kind": "ste-vec",
+        "prefix": prefix(),
+        "array_index_mode": {"item": true, "wildcard": true, "position": false},
+        "mode": "compat",
+    })
 }
 
 fn indexer() -> JsonIndexer {
-    JsonIndexer::new(JsonIndexerOptions {
-        prefix: prefix(),
-        term_filters: Vec::new(),
-        array_index_mode: ArrayIndexMode::default(),
-        mode: SteVecMode::Compat,
-    })
+    let index_type: IndexType = serde_json::from_value(index_config()).unwrap();
+    JsonIndexer::try_init(&index_type).unwrap()
 }
 
 /// `FakeDataKeySource`'s index key for the default (nil) keyset, as the key
@@ -106,8 +132,10 @@ changed selector breaks queries over every SteVec document customers have \
 ALREADY STORED: they stop matching, silently, with no error raised. A changed \
 op breaks their range queries the same way. This is a breaking change to stored data, not \
 a fixture refresh. Do not regenerate the fixture to make this pass unless the \
-break is intended; if it is, regenerate with EQL_UPDATE_FIXTURES=1 and add a \
-changeset that explains the break and how stored documents are re-encrypted.";
+break is intended; if it is, regenerate with EQL_UPDATE_STE_VEC_SELECTORS=1 and \
+add a changeset on the packages that ship the computation to customers \
+(@cipherstash/protect-ffi, and @cipherstash/stack above it) explaining the \
+break and how stored documents are re-encrypted.";
 
 #[tokio::test]
 async fn ste_vec_selectors_are_pinned_under_the_fake_index_key() {
@@ -133,10 +161,26 @@ async fn ste_vec_selectors_are_pinned_under_the_fake_index_key() {
         ("path $".into(), path("$")),
         ("path $.field".into(), path("$.field")),
         ("path $.hello".into(), path("$.hello")),
+        ("path $.ratio".into(), path("$.ratio")),
+        ("path $.active".into(), path("$.active")),
+        ("path $.missing".into(), path("$.missing")),
+        ("path $.nested".into(), path("$.nested")),
+        ("path $.nested.deep".into(), path("$.nested.deep")),
+        ("path $.roles".into(), path("$.roles")),
+        ("path $.roles[*]".into(), path("$.roles[*]")),
         ("value $.field == 1".into(), value("$.field", json!(1))),
         (
             "value $.hello == \"world\"".into(),
             value("$.hello", json!("world")),
+        ),
+        ("value $.ratio == 1.5".into(), value("$.ratio", json!(1.5))),
+        (
+            "value $.active == true".into(),
+            value("$.active", json!(true)),
+        ),
+        (
+            "value $.nested.deep == \"value\"".into(),
+            value("$.nested.deep", json!("value")),
         ),
     ];
 
@@ -168,31 +212,21 @@ async fn ste_vec_selectors_are_pinned_under_the_fake_index_key() {
             "the stored document carries the `{label}` selector {selector}"
         );
     }
-    // Six entries, and the only one no query names is the root's own value
-    // entry: value selectors take scalars only, so no query builds it.
-    let unlabelled: Vec<usize> = entries
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| e["query"].is_null())
-        .map(|(i, _)| i)
-        .collect();
-    assert_eq!(entries.len(), 6, "the document has six SteVec entries");
-    assert_eq!(unlabelled, [3], "only the root value entry is unlabelled");
-    // The op-carrying entries are exactly the two scalar leaves' path entries.
-    let with_op: Vec<&Value> = entries.iter().filter(|e| !e["op"].is_null()).collect();
-    assert_eq!(
-        with_op
-            .iter()
-            .map(|e| e["query"].as_str().unwrap_or("?"))
-            .collect::<Vec<_>>(),
-        ["path $.field", "path $.hello"],
-        "the op-carrying entries are the $.field and $.hello path entries"
-    );
+    // The scalar leaves' path entries carry the orderable `op` term that
+    // range queries compare; the pin below records exactly which entries do.
+    for leaf in ["path $.field", "path $.hello"] {
+        assert!(
+            entries
+                .iter()
+                .any(|e| e["query"] == leaf && !e["op"].is_null()),
+            "the `{leaf}` entry carries an `op` term"
+        );
+    }
 
     let fixture = json!({
-        "_comment": "The SteVec selectors cipherstash-client's JsonIndexer derives for the document under FakeDataKeySource's index key (keyset nil). A change here breaks queries over SteVec documents customers have already stored: it is a breaking change, not a refresh. Regenerate with EQL_UPDATE_FIXTURES=1 only alongside a changeset explaining the break; do not edit by hand.",
+        "_comment": "The SteVec selectors and op terms cipherstash-client's JsonIndexer derives for the document under FakeDataKeySource's index key (keyset nil), with the ste_vec index config @cipherstash/stack sends. A change here breaks queries over SteVec documents customers have already stored: it is a breaking change, not a refresh. Regenerate with EQL_UPDATE_STE_VEC_SELECTORS=1 only alongside a changeset on @cipherstash/protect-ffi explaining the break; do not edit by hand.",
+        "index_config": index_config(),
         "prefix": descriptor,
-        "mode": "Compat",
         "document": document(),
         "selectors": labels
             .iter()
@@ -201,10 +235,11 @@ async fn ste_vec_selectors_are_pinned_under_the_fake_index_key() {
         "entries": entries,
     });
     let rendered = serde_json::to_string_pretty(&fixture).unwrap() + "\n";
-    if std::env::var_os("EQL_UPDATE_FIXTURES").is_some() {
+    if std::env::var_os("EQL_UPDATE_STE_VEC_SELECTORS").is_some() {
         std::fs::write(fixture_path(), &rendered).unwrap();
     }
-    let committed = std::fs::read_to_string(fixture_path())
-        .expect("fixtures/ste_vec_selectors.json is committed; EQL_UPDATE_FIXTURES=1 writes it");
+    let committed = std::fs::read_to_string(fixture_path()).expect(
+        "fixtures/ste_vec_selectors.json is committed; EQL_UPDATE_STE_VEC_SELECTORS=1 writes it",
+    );
     assert_eq!(committed, rendered, "{DRIFT}");
 }

@@ -59,7 +59,7 @@ impl ScalarType for JsonbEntryInteger {
 
     /// The scalar-shaped document fixture, not `fixtures.eql_v3_integer`.
     fn fixture_table_name() -> String {
-        "fixtures.v3_doc_integer".to_string()
+        v3_doc_integer::TABLE.to_string()
     }
 
     /// Single entry domain, variant-independent.
@@ -142,14 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn extracts_entry_at_selector() {
-        assert_eq!(
-            <JsonbEntryInteger as ScalarType>::column_expr(),
-            format!(
-                "payload -> {}::text",
-                v3_doc_integer::field_op_selector_subquery()
-            ),
-        );
+    fn entry_domain_and_ord_extractor() {
         assert_eq!(
             <JsonbEntryInteger as ScalarType>::sql_domain(Variant::Ord),
             "public.eql_v3_json_entry",

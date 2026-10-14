@@ -571,10 +571,16 @@ monorepo, which is where the silent failures are.
   `fixtures::v3_ste_vec::hello_op_selector`, which apply a written rule to the
   loaded fixture and fail, listing every candidate, when zero or several
   selectors match. `tests/sqlx/tests/selector_literal_guard.rs` fails on a
-  random-looking 32-hex literal anywhere in the crate; a forged selector must be
+  random-looking standalone 32-hex run anywhere in the crate's source, SQL and
+  escaped JSON strings included, and runs DB-free in `mise run test:schema` so
+  fork PRs get it too; a forged selector must be
   visibly fake (`"00000000000000000000000000000001"`). The suite passes against
   any workspace. That a keyset and path still produce the same selector bytes is
-  pinned separately, in the encryption test crate (`packages/eql/tests/encryption`).
+  pinned separately, in the encryption test crate
+  (`packages/eql/tests/encryption/tests/ste_vec_selectors.rs`, regenerated only
+  with `EQL_UPDATE_STE_VEC_SELECTORS=1`). It pins the cipherstash-client version
+  the EQL workspace resolves; protect-ffi resolves its own from its own
+  lockfile, so the pin covers protect-ffi's only while the two versions agree.
 - **`FROZEN_PUBLISHERS` is what stops this repo publishing a package whose
   publisher lives elsewhere, and it is a mechanism, not a status.** `scripts/release-gate.mjs` carries a map of every
   package that lives here but is published from another repository. For each,

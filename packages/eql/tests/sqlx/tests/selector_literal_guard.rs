@@ -6,8 +6,12 @@
 //! `CS_WORKSPACE_CRN` changes, which happened twice (issue #1200). Tests read
 //! selectors from the loaded fixture instead (`fixtures::ste_vec_selector`).
 //!
-//! The scan flags a string literal that is exactly 32 lowercase hex characters
-//! (a 16-byte selector) AND looks random: at least [`MIN_DISTINCT_DIGITS`]
+//! The scan flags any standalone run of exactly 32 lowercase hex characters (a
+//! 16-byte selector) AND looks random, wherever it sits on the line: a bare
+//! `"…"` literal, inside a SQL string (`payload -> '…'::text`, the shape the
+//! removed pins were used in), or inside escaped JSON (`{\"s\":\"…\"}`).
+//! "Standalone" means no ASCII letter, digit or `_` directly before or after,
+//! so a longer hash or identifier never matches part-way. A match must also look random: at least [`MIN_DISTINCT_DIGITS`]
 //! distinct hex digits. A real selector is MAC output, uniformly random, and has
 //! fewer than 8 distinct digits in 32 with probability about 4e-8. Forged
 //! selectors in literal-payload tests are written low-entropy
@@ -38,16 +42,29 @@ fn looks_like_real_selector(content: &str) -> bool {
     seen.iter().filter(|s| **s).count() >= MIN_DISTINCT_DIGITS
 }
 
-/// Every `"…"` span on `line` whose body looks like a real selector. Matches
-/// inside raw strings too (a JSON literal such as `{"s":"…"}`), which is where
-/// fixture-shaped payloads put selectors.
+/// Every standalone 32-hex run on `line` that looks like a real selector.
 fn selector_literals(line: &str) -> Vec<&str> {
-    let quotes: Vec<usize> = line.match_indices('"').map(|(i, _)| i).collect();
-    quotes
-        .windows(2)
-        .map(|w| &line[w[0] + 1..w[1]])
-        .filter(|body| looks_like_real_selector(body))
-        .collect()
+    let bytes = line.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let is_hex = |b: u8| b.is_ascii_digit() || (b'a'..=b'f').contains(&b);
+    let mut found = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !is_hex(bytes[i]) || (i > 0 && is_word(bytes[i - 1])) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && is_hex(bytes[i]) {
+            i += 1;
+        }
+        let bounded = i == bytes.len() || !is_word(bytes[i]);
+        let run = &line[start..i];
+        if bounded && looks_like_real_selector(run) {
+            found.push(run);
+        }
+    }
+    found
 }
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -120,6 +137,28 @@ mod classifier {
         assert!(looks_like_real_selector(&random_looking()));
         let line = format!(r#"    {{"s":"{}","c":"ct"}}"#, random_looking());
         assert_eq!(selector_literals(&line), vec![random_looking().as_str()]);
+    }
+
+    #[test]
+    fn flags_a_selector_inside_sql_or_escaped_json() {
+        let r = random_looking();
+        let sql = format!("    \"SELECT 1 WHERE (payload -> '{r}'::text) IS NOT NULL\"");
+        assert_eq!(selector_literals(&sql), vec![r.as_str()]);
+        let escaped = format!(r#"    "{{\"s\":\"{r}\"}}""#);
+        assert_eq!(selector_literals(&escaped), vec![r.as_str()]);
+    }
+
+    #[test]
+    fn ignores_a_run_inside_a_longer_word() {
+        let r = random_looking();
+        for line in [
+            format!("x{r}"),
+            format!("{r}0"),
+            format!("{r}_"),
+            format!("0{r}"),
+        ] {
+            assert!(selector_literals(&line).is_empty(), "{line}");
+        }
     }
 
     #[test]
