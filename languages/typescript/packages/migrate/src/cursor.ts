@@ -233,6 +233,7 @@ export async function countUndecrypted(
   encryptedColumn: string,
   plaintextColumn: string,
   force = false,
+  after: KeysetBound | null = null,
 ): Promise<number> {
   return countPending(
     client,
@@ -240,7 +241,18 @@ export async function countUndecrypted(
     encryptedColumn,
     plaintextColumn,
     force,
+    after,
   )
+}
+
+/**
+ * An exclusive lower bound on the primary key, in the same form the keyset
+ * page query takes: count only rows the pass has not reached yet.
+ */
+export interface KeysetBound {
+  pkColumn: string
+  /** The cursor value (`pk::text`) to count strictly after. */
+  pk: string
 }
 
 async function countPending(
@@ -249,17 +261,41 @@ async function countPending(
   sourceColumn: string,
   targetColumn: string,
   force: boolean,
+  after: KeysetBound | null = null,
 ): Promise<number> {
   const table = qualifyTable(tableName)
-  const where = pendingPredicate(
+  let where = pendingPredicate(
     quoteIdent(sourceColumn),
     quoteIdent(targetColumn),
     force,
   )
+  const params: unknown[] = []
+  if (after !== null) {
+    params.push(after.pk)
+    where += ` AND ${quoteIdent(after.pkColumn)} > $${params.length}`
+  }
   const result = await client.query<{ count: string }>(
     `SELECT count(*)::text AS count FROM ${table} WHERE ${where}`,
+    params,
   )
   return Number(result.rows[0]?.count ?? 0)
+}
+
+/**
+ * Whether any row has `column` set. A plaintext twin that already holds
+ * values before the reverse lifecycle starts is the case `stash decrypt`
+ * refuses by default: the reverse backfill only fills NULLs, so whatever is
+ * there would be kept, current or not. `EXISTS` stops at the first match.
+ */
+export async function columnHasValues(
+  client: ClientBase,
+  tableName: string,
+  column: string,
+): Promise<boolean> {
+  const result = await client.query<{ populated: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM ${qualifyTable(tableName)} WHERE ${quoteIdent(column)} IS NOT NULL) AS populated`,
+  )
+  return result.rows[0]?.populated === true
 }
 
 /**

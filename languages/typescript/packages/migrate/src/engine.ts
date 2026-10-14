@@ -67,8 +67,14 @@ export interface ChunkedRunOptions<Row extends { pk: string }> {
   chunkSize: number
   signal?: AbortSignal
   events: ChunkedRunEvents
-  /** Rows still to process, for `rowsTotal`. Evaluated once, at start. */
-  countPending(): Promise<number>
+  /**
+   * Rows still to process, for `rowsTotal`. Evaluated once, at start, after
+   * the resume point is known: `after` is the cursor the run restarts from
+   * (`null` for a fresh pass). Count only rows past it — rows before it were
+   * already visited and are in the resumed `rowsProcessed`, including any the
+   * previous run skipped, which still match the pending predicate.
+   */
+  countPending(after: string | null): Promise<number>
   /** The next keyset page after `after` (exclusive). */
   fetchPage(after: string | null, limit: number): Promise<KeysetPage<Row>>
   /**
@@ -92,6 +98,13 @@ export interface ChunkedRunOptions<Row extends { pk: string }> {
    * backfill, whose event details are pinned by existing history readers.
    */
   trackSkipped?: boolean
+  /**
+   * Also resume from this direction's `error` event, which records the last
+   * COMMITTED cursor and counters. Without it an error hides the previous
+   * checkpoint and the next run starts a fresh pass from the first primary
+   * key. Off for the forward backfill, whose resume behaviour is pinned.
+   */
+  resumeFromError?: boolean
   onProgress?: (progress: ChunkedRunProgress) => void
 }
 
@@ -114,10 +127,11 @@ export interface ChunkedRunResult {
  * harmless: a re-run simply re-selects whatever is still pending.
  *
  * Resume: when the column's latest event is this direction's checkpoint, the
- * run restarts from its cursor and carries its counters forward. Any other
- * latest event (a completed run, an error, the other direction's history)
- * starts a fresh pass from the beginning, which the idempotency guard keeps
- * cheap.
+ * run restarts from its cursor and carries its counters forward. With
+ * `resumeFromError`, an `error` event recorded in this direction's running
+ * phase resumes the same way: it carries the last committed cursor. Any other
+ * latest event (a completed run, the other direction's history) starts a
+ * fresh pass from the beginning, which the idempotency guard keeps cheap.
  *
  * Abort: `signal` is checked between chunks; the in-flight chunk always
  * finishes and checkpoints first.
@@ -129,16 +143,22 @@ export async function runChunkedMigration<Row extends { pk: string }>(
   const base = options.baseDetails ?? {}
   const trackSkipped = options.trackSkipped ?? false
 
-  const pending = await options.countPending()
-
   const last = await progress(db, tableName, stateColumn)
-  const resumedFrom = last?.event === events.checkpoint ? last : null
+  const resumedFrom =
+    last?.event === events.checkpoint ||
+    (options.resumeFromError === true &&
+      last?.event === 'error' &&
+      last.phase === events.runningPhase &&
+      last.cursorValue !== null)
+      ? last
+      : null
   const resumeCursor = resumedFrom ? resumedFrom.cursorValue : null
   const resumed = resumeCursor !== null
   const priorProcessed = resumedFrom ? (resumedFrom.rowsProcessed ?? 0) : 0
   const priorSkipped =
     trackSkipped && resumedFrom ? readSkipped(resumedFrom.details) : 0
 
+  const pending = await options.countPending(resumeCursor)
   const rowsTotal = priorProcessed + pending
 
   await appendEvent(db, {
@@ -180,26 +200,26 @@ export async function runChunkedMigration<Row extends { pk: string }>(
       })
       const chunkSkipped = trackSkipped ? (prepared.skipped ?? 0) : 0
 
+      // The counters and cursor advance only once the chunk has COMMITTED:
+      // an `error` event records them, and a resumed run trusts them.
+      const nextProcessed = rowsProcessed + page.rows.length
+      const nextSkipped = rowsSkipped + chunkSkipped
       await db.query('BEGIN')
       try {
         await prepared.write(db)
-        rowsProcessed += page.rows.length
-        rowsSkipped += chunkSkipped
-        cursor = page.lastPk
         await appendEvent(db, {
           tableName,
           columnName: stateColumn,
           event: events.checkpoint,
           phase: events.runningPhase,
-          cursorValue: cursor,
-          rowsProcessed,
+          cursorValue: page.lastPk,
+          rowsProcessed: nextProcessed,
           rowsTotal,
           details: {
             ...base,
             chunkIndex,
             chunkRows: page.rows.length,
-            ...(trackSkipped ? { chunkSkipped } : {}),
-            ...skippedDetails(),
+            ...(trackSkipped ? { chunkSkipped, rowsSkipped: nextSkipped } : {}),
             ...prepared.checkpointDetails,
           },
         })
@@ -208,6 +228,9 @@ export async function runChunkedMigration<Row extends { pk: string }>(
         await db.query('ROLLBACK').catch(() => {})
         throw err
       }
+      rowsProcessed = nextProcessed
+      rowsSkipped = nextSkipped
+      cursor = page.lastPk
 
       options.onProgress?.({
         rowsProcessed,
@@ -245,6 +268,7 @@ export async function runChunkedMigration<Row extends { pk: string }>(
         ...base,
         message: err instanceof Error ? err.message : String(err),
         chunkIndex,
+        ...skippedDetails(),
       },
     })
     throw err

@@ -25,11 +25,13 @@ import { countUndecrypted } from '../cursor.js'
 import {
   type BulkDecryptItem,
   type DecryptionClientLike,
+  MAX_DECRYPT_CHUNK_SIZE,
+  PlaintextWriteError,
   runDecryptBackfill,
   UndecryptableBatchError,
 } from '../decrypt.js'
 import { installMigrationsSchema } from '../install.js'
-import { appendEvent, progress } from '../state.js'
+import { appendEvent, latestByColumn, progress } from '../state.js'
 import {
   columnSqlType,
   countEqlColumnsInDatabase,
@@ -235,6 +237,163 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     expect(second.rowsProcessed).toBe(500)
     expect(second.rowsSkipped).toBe(10)
     expect(await plaintextCount()).toBe(490)
+  })
+
+  it('a resumed run counts its total once, so progress ends at 100%', async () => {
+    await seed(500, 50)
+
+    const controller = new AbortController()
+    await run({
+      signal: controller.signal,
+      onProgress: (p) => {
+        if (p.rowsProcessed >= 200) controller.abort()
+      },
+    })
+
+    // The 4 rows skipped before the cursor are already in rowsProcessed and
+    // still match the pending predicate; counting them again made the total
+    // 504 and the run end below 100%.
+    const seen: Array<{ processed: number; total: number }> = []
+    const second = await run({
+      onProgress: (p) =>
+        seen.push({ processed: p.rowsProcessed, total: p.rowsTotal }),
+    })
+    expect(second.resumed).toBe(true)
+    expect(second.rowsTotal).toBe(500)
+    expect(seen.at(-1)).toEqual({ processed: 500, total: 500 })
+  })
+
+  it('resumes after a failed run from its last committed cursor, not the first primary key', async () => {
+    await seed(300)
+
+    const controller = new AbortController()
+    await run({
+      signal: controller.signal,
+      onProgress: (p) => {
+        if (p.rowsProcessed >= 200) controller.abort()
+      },
+    })
+
+    // Credentials for the wrong keyset: the first chunk of this run decrypts
+    // nothing, so it stops before writing and records an `error` event…
+    const wrongKeyset: DecryptionClientLike = {
+      bulkDecrypt: (payloads) =>
+        Promise.resolve({
+          data: payloads.map((payload) => ({
+            id: payload.id,
+            error: 'no key',
+          })),
+        }),
+    }
+    await expect(run({ decryptionClient: wrongKeyset })).rejects.toBeInstanceOf(
+      UndecryptableBatchError,
+    )
+    const db = await pool.connect()
+    try {
+      const state = await progress(db, TABLE, 'email_encrypted')
+      expect(state?.event).toBe('error')
+      expect(state?.cursorValue).toBe('200')
+      expect(state?.rowsProcessed).toBe(200)
+    } finally {
+      db.release()
+    }
+
+    // …which carries the committed cursor, so the fixed re-run picks up at
+    // row 201 instead of re-reading the first 200.
+    stubClient.calls = []
+    const fixed = await run()
+    expect(fixed.resumed).toBe(true)
+    expect(fixed.completed).toBe(true)
+    expect(fixed.rowsProcessed).toBe(300)
+    expect(stubClient.calls).toEqual([100])
+    expect(await plaintextCount()).toBe(300)
+  })
+
+  it('never puts a decrypted value in a write error, its message or the error event', async () => {
+    await pool.query(`
+      CREATE TABLE ${TABLE} (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        email_encrypted jsonb,
+        email integer
+      )
+    `)
+    await pool.query(
+      `INSERT INTO ${TABLE} (email_encrypted) VALUES ($1::jsonb)`,
+      [JSON.stringify(envelope('secret-not-a-number'))],
+    )
+
+    const error = await run({ plaintextSqlType: 'integer' }).catch(
+      (e: unknown) => e,
+    )
+
+    // Postgres's own text for this is
+    //   invalid input syntax for type integer: "secret-not-a-number"
+    expect(error).toBeInstanceOf(PlaintextWriteError)
+    const message = error instanceof Error ? error.message : ''
+    expect(message).not.toContain('secret-not-a-number')
+    expect(message).toContain('SQLSTATE 22P02')
+    expect(message).toContain('"email" (integer)')
+    expect(error instanceof Error ? error.cause : 'n/a').toBeUndefined()
+
+    const db = await pool.connect()
+    try {
+      const { rows } = await db.query<{ details: unknown }>(
+        'SELECT details FROM cipherstash.cs_migrations',
+      )
+      expect(JSON.stringify(rows)).not.toContain('secret-not-a-number')
+      const state = await progress(db, TABLE, 'email_encrypted')
+      expect(state?.event).toBe('error')
+    } finally {
+      db.release()
+    }
+    expect(await plaintextCount()).toBe(0)
+  })
+
+  it.each([0, -1, 1.5, Number.NaN, MAX_DECRYPT_CHUNK_SIZE + 1])(
+    'refuses chunk size %s before any request or event',
+    async (chunkSize) => {
+      await seed(5)
+
+      await expect(run({ chunkSize })).rejects.toBeInstanceOf(RangeError)
+
+      expect(stubClient.calls).toEqual([])
+      const db = await pool.connect()
+      try {
+        expect((await latestByColumn(db)).size).toBe(0)
+      } finally {
+        db.release()
+      }
+    },
+  )
+
+  it('writes a chunk of the maximum size in one statement (2 parameters per row)', async () => {
+    await seed(MAX_DECRYPT_CHUNK_SIZE)
+
+    const result = await run({ chunkSize: MAX_DECRYPT_CHUNK_SIZE })
+
+    expect(result.completed).toBe(true)
+    expect(stubClient.calls).toEqual([MAX_DECRYPT_CHUNK_SIZE])
+    expect(await plaintextCount()).toBe(MAX_DECRYPT_CHUNK_SIZE)
+  }, 60_000)
+
+  it('names the rows whose ciphertext decrypts to null in a scalar column', async () => {
+    await pool.query(`
+      CREATE TABLE ${TABLE} (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        email_encrypted jsonb,
+        email integer
+      )
+    `)
+    await pool.query(
+      `INSERT INTO ${TABLE} (email_encrypted) VALUES ($1::jsonb), ($2::jsonb)`,
+      [JSON.stringify(envelope(null)), JSON.stringify(envelope(5))],
+    )
+
+    const result = await run({ plaintextSqlType: 'integer' })
+
+    expect(result.rowsSkipped).toBe(1)
+    expect(result.skippedByCode).toEqual({ NULL_PLAINTEXT: 1 })
+    expect(result.nullPlaintextPks).toEqual(['1'])
   })
 
   it('is idempotent: a re-run rewrites nothing and only retries the skipped rows', async () => {

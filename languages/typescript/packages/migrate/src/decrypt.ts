@@ -56,9 +56,10 @@ export interface DecryptionClientLike {
  * A whole chunk failing is almost never "every one of these rows happens to
  * be lock-context bound". It is credentials resolving to a different
  * workspace or keyset, and carrying on would spend one ZeroKMS request per
- * chunk across the entire table to decrypt nothing. Stopping before the first
- * write also leaves the cursor untouched, so fixing the credentials and
- * re-running starts cleanly.
+ * chunk across the entire table to decrypt nothing. The run stops before
+ * writing that chunk and records an `error` event carrying the last committed
+ * cursor, so fixing the credentials and re-running resumes from the last
+ * checkpoint rather than from the first primary key.
  */
 export class UndecryptableBatchError extends Error {
   constructor(
@@ -71,6 +72,41 @@ export class UndecryptableBatchError extends Error {
     this.name = 'UndecryptableBatchError'
   }
 }
+
+/**
+ * Thrown when the chunk's `UPDATE` fails — most often a decrypted value that
+ * does not cast to the plaintext column's declared type.
+ *
+ * Postgres puts the offending INPUT in the text of a cast error
+ * (`invalid input syntax for type integer: "…"`), and on this path the input
+ * is decrypted plaintext. The engine persists an error's message into the
+ * `cs_migrations` `error` event, so the database's message must never reach
+ * it. This error carries only the SQLSTATE, the constraint name when there is
+ * one, and the column and type names; the original error is deliberately not
+ * kept as `cause`.
+ */
+export class PlaintextWriteError extends Error {
+  constructor(
+    readonly sqlState: string | undefined,
+    readonly plaintextColumn: string,
+    readonly plaintextSqlType: string,
+    readonly constraint: string | undefined,
+  ) {
+    super(
+      `Could not write decrypted values into "${plaintextColumn}" (${plaintextSqlType})${sqlState ? `: SQLSTATE ${sqlState}` : ''}${constraint ? `, constraint "${constraint}"` : ''}. Nothing from this chunk was written. ${sqlState?.startsWith('22') ? `A decrypted value does not fit the column's type; widen "${plaintextColumn}" (for example to the type \`stash decrypt plan\` suggests) and re-run.` : 'Check the column and re-run; the database message is withheld because it can contain row data.'}`,
+    )
+    this.name = 'PlaintextWriteError'
+  }
+}
+
+/**
+ * The largest chunk one write can carry. Each decrypted row binds TWO
+ * parameters in the chunk's `UPDATE … FROM (VALUES ($1, $2), …)` (the primary
+ * key and the value), and Postgres's wire protocol caps a statement at 65535
+ * parameters, so 32767 rows is the most that can ever be written in one
+ * statement. A larger chunk would fail only after its ZeroKMS request.
+ */
+export const MAX_DECRYPT_CHUNK_SIZE = Math.floor(65535 / 2)
 
 /** Options for {@link runDecryptBackfill}. Mirrors {@link BackfillOptions}. */
 export interface DecryptBackfillOptions {
@@ -95,7 +131,9 @@ export interface DecryptBackfillOptions {
   pkColumn: string
   /**
    * Rows per chunk, which is also the size of each `bulkDecrypt` call — one
-   * ZeroKMS request per chunk. Default `500`.
+   * ZeroKMS request per chunk. Default `500`. A whole number from 1 to
+   * {@link MAX_DECRYPT_CHUNK_SIZE}; anything else throws a `RangeError`
+   * before any event is recorded or any request is made.
    */
   chunkSize?: number
   /** Checked between chunks; the in-flight chunk always commits first. */
@@ -103,8 +141,14 @@ export interface DecryptBackfillOptions {
   onProgress?: (progress: DecryptBackfillProgress) => void
   /**
    * Re-decrypt every row with ciphertext, including rows whose plaintext is
-   * already set. Recovery path for drift (the application updated the
-   * ciphertext without writing the plaintext twin). Not destructive.
+   * already set, and overwrite that plaintext. Recovery path for drift (the
+   * application updated the ciphertext without writing the plaintext twin),
+   * and the way to replace plaintext that predates the reverse lifecycle.
+   *
+   * Safe only while dual-writes are live. It writes the decrypted ciphertext
+   * over whatever the plaintext column holds, so any row the application
+   * wrote to the plaintext column alone (a newer value, or a value cleared on
+   * purpose) gets the older ciphertext's value back.
    */
   force?: boolean
   /**
@@ -145,8 +189,19 @@ export interface DecryptBackfillResult {
   rowsSkipped: number
   /** Skips in THIS run, by error code (`UNKNOWN` when the row carried none). */
   skippedByCode: Record<string, number>
+  /**
+   * Primary keys (first {@link NULL_PLAINTEXT_SAMPLE_SIZE}, this run) of rows
+   * whose ciphertext decrypted to `null` for a non-JSON column — the
+   * `NULL_PLAINTEXT` skips. They are not a credentials problem, so they need
+   * a different remedy, and naming them is what makes it actionable. Keys
+   * only; never values.
+   */
+  nullPlaintextPks: string[]
   completed: boolean
 }
+
+/** How many `NULL_PLAINTEXT` primary keys a result carries. */
+export const NULL_PLAINTEXT_SAMPLE_SIZE = 20
 
 /** The reverse lifecycle's `cs_migrations` vocabulary. */
 const REVERSE_EVENTS = {
@@ -183,11 +238,27 @@ const REVERSE_EVENTS = {
  * Events are recorded under `(tableName, encryptedColumn)` with
  * `details.plaintextColumn` on every event, so later commands recover the
  * pairing from state alone.
+ *
+ * **Resume.** A run resumes from its last checkpoint, and also from an
+ * `error` event, which records the last committed cursor; a failed run does
+ * not throw away the progress before it.
+ *
+ * **Write errors.** A failed chunk write throws {@link PlaintextWriteError},
+ * never the database's own message, which can contain the decrypted value.
  */
 export async function runDecryptBackfill(
   options: DecryptBackfillOptions,
 ): Promise<DecryptBackfillResult> {
   const chunkSize = options.chunkSize ?? 500
+  if (
+    !Number.isSafeInteger(chunkSize) ||
+    chunkSize < 1 ||
+    chunkSize > MAX_DECRYPT_CHUNK_SIZE
+  ) {
+    throw new RangeError(
+      `chunkSize must be a whole number from 1 to ${MAX_DECRYPT_CHUNK_SIZE} (got ${String(chunkSize)}).`,
+    )
+  }
   const {
     db,
     tableName,
@@ -199,6 +270,7 @@ export async function runDecryptBackfill(
   const force = options.force ?? false
   const serialize = plaintextSerializer(plaintextSqlType)
   const skippedByCode: Record<string, number> = {}
+  const nullPlaintextPks: string[] = []
 
   const result = await runChunkedMigration({
     db,
@@ -208,10 +280,18 @@ export async function runDecryptBackfill(
     signal: options.signal,
     events: REVERSE_EVENTS,
     trackSkipped: true,
+    resumeFromError: true,
     baseDetails: { plaintextColumn },
     startedDetails: force ? { force: true } : {},
-    countPending: () =>
-      countUndecrypted(db, tableName, encryptedColumn, plaintextColumn, force),
+    countPending: (after) =>
+      countUndecrypted(
+        db,
+        tableName,
+        encryptedColumn,
+        plaintextColumn,
+        force,
+        after === null ? null : { pkColumn, pk: after },
+      ),
     fetchPage: (after, limit) =>
       fetchUndecryptedPage(db, {
         tableName,
@@ -256,6 +336,9 @@ export async function runDecryptBackfill(
         const value = serialize(item.data)
         if (value === undefined) {
           tally(chunkCodes, 'NULL_PLAINTEXT')
+          if (nullPlaintextPks.length < NULL_PLAINTEXT_SAMPLE_SIZE) {
+            nullPlaintextPks.push(pk)
+          }
           continue
         }
         writes.push({ pk, value })
@@ -311,6 +394,7 @@ export async function runDecryptBackfill(
     rowsDecrypted: result.rowsProcessed - result.rowsSkipped,
     rowsSkipped: result.rowsSkipped,
     skippedByCode,
+    nullPlaintextPks,
     completed: result.completed,
   }
 }
@@ -404,6 +488,11 @@ interface WriteDecryptedChunkOptions {
  * declared type in SQL, which is what lets one statement serve every type.
  * The `plaintext IS NULL` guard (dropped under `force`) keeps a concurrent
  * dual-write from being overwritten by an older decrypted value.
+ *
+ * Identifiers are interpolated, never bound, because SQL cannot bind them:
+ * the table and columns are quoted with `quoteIdent`/`qualifyTable`, and
+ * `plaintextSqlType` is `format_type()` output read from the catalog. Every
+ * value travels as a bound parameter.
  */
 async function writeDecryptedChunk(
   db: ClientBase,
@@ -431,13 +520,39 @@ async function writeDecryptedChunk(
 
   // `plaintextSqlType` is `format_type()` output from the catalog — valid,
   // already-quoted type syntax — never user input.
-  await db.query(
-    `
+  try {
+    await db.query(
+      `
     UPDATE ${table} AS t
     SET ${plain} = v.val::${opts.plaintextSqlType}
     FROM (VALUES ${valuesSql}) AS v(pk, val)
     WHERE ${where}
   `,
-    params,
-  )
+      params,
+    )
+  } catch (error) {
+    throw new PlaintextWriteError(
+      sqlStateOf(error),
+      opts.plaintextColumn,
+      opts.plaintextSqlType,
+      constraintOf(error),
+    )
+  }
+}
+
+/** A driver error's SQLSTATE, when it is one (five uppercase alphanumerics). */
+function sqlStateOf(error: unknown): string | undefined {
+  const code = fieldOf(error, 'code')
+  return code !== undefined && /^[0-9A-Z]{5}$/.test(code) ? code : undefined
+}
+
+/** A driver error's constraint name — schema metadata, not row data. */
+function constraintOf(error: unknown): string | undefined {
+  return fieldOf(error, 'constraint')
+}
+
+function fieldOf(error: unknown, key: string): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined
+  const value: unknown = Reflect.get(error, key)
+  return typeof value === 'string' ? value : undefined
 }
