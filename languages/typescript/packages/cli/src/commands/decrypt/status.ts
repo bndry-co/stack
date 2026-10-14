@@ -14,6 +14,8 @@ import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
 import {
+  derivePlaintextName,
+  isActiveReverseLifecycle,
   manifestPlaintextFor,
   recordedPlaintextColumn,
 } from './lib/resolve-pair.js'
@@ -51,6 +53,12 @@ const STATUS_HEADERS: Row = {
  * - the latest REVERSE event per encrypted column in `cs_migrations` — phase,
  *   progress, and the count of values the backfill could not decrypt.
  *
+ * The twin name comes from the same rules `decrypt plan` and `decrypt
+ * backfill` use (recorded pairing of the lifecycle in progress, then the
+ * manifest, then {@link derivePlaintextName}), so the three commands never
+ * show different names for one column. A twin that is itself an EQL column,
+ * which `plan` and `backfill` refuse, is flagged `plaintext-col-is-eql`.
+ *
  * Read-only, and runs no per-row coverage queries (as `encrypt status`).
  */
 export async function decryptStatusCommand() {
@@ -76,13 +84,21 @@ export async function decryptStatusCommand() {
         if (domain === null || classifyEqlDomain(domain) !== 3) continue
         const key = `${table}.${column}`
         seen.add(key)
-        const state = reverseOnly(stateMap.get(`${table}.${column}`))
+        const latest = reverseOnly(stateMap.get(`${table}.${column}`))
+        const recordedTwin = recordedPlaintextColumn(latest)
+        const active = isActiveReverseLifecycle(
+          latest,
+          recordedTwin === undefined
+            ? null
+            : forwardOnly(stateMap.get(`${table}.${recordedTwin}`)),
+        )
+        // A finished lifecycle's events are history: this column starts over.
+        const state = active ? latest : null
         const plaintext =
-          recordedPlaintextColumn(state) ??
+          (active ? recordedTwin : undefined) ??
           (await manifestPlaintextFor(table, column)) ??
-          (column.endsWith('_encrypted')
-            ? column.slice(0, -'_encrypted'.length)
-            : `${column}_plaintext`)
+          derivePlaintextName(column).name
+        const twinDomain = columns.get(plaintext)
         rows.push(
           renderRow({
             table,
@@ -91,6 +107,10 @@ export async function decryptStatusCommand() {
             plaintext,
             state,
             plaintextExists: columns.has(plaintext),
+            plaintextIsEql:
+              twinDomain !== undefined &&
+              twinDomain !== null &&
+              classifyEqlDomain(twinDomain) !== null,
             mappedType: plaintextTypeForEqlDomain(domain)?.sqlType,
           }),
         )
@@ -147,6 +167,12 @@ function reverseOnly(
   return row && isReverseMigrationPhase(row.phase) ? row : null
 }
 
+function forwardOnly(
+  row: MigrationStateRow | undefined,
+): MigrationStateRow | null {
+  return row && !isReverseMigrationPhase(row.phase) ? row : null
+}
+
 function renderRow(input: {
   table: string
   column: string
@@ -154,6 +180,8 @@ function renderRow(input: {
   plaintext: string
   state: MigrationStateRow | null
   plaintextExists: boolean
+  /** The twin's name is taken by an EQL column, so it cannot hold plaintext. */
+  plaintextIsEql?: boolean
   /** The plaintext type the domain maps to — shown while the twin is absent. */
   mappedType?: string
   /** The encrypted column is no longer in the catalog. */
@@ -161,7 +189,9 @@ function renderRow(input: {
 }): Row {
   const { state } = input
   const flags: string[] = []
-  if (!input.plaintextExists && input.plaintext !== '—') {
+  if (input.plaintextIsEql) {
+    flags.push('plaintext-col-is-eql')
+  } else if (!input.plaintextExists && input.plaintext !== '—') {
     flags.push('plaintext-col-missing')
   }
   if (input.encryptedGone && state?.phase !== 'encrypted-dropped') {
