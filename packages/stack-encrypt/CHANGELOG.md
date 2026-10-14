@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   neither, the limit is `Limit::Unbounded`, and the caller pages with a
   cursor. A limit never exceeds `op::MAX_ROWS` (`i64::MAX`), the largest
   SQL `LIMIT`. The bound assumes a non-matching row shares no token with
-  the needle, so on natural text its confidence is nominal; `verify` still
+  the query, so on natural text its confidence is nominal; `verify` still
   decides every row.
 
 - **Errors now expose stable codes, help text, and structured details.**

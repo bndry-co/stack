@@ -233,7 +233,7 @@ pub trait Probabilistic: QueryTerm {
     ///
     /// A probabilistic bound, not a guarantee: at 99% confidence one query
     /// in a hundred draws more false positives than it allows for, and the
-    /// model assumes a non-matching row shares no token with the needle,
+    /// model assumes a non-matching row shares no token with the query,
     /// which natural text does not honour, so the confidence is nominal.
     /// The candidate count says which case a fetch is in. If the server
     /// returned fewer rows than the limit, the predicate is exhausted, and

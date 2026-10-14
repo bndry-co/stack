@@ -336,9 +336,9 @@ positives); the mean fill, 0.25, raised to 6 predicts 245. The number the
 bound needs is therefore `p = mean(f_i^b)`, and the statistics the client
 holds must let it compute that for the `b` of each query.
 
-The model assumes a non-matching row shares no token with the needle. The
+The model assumes a non-matching row shares no token with the query. The
 same token sets the same bits in every filter, so a row holding part of the
-needle has fewer bits left to chance: "police" already holds two of
+query has fewer bits left to chance: "police" already holds two of
 "alice"'s three 3-grams, and passes at `f^6` rather than `f^18`. On natural
 text the stated confidence is therefore nominal, and a measured histogram
 cannot correct it, because it measures fill, not overlap. Correctness does
