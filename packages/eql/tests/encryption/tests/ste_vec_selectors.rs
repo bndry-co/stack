@@ -33,8 +33,10 @@
 //!
 //! What it pins is the cipherstash-client version this EQL workspace resolves.
 //! protect-ffi, which writes customers' documents, resolves cipherstash-client
-//! from its own workspace and lockfile, so a protect-ffi bump is covered only
-//! once this workspace moves to the same version.
+//! from its own workspace and lockfile.
+//! `scripts/__tests__/cipherstash-client-parity.test.mjs` fails on every PR
+//! where the two lockfiles disagree, so the version pinned here is the one
+//! protect-ffi ships.
 //!
 //! Regenerate with `EQL_UPDATE_STE_VEC_SELECTORS=1` (exactly `1`; any other
 //! value, `0` included, regenerates nothing), deliberately not the crate's

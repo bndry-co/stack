@@ -12,7 +12,7 @@
 //! validated by `test:matrix:inventory:jsonb_entry` (NOT the scalar inventory).
 
 use eql_tests::fixtures::v3_doc_integer::field_op_selector;
-use eql_tests::jsonb_entry::JsonbEntryInteger;
+use eql_tests::jsonb_entry::{entry_column_expr, JsonbEntryInteger};
 use eql_tests::scalar_domains::ScalarType;
 
 eql_tests::jsonb_entry_matrix! {
@@ -96,29 +96,27 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
 // Selector shape guard. A SteVec selector is a keyed MAC over (workspace keyset,
 // STE_VEC_PREFIX, path), so the `$.field` selector differs per CipherStash
 // workspace and is never pinned: every test reads it from the loaded fixture
-// (`field_op_selector`), and the matrix's `column_expr` reads it in SQL. What
-// stays checkable is the SHAPE that makes the lookup unambiguous: exactly one
-// op-carrying selector in the fixture. This test fails, naming every candidate,
-// when that stops holding, instead of leaving it to surface as ~40 confusing
-// NULL-extraction or "more than one row returned by a subquery" failures across
-// the matrix. Whether a keyset and path still produce the same selector bytes is
-// pinned in `packages/eql/tests/encryption`.
+// (`field_op_selector`), and the matrix's `column_expr` embeds it as the literal
+// `payload -> '<sel>'::text`. What stays checkable is the SHAPE that makes the
+// lookup unambiguous: exactly one op-carrying selector in the fixture. This test
+// fails, naming every candidate, when that stops holding, instead of leaving it
+// to surface as ~40 confusing failures across the matrix. It also pins that the
+// matrix's access path is the literal lookup of that selector (that the lookup
+// reaches an `op`-carrying entry on every row is
+// `jsonb_entry_integer_fixture_shape`). Whether a keyset and path still produce the
+// same selector bytes is pinned in `packages/eql/tests/encryption`.
 // ----------------------------------------------------------------------------
 #[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
 async fn jsonb_entry_integer_field_selector_is_unique(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let sel = field_op_selector(&pool).await?;
 
-    // The SQL form the matrix uses must resolve to the same selector.
-    let via_sql: Option<String> = sqlx::query_scalar(&format!(
-        "SELECT {}",
-        eql_tests::fixtures::v3_doc_integer::field_op_selector_subquery()
-    ))
-    .fetch_one(&pool)
-    .await?;
+    // The matrix's access path is the literal lookup of exactly that selector.
+    let col = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await?;
     anyhow::ensure!(
-        via_sql.as_deref() == Some(sel.as_str()),
-        "column_expr's SQL selector lookup returned {via_sql:?}, field_op_selector returned {sel}",
+        col == entry_column_expr(&sel),
+        "the matrix column_expr is {col:?}, expected the literal lookup of {sel}",
     );
+
     Ok(())
 }
 
