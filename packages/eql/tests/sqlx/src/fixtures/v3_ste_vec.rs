@@ -20,49 +20,52 @@ use serde_json::{json, Value};
 
 use super::index_kind::IndexKind;
 use super::spec::FixtureSpec;
+use super::ste_vec_selector;
 
 /// The canonical fixture name → table `fixtures.v3_ste_vec`, script
 /// `v3_ste_vec.sql`, SQLx ref `scripts("v3_ste_vec")`.
 const NAME: &str = "v3_ste_vec";
 
-/// The `$.hello` **string** leaf's `op` selector, pinned from the generated
-/// fixture. THE one shared copy — every suite that names this selector imports
-/// it from here (`eql_tests::fixtures::v3_ste_vec::SEL_HELLO_OP`), so a fixture
-/// or keyset regeneration is a single edit. The selector is a deterministic
-/// MAC of (column context, JSONPath), so it changes only on a keyset change,
-/// not per regeneration.
+/// The fixture table the selector helpers read.
+pub const TABLE: &str = "fixtures.v3_ste_vec";
+
+/// The rule that picks out the `$.hello` **string** leaf's `op` selector.
 ///
-/// History: an earlier copy of this constant named `$.number` — the fixture's
-/// INTEGER leaf — while claiming `$.hello`, and survived because the suites
-/// that used it were equality-only (the fixture pairs `number = i` with
-/// `hello = "world-i"` 1:1, so both leaves induce identical equality
-/// partitions). Only ORDER separates the leaves, which
+/// A string `op` term is `8 * (len + 1) + 1` bits, and `hello` is
+/// `"world-1"`..`"world-9"` (equal length) plus the one-longer `"world-10"`, so
+/// `$.hello` is the only op-carrying selector present on every row whose `op`
+/// takes exactly two lengths. `$.number` and `$.large` are fixed-width numeric
+/// terms (one length), `$.accented` spans three or more (the `café`/`cafe`
+/// collision pair shares one), and `$.empty` / `$.nested.deep` are constant.
+///
+/// The rule matters because the leaves are easy to confuse: an earlier pinned
+/// copy of this selector named `$.number` while claiming `$.hello`, and survived
+/// because the suites using it were equality-only (`number = i` and
+/// `hello = "world-i"` induce the same equality partition). Only ORDER
+/// separates them, which
 /// `v3_json_entry_cross_type_tests::json_entry_text_ord_cross_type_matches_plaintext_ordering`
-/// now pins — and duplication is exactly how the mis-pin escaped notice, hence
-/// the single shared copy.
+/// pins.
+pub const HELLO_OP_RULE: &str =
+    "op-carrying on every row, with exactly two distinct op lengths (world-1..9 vs world-10)";
+
+/// The `$.hello` op selector of the LOADED `v3_ste_vec` fixture.
 ///
-/// To re-derive rather than trust this hex: `ste_vec_query_selector(…, "$.hello")`
-/// asks cipherstash-client directly (see the `proptest-e2e` suite
-/// `v3_json_entry_query_operand_e2e_tests`, which needs no constant at all).
-/// Creds-free, the fixture's term LENGTHS distinguish the two leaves: a string
-/// `op` is `8 * (len + 1) + 1` bits, so `$.hello` is 132 hex chars for
-/// `"world-1"`..`"world-9"` and 148 for `"world-10"`, while `$.number` is a
-/// fixed-width 65-bit number term — 132 on every row.
-///
-/// **Pinned to this repo's CI workspace** (`vars.CS_WORKSPACE_CRN`). The value
-/// below replaced `b325a0c77b130af97b805c12ff853ab3` when the suite moved here
-/// from `cipherstash/encrypt-query-language`: a different workspace means a
-/// different keyset, so the MAC re-pinned with no Rust, SQL or fixture change.
-/// `v3_jsonb_sel_hello_op_matches_fixture` is the drift guard; it reports the
-/// live candidates rather than choosing, so the leaf is identified by the
-/// length rule above, not guessed. Against that workspace the fixture's six
-/// `op`-carrying leaves separate cleanly at `16 * len + 20` hex chars —
-/// `$.empty` 20, `$.accented` 84/180/196 (three lengths, not four: the
-/// `café`/`cafe` collision pair shares one), `$.nested.deep` 148,
-/// `$.number` and `$.large` a fixed 132, and `$.hello` alone spanning 132/148.
-/// A contributor running against their own workspace will see the guard fire
-/// and should NOT commit their local value.
-pub const SEL_HELLO_OP: &str = "6f1db3bd70058dc4dab95cc692599b12";
+/// A SteVec selector is a keyed MAC over (workspace keyset, prefix, path), so
+/// it differs per CipherStash workspace and is read from the fixture rather
+/// than pinned (issue #1200). Fails, naming every candidate with its row count
+/// and op lengths, unless exactly one selector satisfies [`HELLO_OP_RULE`].
+pub async fn hello_op_selector<'e, E>(executor: E) -> Result<String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let candidates = ste_vec_selector::op_selector_candidates(executor, TABLE).await?;
+    ste_vec_selector::pick_one(TABLE, HELLO_OP_RULE, &candidates, is_hello_op)
+}
+
+/// [`HELLO_OP_RULE`] as a predicate.
+fn is_hello_op(c: &ste_vec_selector::OpSelectorCandidate) -> bool {
+    c.rows == c.total_rows && c.distinct_op_lengths == 2
+}
 
 /// The canonical `payload` column type — the `public.eql_v3_json_search` DOMAIN, so the
 /// domain CHECK runs when the fixture loads.
@@ -145,6 +148,40 @@ mod tests {
         assert_eq!(docs[1]["accented"], json!("cafe"));
         assert_eq!(docs[0]["large"], json!(9_007_199_254_740_993_i64));
         assert_eq!(docs[1]["large"], json!(9_007_199_254_740_992_i64));
+    }
+
+    /// The `$.hello` rule against the leaf profile the fixture documents
+    /// produce: only `$.hello` is on every row with exactly two op lengths.
+    #[test]
+    fn hello_op_rule_singles_out_the_two_length_leaf() {
+        let leaf = |selector: &str, lengths: i64, min: i64, max: i64| {
+            ste_vec_selector::OpSelectorCandidate {
+                selector: selector.to_string(),
+                rows: ROW_COUNT,
+                total_rows: ROW_COUNT,
+                distinct_op_lengths: lengths,
+                min_op_length: min,
+                max_op_length: max,
+            }
+        };
+        let candidates = [
+            leaf("sel-empty", 1, 20, 20),
+            leaf("sel-accented", 3, 84, 196),
+            leaf("sel-nested-deep", 1, 148, 148),
+            leaf("sel-number", 1, 132, 132),
+            leaf("sel-large", 1, 132, 132),
+            leaf("sel-hello", 2, 132, 148),
+        ];
+        let got = ste_vec_selector::pick_one(TABLE, HELLO_OP_RULE, &candidates, is_hello_op);
+        assert_eq!(got.unwrap(), "sel-hello");
+
+        // A two-length leaf missing from a row is not `$.hello`.
+        let mut partial = candidates[5].clone();
+        partial.rows = ROW_COUNT - 1;
+        let err = ste_vec_selector::pick_one(TABLE, HELLO_OP_RULE, &[partial], is_hello_op)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("found 0"), "{err}");
     }
 
     #[test]

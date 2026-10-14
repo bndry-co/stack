@@ -1,0 +1,48 @@
+{
+  "_comment": "The SteVec selectors cipherstash-client's JsonIndexer derives for the document under FakeDataKeySource's index key (keyset nil). A change here breaks queries over SteVec documents customers have already stored: it is a breaking change, not a refresh. Regenerate with EQL_UPDATE_FIXTURES=1 only alongside a changeset explaining the break; do not edit by hand.",
+  "document": {
+    "field": 1,
+    "hello": "world"
+  },
+  "entries": [
+    {
+      "op": null,
+      "query": "path $",
+      "s": "1af5523addab3ba61ec51cf59fceadfc"
+    },
+    {
+      "op": "00bef3cc24f1b23fbdb304796611a587fea81269d746ba726f5602bc4de61a4dac1dda8c9552ee518f3bfe07d24eb65d82d56621814757348e7b9feff8ba7234ad42",
+      "query": "path $.field",
+      "s": "b574cc826b75501996ab23b8cdf5d3f5"
+    },
+    {
+      "op": "013e128054c9ec902d4ce4bf9f00d62ea6b1fa824aeafd04aff9eb0c763ea13f429d31d16d5c78841697f40dc170a05a3edd",
+      "query": "path $.hello",
+      "s": "d0a825c9949392215b3ff40dc7dcd9b0"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "d74b8bf2a52a486634f5d4f97486993d"
+    },
+    {
+      "op": null,
+      "query": "value $.field == 1",
+      "s": "b6e19d2e81c567eec77865b5035fc936"
+    },
+    {
+      "op": null,
+      "query": "value $.hello == \"world\"",
+      "s": "348c025840e46d46ff679c84f9221771"
+    }
+  ],
+  "mode": "Compat",
+  "prefix": "users/profile",
+  "selectors": {
+    "path $": "1af5523addab3ba61ec51cf59fceadfc",
+    "path $.field": "b574cc826b75501996ab23b8cdf5d3f5",
+    "path $.hello": "d0a825c9949392215b3ff40dc7dcd9b0",
+    "value $.field == 1": "b6e19d2e81c567eec77865b5035fc936",
+    "value $.hello == \"world\"": "348c025840e46d46ff679c84f9221771"
+  }
+}
