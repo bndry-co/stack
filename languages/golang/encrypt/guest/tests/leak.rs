@@ -646,6 +646,103 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
             ),
         ),
     ];
+    // -- queries by operator -----------------------------------------------
+    let marker = || FfiValue::Bytes(vitaminc_protected::Protected::new(PLAINTEXT.into()));
+    let match_plan = || {
+        encode(obj(vec![(
+            "name",
+            field(label("name"), &["c", "match"], Some("string")),
+        )]))
+    };
+    let source = &["stack_encrypt::dynamic_source"];
+    out.extend([
+        (
+            "an operator the field does not answer",
+            failure("not answered", source, || {
+                block_on(ops::query_term(
+                    &keyset,
+                    &encode(s(PLAINTEXT)),
+                    &plan_under(label("email")),
+                    b"email",
+                    b"lt",
+                ))
+            }),
+        ),
+        (
+            "a query input of another type",
+            failure("query input", source, || {
+                block_on(ops::query_term(
+                    &keyset,
+                    &encode(marker()),
+                    &plan_under(label("email")),
+                    b"email",
+                    b"eq",
+                ))
+            }),
+        ),
+        (
+            "an operator name the engine does not know",
+            failure("unknown operator", source, || {
+                block_on(ops::query_term(
+                    &keyset,
+                    &encode(s(PLAINTEXT)),
+                    &plan_under(label("email")),
+                    b"email",
+                    PLAINTEXT.as_bytes(),
+                ))
+            }),
+        ),
+        (
+            "verifying an exact operator",
+            failure("verify exact", source, || {
+                ops::verify(
+                    &encode(s(PLAINTEXT)),
+                    &encode(FfiValue::Array(vec![s(PLAINTEXT)])),
+                    &plan_under(label("email")),
+                    b"email",
+                    b"eq",
+                )
+            }),
+        ),
+        (
+            "verifying a value of another type",
+            failure("verify value", source, || {
+                ops::verify(
+                    &encode(s(PLAINTEXT)),
+                    &encode(FfiValue::Array(vec![marker()])),
+                    &match_plan(),
+                    b"name",
+                    b"matches",
+                )
+            }),
+        ),
+        (
+            "a fetch sized from bytes that are not a term",
+            failure("limit term", source, || {
+                ops::target_limit(
+                    PLAINTEXT.as_bytes(),
+                    &encode(obj(vec![("rows", FfiValue::UInt64(1))])),
+                    &match_plan(),
+                    b"name",
+                    b"matches",
+                    10,
+                )
+            }),
+        ),
+        (
+            "statistics that are not statistics",
+            failure("limit stats", source, || {
+                ops::target_limit(
+                    &[1, 0],
+                    &encode(obj(vec![("rows", s(PLAINTEXT))])),
+                    &match_plan(),
+                    b"name",
+                    b"matches",
+                    10,
+                )
+            }),
+        ),
+    ]);
     // An EQL value whose stored bytes are a JSON string where an object
     // belongs: serde_json's message would quote the string.
     #[cfg(feature = "eql")]

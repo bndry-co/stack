@@ -85,6 +85,7 @@ type instance struct {
 	exports                      guest.Exports
 	cipherInit, shutdown, keyset api.Function
 	term, query                  api.Function
+	queryTerm, verify, limit     api.Function
 	encryptRecord, decryptRecord api.Function
 	planCheck, targets           api.Function
 }
@@ -172,6 +173,9 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 		"se_keyset":         &inst.keyset,
 		"se_term":           &inst.term,
 		"se_query":          &inst.query,
+		"se_query_term":     &inst.queryTerm,
+		"se_verify":         &inst.verify,
+		"se_target_limit":   &inst.limit,
 		"se_encrypt_record": &inst.encryptRecord,
 		"se_decrypt_record": &inst.decryptRecord,
 		"se_plan_check":     &inst.planCheck,

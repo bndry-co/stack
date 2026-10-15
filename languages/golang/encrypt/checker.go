@@ -165,6 +165,8 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 			t.Producible = b
 		case "reason":
 			t.Reason, err = targetOptionalString(f)
+		case "operators":
+			t.Operators, err = targetOperators(f.Value)
 		default:
 			return t, fmt.Errorf("unknown key %q", f.Key)
 		}
@@ -175,12 +177,72 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 	if t.Name == "" {
 		return t, errors.New("no name")
 	}
-	for _, key := range []string{"indexes", "producible"} {
+	for _, key := range []string{"indexes", "producible", "operators"} {
 		if !seen[key] {
 			return t, fmt.Errorf("no %s", key)
 		}
 	}
 	return t, nil
+}
+
+// targetOperators reads an entry's operators: a list of objects, each with
+// exactly the keys operator, fidelity, arity and index, every value one the
+// engine writes.
+func targetOperators(value any) ([]record.TargetOperator, error) {
+	list, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("operators is %T, not a list", value)
+	}
+	operators := make([]record.TargetOperator, 0, len(list))
+	for i, item := range list {
+		entry, ok := item.(vcvalue.Object)
+		if !ok {
+			return nil, fmt.Errorf("operator %d is %T, not an object", i, item)
+		}
+		var op record.TargetOperator
+		seen := map[string]bool{}
+		for _, f := range entry {
+			if seen[f.Key] {
+				return nil, fmt.Errorf("operator %d: key %q twice", i, f.Key)
+			}
+			seen[f.Key] = true
+			s, err := targetString(f)
+			if err != nil {
+				return nil, fmt.Errorf("operator %d: %v", i, err)
+			}
+			switch f.Key {
+			case "operator":
+				op.Name = s
+			case "fidelity":
+				op.Fidelity = record.Fidelity(s)
+				if op.Fidelity != record.Exact && op.Fidelity != record.Probabilistic {
+					return nil, fmt.Errorf("operator %d: unknown fidelity %q", i, s)
+				}
+			case "arity":
+				switch s {
+				case "one":
+				case "pair":
+					op.Pair = true
+				default:
+					return nil, fmt.Errorf("operator %d: unknown arity %q", i, s)
+				}
+			case "index":
+				switch o := record.Output(s); o {
+				case record.Equality, record.Match, record.Ore, record.Ope:
+					op.Index = o
+				default:
+					return nil, fmt.Errorf("operator %d: unknown index %q", i, s)
+				}
+			default:
+				return nil, fmt.Errorf("operator %d: unknown key %q", i, f.Key)
+			}
+		}
+		if len(seen) != 4 || op.Name == "" {
+			return nil, fmt.Errorf("operator %d: not every key, or no name", i)
+		}
+		operators = append(operators, op)
+	}
+	return operators, nil
 }
 
 func targetString(f vcvalue.Field) (string, error) {

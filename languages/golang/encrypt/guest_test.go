@@ -145,7 +145,7 @@ func TestImportSurfaceIsWASIPlusTransport(t *testing.T) {
 	if !reflect.DeepEqual(transportImports, want) {
 		t.Fatalf("transport imports = %v, want %v", transportImports, want)
 	}
-	for name := range map[string]bool{"se_alloc": true, "se_dealloc": true, "se_cipher_init": true, "se_shutdown": true, "se_keyset": true, "se_term": true, "se_encrypt_record": true, "se_decrypt_record": true, "se_plan_check": true, "se_targets": true} {
+	for name := range map[string]bool{"se_alloc": true, "se_dealloc": true, "se_cipher_init": true, "se_shutdown": true, "se_keyset": true, "se_term": true, "se_query": true, "se_query_term": true, "se_verify": true, "se_target_limit": true, "se_encrypt_record": true, "se_decrypt_record": true, "se_plan_check": true, "se_targets": true} {
 		if _, ok := compiled.ExportedFunctions()[name]; !ok {
 			t.Errorf("guest does not export %s", name)
 		}

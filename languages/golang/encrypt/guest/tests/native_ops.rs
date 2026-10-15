@@ -26,7 +26,7 @@ use stack_encrypt::{
 };
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
 use stack_encrypt_guest::status::{
-    STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET,
+    STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_TERM,
 };
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IndexKeySource,
@@ -1381,6 +1381,381 @@ fn targets_lists_what_the_build_holds() {
         ],
         "the engine's producible types, in catalog order"
     );
+}
+
+// =============================================================================
+// Queries by operator
+// =============================================================================
+
+/// The entries of a query term's object, by key.
+fn query_term_entries(out: &[u8]) -> Vec<(String, FfiValue)> {
+    let FfiValue::Object(entries) = decode(out) else {
+        panic!("a query term is an object");
+    };
+    entries
+}
+
+fn entry<'a>(entries: &'a [(String, FfiValue)], key: &str) -> &'a FfiValue {
+    &entries
+        .iter()
+        .find(|(k, _)| k == key)
+        .unwrap_or_else(|| panic!("no {key}"))
+        .1
+}
+
+fn bytes_of(value: &FfiValue) -> Vec<u8> {
+    match value {
+        FfiValue::Bytes(b) => b.risky_ref().to_vec(),
+        other => panic!("expected bytes, got {}", kind(other)),
+    }
+}
+
+/// A query by operator derives, through the guest, the bytes the term
+/// export derives for the index that answers it, under the field's
+/// context: the plan picks the index, and the derivation is the one a
+/// stored term came from.
+#[test]
+fn a_query_term_is_the_term_of_the_index_that_answers_its_operator() {
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    let term_of = |value: FfiValue, field: &str, kind: u32| {
+        block_on(ops::term(
+            &keyset,
+            &encode(value),
+            &encode(label(field)),
+            kind,
+        ))
+        .expect("term")
+    };
+    let query = |input: FfiValue, field: &str, operator: &str| {
+        let input = encode(input);
+        assert_eq!(
+            ops::validate::query_term(&input, &plan(), field.as_bytes(), operator.as_bytes()),
+            Ok(()),
+            "{operator} on {field} validates"
+        );
+        query_term_entries(
+            &block_on(ops::query_term(
+                &keyset,
+                &input,
+                &plan(),
+                field.as_bytes(),
+                operator.as_bytes(),
+            ))
+            .expect("query term"),
+        )
+    };
+
+    let eq = query(FfiValue::UInt32(34), "age", "eq");
+    assert_eq!(text(entry(&eq, "operator")), "eq");
+    assert_eq!(text(entry(&eq, "fidelity")), "exact");
+    assert_eq!(text(entry(&eq, "index")), "eq");
+    assert!(matches!(entry(&eq, "domain"), FfiValue::Null));
+    assert_eq!(
+        bytes_of(entry(&eq, "term")),
+        term_of(FfiValue::UInt32(34), "age", TERM_EQUALITY)
+    );
+
+    // A host's float reads as the field's integer.
+    let lt = query(FfiValue::Float64(40.0), "age", "lt");
+    assert_eq!(text(entry(&lt, "index")), "ore");
+    assert_eq!(
+        bytes_of(entry(&lt, "term")),
+        term_of(FfiValue::UInt32(40), "age", TERM_ORE)
+    );
+
+    let range = query(
+        FfiValue::Array(vec![FfiValue::UInt32(18), FfiValue::UInt32(65)]),
+        "age",
+        "between",
+    );
+    let FfiValue::Array(bounds) = entry(&range, "term") else {
+        panic!("a range is a list of two terms");
+    };
+    assert_eq!(bounds.len(), 2);
+    assert_eq!(
+        bytes_of(&bounds[0]),
+        term_of(FfiValue::UInt32(18), "age", TERM_ORE)
+    );
+    assert_eq!(
+        bytes_of(&bounds[1]),
+        term_of(FfiValue::UInt32(65), "age", TERM_ORE)
+    );
+
+    let matches = query(s("alice"), "name", "matches");
+    assert_eq!(text(entry(&matches, "fidelity")), "probabilistic");
+    assert_eq!(
+        bytes_of(entry(&matches, "term")),
+        term_of(s("alice"), "name", TERM_MATCH)
+    );
+}
+
+/// The validator refuses what the operation refuses, with the same status,
+/// before a keyset is resolved: an operator the field does not answer, or
+/// one the engine does not know, as a mistyped value is refused; the typed
+/// path's own query refusals as `STATUS_TERM`.
+#[test]
+fn query_term_validation_refuses_what_the_query_op_refuses() {
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    for (what, input, field, operator, status) in [
+        (
+            "unknown operator",
+            FfiValue::UInt32(1),
+            "age",
+            "like",
+            STATUS_ENCODING,
+        ),
+        ("not answered", s("ali"), "age", "matches", STATUS_ENCODING),
+        (
+            "not answered by a match index",
+            s("ali"),
+            "name",
+            "eq",
+            STATUS_ENCODING,
+        ),
+        (
+            "no such field",
+            FfiValue::UInt32(1),
+            "height",
+            "eq",
+            STATUS_ENCODING,
+        ),
+        ("mistyped input", s("34"), "age", "eq", STATUS_ENCODING),
+        (
+            "not a range",
+            FfiValue::UInt32(1),
+            "age",
+            "between",
+            STATUS_ENCODING,
+        ),
+        (
+            "inverted range",
+            FfiValue::Array(vec![FfiValue::UInt32(65), FfiValue::UInt32(18)]),
+            "age",
+            "between",
+            STATUS_TERM,
+        ),
+        ("no token", s("al"), "name", "matches", STATUS_TERM),
+    ] {
+        let input = encode(input);
+        assert_eq!(
+            ops::validate::query_term(&input, &plan(), field.as_bytes(), operator.as_bytes()),
+            Err(status),
+            "{what}: validation"
+        );
+        assert_eq!(
+            block_on(ops::query_term(
+                &keyset,
+                &input,
+                &plan(),
+                field.as_bytes(),
+                operator.as_bytes()
+            )),
+            Err(status),
+            "{what}: the op"
+        );
+    }
+    assert_eq!(
+        ops::validate::query_term(&encode(FfiValue::UInt32(1)), &plan(), b"\xff", b"eq"),
+        Err(STATUS_ENCODING),
+        "a field name that is not UTF-8"
+    );
+}
+
+/// `verify` answers one boolean per value, in order, with no cipher; an
+/// exact operator has nothing to verify.
+#[test]
+fn verify_answers_a_page_in_one_call() {
+    let values = encode(FfiValue::Array(vec![
+        s("Alice Smith"),
+        s("Bob"),
+        FfiValue::Null,
+        s("malice"),
+    ]));
+    let out =
+        ops::verify(&encode(s("alice")), &values, &plan(), b"name", b"matches").expect("verify");
+    let FfiValue::Array(verified) = decode(&out) else {
+        panic!("a list");
+    };
+    let verified: Vec<bool> = verified
+        .iter()
+        .map(|v| match v {
+            FfiValue::Bool(b) => *b,
+            other => panic!("a boolean, not {}", kind(other)),
+        })
+        .collect();
+    assert_eq!(
+        verified,
+        [true, false, false, true],
+        "malice holds every 3-gram of alice"
+    );
+
+    for (what, input, values, field, operator) in [
+        (
+            "an exact operator",
+            FfiValue::UInt32(1),
+            FfiValue::Array(vec![]),
+            "age",
+            "eq",
+        ),
+        (
+            "values not a list",
+            s("alice"),
+            s("Alice"),
+            "name",
+            "matches",
+        ),
+        (
+            "a value of another type",
+            s("alice"),
+            FfiValue::Array(vec![FfiValue::UInt32(1)]),
+            "name",
+            "matches",
+        ),
+        (
+            "an unknown operator",
+            s("alice"),
+            FfiValue::Array(vec![]),
+            "name",
+            "match",
+        ),
+    ] {
+        assert_eq!(
+            ops::verify(
+                &encode(input),
+                &encode(values),
+                &plan(),
+                field.as_bytes(),
+                operator.as_bytes()
+            ),
+            Err(STATUS_ENCODING),
+            "{what}"
+        );
+    }
+    assert_eq!(
+        ops::verify(
+            &encode(s("al")),
+            &encode(FfiValue::Array(vec![])),
+            &plan(),
+            b"name",
+            b"matches"
+        ),
+        Err(STATUS_TERM),
+        "a query that cuts no token verifies nothing"
+    );
+}
+
+/// `target_limit` reads the term's bytes and the statistics, with no
+/// cipher: a measured histogram sizes a fetch, the declared prior a data
+/// plan has none of answers null.
+#[test]
+fn target_limit_sizes_a_fetch_from_the_terms_bytes() {
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    let out = block_on(ops::query_term(
+        &keyset,
+        &encode(s("ali")),
+        &plan(),
+        b"name",
+        b"matches",
+    ))
+    .expect("query term");
+    let term = bytes_of(entry(&query_term_entries(&out), "term"));
+    let pair = |bits: u32, rows: u64| {
+        FfiValue::Array(vec![FfiValue::UInt32(bits), FfiValue::UInt64(rows)])
+    };
+    let measured = encode(obj(vec![
+        ("rows", FfiValue::UInt64(1_000_000)),
+        (
+            "histogram",
+            FfiValue::Array(vec![pair(40, 500_000), pair(120, 500_000)]),
+        ),
+    ]));
+    let limit = |stats: &[u8], term: &[u8], field: &str, operator: &str| {
+        ops::target_limit(
+            term,
+            stats,
+            &plan(),
+            field.as_bytes(),
+            operator.as_bytes(),
+            10,
+        )
+    };
+    let rows = decode(&limit(&measured, &term, "name", "matches").expect("a limit"));
+    assert!(
+        matches!(rows, FfiValue::UInt64(n) if n > 10),
+        "{}",
+        kind(&rows)
+    );
+    let declared = encode(obj(vec![("rows", FfiValue::UInt64(1_000_000))]));
+    assert!(matches!(
+        decode(&limit(&declared, &term, "name", "matches").expect("a limit")),
+        FfiValue::Null
+    ));
+
+    assert_eq!(
+        limit(&measured, &[1], "name", "matches"),
+        Err(STATUS_ENCODING),
+        "half a position"
+    );
+    assert_eq!(
+        limit(&encode(s("x")), &term, "name", "matches"),
+        Err(STATUS_ENCODING),
+        "not stats"
+    );
+    assert_eq!(
+        limit(&measured, &term, "age", "eq"),
+        Err(STATUS_ENCODING),
+        "an exact operator"
+    );
+}
+
+/// The `eql` build's catalog lists, per type, the operators the engine
+/// answers: `TextEq` answers `eq`, exactly, and a type the engine does not
+/// produce answers nothing.
+#[test]
+fn the_catalog_lists_each_types_operators() {
+    if !stack_encrypt_guest::targets::HOLDS_EQL {
+        return;
+    }
+    let FfiValue::Object(entries) = decode(&ops::targets().expect("targets")) else {
+        panic!("an object");
+    };
+    let FfiValue::Array(items) = &entries[0].1 else {
+        panic!("a list");
+    };
+    for item in items {
+        let FfiValue::Object(fields) = item else {
+            panic!("an object");
+        };
+        let name = text(entry(fields, "name")).to_owned();
+        let FfiValue::Array(operators) = entry(fields, "operators") else {
+            panic!("{name}: operators is a list");
+        };
+        let producible = matches!(entry(fields, "producible"), FfiValue::Bool(true));
+        if name == "TextEq" {
+            assert_eq!(operators.len(), 1, "TextEq answers eq alone");
+            let FfiValue::Object(eq) = &operators[0] else {
+                panic!("an object");
+            };
+            let eq: Vec<(&str, &str)> = eq.iter().map(|(k, v)| (k.as_str(), text(v))).collect();
+            assert_eq!(
+                eq,
+                [
+                    ("operator", "eq"),
+                    ("fidelity", "exact"),
+                    ("arity", "one"),
+                    ("index", "eq")
+                ]
+            );
+        } else if !producible {
+            assert!(
+                operators.is_empty(),
+                "{name} is not produced, so answers nothing"
+            );
+        }
+    }
 }
 
 // =============================================================================
