@@ -110,6 +110,41 @@ class ImpactWorkflowTest(unittest.TestCase):
         self.assertIn('not the merge of', self.summary.read_text())
         self.assertNotIn('sha=', result.stdout)
 
+    def test_marks_cost_drivers_whose_function_span_lizard_misread(self):
+        # lizard ends `pick` at the end of `after`: a ternary returning an
+        # object literal after an arrow callback loses the closing brace. Edits
+        # to `after` are then charged to `pick`, which the PR never touched.
+        def branches(name, arg, result):
+            return (f'export function {name}({arg}: number): number {{\n'
+                    + ''.join(f'  if ({arg} === {i}) return {i};\n' for i in range(200))
+                    + f'  return {result}\n}}\n')
+        pick = ('export function pick(xs: readonly string[], hint?: string) {\n'
+                '  const hinted = xs.find((c) => c === hint)\n'
+                "  return hinted ? { hinted, via: 'hint' } : null\n"
+                '}\n')
+        self.commit('src/pick.ts', 'export function third(y: number): number {\n  return y\n}\n\n'
+                    + pick + '\nexport function after(x: number): number {\n  return x + 1\n}\n')
+        self.run_driver('prepare')
+        self.git('checkout', '-qb', 'feature')
+        self.commit('src/pick.ts', branches('third', 'y', 'y') + '\n' + pick + '\n'
+                    + branches('after', 'x', 'x + 1'))
+        # The grade multiplies cost by files changed; the drivers table is only
+        # printed above the warn percentile.
+        for index in range(6):
+            self.commit(f'src/extra{index}.ts', f'export function extra{index}() {{ return 1; }}\n')
+        self.run_driver('report')
+        rows = [line for line in self.summary.read_text().splitlines()
+                if line.startswith('|') and 'src/pick.ts:' in line]
+        pick_rows = [row for row in rows if 'src/pick.ts:pick`' in row]
+        third_rows = [row for row in rows if 'src/pick.ts:third`' in row]
+        self.assertTrue(pick_rows, self.summary.read_text())
+        self.assertTrue(third_rows, self.summary.read_text())
+        for row in pick_rows:
+            self.assertIn('span may be misattributed', row)
+        for row in third_rows:
+            self.assertNotIn('span may be misattributed', row)
+        self.assertIn('lizard read its line span', self.summary.read_text())
+
     def test_cold_baseline_then_reuse_and_refresh(self):
         self.run_driver('prepare')
         self.assertIn('rebuilt=true', self.output.read_text())

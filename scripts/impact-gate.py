@@ -10,12 +10,14 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 
 from impact_gate.baseline import build_baseline, save_baseline
 from impact_gate.core.config import MeasureConfig
+import lizard
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / '.github' / 'impact-gate'
@@ -148,7 +150,60 @@ def report(args: argparse.Namespace, policy: str) -> None:
                      '--enforcement', 'warn', '--format', 'markdown', '--warn-percentile', '90',
                      '--block-percentile', '98', '--curve-prior-weight', '200',
                      '--baseline-file', str(path), '--measure-config', str(POLICY / f'{scope}.yml'))
-        publish(result)
+        publish(mark_misread_spans(result, args.base))
+
+
+# lizard's TypeScript reader sometimes misses a function's closing brace (an
+# arrow callback followed by a ternary returning an object literal is one
+# trigger) and runs the span on into the next top-level declaration. Edits to
+# that neighbour are then charged to a function the PR never touched. In
+# formatted code nothing inside a function body starts at column 0, so a
+# top-level declaration strictly inside a span is the tell.
+SPAN_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx')
+DECLARATION = re.compile(
+    r'(export\s+)?(default\s+)?(async\s+)?(function|const|let|var|class|interface|type|enum)\b')
+LOCATION = re.compile(r'^(\| [^|]* \| )`([^`]+):([^`:]+)`( \|)')
+MISREAD = '⚠️ span may be misattributed'
+MISREAD_NOTE = (f'{MISREAD}: lizard read its line span to include a later top-level '
+                'declaration, so edits to that code are charged to this function. Check '
+                'the diff before refactoring it. Scores and grades are unchanged.')
+
+
+def misread_functions(revisions: list[str], path: str) -> set[str]:
+    names = set()
+    for revision in revisions:
+        shown = subprocess.run(['git', 'show', f'{revision}:{path}'],
+                               capture_output=True, text=True)
+        if shown.returncode != 0:  # Added or deleted on one side.
+            continue
+        lines = shown.stdout.split('\n')
+        for function in lizard.analyze_file.analyze_source_code(path, shown.stdout).function_list:
+            # lizard often ends a span on the next declaration's first line;
+            # that boundary is harmless, so only strictly inner lines count.
+            if any(DECLARATION.match(lines[n - 1])
+                   for n in range(function.start_line + 1, function.end_line)):
+                names.add(function.name.split('::')[-1])
+    return names
+
+
+def mark_misread_spans(markdown: str, base: str) -> str:
+    revisions = [run('git', 'merge-base', base, 'HEAD'), 'HEAD']
+    cache: dict[str, set[str]] = {}
+    marked = False
+    lines = markdown.split('\n')
+    for index, line in enumerate(lines):
+        match = LOCATION.match(line)
+        if not match or not match.group(2).endswith(SPAN_SUFFIXES):
+            continue
+        path, name = match.group(2), match.group(3)
+        if path not in cache:
+            cache[path] = misread_functions(revisions, path)
+        if name in cache[path]:
+            lines[index] = (match.group(1) + f'`{path}:{name}` {MISREAD}'
+                            + match.group(4) + line[match.end():])
+            marked = True
+    text = '\n'.join(lines)
+    return text + f'\n\n{MISREAD_NOTE}' if marked else text
 
 
 def pin(args: argparse.Namespace) -> None:
