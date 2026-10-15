@@ -290,17 +290,17 @@ impl<O: Put> Sink for ValueSink<O> {
         Ok(self.0.put(value))
     }
 
-    fn seq(self, len: Option<usize>) -> Result<ValueSeq<O>, DecodeError> {
+    fn seq(self, _: Option<usize>) -> Result<ValueSeq<O>, DecodeError> {
         Ok(ValueSeq {
             out: self.0,
-            items: Vec::with_capacity(capacity(len)),
+            items: Vec::new(),
         })
     }
 
-    fn map(self, len: Option<usize>) -> Result<ValueMap<O>, DecodeError> {
+    fn map(self, _: Option<usize>) -> Result<ValueMap<O>, DecodeError> {
         Ok(ValueMap {
             out: self.0,
-            entries: Vec::with_capacity(capacity(len)),
+            entries: Vec::new(),
         })
     }
 
@@ -308,12 +308,6 @@ impl<O: Put> Sink for ValueSink<O> {
         let inner = value.visit(ValueSink(Root))?;
         Ok(self.0.put(FfiValue::Passthrough(Box::new(inner))))
     }
-}
-
-/// A length hint is the source's word, so it only seeds a capacity, and
-/// a bounded one.
-fn capacity(len: Option<usize>) -> usize {
-    len.unwrap_or(0).min(1024)
 }
 
 /// The sequence sink of [`ValueSink`].
@@ -618,6 +612,12 @@ mod tests {
         assert_eq!(
             read(vitaminc_aead::to_frame(u16::MAX).expect("frames")),
             FfiValue::UInt32(u16::MAX.into())
+        );
+        // No Rust source walks a `u8` as an int (`Vec<u8>` is bytes), but a
+        // host's frame can carry one: the `UINT8` tag and its byte.
+        assert_eq!(
+            FfiValue::from_frame(&[vitaminc_aead::tags::UINT8, 200]).expect("reads back"),
+            FfiValue::UInt32(200)
         );
     }
 

@@ -1549,6 +1549,29 @@ mod tests {
         }
     }
 
+    /// Each half of the cipher does one thing: a minted key never opens a
+    /// leaf, and a key bound to a leaf for opening never seals one.
+    #[test]
+    fn each_half_of_the_cipher_refuses_the_other_halfs_work() {
+        let leaf =
+            SealedValue::from_parts(Uuid::nil(), [0; 16], vec![1; 4], vec![2; 32]).expect("a leaf");
+        let mut keys = std::iter::empty::<DataKeyWithTag>();
+        let minted = MintedKeys {
+            keyset_id: Uuid::nil(),
+            keys: RefCell::new(&mut keys),
+        };
+        let aad = Context::from_encoded(b"aad");
+        assert!(minted.open(leaf, &aad).is_err(), "a minted key never opens");
+        assert!(
+            minted.seal(Protected::new(vec![1]), &aad).is_err(),
+            "and seals nothing once the batch is spent"
+        );
+        assert!(
+            BoundKeys.seal(Protected::new(vec![1]), &aad).is_err(),
+            "a bound key never seals"
+        );
+    }
+
     /// Byte-level pin for the [`leaf_aad`] derivation. This is part of the
     /// frozen leaf format: a change to the domain label, the version byte,
     /// the keyset id's place, the piece order, or the PAE framing makes
