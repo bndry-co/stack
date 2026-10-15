@@ -16,6 +16,10 @@
 //!   that names an EQL type, that type's query value. It refuses an operator
 //!   the field does not answer as it refuses a value of the wrong type, with
 //!   [`Error::Source`] naming the field.
+//! - [`field_operators`] lists the operators a plan field answers, each with
+//!   the index that answers it ([`operator_to_value`] writes one): what a
+//!   generator asks before the program runs, so it writes one query method
+//!   per operator the engine answers and holds no copy of the table.
 //! - [`verify`] and [`target_limit`] are a probabilistic term's two
 //!   questions, [`Probabilistic::verify`] and
 //!   [`Probabilistic::target_limit`], over a page of decrypted values and
@@ -372,35 +376,132 @@ fn answer<'p>(
     operator: OpSpec,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Answer<'p>, Error> {
-    let found = plan
-        .fields()
-        .iter()
-        .find(|candidate| candidate.name() == field)
-        .ok_or_else(|| Error::Plan {
-            field: Some(field.to_owned()),
-            reason: Reason::NoSuchField,
-        })?;
+    let found = find(plan, field)?;
     let not_answered = || Error::Source {
         field: Some(field.to_owned()),
         reason: Reason::OperatorNotAnswered,
     };
     let kind = found.field_type().ok_or_else(not_answered)?;
-    let (index, target) = match found.target() {
-        Some(name) => {
-            let target = resolver.resolve(name).map_err(Error::Target)?;
-            let index = target_operators(&target)
-                .into_iter()
-                .find_map(|(op, index)| (op == operator).then_some(index));
-            (index, Some(target))
-        }
-        None => (operator.answered_by(kind, &found.indexes()).cloned(), None),
-    };
+    let (operators, target) = answers(found, resolver)?;
+    let index = operators
+        .into_iter()
+        .find_map(|(op, index)| (op == operator).then_some(index));
     Ok(Answer {
         field: found,
         kind,
         index: index.ok_or_else(not_answered)?,
         target,
     })
+}
+
+/// The field named `field`, or [`Error::Plan`] with
+/// [`Reason::NoSuchField`].
+fn find<'p>(plan: &'p Plan, field: &str) -> Result<&'p FieldPlan, Error> {
+    plan.fields()
+        .iter()
+        .find(|candidate| candidate.name() == field)
+        .ok_or_else(|| Error::Plan {
+            field: Some(field.to_owned()),
+            reason: Reason::NoSuchField,
+        })
+}
+
+/// Operators a field answers, each with the index that answers it.
+type Operators = Vec<(OpSpec, IndexSpec)>;
+
+/// Every operator `field` answers with the index that answers it, and the
+/// EQL type it names, resolved: the one table [`answer`] and
+/// [`field_operators`] both read, so what a generator is told a field
+/// answers is what a query on it finds.
+fn answers(
+    field: &FieldPlan,
+    resolver: &(impl TargetResolver + ?Sized),
+) -> Result<(Operators, Option<TargetDescriptor>), Error> {
+    let Some(kind) = field.field_type() else {
+        return Ok((Vec::new(), None));
+    };
+    if let Some(name) = field.target() {
+        let target = resolver.resolve(name).map_err(Error::Target)?;
+        return Ok((target_operators(&target), Some(target)));
+    }
+    let indexes = field.indexes();
+    let operators = OpSpec::ALL
+        .into_iter()
+        .filter_map(|op| {
+            op.answered_by(kind, &indexes)
+                .map(|index| (op, index.clone()))
+        })
+        .collect();
+    Ok((operators, None))
+}
+
+/// The operators a field of a plan answers, each with the index that
+/// answers it, in [`OpSpec::ALL`]'s order: exactly the operators
+/// [`query_term`] derives a term for on that field, so a generator asks the
+/// engine which query methods to write rather than holding a copy of the
+/// table.
+///
+/// A field with indexes answers each operator [`OpSpec::answered_by`] finds
+/// an index for under its declared kind; a field that names an EQL type
+/// answers what the type's [`TargetDescriptor::operators`] lists; a field
+/// with no declared kind answers none. The context does not matter, so a
+/// plan whose context is a field of each record is taken. Write each entry
+/// with [`operator_to_value`].
+///
+/// ```
+/// use stack_encrypt::dynamic::{field_operators, record, FfiValue, NoTargets, OpSpec};
+/// use stack_encrypt::target::IndexSpec;
+///
+/// let text = |s: &str| FfiValue::String(s.into());
+/// let plan = record::plan(FfiValue::Object(vec![(
+///     "age".into(),
+///     FfiValue::Object(vec![
+///         ("context".into(), FfiValue::Array(vec![text("users"), text("age")])),
+///         ("outputs".into(), FfiValue::Array(vec![text("c"), text("eq"), text("ore")])),
+///         ("type".into(), text("uint32")),
+///     ]),
+/// )]))?;
+///
+/// let operators = field_operators(&plan, "age", &NoTargets)?;
+/// assert_eq!(operators[0], (OpSpec::Eq, IndexSpec::Equality));
+/// assert_eq!(operators[1], (OpSpec::Lt, IndexSpec::Ore));
+/// assert_eq!(operators.len(), 6, "eq, the four comparisons and between");
+/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// ```
+///
+/// # Errors
+///
+/// [`Error::Plan`] for a field the plan does not have
+/// ([`Reason::NoSuchField`]), and [`Error::Target`] for a target the
+/// resolver refuses.
+pub fn field_operators(
+    plan: &Plan,
+    field: &str,
+    resolver: &(impl TargetResolver + ?Sized),
+) -> Result<Vec<(OpSpec, IndexSpec)>, Error> {
+    answers(find(plan, field)?, resolver).map(|(operators, _)| operators)
+}
+
+/// One operator a field answers in its wire form, as a catalog lists it: an
+/// object with every key present.
+///
+/// | key | value |
+/// |---|---|
+/// | `operator` | string: the operator's name, `eq` ([`OpSpec::name`]) |
+/// | `fidelity` | string: `exact` or `probabilistic` ([`Fidelity::name`]) |
+/// | `arity` | string: `one`, or `pair` for an operator whose input is two values, low then high |
+/// | `index` | string: the [key](IndexSpec::key) of the index that answers it, `eq` |
+pub fn operator_to_value(operator: OpSpec, index: &IndexSpec) -> FfiValue {
+    let text = |s: &str| FfiValue::String(s.into());
+    FfiValue::Object(vec![
+        ("operator".to_owned(), text(operator.name())),
+        ("fidelity".to_owned(), text(operator.fidelity().name())),
+        (
+            "arity".to_owned(),
+            text(if operator.takes_pair() { "pair" } else { "one" }),
+        ),
+        ("index".to_owned(), text(index.key())),
+    ])
 }
 
 /// Refuse a plan whose context is a field of each record: a term derives
@@ -1797,6 +1898,104 @@ mod tests {
         );
     }
 
+    /// What a field is said to answer is what a query on it finds: every
+    /// listed operator derives a term through the listed index, and every
+    /// other is refused as not answered.
+    #[tokio::test]
+    async fn a_fields_operators_are_exactly_the_queries_it_answers() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let input = |kind: &str, op: OpSpec| {
+            let one = if kind == "string" {
+                text("alice smith")
+            } else {
+                FfiValue::UInt32(7)
+            };
+            if op.takes_pair() {
+                FfiValue::Array(vec![one.clone(), one])
+            } else {
+                one
+            }
+        };
+        for (name, kind, want) in [
+            ("email", "string", vec![(OpSpec::Eq, IndexSpec::Equality)]),
+            (
+                "name",
+                "string",
+                vec![(OpSpec::Matches, IndexSpec::Match(MatchOptions::default()))],
+            ),
+            (
+                "age",
+                "uint32",
+                vec![
+                    (OpSpec::Lt, IndexSpec::Ore),
+                    (OpSpec::Lte, IndexSpec::Ore),
+                    (OpSpec::Gt, IndexSpec::Ore),
+                    (OpSpec::Gte, IndexSpec::Ore),
+                    (OpSpec::Between, IndexSpec::Ore),
+                ],
+            ),
+            ("nickname", "string", vec![]),
+        ] {
+            let listed = field_operators(&users(), name, &NoTargets).unwrap();
+            assert_eq!(listed, want, "{name}");
+            for op in OpSpec::ALL {
+                let found = query(&keyset, name, op, input(kind, op)).await;
+                match (listed.iter().find(|(listed, _)| *listed == op), found) {
+                    (Some((_, index)), Ok(term)) => {
+                        assert_eq!(term.index(), index, "{name} {op}");
+                    }
+                    (Some(_), Err(error)) => panic!("{name} {op} is listed and refused: {error}"),
+                    (None, Ok(_)) => panic!("{name} {op} is not listed and answered"),
+                    (None, Err(error)) => assert_eq!(
+                        reason_of(&error),
+                        (Some(name), Some(Reason::OperatorNotAnswered)),
+                        "{name} {op}"
+                    ),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_field_the_plan_lacks_has_no_operators() {
+        let error = field_operators(&users(), "phone", &NoTargets).unwrap_err();
+        assert_eq!(
+            reason_of(&error),
+            (Some("phone"), Some(Reason::NoSuchField))
+        );
+    }
+
+    #[test]
+    fn an_operator_is_written_with_every_key_in_order() {
+        let FfiValue::Object(entries) = operator_to_value(OpSpec::Between, &IndexSpec::Ope) else {
+            panic!("an object");
+        };
+        let entries: Vec<(&str, &[u8])> = entries
+            .iter()
+            .map(|(k, v)| match v {
+                FfiValue::String(s) => (k.as_str(), s.risky_ref()),
+                _ => panic!("{k} is a string"),
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("operator", b"between".as_slice()),
+                ("fidelity", b"exact".as_slice()),
+                ("arity", b"pair".as_slice()),
+                ("index", b"ope".as_slice())
+            ]
+        );
+        let FfiValue::Object(entries) =
+            operator_to_value(OpSpec::Matches, &IndexSpec::Match(MatchOptions::default()))
+        else {
+            panic!("an object");
+        };
+        assert!(matches!(&entries[1].1, FfiValue::String(s) if s.risky_ref() == b"probabilistic"));
+        assert!(matches!(&entries[2].1, FfiValue::String(s) if s.risky_ref() == b"one"));
+    }
+
     /// A resolver holding one type that answers `eq`, whose query is a
     /// fixed JSON value: what a target field's query term carries.
     struct OneType;
@@ -1859,6 +2058,11 @@ mod tests {
         assert_eq!(term.operand(), &Operand::One(br#"{"hm":"00"}"#.to_vec()));
         assert_eq!(term.domain(), Some("eql_v3.query_some"));
         assert_eq!(term.index(), &IndexSpec::Equality);
+        assert_eq!(
+            field_operators(&plan, "email", &OneType).unwrap(),
+            [(OpSpec::Eq, IndexSpec::Equality)],
+            "a target field answers what its type lists"
+        );
         for op in [OpSpec::Lt, OpSpec::Matches, OpSpec::Between] {
             let error = query_term(&keyset, &plan, "email", op, text("a"), &OneType)
                 .map(drop)

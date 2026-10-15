@@ -40,7 +40,9 @@
 //! * [`query_term`], [`verify`] and [`target_limit`] — a query named by
 //!   operator ([`OpSpec`]) on a plan field, and a probabilistic term's two
 //!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats)
-//!   (ADR-0009; ADR-0007, amended 2026-10-16).
+//!   (ADR-0009; ADR-0007, amended 2026-10-16), and [`field_operators`], the
+//!   operators a plan field answers, for a generator to ask before the
+//!   program runs.
 //! * [`Scope`] — which cipher an opening operation decrypts through.
 //!
 //! # What is not here
@@ -100,8 +102,8 @@ pub use ffi_value::{
 };
 pub use kind::{admits, read};
 pub use query::{
-    check_query, limit_to_value, query_term, target_limit, verify, Fidelity, OpSpec, Operand,
-    QueryTerm,
+    check_query, field_operators, limit_to_value, operator_to_value, query_term, target_limit,
+    verify, Fidelity, OpSpec, Operand, QueryTerm,
 };
 pub use record::{FieldPlan, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};

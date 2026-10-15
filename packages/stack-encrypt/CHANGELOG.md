@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`TargetDescriptor::to_value`) lists the operators the engine answers for
   it, each with its fidelity (`dynamic::Fidelity`), arity and index
   (`TargetDescriptor::operators`).
+- **A binding asks which operators a field answers.**
+  `dynamic::field_operators(&plan, field, &resolver)` lists the operators a
+  field of a data plan answers, each with the index that answers it: what
+  `query_term` derives a term for on that field and nothing else, for a
+  field declared with indexes as for one that names an EQL type.
+  `dynamic::operator_to_value` writes one entry in the catalog's wire form.
+  A generator asks this before the program runs, so it writes one query
+  method per operator and holds no copy of the table.
 - **A query names an operator, not an index.**
   `cipher.query(op::Eq, "bob@example.com").on(&plan)` and
   `cipher.query(op::Matches, "ali").on(&plan)`: the operator comes first, as

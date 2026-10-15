@@ -27,7 +27,7 @@
 
 use std::fmt;
 
-use super::query::target_operators;
+use super::query::{operator_to_value, target_operators};
 use super::{FfiValue, OpSpec, ValueKind};
 
 use crate::{KeysetCipher, Label, Pending, StackCipher};
@@ -153,18 +153,8 @@ impl TargetDescriptor {
                 "operators".to_string(),
                 FfiValue::Array(
                     target_operators(self)
-                        .into_iter()
-                        .map(|(op, index)| {
-                            FfiValue::Object(vec![
-                                ("operator".to_string(), text(op.name())),
-                                ("fidelity".to_string(), text(op.fidelity().name())),
-                                (
-                                    "arity".to_string(),
-                                    text(if op.takes_pair() { "pair" } else { "one" }),
-                                ),
-                                ("index".to_string(), text(index.key())),
-                            ])
-                        })
+                        .iter()
+                        .map(|(op, index)| operator_to_value(*op, index))
                         .collect(),
                 ),
             ),
