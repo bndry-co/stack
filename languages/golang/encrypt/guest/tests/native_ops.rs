@@ -347,12 +347,13 @@ fn unsupported_term_inputs_are_encoding_errors() {
     let cipher = cipher();
     let ctx = encode(s("f"));
 
-    // Floats and bools have no equality encoding; match is text-only;
+    // Bools have no equality domain and no order term; match is text-only;
     // containers have no term semantics; kinds outside the table and empty
     // contexts are rejected.
     for (value, kind) in [
-        (FfiValue::Float64(1.5), TERM_EQUALITY),
         (FfiValue::Bool(true), TERM_EQUALITY),
+        (FfiValue::Bool(true), TERM_ORE),
+        (FfiValue::Bool(false), TERM_OPE),
         (FfiValue::UInt32(1), TERM_MATCH),
         (FfiValue::Array(vec![]), TERM_ORE),
         (FfiValue::Null, TERM_EQUALITY),
@@ -1055,12 +1056,9 @@ fn term_validation_refuses_what_the_term_op_refuses() {
     let ctx = encode(s("f"));
 
     for (label, value, kind) in [
-        (
-            "a float under equality",
-            FfiValue::Float64(1.5),
-            TERM_EQUALITY,
-        ),
         ("a bool under equality", FfiValue::Bool(true), TERM_EQUALITY),
+        ("a bool under ore", FfiValue::Bool(true), TERM_ORE),
+        ("a bool under ope", FfiValue::Bool(true), TERM_OPE),
         ("an integer under match", FfiValue::UInt32(1), TERM_MATCH),
         ("a container", FfiValue::Array(vec![]), TERM_ORE),
         ("an object", obj(vec![("k", s("v"))]), TERM_EQUALITY),
@@ -1101,8 +1099,9 @@ fn term_validation_refuses_what_the_term_op_refuses() {
         (s("x"), TERM_EQUALITY),
         (FfiValue::Bytes(Protected::new(vec![1])), TERM_EQUALITY),
         (s("x y"), TERM_MATCH),
+        (FfiValue::Float64(1.5), TERM_EQUALITY),
         (FfiValue::Float64(1.5), TERM_ORE),
-        (FfiValue::Bool(true), TERM_OPE),
+        (FfiValue::Int32(-1), TERM_OPE),
         (s("x"), TERM_ORE),
     ] {
         assert_eq!(ops::validate::term(&encode(value), &ctx, kind), Ok(()));

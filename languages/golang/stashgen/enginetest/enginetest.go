@@ -105,14 +105,15 @@ func (e Static) Check(ctx context.Context, d stashgen.Declaration) error {
 }
 
 // indexApplies mirrors dynamic::admits in stack-encrypt: equality over
-// integers, text and bytes (no floats, no booleans: they have no PRF
-// encoding), match over text alone, ORE and OPE over every scalar. The JSON
-// index is not in the engine yet.
+// integers, floats, text and bytes (the kinds vitaminc gives an equality
+// domain; a boolean has none), match over text alone, ORE and OPE over
+// every scalar but a boolean, whose order term would reveal which rows are
+// true. The JSON index is not in the engine yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
 	case stashgen.IndexEquality:
 		switch t.Kind {
-		case stashgen.KindString, stashgen.KindBytes, stashgen.KindInt, stashgen.KindUint:
+		case stashgen.KindString, stashgen.KindBytes, stashgen.KindInt, stashgen.KindUint, stashgen.KindFloat:
 			return nil
 		}
 	case stashgen.IndexMatch:
@@ -121,7 +122,7 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 		}
 		return fmt.Errorf("match applies to a string, not to %s", t)
 	case stashgen.IndexOre, stashgen.IndexOpe:
-		if t.Kind.Scalar() {
+		if t.Kind.Scalar() && t.Kind != stashgen.KindBool {
 			return nil
 		}
 	case stashgen.IndexJSON:

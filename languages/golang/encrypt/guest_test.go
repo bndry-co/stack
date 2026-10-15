@@ -734,10 +734,10 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 	c := rawInstance(t)
 	def := c.DefaultKeyset()
 	plan := usersPlan()
-	floatAge := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Float64, Outputs: []record.Output{record.Ciphertext, record.Equality}}}}
+	boolFlag := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "flag", Kind: record.Bool, Outputs: []record.Output{record.Ciphertext, record.Equality}}}}
 	matchInt := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Match}}}}
 	calls := map[string]func() error{
-		"float under equality":    func() error { _, err := def.Derive(ctx, floatAge, "age", record.Equality, 1.5); return err },
+		"bool under equality":     func() error { _, err := def.Derive(ctx, boolFlag, "flag", record.Equality, true); return err },
 		"integer under match":     func() error { _, err := def.Derive(ctx, matchInt, "age", record.Match, uint32(1)); return err },
 		"container as term value": func() error { _, err := def.Derive(ctx, plan, "age", record.Equality, []any{1}); return err },
 		"a kind the type refuses": func() error { _, err := def.Seal(ctx, matchInt, []record.Source{usersRow(1, "x")}); return err },
@@ -837,7 +837,8 @@ func TestPlanCheckAnswersWithoutACipher(t *testing.T) {
 	}
 	refused := []*record.Plan{
 		{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Match}}}},
-		{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Float64, Outputs: []record.Output{record.Equality}}}},
+		{Context: []string{"users"}, Fields: []record.Field{{Name: "flag", Kind: record.Bool, Outputs: []record.Output{record.Equality}}}},
+		{Context: []string{"users"}, Fields: []record.Field{{Name: "flag", Kind: record.Bool, Outputs: []record.Output{record.Ore}}}},
 	}
 	for i, p := range refused {
 		if err := k.Check(ctx, p); !errors.Is(err, ErrEncoding) {

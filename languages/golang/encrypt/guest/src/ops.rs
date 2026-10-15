@@ -35,14 +35,21 @@
 //! directions, buffers sized before a byte of plaintext is written, the
 //! ABI's numeric term kinds, and the mapping from a library error to a
 //! status code.
+//!
+//! A term's value is not decoded at all: the frame is parsed and walked in
+//! place to the scalar it holds, the way vitaminc's own guest walks a frame
+//! into encryption, so no copy of the plaintext is built to derive it. A
+//! record's source, a plan and an options object are decoded into an
+//! [`FfiValue`]: the engine reads them, splits a source into fields and
+//! keeps each field's value past this call.
 
-use stack_encrypt::dynamic::{self, FfiValue, Scalar, Scope};
+use stack_encrypt::dynamic::{self, FfiValue, Scope};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::ErrorPayload;
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, Node, SealedValue, StackCipherText};
 use stack_kms::DataKeySource;
-use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext, FrameWriter};
+use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext, Frame, FrameWriter};
 use vitaminc_protected::Controlled;
 use zeroize::Zeroizing;
 
@@ -71,7 +78,7 @@ type BytesTree = Node<Vec<u8>>;
 
 /// Derive one index term: a codec-encoded scalar and a codec-encoded
 /// context in, the term's frozen byte encoding out (see `stack-encrypt`'s
-/// `sem` module docs). Under the local HMAC backend the derivation is one
+/// `sem` module docs). The scalar's frame is walked in place. Under the local HMAC backend the derivation is one
 /// PRF/CLLW computation with no ZeroKMS I/O; that is the backend's
 /// property, not this operation's contract — the term API is a `Pending`
 /// so a backend that derives terms at ZeroKMS settles the same way.
@@ -98,22 +105,22 @@ where
     // The same proof every stack-encrypt leaf demands: an empty context is
     // `STATUS_ENCODING` here, before any derivation.
     let context = dynamic::context(decode_value(context)?).map_err(|e| fail_dynamic(&e))?;
-    let (scalar, kind) = parse_term(decode_value(value)?, kind)?;
-    dynamic::term(cipher, scalar, &kind, context)
+    let value = parse_frame(value)?;
+    let kind = parse_term(value, kind)?;
+    dynamic::term(cipher, value, &kind, context)
         .await
         .map_err(|e| fail_dynamic(&e))
 }
 
-/// The static half of a term: the kind is one of the ABI's table, the value
-/// is a scalar, and the scheme defines the pair
-/// ([`IndexSpec::supports`]). Shared by [`term`] and [`validate::term`] so
-/// the ABI refuses exactly what the operation would, before any keyset is
-/// resolved.
+/// The static half of a term: the kind is one of the ABI's table, and the
+/// value is one scalar the index takes ([`IndexSpec::defines`]). Shared by
+/// [`term`] and [`validate::term`] so the ABI refuses exactly what the
+/// operation would, before any keyset is resolved.
 ///
 /// The ABI's kind codes carry no options, so [`TERM_MATCH`] is the match
 /// index under the default options, the same index a plan's bare `"match"`
 /// names.
-fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, IndexSpec), u32> {
+fn parse_term(value: Frame<'_>, kind: u32) -> Result<IndexSpec, u32> {
     let kind = match kind {
         TERM_EQUALITY => IndexSpec::Equality,
         TERM_MATCH => IndexSpec::Match(MatchOptions::default()),
@@ -125,11 +132,10 @@ fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, IndexSpec), u32> {
             ))
         }
     };
-    let scalar = Scalar::of(&value, &kind).map_err(|e| fail_dynamic(&e))?;
-    if !kind.supports(&scalar) {
+    if !kind.defines(value) {
         return Err(fail_dynamic(&dynamic::Error::Term { field: None, kind }));
     }
-    Ok((scalar, kind))
+    Ok(kind)
 }
 
 // =============================================================================
@@ -308,13 +314,12 @@ pub mod validate {
 
     /// A term's inputs, as [`term`] takes them: the context decodes and is
     /// non-empty, the kind is one of [`TERM_EQUALITY`] .. [`TERM_OPE`], and
-    /// the value is a scalar the scheme defines that term for
-    /// ([`IndexSpec::supports`]).
+    /// the value is one scalar the index takes ([`IndexSpec::defines`]).
     pub fn term(value: &[u8], context: &[u8], kind: u32) -> Result<(), u32> {
         dynamic::context(decode_value(context)?)
             .map(drop)
             .map_err(|e| fail_dynamic(&e))?;
-        parse_term(decode_value(value)?, kind).map(drop)
+        parse_term(parse_frame(value)?, kind).map(drop)
     }
 
     /// A record source against its plan, as [`encrypt_record`] takes them:
@@ -374,8 +379,17 @@ pub mod validate {
 // =============================================================================
 
 fn decode_value(bytes: &[u8]) -> Result<FfiValue, u32> {
-    FfiValue::from_frame(bytes)
-        .map_err(|_| last_error::malformed("an input is not a value in the transport frame"))
+    FfiValue::from_frame(bytes).map_err(|_| not_a_frame())
+}
+
+/// One frame, parsed and checked but not decoded: what a term's value is
+/// walked from, in place.
+fn parse_frame(bytes: &[u8]) -> Result<Frame<'_>, u32> {
+    Frame::parse(bytes).map_err(|_| not_a_frame())
+}
+
+fn not_a_frame() -> u32 {
+    last_error::malformed("an input is not a value in the transport frame")
 }
 
 /// Encode a value tree into a buffer whose capacity is exactly its length.
