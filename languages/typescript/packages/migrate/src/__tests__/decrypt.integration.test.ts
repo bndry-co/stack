@@ -361,6 +361,23 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     expect(rows[0]?.n).toBe('0')
   })
 
+  it('a completed forced pass meets the obligation: later plain runs are unforced again', async () => {
+    await seed(300)
+    await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
+    expect((await run({ force: true })).completed).toBe(true)
+
+    // The app writes a newer value to the plaintext column alone. A forced
+    // run would put the older ciphertext's value back over it.
+    await pool.query(
+      `UPDATE ${TABLE} SET email = 'newer@example.com' WHERE id = 1`,
+    )
+    await run()
+    const { rows } = await pool.query<{ email: string }>(
+      `SELECT email FROM ${TABLE} WHERE id = 1`,
+    )
+    expect(rows[0]?.email).toBe('newer@example.com')
+  })
+
   it('a plain run after a forced pass failed before its first commit still overwrites every row', async () => {
     await seed(300)
     await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
