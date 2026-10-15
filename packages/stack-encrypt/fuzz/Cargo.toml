@@ -63,3 +63,15 @@ bench = false
 
 [workspace]
 resolver = "2"
+
+# Temporary, as in the root Cargo.toml: the vitaminc crates stack-encrypt
+# builds on come from the branch that implements vitaminc ADR 0001
+# (cipherstash/vitaminc PRs #439 to #445) until vitaminc releases it.
+[patch.crates-io]
+vitaminc = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc-aead-frame = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
