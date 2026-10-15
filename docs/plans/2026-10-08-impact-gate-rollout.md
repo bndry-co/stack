@@ -26,7 +26,7 @@ Manual comparison of representative Stack source at the base SHA also found a re
 
 The inspected Rust `is_fresh_at` in `packages/stack-encrypt/src/keyset.rs` is correctly reported at 103–105 (CC 1). Go `StatusError` and `PackedResult` in `languages/golang/internal/guest/status.go` are correctly reported at 45–106 (CC 29) and 111–116 (CC 2). These are sample checks, not proof that either parser is universally correct.
 
-Keep the report advisory. Do not modify production source to satisfy this parser. These silent span defects are different from process failures: successful CLI exit cannot establish accurate function boundaries.
+Keep the report advisory. Do not modify production source to satisfy this parser. These silent span defects are different from process failures: successful CLI exit cannot establish accurate function boundaries. The report now labels a function row `⚠️ span may be misattributed` when lizard's span contains a later top-level declaration (#1219). It does not label a span that ends on the next declaration's first line, so `parseSelectorSegments` above stays unlabelled; that boundary is harmless because the neighbour's body is still outside the span.
 
 ## Coverage and interpretation
 

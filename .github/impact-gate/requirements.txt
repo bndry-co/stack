@@ -2,11 +2,12 @@
 # CI installs it with `pip install --require-hashes --no-deps`, so nothing here
 # resolves at install time and a transitive dependency cannot float.
 #
-# The top-level pins are impact-gate==0.4.1 and lizard==1.23.0 (Lizard 1.24.0 is
-# excluded by ImpactGate's own metadata). To regenerate after changing them, from
-# the repository root:
+# The top-level pins are impact-gate==0.4.1, lizard==1.23.0 (Lizard 1.24.0 is
+# excluded by ImpactGate's own metadata) and pygments==2.21.0, which
+# scripts/impact-gate.py imports directly. uv still annotates pygments "via
+# lizard". To regenerate after changing them, from the repository root:
 #
-#   printf 'impact-gate==0.4.1\nlizard==1.23.0\n' \
+#   printf 'impact-gate==0.4.1\nlizard==1.23.0\npygments==2.21.0\n' \
 #     | uv pip compile - --generate-hashes --universal --python-version 3.12 \
 #         --no-header -o .github/impact-gate/requirements.txt
 #

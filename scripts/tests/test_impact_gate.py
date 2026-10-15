@@ -10,6 +10,12 @@ import tempfile
 import unittest
 
 DRIVER = Path(__file__).resolve().parents[1] / 'impact-gate.py'
+# lizard misses this function's closing brace (a ternary returning an object
+# literal after an arrow callback) and runs its span on into whatever follows.
+PICK = ('export function pick(xs: readonly string[], hint?: string) {\n'
+        '  const hinted = xs.find((c) => c === hint)\n'
+        "  return hinted ? { hinted, via: 'hint' } : null\n"
+        '}\n')
 
 
 class ImpactWorkflowTest(unittest.TestCase):
@@ -119,15 +125,11 @@ class ImpactWorkflowTest(unittest.TestCase):
             return (f'export function {name}({arg}: number): number {{\n'
                     + ''.join(f'  if ({arg} === {i}) return {i};\n' for i in range(200))
                     + f'  return {result}\n}}\n')
-        pick = ('export function pick(xs: readonly string[], hint?: string) {\n'
-                '  const hinted = xs.find((c) => c === hint)\n'
-                "  return hinted ? { hinted, via: 'hint' } : null\n"
-                '}\n')
         self.commit('src/pick.ts', 'export function third(y: number): number {\n  return y\n}\n\n'
-                    + pick + '\nexport function after(x: number): number {\n  return x + 1\n}\n')
+                    + PICK + '\nexport function after(x: number): number {\n  return x + 1\n}\n')
         self.run_driver('prepare')
         self.git('checkout', '-qb', 'feature')
-        self.commit('src/pick.ts', branches('third', 'y', 'y') + '\n' + pick + '\n'
+        self.commit('src/pick.ts', branches('third', 'y', 'y') + '\n' + PICK + '\n'
                     + branches('after', 'x', 'x + 1'))
         # The grade multiplies cost by files changed; the drivers table is only
         # printed above the warn percentile.
@@ -147,6 +149,10 @@ class ImpactWorkflowTest(unittest.TestCase):
         self.assertIn('lizard read its line span', self.summary.read_text())
 
     def load_driver(self):
+        """Import the driver with the fixture repository as the working directory."""
+        cwd = os.getcwd()
+        os.chdir(self.repo)
+        self.addCleanup(os.chdir, cwd)
         spec = importlib.util.spec_from_file_location('impact_gate_driver', DRIVER)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -159,15 +165,40 @@ class ImpactWorkflowTest(unittest.TestCase):
                     '  return `\nimport { x } from "y"\nconst ${name} = x\n'
                     'export const client = ${name}\n`\n}\n')
         head = self.git('rev-parse', 'HEAD')
-        cwd = os.getcwd()
-        os.chdir(self.repo)
-        self.addCleanup(os.chdir, cwd)
         self.assertEqual(self.load_driver().misread_functions([head], 'src/gen.ts'), set())
 
+    def test_unindented_declarations_inside_a_function_body_are_not_top_level(self):
+        # Column 0 alone is not top level: an unformatted body whose span
+        # lizard read correctly must not be marked.
+        self.commit('src/flat.ts', 'export function outer(): number {\nconst inner = 2\n'
+                    'function nested() { return inner }\nreturn nested()\n}\n\n'
+                    'export const sibling = 3\n')
+        head = self.git('rev-parse', 'HEAD')
+        self.assertEqual(self.load_driver().misread_functions([head], 'src/flat.ts'), set())
+
+    def test_marks_a_function_above_a_removed_declaration(self):
+        # At the base, `pick`'s span swallows `gone`; the PR deletes `gone`.
+        self.commit('src/pick.ts', PICK + '\nexport function gone(x: number): number {\n'
+                    '  return x\n}\n\nexport function kept(y: number): number {\n  return y\n}\n')
+        base = self.git('rev-parse', 'HEAD')
+        self.commit('src/pick.ts', PICK + '\nexport function kept(y: number): number {\n'
+                    '  return y + 1\n}\n')
+        found = self.load_driver().misread_functions([base, 'HEAD'], 'src/pick.ts')
+        self.assertIn(('', 'pick'), found)
+        self.assertNotIn(('', 'kept'), found)
+
+    def test_marks_a_function_above_appended_code(self):
+        # At the base `pick` ends the file; the PR appends after it.
+        self.commit('src/pick.ts', 'export function edited(y: number): number {\n  return y\n}\n\n'
+                    + PICK)
+        base = self.git('rev-parse', 'HEAD')
+        self.commit('src/pick.ts', 'export function edited(y: number): number {\n  return y + 1\n}\n\n'
+                    + PICK + '\nexport function appended(x: number): number {\n  return x\n}\n')
+        found = self.load_driver().misread_functions([base, 'HEAD'], 'src/pick.ts')
+        self.assertIn(('', 'pick'), found)
+        self.assertNotIn(('', 'edited'), found)
+
     def test_marking_failure_keeps_the_unmarked_report(self):
-        cwd = os.getcwd()
-        os.chdir(self.repo)
-        self.addCleanup(os.chdir, cwd)
         report = '| 1 | `src/main.ts:count` | _file scope_ | 1 | 0 | mutation |'
         marked = self.load_driver().mark_misread_spans(report, 'missing-target')
         self.assertTrue(marked.startswith(report))

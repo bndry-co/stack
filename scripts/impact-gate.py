@@ -19,7 +19,7 @@ from impact_gate.baseline import build_baseline, save_baseline
 from impact_gate.core.config import MeasureConfig
 import lizard
 from pygments.lexers import JavascriptLexer, TypeScriptLexer
-from pygments.token import Keyword, Name
+from pygments.token import Keyword, Name, Punctuation
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / '.github' / 'impact-gate'
@@ -163,6 +163,9 @@ def report(args: argparse.Namespace, policy: str) -> None:
 # formatted code nothing inside a function body starts at column 0, so a
 # top-level declaration strictly inside a span is the tell. Pygments decides
 # what is code: a column-0 `const` inside a template literal is string text.
+# Limit: when the misread makes lizard drop functions instead (the same
+# trigger inside a class method reports only an `(anonymous)` function), the
+# edits land on a row that has no span to check, and nothing is marked.
 SPAN_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx')
 DECLARATION = re.compile(r'@|(export|import|declare|abstract|async|function|const|let|var'
                          r'|class|interface|type|enum)\b')
@@ -180,9 +183,15 @@ def declaration_lines(path: str, source: str) -> set[int]:
     for number, line in enumerate(source.split('\n'), 1):
         line_at[offset] = number
         offset += len(line) + 1
-    return {line_at[offset] for offset, token, _ in lexer.get_tokens_unprocessed(source)
-            if offset in line_at and (token in Keyword or token in Name.Decorator)
-            and DECLARATION.match(source, offset)}
+    # Column 0 is not top level in unformatted code, so count braces too.
+    declarations, depth = set(), 0
+    for offset, token, value in lexer.get_tokens_unprocessed(source):
+        if (depth == 0 and offset in line_at and (token in Keyword or token in Name.Decorator)
+                and DECLARATION.match(source, offset)):
+            declarations.add(line_at[offset])
+        elif token in Punctuation:
+            depth = max(0, depth + value.count('{') - value.count('}'))
+    return declarations
 
 
 def misread_functions(revisions: list[str], path: str) -> set[tuple[str, str]]:
@@ -233,11 +242,12 @@ def pin(args: argparse.Namespace) -> None:
     """Point the target ref at the commit this run's change is measured from.
 
     A push measures from its own commit. A pull request checks out
-    refs/pull/N/merge, GitHub's merge of the PR into the target branch's tip at
-    run time. The event's pull_request.base.sha is older whenever the target
-    moved on after the PR last synced, and scoring from it counts the target's
-    newer commits as the PR's. The merge's first parent is the tip it was built
-    on, so HEAD^1..HEAD is exactly what the PR adds.
+    refs/pull/N/merge, GitHub's merge of the PR into the target branch's tip
+    when the event fired (a re-run reuses it). The event's pull_request.base.sha
+    is older whenever the target moved on after the PR last synced, and scoring
+    from it counts the target's newer commits as the PR's. The merge's first
+    parent is the tip it was built on, so HEAD^1..HEAD is exactly what the PR
+    adds.
     """
     base = args.event_sha
     if args.pr_head:
