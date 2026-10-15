@@ -409,7 +409,7 @@ pub fn targets() -> Result<Vec<u8>, u32> {
 /// The operators one field of a codec-encoded plan answers, as a
 /// codec-encoded list: one object per operator, in the order the engine
 /// lists them, each written by
-/// [`dynamic::operator_to_value`](stack_encrypt::dynamic::operator_to_value):
+/// [`dynamic::operator_to_value`]:
 ///
 /// ```text
 /// [ { "operator": "eq", "fidelity": "exact", "arity": "one", "index": "eq" }, ... ]

@@ -40,7 +40,7 @@ Your program calls those functions, and it never builds or names a plan.
    ```go
    encrypted, err := users.Encrypt(ctx, cipher, people)
    opened, err := users.Decrypt(ctx, cipher, encrypted)
-   query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com")
+   query, err := users.Fields.Email.Eq(ctx, cipher, "bob@example.com")
    ```
 
 6. Store the encrypted type.
@@ -123,7 +123,12 @@ For `-type User`, the file `user_stash.go` holds:
 - `Encrypt` and `Decrypt`, which take a slice and return a slice, and send one ZeroKMS request for each 500 sealed values in it, plus one the first time a keyset is used.
 - `Fields`, with one entry for each sealed field.
   An opaque struct, or a struct with no sealed field outside an opaque one, gets no `Fields`: nothing in it is sealed on its own, so nothing can be queried.
-  An entry encrypts one value, and it has a query method only for what the field declares: `Query` for `encrypt_into`, and `Equality`, `Match`, `Ore` or `Ope` for `index=`.
+  An entry encrypts one value, and has one query method for each operator the engine answers on the field: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` or `Matches`.
+  stashgen asks the embedded engine which operators each field answers, and which index answers each one, so it holds no copy of those rules: an equality index answers `Eq`, a match index on a string `Matches`, and an ORE or OPE index on an integer the four orderings and `Between`, through ORE when the field declares both.
+  `encrypt_into=TextEq` answers `Eq`, which returns the type's query value, `eql.TextEqQuery`.
+  `encrypt_into=TextMatch` answers `Matches`, which returns an `encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand, with `Verify` and `TargetLimit`.
+  The query of `Matches` carries `Verify` and `TargetLimit`, because its answer can hold rows that do not match; an exact operator's query carries neither.
+  See the encrypt package's README for each method's result and the query with `database/sql`.
 - `String` and `LogValue` on `EncryptedUser`, which print the passthrough fields and hide the sealed ones.
 - A copy of the fields of `User`, so a change to them stops the build.
 
