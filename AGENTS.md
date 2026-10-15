@@ -575,7 +575,9 @@ monorepo, which is where the silent failures are.
   `tests/sqlx/tests/selector_literal_guard.rs` fails on a random-looking
   standalone 32-hex run, in any case, in any `.rs` file under the crate's `src/`
   and `tests/`, SQL and escaped JSON inside Rust strings included, and counts a
-  string escape (`\n`, `\x`) or a `0x` prefix as a boundary; the generated
+  string escape (`\n`, `\x`), a `0x` prefix or an integer suffix (`0x…u128`)
+  as a boundary. It does not catch a selector split into pieces, such as a
+  `[u8; 16]` array of `0x..` bytes; the generated
   `fixtures/*.sql` files hold real selectors and are not scanned. It runs
   DB-free in `mise run test:schema` so fork PRs get it too; a forged selector
   must be visibly fake (`"00000000000000000000000000000001"`). The suite passes

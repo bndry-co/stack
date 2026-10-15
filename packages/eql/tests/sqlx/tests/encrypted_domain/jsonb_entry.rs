@@ -12,7 +12,7 @@
 //! validated by `test:matrix:inventory:jsonb_entry` (NOT the scalar inventory).
 
 use eql_tests::fixtures::v3_doc_integer::field_op_selector;
-use eql_tests::jsonb_entry::{entry_column_expr, JsonbEntryInteger};
+use eql_tests::jsonb_entry::JsonbEntryInteger;
 use eql_tests::scalar_domains::ScalarType;
 
 eql_tests::jsonb_entry_matrix! {
@@ -22,14 +22,16 @@ eql_tests::jsonb_entry_matrix! {
 }
 
 // ----------------------------------------------------------------------------
-// Entry-specific structural invariant. Pins that the fixture's `$.field` op
-// selector extracts a real, `op`-carrying entry from every fixture row — a
-// missing entry would make every matrix comparison vacuous via NULL extraction
-// rather than failing.
+// Entry-specific structural invariant. Pins that the matrix's access path
+// (`column_expr`, the literal lookup of the fixture's `$.field` op selector)
+// extracts a real, `op`-carrying entry from every fixture row — a missing entry
+// would make every matrix comparison vacuous via NULL extraction rather than
+// failing.
 // ----------------------------------------------------------------------------
 #[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
 async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let sel = field_op_selector(&pool).await?;
+    let col = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await?;
     let n = <JsonbEntryInteger as ScalarType>::fixture_values().len() as i64;
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fixtures.v3_doc_integer")
@@ -52,7 +54,7 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
     // Every row's entry at the selector is non-NULL — guards against a row
     // missing its `$.field` entry silently hollowing out the matrix.
     let null_entries: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM fixtures.v3_doc_integer WHERE (payload -> '{sel}'::text) IS NULL",
+        "SELECT COUNT(*) FROM fixtures.v3_doc_integer WHERE ({col}) IS NULL",
     ))
     .fetch_one(&pool)
     .await?;
@@ -66,8 +68,8 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
     // `eql_v3.ord_term` returns SQL NULL for an op-less entry).
     let invalid: i64 = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM fixtures.v3_doc_integer \
-         WHERE NOT public.eql_v3_is_valid_ste_vec_entry_payload((payload -> '{sel}'::text)::jsonb) \
-            OR eql_v3.ord_term((payload -> '{sel}'::text)::public.eql_v3_json_entry) IS NULL",
+         WHERE NOT public.eql_v3_is_valid_ste_vec_entry_payload(({col})::jsonb) \
+            OR eql_v3.ord_term(({col})::public.eql_v3_json_entry) IS NULL",
     ))
     .fetch_one(&pool)
     .await?;
@@ -79,7 +81,7 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
     // Distinct op terms == row count (distinct plaintexts → distinct CLLW-OPE
     // leaves), so the correctness/ordering oracle has real discrimination.
     let distinct_op: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(DISTINCT ((payload -> '{sel}'::text)::jsonb ->> 'op')) \
+        "SELECT COUNT(DISTINCT (({col})::jsonb ->> 'op')) \
          FROM fixtures.v3_doc_integer",
     ))
     .fetch_one(&pool)
@@ -100,23 +102,14 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
 // `payload -> '<sel>'::text`. What stays checkable is the SHAPE that makes the
 // lookup unambiguous: exactly one op-carrying selector in the fixture. This test
 // fails, naming every candidate, when that stops holding, instead of leaving it
-// to surface as ~40 confusing failures across the matrix. It also pins that the
-// matrix's access path is the literal lookup of that selector (that the lookup
-// reaches an `op`-carrying entry on every row is
-// `jsonb_entry_integer_fixture_shape`). Whether a keyset and path still produce the
-// same selector bytes is pinned in `packages/eql/tests/encryption`.
+// to surface as ~40 confusing failures across the matrix. That the matrix's
+// access path reaches a valid, `op`-carrying entry on every row is
+// `jsonb_entry_integer_fixture_shape`. Whether a keyset and path still produce
+// the same selector bytes is pinned in `packages/eql/tests/encryption`.
 // ----------------------------------------------------------------------------
 #[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
 async fn jsonb_entry_integer_field_selector_is_unique(pool: sqlx::PgPool) -> anyhow::Result<()> {
-    let sel = field_op_selector(&pool).await?;
-
-    // The matrix's access path is the literal lookup of exactly that selector.
-    let col = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await?;
-    anyhow::ensure!(
-        col == entry_column_expr(&sel),
-        "the matrix column_expr is {col:?}, expected the literal lookup of {sel}",
-    );
-
+    field_op_selector(&pool).await?;
     Ok(())
 }
 

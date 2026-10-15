@@ -18,7 +18,9 @@
 //! part-way. Two exceptions still count as a boundary, so `"\n…"`, `'\x…'`
 //! (Postgres bytea) and `0x…` (a Rust `u128`) are caught: a `0x` prefix, and a
 //! backslash followed by any ASCII letter, or by a hex character that the run
-//! swallows (`\0`, `\b`, `\f`, but also `\5`). That rule is lexical, not a
+//! swallows (`\0`, `\b`, `\f`, but also `\5`). After a `0x` run, a Rust
+//! integer suffix (`0x…u128`, `0x…_u128`, any integer type) counts as a right
+//! boundary, so a suffixed literal is caught too. That rule is lexical, not a
 //! string-escape parser: an escaped backslash (`\\n`), a raw string (`r"\b…"`)
 //! and a path separator count the same. Telling them apart would only stop
 //! some runs being flagged, and the guard errs toward flagging. A match must
@@ -28,6 +30,10 @@
 //! Forged selectors in literal-payload tests are written low-entropy
 //! (`"00000000000000000000000000000001"`, `"ffff…"`, `"deadbeef…"`), so they read
 //! as fake and pass. Needs no database.
+//!
+//! Not caught: a selector split into pieces, such as a `[u8; 16]` array of
+//! `0x..` bytes, two `u64` halves, or a run broken across lines. The scan sees
+//! one line at a time and only a contiguous 32-hex run.
 
 use std::path::{Path, PathBuf};
 
