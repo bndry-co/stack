@@ -38,11 +38,13 @@ pub const TABLE: &str = "fixtures.v3_ste_vec";
 /// (equal length) plus the one-longer `"world-10"`, so `$.hello` is the only
 /// op-carrying selector present on every row whose `op` takes exactly two
 /// lengths, one character apart, with exactly one row at the longer length.
-/// `$.number` and `$.large` are fixed-width numeric terms (one length),
-/// `$.accented` spans several lengths that are not one character apart and not
-/// split 9/1 (the `café`/`cafe` collision pair shares one), and `$.empty` /
-/// `$.nested.deep` are constant. Checking only "two lengths" is not enough: on
-/// a nine-row fixture `$.accented` also takes exactly two.
+/// `$.number` and `$.large` are fixed-width numeric terms (one length), and
+/// `$.empty` / `$.nested.deep` are constant. `$.accented` spans THREE lengths
+/// (84 for the `café`/`cafe` collision pair, 180 for `accented-3..9`, 196 for
+/// `accented-10`), and it is the two-lengths and one-character clauses that
+/// exclude it: it does have exactly one row at its longest length, so the
+/// one-row clause alone would not. Checking only "two lengths" is not enough
+/// either: on a nine-row fixture `$.accented` takes exactly two.
 ///
 /// The rule matters because the leaves are easy to confuse: an earlier pinned
 /// copy of this selector named `$.number` while claiming `$.hello`, and survived
@@ -241,9 +243,12 @@ mod tests {
         );
     }
 
-    /// Each clause of [`HELLO_OP_RULE`] is load-bearing on its own: a
+    /// The gap and split clauses of [`HELLO_OP_RULE`] are each load-bearing: a
     /// one-character pair NOT split 9/1, and a 9/1 split NOT one character
-    /// apart, are both rejected, while the true profile is accepted.
+    /// apart, are both rejected, while the true profile is accepted. The split
+    /// clause does not exclude the real `$.accented`, which also has one row at
+    /// its longest length; its three lengths and their 112-hex spread do
+    /// (`hello_op_rule_singles_out_the_two_length_leaf`).
     #[test]
     fn hello_op_rule_needs_both_the_one_character_gap_and_the_nine_one_split() {
         let n = ROW_COUNT;

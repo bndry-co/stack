@@ -163,24 +163,30 @@ mod tests {
         assert_eq!(entry_column_expr("a'b"), "payload -> 'a''b'::text");
     }
 
-    /// `JsonbEntryInteger::column_expr` must resolve its selector from the
-    /// fixture rather than return a static expression: against a pool that
-    /// reaches no database it fails with the lookup's error. (The scalar
-    /// default, by contrast, succeeds against the same pool — see
-    /// `scalar_domains::seam_tests`.) That the resolved selector is the one
-    /// `field_op_selector` reports, and is embedded through
-    /// [`entry_column_expr`], is checked against the live fixture in
-    /// `tests/encrypted_domain/jsonb_entry.rs`.
+    /// `JsonbEntryInteger::column_expr` queries the database rather than
+    /// returning a static expression: against a pool that reaches no database
+    /// it fails with the pool's connection error. (The scalar default, by
+    /// contrast, succeeds against the same pool — see
+    /// `scalar_domains::seam_tests`.) This proves only that a query is made.
+    /// That the expression is the literal lookup of the selector
+    /// `field_op_selector` reads from the fixture is the `ensure` in
+    /// `jsonb_entry_integer_field_selector_is_unique`
+    /// (`tests/encrypted_domain/jsonb_entry.rs`), against the live fixture.
     #[tokio::test]
     async fn column_expr_reads_the_selector_from_the_fixture() {
         let pool = sqlx::postgres::PgPoolOptions::new()
-            .acquire_timeout(std::time::Duration::from_secs(2))
+            .acquire_timeout(std::time::Duration::from_millis(100))
             .connect_lazy("postgres://unused@127.0.0.1:1/none")
             .unwrap();
-        let got = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await;
+        let err = <JsonbEntryInteger as ScalarType>::column_expr(&pool)
+            .await
+            .expect_err("column_expr must query the database for its selector");
         assert!(
-            got.is_err(),
-            "column_expr must query the fixture for its selector, got {got:?}"
+            matches!(
+                err.downcast_ref::<sqlx::Error>(),
+                Some(sqlx::Error::PoolTimedOut)
+            ),
+            "column_expr must fail acquiring a connection, got {err:?}"
         );
     }
 

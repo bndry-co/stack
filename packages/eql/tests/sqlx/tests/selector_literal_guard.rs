@@ -15,9 +15,13 @@
 //! shape the removed pins were used in), or inside escaped JSON
 //! (`{\"s\":\"…\"}`). "Standalone" means no ASCII letter, digit or `_`
 //! directly before or after, so a longer hash or identifier never matches
-//! part-way. A string escape (`\n`, `\t`, `\r`, `\0`, `\x`, …) or a `0x`
-//! prefix directly before the run still counts as a boundary, so `"\n…"`,
-//! `'\x…'` (Postgres bytea) and `0x…` (a Rust `u128`) are caught. A match must
+//! part-way. Two exceptions still count as a boundary, so `"\n…"`, `'\x…'`
+//! (Postgres bytea) and `0x…` (a Rust `u128`) are caught: a `0x` prefix, and a
+//! backslash followed by any ASCII letter, or by a hex character that the run
+//! swallows (`\0`, `\b`, `\f`, but also `\5`). That rule is lexical, not a
+//! string-escape parser: an escaped backslash (`\\n`), a raw string (`r"\b…"`)
+//! and a path separator count the same. Telling them apart would only stop
+//! some runs being flagged, and the guard errs toward flagging. A match must
 //! also look random: at least [`MIN_DISTINCT_DIGITS`] distinct hex digits,
 //! counted case-insensitively. A real selector is MAC output, uniformly random,
 //! and has fewer than 8 distinct digits in 32 with probability about 4e-8.
@@ -46,7 +50,10 @@ fn looks_like_real_selector(content: &str) -> bool {
 }
 
 /// Whether the hex run starting at `start` has a left boundary: nothing, a
-/// non-word byte, a string escape (`\n`, `\x`, …) or a `0x` prefix before it.
+/// non-word byte, a backslash then any ASCII letter (`\n`, `\x`, whether or not
+/// the backslash is itself escaped or in a raw string), or a standalone `0x`
+/// prefix before it. A backslash then a hex character is handled by the caller,
+/// which strips that character from the run (`after_escape`).
 fn left_bounded(bytes: &[u8], start: usize) -> bool {
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     let Some(prev) = start.checked_sub(1).map(|i| bytes[i]) else {

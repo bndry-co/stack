@@ -158,7 +158,8 @@ pub trait ScalarType:
     /// literal, so the statements are the `payload -> '<sel>'` form customers
     /// write, not a subquery. Call it only where the expression is used (the
     /// matrix arms and [`fetch_fixture_payload`]), because some matrix tests
-    /// load no fixture.
+    /// load no fixture. An arm that has resolved it passes it on to
+    /// [`fetch_fixture_payload_at`] rather than resolving it again.
     fn column_expr(pool: &PgPool) -> impl std::future::Future<Output = Result<String>> + Send {
         let _ = pool;
         std::future::ready(Ok("payload".to_string()))
@@ -1556,10 +1557,24 @@ pub fn commute_op(op: &str) -> &'static str {
 }
 
 /// Fetch the payload row keyed by `plaintext` from `T`'s fixture table.
+/// Resolves `T::column_expr` itself; a caller that already holds the resolved
+/// expression uses [`fetch_fixture_payload_at`] instead.
 pub async fn fetch_fixture_payload<T: ScalarType>(pool: &PgPool, plaintext: T) -> Result<String> {
+    let column_expr = T::column_expr(pool).await?;
+    fetch_fixture_payload_at(pool, &column_expr, plaintext).await
+}
+
+/// [`fetch_fixture_payload`] with `column_expr` already resolved, so a matrix
+/// arm that has resolved it for its own SQL does not resolve it twice (for a
+/// SteVec entry view that is a selector scan of the fixture).
+pub async fn fetch_fixture_payload_at<T: ScalarType>(
+    pool: &PgPool,
+    column_expr: &str,
+    plaintext: T,
+) -> Result<String> {
     let sql = format!(
         "SELECT ({col})::text FROM {table} WHERE plaintext = {lit}",
-        col = T::column_expr(pool).await?,
+        col = column_expr,
         table = T::fixture_table_name(),
         lit = T::to_sql_literal(&plaintext),
     );

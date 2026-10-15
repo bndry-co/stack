@@ -872,7 +872,9 @@ macro_rules! __scalar_matrix_correctness_case {
                     <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let pivot: $scalar = $pivot_val;
                 let payload =
-                    $crate::scalar_domains::fetch_fixture_payload::<$scalar>(&pool, pivot.clone()).await?;
+                    $crate::scalar_domains::fetch_fixture_payload_at::<$scalar>(
+                        &pool, &column_expr, pivot.clone(),
+                    ).await?;
                 let lit = $crate::scalar_domains::sql_string_literal(&payload);
                 let predicate = format!(
                     "({col})::{d} {op} {lit}::jsonb::{d}",
@@ -915,7 +917,9 @@ macro_rules! __scalar_matrix_cross_shape_case {
                     <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let pivot: $scalar = $pivot_val;
                 let payload =
-                    $crate::scalar_domains::fetch_fixture_payload::<$scalar>(&pool, pivot.clone()).await?;
+                    $crate::scalar_domains::fetch_fixture_payload_at::<$scalar>(
+                        &pool, &column_expr, pivot.clone(),
+                    ).await?;
                 let lit = $crate::scalar_domains::sql_string_literal(&payload);
                 let forward_count =
                     <$scalar as $crate::scalar_domains::ScalarType>::expected_forward($op, pivot.clone())
@@ -2507,8 +2511,9 @@ macro_rules! __scalar_matrix_index_case {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
 
                 let pivot: $scalar = <$scalar as $crate::scalar_domains::ScalarType>::fixture_values()[0].clone();
-                let payload =
-                    $crate::scalar_domains::fetch_fixture_payload::<$scalar>(&pool, pivot).await?;
+                let payload = $crate::scalar_domains::fetch_fixture_payload_at::<$scalar>(
+                    &pool, &column_expr, pivot,
+                ).await?;
                 let lit = $crate::scalar_domains::sql_string_literal(&payload);
 
                 // VALIDITY, NOT PREFERENCE: `enable_seqscan = off` is set

@@ -588,11 +588,13 @@ monorepo, which is where the silent failures are.
   v3 JSON selector and is meant to fail the pin). It also records the fake index
   key it derives under: a changed key fails first, with a message naming it a
   stack-kms test-infrastructure change rather than a stored-data break. It pins
-  the cipherstash-client version the EQL workspace resolves; protect-ffi
-  resolves its own from its own lockfile, and
-  `scripts/__tests__/cipherstash-client-parity.test.mjs` (`pnpm run
-  test:scripts`, every PR) fails when the two lockfiles disagree, so a
-  protect-ffi bump has to move the EQL pins with it.
+  the cipherstash-client and cipherstash-config (the crates that compute the
+  selectors) the EQL workspace resolves; protect-ffi resolves its own from its
+  own lockfile, and `scripts/__tests__/cipherstash-client-parity.test.mjs`
+  (`pnpm run test:scripts`, every PR) fails when the two lockfiles disagree on
+  either, so a protect-ffi bump has to move the EQL pins with it. Primitive
+  dependencies such as blake3 are not compared, and already differ at patch
+  level.
 - **`FROZEN_PUBLISHERS` is what stops this repo publishing a package whose
   publisher lives elsewhere, and it is a mechanism, not a status.** `scripts/release-gate.mjs` carries a map of every
   package that lives here but is published from another repository. For each,

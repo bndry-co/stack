@@ -502,9 +502,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -606,9 +606,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -710,9 +710,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -814,9 +814,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -918,9 +918,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -1022,9 +1022,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -1126,9 +1126,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -1230,9 +1230,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -1334,9 +1334,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -1438,9 +1438,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -1542,9 +1542,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -1646,9 +1646,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -1750,9 +1750,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -1854,9 +1854,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -1958,9 +1958,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -2062,9 +2062,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -2166,9 +2166,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -2270,9 +2270,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -2374,9 +2374,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -2478,9 +2478,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -2582,9 +2582,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -2686,9 +2686,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -2790,9 +2790,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -2894,9 +2894,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -3000,9 +3000,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -3106,9 +3106,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -3212,9 +3212,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -3318,9 +3318,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -3424,9 +3424,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -3530,9 +3530,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -3634,9 +3634,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -3738,9 +3738,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -3842,9 +3842,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -3946,9 +3946,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -4050,9 +4050,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -4154,9 +4154,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -4258,9 +4258,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -4362,9 +4362,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -4466,9 +4466,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -4570,9 +4570,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -4674,9 +4674,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -4778,9 +4778,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -4882,9 +4882,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -4986,9 +4986,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -5090,9 +5090,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -5194,9 +5194,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -5298,9 +5298,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -5402,9 +5402,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -5506,9 +5506,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -5610,9 +5610,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -5714,9 +5714,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -5818,9 +5818,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -5922,9 +5922,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -6026,9 +6026,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -6130,9 +6130,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -6234,9 +6234,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -6338,9 +6338,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -6442,9 +6442,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -6546,9 +6546,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -6650,9 +6650,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -6754,9 +6754,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -6858,9 +6858,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -6962,9 +6962,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -7066,9 +7066,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -7170,9 +7170,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -7274,9 +7274,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -7380,9 +7380,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -7486,9 +7486,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -7592,9 +7592,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -7698,9 +7698,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -7804,9 +7804,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -7910,9 +7910,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -8016,9 +8016,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -8122,9 +8122,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -8228,9 +8228,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -8334,9 +8334,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -8440,9 +8440,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -8546,9 +8546,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let predicate = ::alloc::__export::must_use({
@@ -8623,9 +8623,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -8650,9 +8650,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -8795,9 +8795,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -8822,9 +8822,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -8967,9 +8967,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -8994,9 +8994,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -9139,9 +9139,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9166,9 +9166,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -9311,9 +9311,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9338,9 +9338,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -9483,9 +9483,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9510,9 +9510,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -9655,9 +9655,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9682,9 +9682,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -9827,9 +9827,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -9854,9 +9854,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -9999,9 +9999,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10026,9 +10026,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -10171,9 +10171,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10198,9 +10198,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -10343,9 +10343,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10370,9 +10370,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -10515,9 +10515,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10542,9 +10542,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -10687,9 +10687,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10714,9 +10714,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -10859,9 +10859,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -10886,9 +10886,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -11031,9 +11031,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -11058,9 +11058,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -11203,9 +11203,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -11230,9 +11230,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -11375,9 +11375,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -11402,9 +11402,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -11547,9 +11547,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -11574,9 +11574,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -11719,9 +11719,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -11746,9 +11746,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -11891,9 +11891,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -11918,9 +11918,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -12063,9 +12063,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -12090,9 +12090,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -12235,9 +12235,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -12262,9 +12262,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -12407,9 +12407,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -12434,9 +12434,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -12579,9 +12579,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -12606,9 +12606,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -12751,9 +12751,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -12780,9 +12780,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -12925,9 +12925,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -12954,9 +12954,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -13099,9 +13099,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -13128,9 +13128,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -13273,9 +13273,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -13302,9 +13302,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -13447,9 +13447,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -13476,9 +13476,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -13621,9 +13621,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -13650,9 +13650,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -13795,9 +13795,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -13822,9 +13822,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -13967,9 +13967,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -13994,9 +13994,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -14139,9 +14139,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -14166,9 +14166,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -14311,9 +14311,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -14338,9 +14338,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -14483,9 +14483,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -14510,9 +14510,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -14655,9 +14655,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -14682,9 +14682,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -14827,9 +14827,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -14854,9 +14854,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -14999,9 +14999,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -15026,9 +15026,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -15171,9 +15171,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -15198,9 +15198,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -15343,9 +15343,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -15370,9 +15370,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -15515,9 +15515,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -15542,9 +15542,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -15687,9 +15687,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -15714,9 +15714,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -15859,9 +15859,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -15886,9 +15886,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -16031,9 +16031,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -16058,9 +16058,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -16203,9 +16203,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -16230,9 +16230,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -16375,9 +16375,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -16402,9 +16402,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -16547,9 +16547,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -16574,9 +16574,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -16719,9 +16719,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -16746,9 +16746,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -16891,9 +16891,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -16918,9 +16918,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -17063,9 +17063,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -17090,9 +17090,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -17235,9 +17235,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -17262,9 +17262,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -17407,9 +17407,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -17434,9 +17434,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -17579,9 +17579,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -17606,9 +17606,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -17751,9 +17751,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -17778,9 +17778,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -17923,9 +17923,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -17950,9 +17950,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -18095,9 +18095,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -18122,9 +18122,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -18267,9 +18267,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -18294,9 +18294,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -18439,9 +18439,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -18466,9 +18466,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -18611,9 +18611,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -18638,9 +18638,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -18783,9 +18783,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -18810,9 +18810,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -18955,9 +18955,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -18982,9 +18982,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -19127,9 +19127,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -19154,9 +19154,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -19299,9 +19299,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -19326,9 +19326,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -19471,9 +19471,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -19498,9 +19498,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -19643,9 +19643,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -19670,9 +19670,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -19815,9 +19815,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -19842,9 +19842,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -19987,9 +19987,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -20016,9 +20016,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -20161,9 +20161,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -20190,9 +20190,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -20335,9 +20335,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -20364,9 +20364,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -20509,9 +20509,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -20538,9 +20538,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -20683,9 +20683,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -20712,9 +20712,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -20857,9 +20857,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -20886,9 +20886,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -21031,9 +21031,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -21060,9 +21060,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -21205,9 +21205,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -21234,9 +21234,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -21379,9 +21379,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -21408,9 +21408,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -21553,9 +21553,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -21582,9 +21582,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::min_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -21727,9 +21727,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -21756,9 +21756,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::max_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -21901,9 +21901,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 910usize,
+            start_line: 912usize,
             start_col: 22usize,
-            end_line: 910usize,
+            end_line: 912usize,
             end_col: 96usize,
             compile_fail: false,
             no_run: false,
@@ -21930,9 +21930,9 @@ pub mod text {
                     )
                     .await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::OrderedScalar>::mid_pivot();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot.clone())
+                >(&pool, &column_expr, pivot.clone())
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let forward_count = <String as ::eql_tests::scalar_domains::ScalarType>::expected_forward(
@@ -22075,9 +22075,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -22168,9 +22168,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -22261,9 +22261,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -22354,9 +22354,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -22447,9 +22447,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -22540,9 +22540,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -22633,9 +22633,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -22726,9 +22726,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -22819,9 +22819,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -22912,9 +22912,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23005,9 +23005,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23098,9 +23098,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23191,9 +23191,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23284,9 +23284,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23377,9 +23377,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23470,9 +23470,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23563,9 +23563,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23656,9 +23656,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23749,9 +23749,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23842,9 +23842,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -23935,9 +23935,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -24028,9 +24028,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -24121,9 +24121,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -24214,9 +24214,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -24307,9 +24307,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -24400,9 +24400,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 969usize,
+            start_line: 973usize,
             start_col: 22usize,
-            end_line: 969usize,
+            end_line: 973usize,
             end_col: 79usize,
             compile_fail: false,
             no_run: false,
@@ -24491,9 +24491,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -24626,9 +24626,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -24761,9 +24761,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -24896,9 +24896,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -25031,9 +25031,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -25166,9 +25166,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -25303,9 +25303,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -25440,9 +25440,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -25575,9 +25575,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -25708,9 +25708,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -25841,9 +25841,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -25974,9 +25974,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -26107,9 +26107,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -26244,9 +26244,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -26381,9 +26381,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -26518,9 +26518,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -26655,9 +26655,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -26792,9 +26792,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1033usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1033usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -26929,9 +26929,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1100usize,
+            start_line: 1104usize,
             start_col: 22usize,
-            end_line: 1100usize,
+            end_line: 1104usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -27069,9 +27069,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1100usize,
+            start_line: 1104usize,
             start_col: 22usize,
-            end_line: 1100usize,
+            end_line: 1104usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -27207,9 +27207,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1100usize,
+            start_line: 1104usize,
             start_col: 22usize,
-            end_line: 1100usize,
+            end_line: 1104usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -27349,9 +27349,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1100usize,
+            start_line: 1104usize,
             start_col: 22usize,
-            end_line: 1100usize,
+            end_line: 1104usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -27491,9 +27491,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1100usize,
+            start_line: 1104usize,
             start_col: 22usize,
-            end_line: 1100usize,
+            end_line: 1104usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -27633,9 +27633,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1100usize,
+            start_line: 1104usize,
             start_col: 22usize,
-            end_line: 1100usize,
+            end_line: 1104usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -27775,9 +27775,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1173usize,
+            start_line: 1177usize,
             start_col: 22usize,
-            end_line: 1173usize,
+            end_line: 1177usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -27876,9 +27876,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1173usize,
+            start_line: 1177usize,
             start_col: 22usize,
-            end_line: 1173usize,
+            end_line: 1177usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -27979,9 +27979,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1173usize,
+            start_line: 1177usize,
             start_col: 22usize,
-            end_line: 1173usize,
+            end_line: 1177usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -28082,9 +28082,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1173usize,
+            start_line: 1177usize,
             start_col: 22usize,
-            end_line: 1173usize,
+            end_line: 1177usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -28185,9 +28185,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1173usize,
+            start_line: 1177usize,
             start_col: 22usize,
-            end_line: 1173usize,
+            end_line: 1177usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -28288,9 +28288,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1173usize,
+            start_line: 1177usize,
             start_col: 22usize,
-            end_line: 1173usize,
+            end_line: 1177usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -28391,9 +28391,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1230usize,
+            start_line: 1234usize,
             start_col: 22usize,
-            end_line: 1230usize,
+            end_line: 1234usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -28480,9 +28480,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1230usize,
+            start_line: 1234usize,
             start_col: 22usize,
-            end_line: 1230usize,
+            end_line: 1234usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -28569,9 +28569,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1230usize,
+            start_line: 1234usize,
             start_col: 22usize,
-            end_line: 1230usize,
+            end_line: 1234usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -28658,9 +28658,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1230usize,
+            start_line: 1234usize,
             start_col: 22usize,
-            end_line: 1230usize,
+            end_line: 1234usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -28747,9 +28747,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1230usize,
+            start_line: 1234usize,
             start_col: 22usize,
-            end_line: 1230usize,
+            end_line: 1234usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -28836,9 +28836,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1230usize,
+            start_line: 1234usize,
             start_col: 22usize,
-            end_line: 1230usize,
+            end_line: 1234usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -28925,9 +28925,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1305usize,
+            start_line: 1309usize,
             start_col: 22usize,
-            end_line: 1305usize,
+            end_line: 1309usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -29149,9 +29149,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1305usize,
+            start_line: 1309usize,
             start_col: 22usize,
-            end_line: 1305usize,
+            end_line: 1309usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -29373,9 +29373,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1305usize,
+            start_line: 1309usize,
             start_col: 22usize,
-            end_line: 1305usize,
+            end_line: 1309usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -29597,9 +29597,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1305usize,
+            start_line: 1309usize,
             start_col: 22usize,
-            end_line: 1305usize,
+            end_line: 1309usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -29821,9 +29821,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1305usize,
+            start_line: 1309usize,
             start_col: 22usize,
-            end_line: 1305usize,
+            end_line: 1309usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -30045,9 +30045,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1305usize,
+            start_line: 1309usize,
             start_col: 22usize,
-            end_line: 1305usize,
+            end_line: 1309usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -30269,9 +30269,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1408usize,
+            start_line: 1412usize,
             start_col: 22usize,
-            end_line: 1408usize,
+            end_line: 1412usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -30640,9 +30640,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1408usize,
+            start_line: 1412usize,
             start_col: 22usize,
-            end_line: 1408usize,
+            end_line: 1412usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -30941,9 +30941,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1408usize,
+            start_line: 1412usize,
             start_col: 22usize,
-            end_line: 1408usize,
+            end_line: 1412usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -31102,9 +31102,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1408usize,
+            start_line: 1412usize,
             start_col: 22usize,
-            end_line: 1408usize,
+            end_line: 1412usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -31263,9 +31263,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1489usize,
+            start_line: 1493usize,
             start_col: 22usize,
-            end_line: 1489usize,
+            end_line: 1493usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -31427,9 +31427,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1489usize,
+            start_line: 1493usize,
             start_col: 22usize,
-            end_line: 1489usize,
+            end_line: 1493usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -31591,9 +31591,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1489usize,
+            start_line: 1493usize,
             start_col: 22usize,
-            end_line: 1489usize,
+            end_line: 1493usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -31755,9 +31755,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1489usize,
+            start_line: 1493usize,
             start_col: 22usize,
-            end_line: 1489usize,
+            end_line: 1493usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -31919,9 +31919,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1489usize,
+            start_line: 1493usize,
             start_col: 22usize,
-            end_line: 1489usize,
+            end_line: 1493usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -32083,9 +32083,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1489usize,
+            start_line: 1493usize,
             start_col: 22usize,
-            end_line: 1489usize,
+            end_line: 1493usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -32247,9 +32247,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1489usize,
+            start_line: 1493usize,
             start_col: 22usize,
-            end_line: 1489usize,
+            end_line: 1493usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -32411,9 +32411,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1489usize,
+            start_line: 1493usize,
             start_col: 22usize,
-            end_line: 1489usize,
+            end_line: 1493usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -32575,9 +32575,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1489usize,
+            start_line: 1493usize,
             start_col: 22usize,
-            end_line: 1489usize,
+            end_line: 1493usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -32739,9 +32739,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2463usize,
+            start_line: 2467usize,
             start_col: 22usize,
-            end_line: 2463usize,
+            end_line: 2467usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -32827,9 +32827,9 @@ pub mod text {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::ScalarType>::fixture_values()[0]
                     .clone();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot)
+                >(&pool, &column_expr, pivot)
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let rhs_casts = [
@@ -32923,9 +32923,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2463usize,
+            start_line: 2467usize,
             start_col: 22usize,
-            end_line: 2463usize,
+            end_line: 2467usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -33011,9 +33011,9 @@ pub mod text {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::ScalarType>::fixture_values()[0]
                     .clone();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot)
+                >(&pool, &column_expr, pivot)
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let rhs_casts = [
@@ -33107,9 +33107,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2463usize,
+            start_line: 2467usize,
             start_col: 22usize,
-            end_line: 2463usize,
+            end_line: 2467usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -33195,9 +33195,9 @@ pub mod text {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::ScalarType>::fixture_values()[0]
                     .clone();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot)
+                >(&pool, &column_expr, pivot)
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let rhs_casts = [
@@ -33381,9 +33381,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2463usize,
+            start_line: 2467usize,
             start_col: 22usize,
-            end_line: 2463usize,
+            end_line: 2467usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -33469,9 +33469,9 @@ pub mod text {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::ScalarType>::fixture_values()[0]
                     .clone();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot)
+                >(&pool, &column_expr, pivot)
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let rhs_casts = [
@@ -33565,9 +33565,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2463usize,
+            start_line: 2467usize,
             start_col: 22usize,
-            end_line: 2463usize,
+            end_line: 2467usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -33653,9 +33653,9 @@ pub mod text {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::ScalarType>::fixture_values()[0]
                     .clone();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot)
+                >(&pool, &column_expr, pivot)
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let rhs_casts = [
@@ -33839,9 +33839,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2463usize,
+            start_line: 2467usize,
             start_col: 22usize,
-            end_line: 2463usize,
+            end_line: 2467usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -33927,9 +33927,9 @@ pub mod text {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::ScalarType>::fixture_values()[0]
                     .clone();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot)
+                >(&pool, &column_expr, pivot)
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let rhs_casts = [
@@ -34023,9 +34023,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2463usize,
+            start_line: 2467usize,
             start_col: 22usize,
-            end_line: 2463usize,
+            end_line: 2467usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -34111,9 +34111,9 @@ pub mod text {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::ScalarType>::fixture_values()[0]
                     .clone();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot)
+                >(&pool, &column_expr, pivot)
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let rhs_casts = [
@@ -34297,9 +34297,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2463usize,
+            start_line: 2467usize,
             start_col: 22usize,
-            end_line: 2463usize,
+            end_line: 2467usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -34385,9 +34385,9 @@ pub mod text {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::ScalarType>::fixture_values()[0]
                     .clone();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot)
+                >(&pool, &column_expr, pivot)
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let rhs_casts = [
@@ -34481,9 +34481,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2463usize,
+            start_line: 2467usize,
             start_col: 22usize,
-            end_line: 2463usize,
+            end_line: 2467usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -34569,9 +34569,9 @@ pub mod text {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::ScalarType>::fixture_values()[0]
                     .clone();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot)
+                >(&pool, &column_expr, pivot)
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let rhs_casts = [
@@ -34755,9 +34755,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2463usize,
+            start_line: 2467usize,
             start_col: 22usize,
-            end_line: 2463usize,
+            end_line: 2467usize,
             end_col: 75usize,
             compile_fail: false,
             no_run: false,
@@ -34845,9 +34845,9 @@ pub mod text {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
                 let pivot: String = <String as ::eql_tests::scalar_domains::ScalarType>::fixture_values()[0]
                     .clone();
-                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload::<
+                let payload = ::eql_tests::scalar_domains::fetch_fixture_payload_at::<
                     String,
-                >(&pool, pivot)
+                >(&pool, &column_expr, pivot)
                     .await?;
                 let lit = ::eql_tests::scalar_domains::sql_string_literal(&payload);
                 let rhs_casts = [
@@ -34941,9 +34941,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1809usize,
+            start_line: 1813usize,
             start_col: 22usize,
-            end_line: 1809usize,
+            end_line: 1813usize,
             end_col: 86usize,
             compile_fail: false,
             no_run: false,
@@ -35143,9 +35143,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1900usize,
+            start_line: 1904usize,
             start_col: 22usize,
-            end_line: 1900usize,
+            end_line: 1904usize,
             end_col: 55usize,
             compile_fail: false,
             no_run: false,
@@ -35549,9 +35549,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2083usize,
+            start_line: 2087usize,
             start_col: 22usize,
-            end_line: 2083usize,
+            end_line: 2087usize,
             end_col: 86usize,
             compile_fail: false,
             no_run: false,
@@ -35823,9 +35823,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2083usize,
+            start_line: 2087usize,
             start_col: 22usize,
-            end_line: 2083usize,
+            end_line: 2087usize,
             end_col: 86usize,
             compile_fail: false,
             no_run: false,
@@ -36097,9 +36097,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2083usize,
+            start_line: 2087usize,
             start_col: 22usize,
-            end_line: 2083usize,
+            end_line: 2087usize,
             end_col: 86usize,
             compile_fail: false,
             no_run: false,
@@ -36371,9 +36371,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2083usize,
+            start_line: 2087usize,
             start_col: 22usize,
-            end_line: 2083usize,
+            end_line: 2087usize,
             end_col: 86usize,
             compile_fail: false,
             no_run: false,
@@ -36643,9 +36643,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2261usize,
+            start_line: 2265usize,
             start_col: 22usize,
-            end_line: 2261usize,
+            end_line: 2265usize,
             end_col: 64usize,
             compile_fail: false,
             no_run: false,
@@ -36747,9 +36747,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2277usize,
+            start_line: 2281usize,
             start_col: 22usize,
-            end_line: 2277usize,
+            end_line: 2281usize,
             end_col: 66usize,
             compile_fail: false,
             no_run: false,
@@ -36858,9 +36858,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2296usize,
+            start_line: 2300usize,
             start_col: 22usize,
-            end_line: 2296usize,
+            end_line: 2300usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -36969,9 +36969,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2322usize,
+            start_line: 2326usize,
             start_col: 22usize,
-            end_line: 2322usize,
+            end_line: 2326usize,
             end_col: 77usize,
             compile_fail: false,
             no_run: false,
@@ -37121,9 +37121,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2261usize,
+            start_line: 2265usize,
             start_col: 22usize,
-            end_line: 2261usize,
+            end_line: 2265usize,
             end_col: 64usize,
             compile_fail: false,
             no_run: false,
@@ -37227,9 +37227,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2277usize,
+            start_line: 2281usize,
             start_col: 22usize,
-            end_line: 2277usize,
+            end_line: 2281usize,
             end_col: 66usize,
             compile_fail: false,
             no_run: false,
@@ -37338,9 +37338,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2296usize,
+            start_line: 2300usize,
             start_col: 22usize,
-            end_line: 2296usize,
+            end_line: 2300usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -37449,9 +37449,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2322usize,
+            start_line: 2326usize,
             start_col: 22usize,
-            end_line: 2322usize,
+            end_line: 2326usize,
             end_col: 77usize,
             compile_fail: false,
             no_run: false,
@@ -37601,9 +37601,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2400usize,
+            start_line: 2404usize,
             start_col: 22usize,
-            end_line: 2400usize,
+            end_line: 2404usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -37703,9 +37703,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2400usize,
+            start_line: 2404usize,
             start_col: 22usize,
-            end_line: 2400usize,
+            end_line: 2404usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -37803,9 +37803,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2951usize,
+            start_line: 2956usize,
             start_col: 22usize,
-            end_line: 2951usize,
+            end_line: 2956usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -37989,9 +37989,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3015usize,
+            start_line: 3020usize,
             start_col: 22usize,
-            end_line: 3015usize,
+            end_line: 3020usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -38101,9 +38101,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3040usize,
+            start_line: 3045usize,
             start_col: 22usize,
-            end_line: 3040usize,
+            end_line: 3045usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -38200,9 +38200,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3066usize,
+            start_line: 3071usize,
             start_col: 22usize,
-            end_line: 3066usize,
+            end_line: 3071usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -38390,9 +38390,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2951usize,
+            start_line: 2956usize,
             start_col: 22usize,
-            end_line: 2951usize,
+            end_line: 2956usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -38576,9 +38576,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3015usize,
+            start_line: 3020usize,
             start_col: 22usize,
-            end_line: 3015usize,
+            end_line: 3020usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -38688,9 +38688,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3040usize,
+            start_line: 3045usize,
             start_col: 22usize,
-            end_line: 3040usize,
+            end_line: 3045usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -38787,9 +38787,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3066usize,
+            start_line: 3071usize,
             start_col: 22usize,
-            end_line: 3066usize,
+            end_line: 3071usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -38979,9 +38979,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2951usize,
+            start_line: 2956usize,
             start_col: 22usize,
-            end_line: 2951usize,
+            end_line: 2956usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -39165,9 +39165,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3015usize,
+            start_line: 3020usize,
             start_col: 22usize,
-            end_line: 3015usize,
+            end_line: 3020usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -39277,9 +39277,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3040usize,
+            start_line: 3045usize,
             start_col: 22usize,
-            end_line: 3040usize,
+            end_line: 3045usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -39376,9 +39376,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3066usize,
+            start_line: 3071usize,
             start_col: 22usize,
-            end_line: 3066usize,
+            end_line: 3071usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -39568,9 +39568,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2951usize,
+            start_line: 2956usize,
             start_col: 22usize,
-            end_line: 2951usize,
+            end_line: 2956usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -39754,9 +39754,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3015usize,
+            start_line: 3020usize,
             start_col: 22usize,
-            end_line: 3015usize,
+            end_line: 3020usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -39866,9 +39866,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3040usize,
+            start_line: 3045usize,
             start_col: 22usize,
-            end_line: 3040usize,
+            end_line: 3045usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -39965,9 +39965,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3066usize,
+            start_line: 3071usize,
             start_col: 22usize,
-            end_line: 3066usize,
+            end_line: 3071usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -40157,9 +40157,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2951usize,
+            start_line: 2956usize,
             start_col: 22usize,
-            end_line: 2951usize,
+            end_line: 2956usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -40343,9 +40343,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3015usize,
+            start_line: 3020usize,
             start_col: 22usize,
-            end_line: 3015usize,
+            end_line: 3020usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -40455,9 +40455,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3040usize,
+            start_line: 3045usize,
             start_col: 22usize,
-            end_line: 3040usize,
+            end_line: 3045usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -40554,9 +40554,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3066usize,
+            start_line: 3071usize,
             start_col: 22usize,
-            end_line: 3066usize,
+            end_line: 3071usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -40746,9 +40746,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2951usize,
+            start_line: 2956usize,
             start_col: 22usize,
-            end_line: 2951usize,
+            end_line: 2956usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -40932,9 +40932,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3015usize,
+            start_line: 3020usize,
             start_col: 22usize,
-            end_line: 3015usize,
+            end_line: 3020usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -41044,9 +41044,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3040usize,
+            start_line: 3045usize,
             start_col: 22usize,
-            end_line: 3040usize,
+            end_line: 3045usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -41143,9 +41143,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3066usize,
+            start_line: 3071usize,
             start_col: 22usize,
-            end_line: 3066usize,
+            end_line: 3071usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -41335,9 +41335,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2951usize,
+            start_line: 2956usize,
             start_col: 22usize,
-            end_line: 2951usize,
+            end_line: 2956usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -41521,9 +41521,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3015usize,
+            start_line: 3020usize,
             start_col: 22usize,
-            end_line: 3015usize,
+            end_line: 3020usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -41633,9 +41633,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3040usize,
+            start_line: 3045usize,
             start_col: 22usize,
-            end_line: 3040usize,
+            end_line: 3045usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -41732,9 +41732,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3066usize,
+            start_line: 3071usize,
             start_col: 22usize,
-            end_line: 3066usize,
+            end_line: 3071usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -41926,9 +41926,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2951usize,
+            start_line: 2956usize,
             start_col: 22usize,
-            end_line: 2951usize,
+            end_line: 2956usize,
             end_col: 73usize,
             compile_fail: false,
             no_run: false,
@@ -42112,9 +42112,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3015usize,
+            start_line: 3020usize,
             start_col: 22usize,
-            end_line: 3015usize,
+            end_line: 3020usize,
             end_col: 80usize,
             compile_fail: false,
             no_run: false,
@@ -42224,9 +42224,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3040usize,
+            start_line: 3045usize,
             start_col: 22usize,
-            end_line: 3040usize,
+            end_line: 3045usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -42323,9 +42323,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3066usize,
+            start_line: 3071usize,
             start_col: 22usize,
-            end_line: 3066usize,
+            end_line: 3071usize,
             end_col: 85usize,
             compile_fail: false,
             no_run: false,
@@ -42517,9 +42517,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3249usize,
+            start_line: 3254usize,
             start_col: 22usize,
-            end_line: 3249usize,
+            end_line: 3254usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -42774,9 +42774,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3249usize,
+            start_line: 3254usize,
             start_col: 22usize,
-            end_line: 3249usize,
+            end_line: 3254usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -43031,9 +43031,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3249usize,
+            start_line: 3254usize,
             start_col: 22usize,
-            end_line: 3249usize,
+            end_line: 3254usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -43288,9 +43288,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3249usize,
+            start_line: 3254usize,
             start_col: 22usize,
-            end_line: 3249usize,
+            end_line: 3254usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -43545,9 +43545,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3249usize,
+            start_line: 3254usize,
             start_col: 22usize,
-            end_line: 3249usize,
+            end_line: 3254usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -43802,9 +43802,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3249usize,
+            start_line: 3254usize,
             start_col: 22usize,
-            end_line: 3249usize,
+            end_line: 3254usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -44059,9 +44059,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3249usize,
+            start_line: 3254usize,
             start_col: 22usize,
-            end_line: 3249usize,
+            end_line: 3254usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -44316,9 +44316,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3249usize,
+            start_line: 3254usize,
             start_col: 22usize,
-            end_line: 3249usize,
+            end_line: 3254usize,
             end_col: 82usize,
             compile_fail: false,
             no_run: false,
@@ -44573,9 +44573,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3164usize,
+            start_line: 3169usize,
             start_col: 22usize,
-            end_line: 3164usize,
+            end_line: 3169usize,
             end_col: 77usize,
             compile_fail: false,
             no_run: false,
@@ -44682,9 +44682,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3164usize,
+            start_line: 3169usize,
             start_col: 22usize,
-            end_line: 3164usize,
+            end_line: 3169usize,
             end_col: 77usize,
             compile_fail: false,
             no_run: false,
@@ -44791,9 +44791,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3164usize,
+            start_line: 3169usize,
             start_col: 22usize,
-            end_line: 3164usize,
+            end_line: 3169usize,
             end_col: 77usize,
             compile_fail: false,
             no_run: false,
@@ -44900,9 +44900,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3164usize,
+            start_line: 3169usize,
             start_col: 22usize,
-            end_line: 3164usize,
+            end_line: 3169usize,
             end_col: 77usize,
             compile_fail: false,
             no_run: false,
@@ -45009,9 +45009,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -45177,9 +45177,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -45345,9 +45345,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -45513,9 +45513,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -45681,9 +45681,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -45849,9 +45849,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -46017,9 +46017,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -46185,9 +46185,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -46353,9 +46353,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -46521,9 +46521,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -46689,9 +46689,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -46857,9 +46857,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3410usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3410usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -47025,9 +47025,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3524usize,
+            start_line: 3529usize,
             start_col: 22usize,
-            end_line: 3524usize,
+            end_line: 3529usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -47158,9 +47158,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3560usize,
+            start_line: 3565usize,
             start_col: 22usize,
-            end_line: 3560usize,
+            end_line: 3565usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -47272,9 +47272,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3606usize,
+            start_line: 3611usize,
             start_col: 22usize,
-            end_line: 3606usize,
+            end_line: 3611usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -47414,9 +47414,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3524usize,
+            start_line: 3529usize,
             start_col: 22usize,
-            end_line: 3524usize,
+            end_line: 3529usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -47545,9 +47545,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3560usize,
+            start_line: 3565usize,
             start_col: 22usize,
-            end_line: 3560usize,
+            end_line: 3565usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -47659,9 +47659,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3606usize,
+            start_line: 3611usize,
             start_col: 22usize,
-            end_line: 3606usize,
+            end_line: 3611usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -47801,9 +47801,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3524usize,
+            start_line: 3529usize,
             start_col: 22usize,
-            end_line: 3524usize,
+            end_line: 3529usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -47932,9 +47932,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3560usize,
+            start_line: 3565usize,
             start_col: 22usize,
-            end_line: 3560usize,
+            end_line: 3565usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -48046,9 +48046,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3606usize,
+            start_line: 3611usize,
             start_col: 22usize,
-            end_line: 3606usize,
+            end_line: 3611usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -48188,9 +48188,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3524usize,
+            start_line: 3529usize,
             start_col: 22usize,
-            end_line: 3524usize,
+            end_line: 3529usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -48321,9 +48321,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3560usize,
+            start_line: 3565usize,
             start_col: 22usize,
-            end_line: 3560usize,
+            end_line: 3565usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -48435,9 +48435,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3606usize,
+            start_line: 3611usize,
             start_col: 22usize,
-            end_line: 3606usize,
+            end_line: 3611usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -48577,9 +48577,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3524usize,
+            start_line: 3529usize,
             start_col: 22usize,
-            end_line: 3524usize,
+            end_line: 3529usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -48710,9 +48710,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3560usize,
+            start_line: 3565usize,
             start_col: 22usize,
-            end_line: 3560usize,
+            end_line: 3565usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -48824,9 +48824,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3606usize,
+            start_line: 3611usize,
             start_col: 22usize,
-            end_line: 3606usize,
+            end_line: 3611usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -48966,9 +48966,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3524usize,
+            start_line: 3529usize,
             start_col: 22usize,
-            end_line: 3524usize,
+            end_line: 3529usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -49099,9 +49099,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3560usize,
+            start_line: 3565usize,
             start_col: 22usize,
-            end_line: 3560usize,
+            end_line: 3565usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -49213,9 +49213,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3606usize,
+            start_line: 3611usize,
             start_col: 22usize,
-            end_line: 3606usize,
+            end_line: 3611usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -49357,9 +49357,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -49506,9 +49506,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -49655,9 +49655,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -49804,9 +49804,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -49953,9 +49953,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -50102,9 +50102,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -50251,9 +50251,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -50400,9 +50400,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -50549,9 +50549,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -50698,9 +50698,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -50847,9 +50847,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -50996,9 +50996,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -51145,9 +51145,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -51294,9 +51294,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -51443,9 +51443,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -51592,9 +51592,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2615usize,
+            start_line: 2620usize,
             start_col: 22usize,
-            end_line: 2615usize,
+            end_line: 2620usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -51743,9 +51743,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -51926,9 +51926,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -52109,9 +52109,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -52292,9 +52292,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -52475,9 +52475,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -52658,9 +52658,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -52841,9 +52841,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -53024,9 +53024,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -53207,9 +53207,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -53390,9 +53390,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -53573,9 +53573,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -53756,9 +53756,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -53939,9 +53939,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -54124,9 +54124,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -54307,9 +54307,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -54492,9 +54492,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2731usize,
+            start_line: 2736usize,
             start_col: 22usize,
-            end_line: 2731usize,
+            end_line: 2736usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -54677,9 +54677,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -54785,9 +54785,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -54893,9 +54893,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -55001,9 +55001,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -55109,9 +55109,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -55217,9 +55217,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -55325,9 +55325,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -55433,9 +55433,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -55541,9 +55541,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -55649,9 +55649,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -55757,9 +55757,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -55865,9 +55865,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -55973,9 +55973,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -56083,9 +56083,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -56193,9 +56193,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
@@ -56303,9 +56303,9 @@ pub mod text {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 2859usize,
+            start_line: 2864usize,
             start_col: 22usize,
-            end_line: 2859usize,
+            end_line: 2864usize,
             end_col: 87usize,
             compile_fail: false,
             no_run: false,
