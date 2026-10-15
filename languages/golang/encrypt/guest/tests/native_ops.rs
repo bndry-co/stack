@@ -1889,6 +1889,94 @@ fn a_text_match_field_answers_matches_through_its_twin() {
     );
 }
 
+/// The operators of one field, each as `(operator, fidelity, arity, index)`.
+fn operators_of(plan: &[u8], field: &str) -> Vec<[String; 4]> {
+    let FfiValue::Array(items) =
+        decode(&ops::operators(plan, field.as_bytes()).expect("operators"))
+    else {
+        panic!("operators are a list");
+    };
+    items
+        .iter()
+        .map(|item| {
+            let FfiValue::Object(entries) = item else {
+                panic!("an operator is an object");
+            };
+            let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+            assert_eq!(keys, ["operator", "fidelity", "arity", "index"]);
+            [0, 1, 2, 3].map(|i| text(&entries[i].1).to_owned())
+        })
+        .collect()
+}
+
+/// A field's operators are the queries the engine answers on it, with
+/// their fidelity, arity and index: what the generator writes one method
+/// for. Every operator listed derives a term, and every other is refused.
+#[test]
+fn a_fields_operators_are_the_queries_it_answers() {
+    let row = |op: &str, fidelity: &str, arity: &str, index: &str| {
+        [op, fidelity, arity, index].map(str::to_owned)
+    };
+    assert_eq!(
+        operators_of(&plan(), "age"),
+        [
+            row("eq", "exact", "one", "eq"),
+            row("lt", "exact", "one", "ore"),
+            row("lte", "exact", "one", "ore"),
+            row("gt", "exact", "one", "ore"),
+            row("gte", "exact", "one", "ore"),
+            row("between", "exact", "pair", "ore"),
+        ]
+    );
+    assert_eq!(
+        operators_of(&plan(), "name"),
+        [row("matches", "probabilistic", "one", "match")]
+    );
+    for (field, input) in [("age", FfiValue::UInt32(7)), ("name", s("alice smith"))] {
+        let listed: Vec<String> = operators_of(&plan(), field)
+            .into_iter()
+            .map(|[op, ..]| op)
+            .collect();
+        for op in ["eq", "lt", "lte", "gt", "gte", "between", "matches"] {
+            let input = if op == "between" {
+                FfiValue::Array(vec![input.clone(), input.clone()])
+            } else {
+                input.clone()
+            };
+            let checked =
+                ops::validate::query_term(&encode(input), &plan(), field.as_bytes(), op.as_bytes());
+            if listed.iter().any(|l| l == op) {
+                assert_eq!(checked, Ok(()), "{field} {op} is listed and answered");
+            } else {
+                assert_eq!(checked, Err(STATUS_ENCODING), "{field} {op} is not listed");
+            }
+        }
+    }
+    assert_eq!(
+        ops::operators(&plan(), b"phone"),
+        Err(STATUS_ENCODING),
+        "a field the plan lacks"
+    );
+    assert_eq!(ops::operators(b"\xff", b"age"), Err(STATUS_ENCODING));
+}
+
+/// In the `eql` build a field that names an EQL type answers what the
+/// catalog lists for the type: `TextEq` answers `eq`.
+#[test]
+fn a_target_fields_operators_are_its_types() {
+    if !stack_encrypt_guest::targets::HOLDS_EQL {
+        return;
+    }
+    let plan = encode(obj(vec![(
+        "email",
+        obj(vec![("context", label("email")), ("target", s("TextEq"))]),
+    )]));
+    assert_eq!(
+        operators_of(&plan, "email"),
+        [["eq", "exact", "one", "eq"].map(str::to_owned)]
+    );
+}
+
 // =============================================================================
 // A plan whose context is a field of the record
 // =============================================================================

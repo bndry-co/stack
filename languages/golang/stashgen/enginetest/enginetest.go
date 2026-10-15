@@ -1,7 +1,7 @@
 // Package enginetest is a static stand-in for the Rust engine in the
 // generator's tests. It knows what the engine produces today: the EQL types
-// in eqlTypes, each with the width of value it seals, and the four indexes
-// with the Go kinds each applies to.
+// in eqlTypes, each with the width of value it seals, the four indexes with
+// the Go kinds each applies to, and the operators each answers.
 //
 // It is a test double, not a copy of the rules the SDK ships: the SDK's
 // generator asks the embedded guest. When the engine learns a type or an
@@ -102,6 +102,83 @@ func (e Static) Check(ctx context.Context, d stashgen.Declaration) error {
 		}
 	}
 	return nil
+}
+
+// operatorNames are the operators, in the engine's order (OpSpec::ALL).
+var operatorNames = []string{"eq", "lt", "lte", "gt", "gte", "between", "matches"}
+
+// Operators applies the engine's table as it stands today: OpSpec::answered_by
+// for a field with indexes, and for an EQL type the operators of one value
+// its indexes answer (matches included).
+func (e Static) Operators(ctx context.Context, d stashgen.Declaration) (map[string][]stashgen.Operator, error) {
+	out := map[string][]stashgen.Operator{}
+	if d.Opaque {
+		return out, nil
+	}
+	eqlTypes, _ := e.EQLTypes(ctx)
+	for _, f := range d.Fields {
+		if !f.Sealed() {
+			continue
+		}
+		indexes := make([]stashgen.IndexName, 0, len(f.Indexes))
+		for _, idx := range f.Indexes {
+			indexes = append(indexes, idx.Name)
+		}
+		target := false
+		if f.Verb == stashgen.VerbEncryptInto {
+			target = true
+			indexes = nil
+			for _, t := range eqlTypes {
+				if t.Name == f.EQLType {
+					indexes = t.Indexes
+				}
+			}
+		}
+		ops := []stashgen.Operator{}
+		for _, name := range operatorNames {
+			op := stashgen.Operator{Name: name, Probabilistic: name == "matches", Pair: name == "between"}
+			// A twin is one value, so an EQL type answers no range; it
+			// answers matches through its match index, whose options the
+			// engine holds for every EQL type with one.
+			if target && op.Pair {
+				continue
+			}
+			if index, ok := answeredBy(name, f.GoType, indexes); ok {
+				op.Index = index
+				ops = append(ops, op)
+			}
+		}
+		out[f.Name] = ops
+	}
+	return out, nil
+}
+
+// answeredBy mirrors OpSpec::answered_by in stack-encrypt: eq through an
+// equality index, matches through a match index, and the orderings through
+// ORE, or OPE when there is no ORE, over an integer alone; each only where
+// the index applies to the type.
+func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName) (stashgen.IndexName, bool) {
+	declared := func(want stashgen.IndexName) bool {
+		for _, idx := range indexes {
+			if idx == want {
+				return indexApplies(want, t) == nil
+			}
+		}
+		return false
+	}
+	switch operator {
+	case "eq":
+		return stashgen.IndexEquality, declared(stashgen.IndexEquality)
+	case "matches":
+		return stashgen.IndexMatch, declared(stashgen.IndexMatch)
+	}
+	if t.Kind != stashgen.KindInt && t.Kind != stashgen.KindUint {
+		return "", false
+	}
+	if declared(stashgen.IndexOre) {
+		return stashgen.IndexOre, true
+	}
+	return stashgen.IndexOpe, declared(stashgen.IndexOpe)
 }
 
 // indexApplies mirrors dynamic::admits in stack-encrypt: equality over

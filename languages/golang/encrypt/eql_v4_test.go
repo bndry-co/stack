@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
 )
 
@@ -153,12 +154,12 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 
 	// Byte for byte what eql-bindings' own dispatch derived under the same
 	// index key: the Go field runs its v4 type's plan and no other.
-	name, err := testusers.ProfileFields.Name.Query(ctx, cipher, fixture.Name.Plaintext)
+	name, err := testusers.ProfileFields.Name.Matches(ctx, cipher, fixture.Name.Plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(name) != fixture.Name.Query {
-		t.Errorf("Name.Query = %s\nwant           %s", name, fixture.Name.Query)
+	if string(name.Query()) != fixture.Name.Query {
+		t.Errorf("Name.Matches = %s\nwant             %s", name.Query(), fixture.Name.Query)
 	}
 
 	// And a stored value holds every filter bit of a query for text it
@@ -173,20 +174,53 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 	}
 	all := bloom(t, encrypted[0].Name)
 	for needle, contained := range map[string]bool{"alice": true, "LIC": true, "zzz": false, "bob": false} {
-		q, err := testusers.ProfileFields.Name.Query(ctx, cipher, needle)
+		q, err := testusers.ProfileFields.Name.Matches(ctx, cipher, needle)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := subset(bloom(t, q), all); got != contained {
+		if got := subset(bloom(t, q.Query()), all); got != contained {
 			t.Errorf("%q in %q: %v, want %v", needle, profiles[0].Name, got, contained)
 		}
+		// Verify decides on the decrypted text, under TextMatch's own
+		// tokenizer, whatever the filter says.
+		names := []string{profiles[0].Name, profiles[1].Name}
+		verified, err := q.Verify(ctx, names)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, name := range names {
+			if want := strings.Contains(name, strings.ToLower(needle)); verified[i] != want {
+				t.Errorf("Verify(%q) over %q = %v, want %v", needle, name, verified[i], want)
+			}
+		}
+	}
+
+	// The fetch is sized from the twin's bits: with no measured histogram a
+	// data plan states no prior, so no finite fetch is promised.
+	q, err := testusers.ProfileFields.Name.Matches(ctx, cipher, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit, err := q.TargetLimit(ctx, 10, encrypt.Stats{Rows: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows, bounded := limit.Rows(); bounded {
+		t.Errorf("TargetLimit with no histogram = %d, want unbounded", rows)
+	}
+	limit, err = q.TargetLimit(ctx, 10, encrypt.Stats{Rows: 1000, Histogram: []encrypt.Bucket{{Bits: 60, Rows: 1000}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows, bounded := limit.Rows(); !bounded || rows < 10 {
+		t.Errorf("TargetLimit with a histogram = %d (bounded %v), want at least 10", rows, bounded)
 	}
 
 	// A needle too short for a 3-gram has no filter bits, and an empty
 	// filter would be a subset of every row's: the engine refuses it.
 	for _, short := range []string{"", "al"} {
-		if q, err := testusers.ProfileFields.Name.Query(ctx, cipher, short); err == nil {
-			t.Errorf("Name.Query(%q) = %s, want a refusal", short, q)
+		if q, err := testusers.ProfileFields.Name.Matches(ctx, cipher, short); err == nil {
+			t.Errorf("Name.Matches(%q) = %s, want a refusal", short, q)
 		}
 	}
 }

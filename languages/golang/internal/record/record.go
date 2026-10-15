@@ -443,7 +443,7 @@ type Target struct {
 	Reason     string
 	// Operators are the operators the engine answers for a field that names
 	// the type, in the engine's order; none for a type it does not produce.
-	Operators []TargetOperator
+	Operators []Operator
 }
 
 // Fidelity says how far the server's answer to an operator can be trusted:
@@ -460,9 +460,10 @@ const (
 	Probabilistic Fidelity = "probabilistic"
 )
 
-// TargetOperator is one operator the engine answers for an EQL type, as
-// se_targets lists it.
-type TargetOperator struct {
+// Operator is one operator the engine answers for a field: for an EQL type,
+// as se_targets lists it, and for any field of a plan, as se_operators
+// lists it.
+type Operator struct {
 	// Name is the operator's name, as a query names it: eq, lt, lte, gt,
 	// gte, between or matches.
 	Name string
@@ -471,6 +472,6 @@ type TargetOperator struct {
 	// Pair says the operator takes two values, low then high, as between
 	// does, where every other takes one.
 	Pair bool
-	// Index is the type's index that answers it.
+	// Index is the index that answers it: the field's, or its EQL type's.
 	Index Output
 }

@@ -93,15 +93,15 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	if !one.Equality.Equal(encrypted[1].Email.Equality) || !bytes.Equal(one.Match, encrypted[1].Email.Match) {
 		t.Error("a field's own Encrypt derives other terms than the record's")
 	}
-	probe, err := testusers.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+	probe, err := testusers.Fields.Email.Eq(ctx, cipher, "bob@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !probe.Equal(encrypted[1].Email.Equality) || probe.Equal(encrypted[0].Email.Equality) {
 		t.Error("the probe does not single out its row")
 	}
-	match, err := testusers.Fields.Email.Match(ctx, cipher, "bob@example.com")
-	if err != nil || !bytes.Equal(match, encrypted[1].Email.Match) {
+	match, err := testusers.Fields.Email.Matches(ctx, cipher, "bob@example.com")
+	if err != nil || !bytes.Equal(match.Term(), encrypted[1].Email.Match) {
 		t.Errorf("match probe: %v", err)
 	}
 	// A column update: one field's ciphertext opens in a row.
@@ -156,7 +156,7 @@ func TestExtendIsPartOfTheIdentity(t *testing.T) {
 		t.Fatalf("with its extension: %v %+v", err, back)
 	}
 	// The probe takes the same cipher.
-	probe, err := testusers.Fields.Email.Equality(ctx, tenant7, "bob@example.com")
+	probe, err := testusers.Fields.Email.Eq(ctx, tenant7, "bob@example.com")
 	if err != nil || !probe.Equal(ext[1].Email.Equality) || probe.Equal(plain[1].Email.Equality) {
 		t.Fatalf("tenant probe: %v", err)
 	}
@@ -293,11 +293,11 @@ func TestAMatchIndexStoresShortText(t *testing.T) {
 		}
 		// No query matches the empty filter: a query has at least one
 		// position, and the empty filter holds none of them.
-		q, err := testusers.Fields.Email.Match(ctx, cipher, "example")
+		q, err := testusers.Fields.Email.Matches(ctx, cipher, "example")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if positions, _ := q.Positions(); len(positions) == 0 {
+		if positions, _ := q.Term().Positions(); len(positions) == 0 {
 			t.Fatalf("%s: a query with a token sets no bit", name)
 		}
 	}
@@ -307,8 +307,8 @@ func TestAMatchIndexStoresShortText(t *testing.T) {
 	}
 	// A match query with no token is the one value the engine refuses.
 	for _, text := range []string{"", " \t", "ab"} {
-		if _, err := testusers.Fields.Email.Match(ctx, cipher, text); !errors.Is(err, encrypt.ErrTerm) {
-			t.Fatalf("Fields.Email.Match(%q): %v, want ErrTerm", text, err)
+		if _, err := testusers.Fields.Email.Matches(ctx, cipher, text); !errors.Is(err, encrypt.ErrTerm) {
+			t.Fatalf("Fields.Email.Matches(%q): %v, want ErrTerm", text, err)
 		}
 	}
 	// Zero values the engine does seal.

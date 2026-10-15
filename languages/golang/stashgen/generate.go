@@ -98,6 +98,9 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 	if err := engine.Check(ctx, gf.decl); err != nil {
 		return nil, err
 	}
+	if err := gf.askOperators(ctx, engine); err != nil {
+		return nil, err
+	}
 	src, err := emit(gf)
 	if err != nil {
 		return nil, err
@@ -106,6 +109,21 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 		return nil, err
 	}
 	return &File{Path: outPath, Content: src, Notices: gf.stderrNotices()}, nil
+}
+
+// askOperators asks the engine which operators each sealed field answers,
+// for the field's query methods.
+func (f *genFile) askOperators(ctx context.Context, engine Engine) error {
+	operators, err := engine.Operators(ctx, f.decl)
+	if err != nil {
+		return err
+	}
+	for i := range f.fields {
+		if f.fields[i].Sealed() {
+			f.fields[i].operators = operators[f.fields[i].Name]
+		}
+	}
+	return nil
 }
 
 // checkNamesFree refuses a file that declares a package-level name the

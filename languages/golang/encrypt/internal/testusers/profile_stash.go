@@ -229,7 +229,8 @@ func (f ProfileNameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v stri
 	return eql.TextMatch(out.EQL), err
 }
 
-func (f ProfileNameField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextMatchQuery, error) {
-	out, err := f.field.Query(ctx, c, v)
-	return eql.TextMatchQuery(out.EQL), err
+// Matches derives the matches query for v. Its answer can hold rows that do not
+// match: decrypt the rows it fetches and keep those Verify reports true.
+func (f ProfileNameField) Matches(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EQLMatchQuery[eql.TextMatchQuery, string], error) {
+	return gensupport.EQLMatches[eql.TextMatchQuery](ctx, f.field, c, v)
 }

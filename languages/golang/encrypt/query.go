@@ -2,7 +2,10 @@ package encrypt
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
+	"io"
+	"log/slog"
 
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
@@ -302,4 +305,214 @@ func (cph *Cipher) TargetLimit(ctx context.Context, plan *record.Plan, field, op
 	default:
 		return Limit{}, fmt.Errorf("%w: se_target_limit returned %T", ErrInternal, decoded)
 	}
+}
+
+// Range is a between query on a field declared with an order index: the
+// term of the low bound and the term of the high bound, both inclusive,
+// derived under one context. Its answer is exact, so it has nothing to
+// verify. A range binds as two parameters, one for each bound, and each
+// bound implements driver.Valuer.
+//
+// An [OreTerm] does not order as its plaintext under plain byte order: a
+// Range of them is compared in Go, with [OreTerm.Compare], not in SQL on a
+// byte column. A Range of [OpeTerm] values orders under byte order, so a
+// database compares it with no custom operator.
+type Range[T OreTerm | OpeTerm] struct {
+	// Low is the low bound's term.
+	Low T
+	// High is the high bound's term.
+	High T
+}
+
+// MatchQuery is a matches query on a field declared with a match index: the
+// term to bind in SQL, and the two questions its probabilistic answer
+// leaves, [MatchQuery.Verify] and [MatchQuery.TargetLimit]. The server
+// answers a matches query with every row whose stored filter holds the
+// query's bits, which can include rows that do not hold the query's text,
+// so a caller decrypts the rows it fetched and verifies them.
+//
+// A MatchQuery keeps the text it was derived from, because Verify cuts that
+// text's tokens again in the engine, with the field's own tokenizer: no
+// term carries them, as they are plaintext. Go cannot wipe a string, so the
+// text stays in memory until the garbage collector reclaims it, as the
+// string the caller passed in does. A MatchQuery never prints it: fmt,
+// slog and %#v show the field and the term's size only.
+//
+// T is the field's Go type. The zero MatchQuery holds no query, and its
+// methods return [ErrEncoding].
+type MatchQuery[T ~string] struct {
+	term   MatchTerm
+	cipher *Cipher
+	plan   *record.Plan
+	field  string
+	text   T
+}
+
+// NewMatchQuery derives the matches query for text on one field of the
+// plan under this cipher's keyset, through [Cipher.QueryTerm]. For
+// generated code: a program calls the field's Matches method.
+func NewMatchQuery[T ~string](ctx context.Context, cph *Cipher, plan *record.Plan, field string, text T) (MatchQuery[T], error) {
+	if cph == nil {
+		return MatchQuery[T]{}, fmt.Errorf("%w: field %q: a matches query needs a cipher", ErrEncoding, field)
+	}
+	term, err := cph.QueryTerm(ctx, plan, field, "matches", string(text))
+	if err != nil {
+		return MatchQuery[T]{}, err
+	}
+	if term.Fidelity != record.Probabilistic || term.Index != record.Match || len(term.Terms) != 1 {
+		return MatchQuery[T]{}, fmt.Errorf("%w: field %q: matches came back as a %s %s term of %d parts", ErrInternal, field, term.Fidelity, term.Index, len(term.Terms))
+	}
+	return MatchQuery[T]{term: term.Terms[0], cipher: cph, plan: plan, field: field, text: text}, nil
+}
+
+// Term is the match term to bind in SQL: the bits the query sets in the
+// field's filter, which a stored filter must hold for the row to match.
+func (q MatchQuery[T]) Term() MatchTerm { return q.term }
+
+// Value implements driver.Valuer: the term's bytes.
+func (q MatchQuery[T]) Value() (driver.Value, error) { return []byte(q.term), nil }
+
+// Verify reports, for each of a page of decrypted values of the field,
+// whether it really holds the query's text, in order: one call into the
+// engine for the page, with no key. Keep the rows it reports true; the
+// others are the false positives of the server's answer.
+func (q MatchQuery[T]) Verify(ctx context.Context, values []T) ([]bool, error) {
+	if q.cipher == nil {
+		return nil, errNoMatchQuery
+	}
+	page := make([]any, len(values))
+	for i, v := range values {
+		page[i] = string(v)
+	}
+	return q.cipher.Verify(ctx, q.plan, q.field, "matches", string(q.text), page)
+}
+
+// TargetLimit is how many rows to fetch so that, at the confidence stats
+// names, want of them verify: the LIMIT to send with the query. A field
+// declared with tags states no expected token count, so with no measured
+// [Stats.Histogram] the limit is unbounded, and a caller pages with
+// [Limit.FetchOr]. Uses no key.
+func (q MatchQuery[T]) TargetLimit(ctx context.Context, want uint64, stats Stats) (Limit, error) {
+	if q.cipher == nil {
+		return Limit{}, errNoMatchQuery
+	}
+	return q.cipher.TargetLimit(ctx, q.plan, q.field, "matches", q.term, want, stats)
+}
+
+var errNoMatchQuery = fmt.Errorf("%w: the zero MatchQuery holds no query; derive one with the field's Matches", ErrEncoding)
+
+// EQLMatchQuery is a matches query on a field that names an EQL type with a
+// match index, such as TextMatch: the type's query value to bind in SQL
+// ([EQLMatchQuery.Query], cast to the type's query domain), and the same
+// two questions a [MatchQuery] leaves, [EQLMatchQuery.Verify] and
+// [EQLMatchQuery.TargetLimit]. The server answers with every row whose
+// stored filter holds the query's bits, which can include rows that do not
+// hold the query's text, so a caller decrypts the rows it fetched and
+// verifies them.
+//
+// Like a MatchQuery it keeps the text it was derived from, for Verify, and
+// never prints it. Q is the EQL query type (eql.TextMatchQuery), T the
+// field's Go type. The zero EQLMatchQuery holds no query, and its methods
+// return [ErrEncoding].
+type EQLMatchQuery[Q ~[]byte, T ~string] struct {
+	query  Q
+	domain string
+	cipher *Cipher
+	plan   *record.Plan
+	field  string
+	text   T
+}
+
+// NewEQLMatchQuery derives the matches query for text on one field of the
+// plan that names an EQL type, under this cipher's keyset, through
+// [Cipher.QueryTerm]. For generated code: a program calls the field's
+// Matches method.
+func NewEQLMatchQuery[Q ~[]byte, T ~string](ctx context.Context, cph *Cipher, plan *record.Plan, field string, text T) (EQLMatchQuery[Q, T], error) {
+	if cph == nil {
+		return EQLMatchQuery[Q, T]{}, fmt.Errorf("%w: field %q: a matches query needs a cipher", ErrEncoding, field)
+	}
+	term, err := cph.QueryTerm(ctx, plan, field, "matches", string(text))
+	if err != nil {
+		return EQLMatchQuery[Q, T]{}, err
+	}
+	if term.Fidelity != record.Probabilistic || term.Index != record.Match || term.Domain == "" || len(term.Terms) != 1 {
+		return EQLMatchQuery[Q, T]{}, fmt.Errorf("%w: field %q: matches came back as a %s %s term of %d parts under domain %q, not an EQL query value", ErrInternal, field, term.Fidelity, term.Index, len(term.Terms), term.Domain)
+	}
+	return EQLMatchQuery[Q, T]{query: Q(term.Terms[0]), domain: term.Domain, cipher: cph, plan: plan, field: field, text: text}, nil
+}
+
+// Query is the EQL query value to bind in SQL, cast to its query domain.
+func (q EQLMatchQuery[Q, T]) Query() Q { return q.query }
+
+// Value implements driver.Valuer: the query value's JSON text, or NULL for
+// the zero EQLMatchQuery.
+func (q EQLMatchQuery[Q, T]) Value() (driver.Value, error) {
+	if len(q.query) == 0 {
+		return nil, nil
+	}
+	return string(q.query), nil
+}
+
+// Verify reports, for each of a page of decrypted values of the field,
+// whether it really holds the query's text, in order: one call into the
+// engine for the page, with no key, under the EQL type's match options.
+// Keep the rows it reports true.
+func (q EQLMatchQuery[Q, T]) Verify(ctx context.Context, values []T) ([]bool, error) {
+	if q.cipher == nil {
+		return nil, errNoEQLMatchQuery
+	}
+	page := make([]any, len(values))
+	for i, v := range values {
+		page[i] = string(v)
+	}
+	return q.cipher.Verify(ctx, q.plan, q.field, "matches", string(q.text), page)
+}
+
+// TargetLimit is how many rows to fetch so that, at the confidence stats
+// names, want of them verify: the LIMIT to send with the query. With no
+// measured [Stats.Histogram] the limit is unbounded, and a caller pages
+// with [Limit.FetchOr]. Uses no key.
+func (q EQLMatchQuery[Q, T]) TargetLimit(ctx context.Context, want uint64, stats Stats) (Limit, error) {
+	if q.cipher == nil {
+		return Limit{}, errNoEQLMatchQuery
+	}
+	return q.cipher.TargetLimit(ctx, q.plan, q.field, "matches", []byte(q.query), want, stats)
+}
+
+var errNoEQLMatchQuery = fmt.Errorf("%w: the zero EQLMatchQuery holds no query; derive one with the field's Matches", ErrEncoding)
+
+// String names the field, the query domain and the value's size, never the
+// text.
+func (q EQLMatchQuery[Q, T]) String() string {
+	return fmt.Sprintf("encrypt.EQLMatchQuery{field: %q, domain: %q, query: %d bytes}", q.field, q.domain, len(q.query))
+}
+
+// GoString is what %#v prints: [EQLMatchQuery.String].
+func (q EQLMatchQuery[Q, T]) GoString() string { return q.String() }
+
+// Format prints [EQLMatchQuery.String] for every verb, so no verb reaches
+// the text.
+func (q EQLMatchQuery[Q, T]) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, q.String()) }
+
+// LogValue is what slog records: the field, the domain and the value's
+// size.
+func (q EQLMatchQuery[Q, T]) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("field", q.field), slog.String("domain", q.domain), slog.Int("query_bytes", len(q.query)))
+}
+
+// String names the field and the term's size, never the text.
+func (q MatchQuery[T]) String() string {
+	return fmt.Sprintf("encrypt.MatchQuery{field: %q, term: %d bytes}", q.field, len(q.term))
+}
+
+// GoString is what %#v prints: [MatchQuery.String].
+func (q MatchQuery[T]) GoString() string { return q.String() }
+
+// Format prints [MatchQuery.String] for every verb, so no verb reaches the
+// text.
+func (q MatchQuery[T]) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, q.String()) }
+
+// LogValue is what slog records: the field and the term's size.
+func (q MatchQuery[T]) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("field", q.field), slog.Int("term_bytes", len(q.term)))
 }

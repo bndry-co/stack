@@ -285,18 +285,26 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 			}
 		})
 	}
-	// What the fake refuses, the engine refuses: the same cases against both.
+	// What the fake refuses, the engine refuses, and what both accept they
+	// write the same file for: the same query methods, from the same
+	// operators. The same cases against both.
 	for _, c := range []struct{ name, line string }{
 		{"equality on a bool", "\tDone bool `stash:\"done,encrypt,index=equality\"`"},
 		{"order on a bool", "\tDone bool `stash:\"done,encrypt,index=ore\"`"},
 		{"equality on a float", "\tScore float64 `stash:\"score,encrypt,index=equality\"`"},
 		{"a declaration the engine runs", "\tAge uint32 `stash:\"age,encrypt,index=equality;ore\"`\n\tName string `stash:\"name,encrypt,index=match\"`"},
+		{"every index on an integer", "\tScore int64 `stash:\"score,encrypt,index=equality;ore;ope\"`\n\tRank int32 `stash:\"rank,index=ope\"`"},
+		{"orders on text, bytes and a float", "\tName string `stash:\"name,encrypt,index=ore;ope;match\"`\n\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`"},
 	} {
 		dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})
-		_, real := stashgen.FromTags(context.Background(), engine, stashgen.Request{Dir: dir, Type: "User"})
-		_, fake := stashgen.FromTags(context.Background(), enginetest.Static{}, stashgen.Request{Dir: dir, Type: "User"})
+		realFile, real := stashgen.FromTags(context.Background(), engine, stashgen.Request{Dir: dir, Type: "User"})
+		fakeFile, fake := stashgen.FromTags(context.Background(), enginetest.Static{}, stashgen.Request{Dir: dir, Type: "User"})
 		if (real == nil) != (fake == nil) {
 			t.Errorf("%s: the engine says %v, the fake says %v", c.name, real, fake)
+			continue
+		}
+		if real == nil && string(realFile.Content) != string(fakeFile.Content) {
+			t.Errorf("%s: the engine and the fake write different files:\n%s", c.name, diff(string(realFile.Content), string(fakeFile.Content)))
 		}
 	}
 }

@@ -11,10 +11,12 @@ import (
 
 // Engine answers the generator's questions about what the Rust engine can do.
 // The generator holds no copy of the engine's rules: every refusal about an
-// index, an EQL type or a field type comes from here.
+// index, an EQL type or a field type comes from here, and so does every
+// operator a field's query methods name.
 //
 // [GuestEngine] is the SDK's implementation: the WASI guest that package
-// encrypt embeds, asked through se_plan_check and se_targets.
+// encrypt embeds, asked through se_plan_check, se_targets and
+// se_operators.
 type Engine interface {
 	// EQLTypes lists the EQL types the engine can produce: each name, its
 	// plaintext kind, its indexes and its query type.
@@ -24,6 +26,29 @@ type Engine interface {
 	// seal, an EQL type it cannot produce, or an index option it cannot
 	// carry. The error names the field.
 	Check(ctx context.Context, d Declaration) error
+	// Operators lists the operators the engine answers on each sealed field
+	// of a declaration it accepts, by the field's declared name, in the
+	// engine's order: the generator writes one query method for each.
+	Operators(ctx context.Context, d Declaration) (map[string][]Operator, error)
+}
+
+// Operator is one operator the engine answers on a field, such as eq or
+// matches: the generated method's name, its input and its result follow
+// from it.
+type Operator struct {
+	// Name is the operator's name, as a query names it: eq, lt, lte, gt,
+	// gte, between or matches.
+	Name string
+	// Probabilistic says the server's answer can hold false positives, so
+	// the query's type carries Verify and TargetLimit; an exact answer's
+	// carries neither.
+	Probabilistic bool
+	// Pair says the operator takes two values, low then high, as between
+	// does.
+	Pair bool
+	// Index is the index that answers it: the field's own, or its EQL
+	// type's.
+	Index IndexName
 }
 
 // EQLType is one EQL type the engine produces, such as TextEq.
@@ -116,6 +141,41 @@ func (e *guestEngine) Check(ctx context.Context, d Declaration) error {
 		return &FieldError{Type: d.Type, Reason: fmt.Sprintf("the engine refuses the declaration as a whole: %v", err)}
 	}
 	return nil
+}
+
+// Operators asks the guest, one sealed field at a time, which operators the
+// engine answers on it (se_operators).
+func (e *guestEngine) Operators(ctx context.Context, d Declaration) (map[string][]Operator, error) {
+	if d.Opaque {
+		// An opaque struct is one ciphertext with no index: no query.
+		return map[string][]Operator{}, nil
+	}
+	eqlTypes, err := e.EQLTypes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := lowerDeclaration(d, eqlTypes)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]Operator, len(plan.Fields))
+	for _, f := range plan.Fields {
+		one := &record.Plan{Context: plan.Context, ContextField: plan.ContextField, Fields: []record.Field{f}}
+		answered, err := e.checker.Operators(ctx, one, f.Name)
+		if err != nil {
+			return nil, &FieldError{Type: d.Type, Field: d.field(f.Name).GoName, Reason: fmt.Sprintf("the engine's operators: %v", err)}
+		}
+		ops := make([]Operator, 0, len(answered))
+		for _, o := range answered {
+			index, ok := indexOfOutput[o.Index]
+			if !ok {
+				return nil, &FieldError{Type: d.Type, Field: d.field(f.Name).GoName, Reason: fmt.Sprintf("the engine answers %s through the index %q, which the generator does not know", o.Name, o.Index)}
+			}
+			ops = append(ops, Operator{Name: o.Name, Probabilistic: o.Fidelity == record.Probabilistic, Pair: o.Pair, Index: index})
+		}
+		out[f.Name] = ops
+	}
+	return out, nil
 }
 
 // lowerDeclaration is the generator's lowering of a declaration to the plan
