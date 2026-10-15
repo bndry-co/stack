@@ -121,6 +121,48 @@ async fn jsonb_entry_integer_field_selector_is_unique(pool: sqlx::PgPool) -> any
 }
 
 // ----------------------------------------------------------------------------
+// Reading the whole document instead of the entry fails loudly. Every entry
+// matrix arm casts its column to `public.eql_v3_json_entry`, whose CHECK
+// requires string `s` and `c` and admits only entry keys; a SteVec document has
+// neither at its root. So an arm that reads bare `payload` where it should read
+// `column_expr` raises a check violation rather than comparing documents. This
+// pins that safety net: the matrix relies on it in place of a type-level
+// guarantee that every fixture-reading arm resolves `column_expr`.
+// ----------------------------------------------------------------------------
+#[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
+async fn jsonb_entry_integer_document_is_not_an_entry(pool: sqlx::PgPool) -> anyhow::Result<()> {
+    let n = <JsonbEntryInteger as ScalarType>::fixture_values().len() as i64;
+
+    // Control: the resolved entry read casts on every row.
+    let col = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await?;
+    let entries: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(({col})::public.eql_v3_json_entry) FROM fixtures.v3_doc_integer",
+    ))
+    .fetch_one(&pool)
+    .await?;
+    anyhow::ensure!(
+        entries == n,
+        "the entry read must cast on all {n} rows, got {entries}",
+    );
+
+    // The mistaken read: the whole document, cast as an arm would cast it.
+    let err = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT((payload)::public.eql_v3_json_entry) FROM fixtures.v3_doc_integer",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect_err("a whole SteVec document must not cast to public.eql_v3_json_entry");
+    let code = err.as_database_error().and_then(|e| e.code());
+    anyhow::ensure!(
+        code.as_deref() == Some("23514"),
+        "expected SQLSTATE 23514 (check_violation) casting the document to an entry, \
+         got {code:?}: {err}",
+    );
+
+    Ok(())
+}
+
+// ----------------------------------------------------------------------------
 // CLLW-OPE injectivity. Distinct plaintexts must produce distinct ord_term
 // terms. Compares `eql_v3.ord_term(...)` outputs directly; entry equality is a
 // fail-loud blocker and is not part of the ordering surface.
