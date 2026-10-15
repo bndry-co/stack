@@ -151,15 +151,47 @@ def report(args: argparse.Namespace, policy: str) -> None:
         publish(result)
 
 
+def pin(args: argparse.Namespace) -> None:
+    """Point the target ref at the commit this run's change is measured from.
+
+    A push measures from its own commit. A pull request checks out
+    refs/pull/N/merge, GitHub's merge of the PR into the target branch's tip at
+    run time. The event's pull_request.base.sha is older whenever the target
+    moved on after the PR last synced, and scoring from it counts the target's
+    newer commits as the PR's. The merge's first parent is the tip it was built
+    on, so HEAD^1..HEAD is exactly what the PR adds.
+    """
+    base = args.event_sha
+    if args.pr_head:
+        parents = run('git', 'rev-list', '--parents', '-n', '1', 'HEAD').split()[1:]
+        if len(parents) != 2 or parents[1] != args.pr_head:
+            raise ValueError(f'HEAD is not the merge of {args.pr_head} into the target; '
+                             'check out refs/pull/N/merge.')
+        base = parents[0]
+    run('git', 'update-ref', args.base, base)
+    output('sha', base)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('prepare', 'report'))
+    parser.add_argument('command', choices=('pin', 'prepare', 'report'))
     parser.add_argument('--base', required=True)
-    parser.add_argument('--cache-dir', type=Path, required=True)
+    parser.add_argument('--cache-dir', type=Path)
     parser.add_argument('--refresh', action='store_true')
+    parser.add_argument('--event-sha', help='pin: the commit the event was raised for')
+    parser.add_argument('--pr-head', help='pin: the pull request head, on pull_request events')
     args = parser.parse_args()
-    args.cache_dir = args.cache_dir.resolve()
+    if args.command == 'pin':
+        if not args.event_sha:
+            parser.error('pin requires --event-sha')
+    elif args.cache_dir is None:
+        parser.error(f'{args.command} requires --cache-dir')
+    else:
+        args.cache_dir = args.cache_dir.resolve()
     try:
+        if args.command == 'pin':
+            pin(args)
+            return 0
         head = run('git', 'rev-parse', '--verify', args.base + '^{commit}')
         policy = identity()
         if args.command == 'prepare':

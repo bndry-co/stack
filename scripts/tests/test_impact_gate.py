@@ -57,6 +57,59 @@ class ImpactWorkflowTest(unittest.TestCase):
         self.assertEqual(result.returncode, expect, result.stdout + result.stderr)
         return result
 
+    def pin(self, *args, expect=0):
+        result = subprocess.run([sys.executable, str(DRIVER), 'pin',
+                                 '--base', 'refs/remotes/origin/main', *args],
+                                cwd=self.repo, text=True, capture_output=True,
+                                env={**os.environ, 'GITHUB_OUTPUT': str(self.output),
+                                     'GITHUB_STEP_SUMMARY': str(self.summary)})
+        self.assertEqual(result.returncode, expect, result.stdout + result.stderr)
+        return result
+
+    def pull_request_merge(self):
+        """Build GitHub's refs/pull/N/merge after main moved past the PR's base."""
+        stale_base = self.git('rev-parse', 'main')
+        self.git('checkout', '-qb', 'feature')
+        pr_head = self.commit('src/feature.ts', 'export function feature() { return 1; }\n')
+        self.git('checkout', '-q', 'main')
+        landed = self.commit('src/landed.ts', 'export function landed() { return 2; }\n')
+        self.git('checkout', '-q', '--detach', 'main')
+        self.git('merge', '-q', '--no-ff', '-m', 'merge', 'feature')
+        return stale_base, pr_head, landed
+
+    def test_pull_request_scores_only_its_own_changes_when_main_moved_on(self):
+        stale_base, pr_head, landed = self.pull_request_merge()
+        # The event's recorded base, which the workflow used to pin: main's
+        # newer commit then lands inside merge-base..HEAD as if the PR made it.
+        self.git('update-ref', 'refs/remotes/origin/main', stale_base)
+        self.run_driver('prepare', '--base', 'refs/remotes/origin/main')
+        self.run_driver('report', '--base', 'refs/remotes/origin/main')
+        self.assertIn('src/landed.ts', self.summary.read_text())
+
+        self.output.write_text('')
+        self.summary.write_text('')
+        self.pin('--event-sha', stale_base, '--pr-head', pr_head)
+        self.assertEqual(self.git('rev-parse', 'refs/remotes/origin/main'), landed)
+        self.assertIn(f'sha={landed}\n', self.output.read_text())
+        self.run_driver('prepare', '--base', 'refs/remotes/origin/main')
+        self.run_driver('report', '--base', 'refs/remotes/origin/main')
+        summary = self.summary.read_text()
+        self.assertIn('src/feature.ts', summary)
+        self.assertNotIn('src/landed.ts', summary)
+
+    def test_push_pins_the_event_commit(self):
+        head = self.git('rev-parse', 'HEAD')
+        self.pin('--event-sha', head)
+        self.assertEqual(self.git('rev-parse', 'refs/remotes/origin/main'), head)
+        self.assertIn(f'sha={head}\n', self.output.read_text())
+
+    def test_pull_request_pin_refuses_a_checkout_that_is_not_the_pr_merge(self):
+        _, pr_head, _ = self.pull_request_merge()
+        self.git('checkout', '-q', 'feature')
+        result = self.pin('--event-sha', pr_head, '--pr-head', pr_head, expect=1)
+        self.assertIn('not the merge of', self.summary.read_text())
+        self.assertNotIn('sha=', result.stdout)
+
     def test_cold_baseline_then_reuse_and_refresh(self):
         self.run_driver('prepare')
         self.assertIn('rebuilt=true', self.output.read_text())
