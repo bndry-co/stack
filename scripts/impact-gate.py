@@ -5,6 +5,7 @@ Run from the Git checkout being assessed. Policy belongs to this script's checko
 so tests can exercise the same workflow against isolated Git histories.
 """
 import argparse
+import bisect
 import hashlib
 import importlib.metadata
 import json
@@ -177,21 +178,26 @@ MISREAD_NOTE = (f'{MISREAD}: lizard read its line span to include a later top-le
                 'the diff before refactoring it. Scores and grades are unchanged.')
 
 
-def declaration_lines(path: str, source: str) -> set[int]:
+def declaration_lines(path: str, source: str) -> dict[int, bool]:
+    """Line of each top-level declaration, mapped to whether it ends on that line."""
     lexer = TypeScriptLexer() if path.endswith(('.ts', '.tsx')) else JavascriptLexer()
-    line_at, offset = {}, 0
-    for number, line in enumerate(source.split('\n'), 1):
-        line_at[offset] = number
-        offset += len(line) + 1
+    starts = [0]
+    for line in source.split('\n')[:-1]:
+        starts.append(starts[-1] + len(line) + 1)
     # Column 0 is not top level in unformatted code, so count braces too.
-    declarations, depth = set(), 0
+    # Brackets of every kind decide whether a declaration closes on its line.
+    declarations, depth, nesting, open_at_end = set(), 0, 0, {}
     for offset, token, value in lexer.get_tokens_unprocessed(source):
-        if (depth == 0 and offset in line_at and (token in Keyword or token in Name.Decorator)
+        line = bisect.bisect_right(starts, offset)
+        if (depth == 0 and starts[line - 1] == offset
+                and (token in Keyword or token in Name.Decorator)
                 and DECLARATION.match(source, offset)):
-            declarations.add(line_at[offset])
+            declarations.add(line)
         elif token in Punctuation:
             depth = max(0, depth + value.count('{') - value.count('}'))
-    return declarations
+            nesting = max(0, nesting + sum(map(value.count, '({[')) - sum(map(value.count, ')}]')))
+            open_at_end[line] = nesting > 0
+    return {line: not open_at_end.get(line, False) for line in declarations}
 
 
 def misread_functions(revisions: list[str], path: str) -> set[tuple[str, str]]:
@@ -205,10 +211,12 @@ def misread_functions(revisions: list[str], path: str) -> set[tuple[str, str]]:
         declarations = declaration_lines(path, source)
         for function in lizard.analyze_file.analyze_source_code(path, source).function_list:
             owner, _, name = function.name.rpartition('::')
-            # lizard often ends a span on the next declaration's first line;
-            # that boundary is harmless, so only strictly inner lines count.
+            # lizard often ends a span on the next declaration's first line.
+            # That boundary is harmless unless the whole declaration is there.
             if name != '(anonymous)' and any(
-                    function.start_line < n < function.end_line for n in declarations):
+                    function.start_line < n < function.end_line
+                    or (n == function.end_line and whole)
+                    for n, whole in declarations.items()):
                 found.add((owner, name))
     return found
 

@@ -172,9 +172,23 @@ class ImpactWorkflowTest(unittest.TestCase):
         # lizard read correctly must not be marked.
         self.commit('src/flat.ts', 'export function outer(): number {\nconst inner = 2\n'
                     'function nested() { return inner }\nreturn nested()\n}\n\n'
-                    'export const sibling = 3\n')
+                    'export function sibling(): number {\n  return 3\n}\n')
         head = self.git('rev-parse', 'HEAD')
         self.assertEqual(self.load_driver().misread_functions([head], 'src/flat.ts'), set())
+
+    def test_a_span_ending_on_a_one_line_declaration_swallows_it(self):
+        # lizard ends `path` on the next declaration's first line. That is
+        # harmless when only a signature is there, but a one-line declaration
+        # is there whole, so edits to it are charged to `path`.
+        path = ('export function path(segments: string[]): string {\n'
+                '  return `$.${segments.join(".")}`\n}\n\n')
+        self.commit('src/path.ts', path + 'export const LIMIT = 10\n')
+        self.commit('src/boundary.ts', path + 'export function next(x: number): number {\n'
+                    '  return x\n}\n')
+        head = self.git('rev-parse', 'HEAD')
+        driver = self.load_driver()
+        self.assertEqual(driver.misread_functions([head], 'src/path.ts'), {('', 'path')})
+        self.assertEqual(driver.misread_functions([head], 'src/boundary.ts'), set())
 
     def test_marks_a_function_above_a_removed_declaration(self):
         # At the base, `pick`'s span swallows `gone`; the PR deletes `gone`.
