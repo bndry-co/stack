@@ -23,10 +23,12 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * root `Cargo.lock` or the guest's pin (#1205). Every root `--locked` build and
  * the Go guest failed (#1207).
  *
- * Two defences, both held here:
+ * Two defences:
  * - the EQL entry is `versioning-strategy: lockfile-only`, so it can never
- *   edit a manifest, the root one included;
- * - it ignores every crate the root entry moves by hand, so its lockfile does
+ *   edit a manifest, the root one included. That one is held, for every cargo
+ *   entry a path dependency crosses into or out of, by
+ *   dependabot-cargo-cross-workspace.test.mjs;
+ * - held here: it ignores every crate the root entry moves by hand, so its lockfile does
  *   not move those crates apart from the root's. The two ignore lists are
  *   hand-written copies, so this compares them.
  */
@@ -43,6 +45,17 @@ const ROOT_DIR = '/'
 const EXEMPT = new Map([
   // ['crate-name', 'why the EQL workspace cannot resolve it through a path dependency'],
 ])
+
+/**
+ * The crates `rootIgnored` names that `eqlIgnored` does not, less those
+ * `exempt` excuses. Only a written reason excuses one: an exemption whose
+ * reason is empty is no exemption.
+ */
+function unexempted(rootIgnored, eqlIgnored, exempt) {
+  return [...rootIgnored].filter(
+    (name) => !eqlIgnored.has(name) && !exempt.get(name)?.trim(),
+  )
+}
 
 /** The `cargo` entry covering `dir`, from `directory:` or `directories:`. */
 function cargoEntry(config, dir) {
@@ -126,15 +139,6 @@ describe('the /packages/eql Dependabot entry ignores what it inherits from the r
     pathDeps = eqlPathDependenciesIntoRoot()
   })
 
-  it('never edits a manifest: the EQL entry is lockfile-only', () => {
-    expect(
-      eqlEntry['versioning-strategy'],
-      `the ${EQL_DIR} entry must be \`versioning-strategy: lockfile-only\`. Its path ` +
-        'dependencies inherit requirements from the ROOT Cargo.toml, so any manifest edit ' +
-        'it makes can land outside its own workspace.',
-    ).toBe('lockfile-only')
-  })
-
   it('finds the root ignore list it compares against', () => {
     expect(rootIgnored.size).toBeGreaterThan(0)
   })
@@ -149,9 +153,7 @@ describe('the /packages/eql Dependabot entry ignores what it inherits from the r
   })
 
   it('ignores every crate the root entry ignores, unless exempted with a reason', () => {
-    const missing = [...rootIgnored].filter(
-      (name) => !eqlIgnored.has(name) && !EXEMPT.has(name),
-    )
+    const missing = unexempted(rootIgnored, eqlIgnored, EXEMPT)
     expect(
       missing,
       `the root cargo entry ignores these but the ${EQL_DIR} entry does not. The EQL workspace ` +
@@ -160,6 +162,17 @@ describe('the /packages/eql Dependabot entry ignores what it inherits from the r
         `would edit the root workspace's pins. Add them to the ${EQL_DIR} entry's ignore list, ` +
         `or exempt one with a reason here if the EQL workspace provably cannot resolve it.`,
     ).toEqual([])
+  })
+
+  it('counts an exemption only when it gives a reason', () => {
+    const root = new Set(['recipher', 'cllw-ore', 'vitaminc*'])
+    const eql = new Set()
+    const exempt = new Map([
+      ['recipher', 'the EQL workspace resolves no crate that requires it'],
+      ['cllw-ore', ''],
+      ['vitaminc*', '   '],
+    ])
+    expect(unexempted(root, eql, exempt)).toEqual(['cllw-ore', 'vitaminc*'])
   })
 
   it('carries no stale exemption', () => {
