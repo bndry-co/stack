@@ -146,6 +146,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release of vitaminc ADR 0001, which the entries below build on. A crate
   that names a vitaminc type stack-encrypt takes or returns (`Encrypt`,
   `Decrypt`, `Protected`) moves to 0.6 with it.
+- **Equality terms derive through `vitaminc-normalize`, so `TextEq` compares
+  text in Unicode 16 NFC.** An equality term is the PRF over the value's
+  normalized bytes under vitaminc's domain for its kind: `café` written with
+  a precomposed `é` and with `e` and a combining accent is one term, every
+  integer width of one number is one term (`34u32` and `34i64` match), both
+  float widths of one number are one term, and a date, timestamp, decimal
+  or uuid derives in a domain of its own. `KeysetCipher::equality_term`,
+  `target::equality`, the `Equality` index and `op::Eq` take an `Encrypt`
+  that is one scalar where they took a `PrfValue`. A boolean, a null or a
+  container has no equality term (`TermError::NoEqualityTerm`), and text
+  holding a code point unassigned in Unicode 16 is refused
+  (`TermError::Normalize`). Match text is tokenized in the same normal
+  form, and refused the same way. Every equality and match term changes
+  bytes (the domains move to `/v2`); ORE and OPE terms do not. No stored
+  term existed to keep; the record fixture is regenerated.
+- **`dynamic::Value` and `dynamic::Scalar` are gone.** A field lowered from
+  data holds an `FfiValue`, which is now `Clone` (a deep copy into fresh
+  `Protected` payloads, as `Value`'s was) and reads as a context label.
+  `dynamic::term` takes any `Encrypt` (an `&FfiValue`, a transport frame
+  walked in place, a Rust value) and derives at the one scalar it holds;
+  `IndexSpec::defines(value)` replaces `IndexSpec::supports(&scalar)`, and
+  `IndexSpec` is an `Index<FfiValue>`.
+- **A boolean has no order term**, through a plan or `dynamic::term`: with
+  two values, an ORE or OPE term would tell anyone holding the column which
+  rows are `true`. `dynamic::admits` now refuses ORE and OPE on `bool`, and
+  admits equality on `float32` and `float64`, which vitaminc gives an
+  equality domain. A 128-bit integer has an equality term and no order
+  term.
+
 - **Values describe themselves with vitaminc's new `Encrypt` and read back
   with `Decrypt` (vitaminc ADR 0001).** `KeysetCipher::encrypt`,
   `StackCipher::decrypt` and every target take the new `Encrypt`, a source
