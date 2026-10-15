@@ -333,6 +333,34 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     expect(rows[0]?.n).toBe('0')
   })
 
+  it('a stale twin acknowledged with --force at dual-write confirmation is overwritten by a plain run', async () => {
+    await seed(300)
+    await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
+    // What `stash decrypt backfill --force` records before its first run.
+    const db = await pool.connect()
+    try {
+      await appendEvent(db, {
+        tableName: TABLE,
+        columnName: 'email_encrypted',
+        event: 'decrypt_dual_writing',
+        phase: 'decrypt-dual-writing',
+        details: {
+          plaintextColumn: 'email',
+          existingPlaintext: 'prepopulated',
+          acknowledgedWith: 'force',
+        },
+      })
+    } finally {
+      db.release()
+    }
+
+    await run()
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ${TABLE} WHERE email = 'stale@example.com'`,
+    )
+    expect(rows[0]?.n).toBe('0')
+  })
+
   it('a plain run after a forced pass failed before its first commit still overwrites every row', async () => {
     await seed(300)
     await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)

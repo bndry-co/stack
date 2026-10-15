@@ -374,8 +374,9 @@ async function ensureReverseDualWritesDeployed(
     phase: 'decrypt-dual-writing',
     details: {
       plaintextColumn: pair.plaintextColumn,
-      // The audit trail for a twin that held values before this lifecycle:
-      // what was found and which flag the operator chose.
+      // A twin that held values before this lifecycle: what was found and
+      // which flag the operator chose. `acknowledgedWith: 'force'` opens the
+      // forced-pass obligation `runDecryptBackfill` enforces on every run.
       ...(opts.acknowledgedHazard
         ? {
             existingPlaintext: opts.acknowledgedHazard.hazard.kind,

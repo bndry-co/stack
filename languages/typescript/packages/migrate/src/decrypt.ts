@@ -201,10 +201,12 @@ export interface DecryptBackfillResult {
 }
 
 /**
- * Whether this column migration owes a forced pass: one was started and none
- * has completed since. While it is open every run is forced, whatever the
- * caller passes, because the rows that pass has not reached still hold the
- * plaintext it was started to replace.
+ * Whether this column migration owes a forced pass, and so every run must be
+ * one whatever the caller passes. It is owed from the moment a forced pass
+ * starts, or from the `decrypt_dual_writing` event when a twin that already
+ * held values was acknowledged with `force` (`details.acknowledgedWith`), and
+ * stops being owed when a forced pass completes. Reads only the events since
+ * the latest `decrypt_dual_writing`, which starts the column migration.
  */
 export async function forceObligationOpen(
   db: ClientBase,
@@ -224,9 +226,16 @@ export async function forceObligationOpen(
   )
   let open = false
   for (const row of rows) {
-    if (row.details?.force !== true) continue
-    if (row.event === REVERSE_EVENTS.completed) open = false
-    else if (row.phase === REVERSE_EVENTS.runningPhase) open = true
+    if (row.event === 'decrypt_dual_writing') {
+      // Starts a column migration. A twin that already held values and was
+      // acknowledged with `force` owes a forced pass before any has run.
+      open = row.details?.acknowledgedWith === 'force'
+    } else if (row.details?.force !== true) {
+    } else if (row.event === REVERSE_EVENTS.completed) {
+      open = false
+    } else if (row.phase === REVERSE_EVENTS.runningPhase) {
+      open = true
+    }
   }
   return open
 }
