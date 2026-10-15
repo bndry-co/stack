@@ -52,6 +52,11 @@
 //! | `producible` | Whether the engine can produce this type today. [`encrypt`] and [`query`] refuse a type that is not, and a generator should too. |
 //! | `reason` | Why not, when `producible` is `false`; `null` when it is. |
 //!
+//! The engine adds an eleventh key, `operators`, when it lists the table:
+//! the operators it answers for the type, computed from the row by its own
+//! rules (`stack_encrypt::dynamic::TargetDescriptor`), so this table holds
+//! none of them.
+//!
 //! The table has one row per stored domain in catalog order; query twins are
 //! not rows (each row names its own). Adding a field is a wire change for
 //! every reader of `se_targets`; renaming or removing one is a breaking one.

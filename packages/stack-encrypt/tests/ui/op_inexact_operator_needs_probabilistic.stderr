@@ -4,9 +4,9 @@ error[E0277]: `EqualityTerm` cannot answer `stack_encrypt::op::Matches`
 24 |     type Query = EqualityTerm;
    |                  ^^^^^^^^^^^^ this query term does not meet the operator's requirement
    |
-   = help: the trait `Probabilistic` is not implemented for `EqualityTerm`
+   = help: the trait `stack_encrypt::op::Probabilistic` is not implemented for `EqualityTerm`
    = note: a term that answers `op::Matches` must implement `op::Probabilistic`
-help: the trait `Probabilistic` is implemented for `MatchQuery<O>`
+help: the trait `stack_encrypt::op::Probabilistic` is implemented for `MatchQuery<O>`
   --> src/sem/mod.rs
    |
    | impl<O: MatchConfig> crate::op::Probabilistic for MatchQuery<O> {

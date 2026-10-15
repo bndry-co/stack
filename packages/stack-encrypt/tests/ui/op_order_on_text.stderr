@@ -16,5 +16,5 @@ error[E0277]: `std::string::String` is not ordered: the ordering operators are a
              u16
              u32
            and $N others
-   = note: required for `Lt` to implement `DefaultIndex<std::string::String>`
-   = note: required for `ValuePlan<std::string::String, Indexed<stack_encrypt::Ore>>` to implement `Chooses<Lt, std::string::String, Whole>`
+   = note: required for `stack_encrypt::op::Lt` to implement `DefaultIndex<std::string::String>`
+   = note: required for `ValuePlan<std::string::String, Indexed<stack_encrypt::Ore>>` to implement `Chooses<stack_encrypt::op::Lt, std::string::String, Whole>`

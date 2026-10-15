@@ -430,7 +430,7 @@ impl FieldPlan {
     }
 
     /// The indexes the field declares, in output order.
-    fn indexes(&self) -> Vec<IndexSpec> {
+    pub(super) fn indexes(&self) -> Vec<IndexSpec> {
         self.outputs
             .iter()
             .filter_map(|output| match output {

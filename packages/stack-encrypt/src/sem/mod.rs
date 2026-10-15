@@ -810,14 +810,7 @@ impl<O: MatchConfig> crate::op::Probabilistic for MatchQuery<O> {
     type Plaintext = str;
 
     fn verify(&self, value: &str) -> bool {
-        let options = O::options();
-        // A value the index cannot normalize holds no token of any query.
-        let Ok(tokens) = tokenize::tokens(value, options.tokenizer, options.downcase) else {
-            return false;
-        };
-        let tokens = Zeroizing::new(tokens);
-        let have: HashSet<&str> = tokens.iter().map(String::as_str).collect();
-        !self.tokens.0.is_empty() && self.tokens.0.iter().all(|t| have.contains(t.as_str()))
+        self.tokens.verify(value, &O::options())
     }
 
     /// `want` plus the false positives expected among the rows `stats`
@@ -829,11 +822,13 @@ impl<O: MatchConfig> crate::op::Probabilistic for MatchQuery<O> {
     /// neither, the answer is
     /// [`Limit::Unbounded`](crate::op::Limit::Unbounded).
     fn target_limit(&self, want: u64, stats: &crate::op::Stats) -> crate::op::Limit {
-        let options = O::options();
-        let declared = O::expected_tokens()
-            .map(|tokens| crate::op::stats::expected_fill(tokens, options.k, options.m));
-        let bits = u32::try_from(self.positions().len()).unwrap_or(u32::MAX);
-        stats.limit(want, stats.pass_rate(bits, options.m, declared))
+        match_limit(
+            self.positions().len(),
+            &O::options(),
+            O::expected_tokens(),
+            want,
+            stats,
+        )
     }
 }
 
@@ -962,6 +957,38 @@ impl QueryTokens {
         }
         Ok(tokens)
     }
+
+    /// Whether `value` holds every one of these tokens, cut under the same
+    /// `options` the tokens were: what [`MatchQuery`]'s `verify` asks, with
+    /// the options a value rather than a type, so a match index declared as
+    /// data verifies by the same code. No tokens verify nothing, and a value
+    /// the index cannot normalize holds no token of any query.
+    pub(crate) fn verify(&self, value: &str, options: &MatchOptions) -> bool {
+        let Ok(tokens) = tokenize::tokens(value, options.tokenizer, options.downcase) else {
+            return false;
+        };
+        let tokens = Zeroizing::new(tokens);
+        let have: HashSet<&str> = tokens.iter().map(String::as_str).collect();
+        !self.0.is_empty() && self.0.iter().all(|t| have.contains(t.as_str()))
+    }
+}
+
+/// The fetch for `want` real matches of a match query whose filter sets
+/// `bits` positions, under `options` and the index's `expected_tokens`
+/// prior: what [`MatchQuery`]'s `target_limit` answers, with the options a
+/// value rather than a type, so a match index declared as data sizes its
+/// fetch by the same code.
+pub(crate) fn match_limit(
+    bits: usize,
+    options: &MatchOptions,
+    expected_tokens: Option<u32>,
+    want: u64,
+    stats: &crate::op::Stats,
+) -> crate::op::Limit {
+    let declared =
+        expected_tokens.map(|tokens| crate::op::stats::expected_fill(tokens, options.k, options.m));
+    let bits = u32::try_from(bits).unwrap_or(u32::MAX);
+    stats.limit(want, stats.pass_rate(bits, options.m, declared))
 }
 
 /// A [`PrfVisitor`] that folds a sequence of per-token PRF blocks into

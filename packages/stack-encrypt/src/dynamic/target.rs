@@ -27,7 +27,8 @@
 
 use std::fmt;
 
-use super::{FfiValue, ValueKind};
+use super::query::target_operators;
+use super::{FfiValue, OpSpec, ValueKind};
 
 use crate::{KeysetCipher, Label, Pending, StackCipher};
 
@@ -52,6 +53,21 @@ use crate::{KeysetCipher, Label, Pending, StackCipher};
 /// | `query_sql_domain` | string or null: the query twin's PostgreSQL domain |
 /// | `producible` | bool: whether the engine produces the type today |
 /// | `reason` | string or null: why not, when it does not |
+/// | `operators` | list of objects: the operators the engine answers for the type ([`operators`](Self::operators)), each `{"operator", "fidelity", "arity", "index"}`; empty for a type it does not produce |
+///
+/// Each `operators` entry has every key:
+///
+/// | key | value |
+/// |---|---|
+/// | `operator` | string: the operator's name, `eq` ([`OpSpec::name`]) |
+/// | `fidelity` | string: `exact` or `probabilistic` ([`Fidelity::name`](super::Fidelity::name)) |
+/// | `arity` | string: `one`, or `pair` for an operator whose input is two values, low then high |
+/// | `index` | string: the key of the type's index that answers it, `eq` |
+///
+/// The first ten keys are the row `eql-bindings` serializes for the type;
+/// `operators` is the engine's, computed from the row by the table every
+/// plan field is held to ([`OpSpec::answered_by`]), so a generator reads the
+/// operators from the engine it embeds rather than from a copy of the rules.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TargetDescriptor {
@@ -133,7 +149,40 @@ impl TargetDescriptor {
             ),
             ("producible".to_string(), FfiValue::Bool(self.producible)),
             ("reason".to_string(), optional(&self.reason)),
+            (
+                "operators".to_string(),
+                FfiValue::Array(
+                    target_operators(self)
+                        .into_iter()
+                        .map(|(op, index)| {
+                            FfiValue::Object(vec![
+                                ("operator".to_string(), text(op.name())),
+                                ("fidelity".to_string(), text(op.fidelity().name())),
+                                (
+                                    "arity".to_string(),
+                                    text(if op.takes_pair() { "pair" } else { "one" }),
+                                ),
+                                ("index".to_string(), text(index.key())),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
         ])
+    }
+
+    /// The operators the engine answers for a field that names this type,
+    /// in [`OpSpec::ALL`]'s order: none for a type it does not produce or
+    /// that has no query twin, and otherwise each exact operator of one value
+    /// that one of the type's indexes answers for its plaintext kind
+    /// ([`OpSpec::answered_by`]). The query for each is the type's query
+    /// twin. A probabilistic operator and `between` are not answered through
+    /// a type yet: see [`query_term`](super::query_term)'s module.
+    pub fn operators(&self) -> Vec<OpSpec> {
+        target_operators(self)
+            .into_iter()
+            .map(|(op, _)| op)
+            .collect()
     }
 }
 
@@ -604,7 +653,8 @@ mod tests {
                 "query",
                 "query_sql_domain",
                 "producible",
-                "reason"
+                "reason",
+                "operators"
             ],
             "the se_targets entry's keys, in order"
         );
@@ -624,7 +674,7 @@ mod tests {
         assert!(matches!(&entries[6].1, FfiValue::Null));
         assert_eq!(
             entries.len(),
-            10,
+            11,
             "an absent value is null, never a missing key"
         );
     }

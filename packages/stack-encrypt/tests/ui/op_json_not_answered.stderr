@@ -7,12 +7,12 @@ error[E0277]: `Contains` has no default index given `std::string::String`
    = help: the trait `DefaultIndex<std::string::String>` is not implemented for `Contains`
    = note: `op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; name another index, such as `Ope`, with `.via(index)`; no index answers `op::Contains`, `op::ContainedBy` or `op::AtPath` yet, since this crate has no JSON index
    = help: the following other types implement trait `DefaultIndex<In>`:
-             `Between` implements `DefaultIndex<(S, S)>`
-             `Gt` implements `DefaultIndex<S>`
-             `Gte` implements `DefaultIndex<S>`
-             `Lt` implements `DefaultIndex<S>`
-             `Lte` implements `DefaultIndex<S>`
+             `stack_encrypt::op::Between` implements `DefaultIndex<(S, S)>`
              `stack_encrypt::op::Eq` implements `DefaultIndex<S>`
+             `stack_encrypt::op::Gt` implements `DefaultIndex<S>`
+             `stack_encrypt::op::Gte` implements `DefaultIndex<S>`
+             `stack_encrypt::op::Lt` implements `DefaultIndex<S>`
+             `stack_encrypt::op::Lte` implements `DefaultIndex<S>`
              `stack_encrypt::op::Matches<<DefaultMatch as stack_encrypt::op::MatchCase>::Case>` implements `DefaultIndex<S>`
    = note: required for `ValuePlan<std::string::String, Indexed<stack_encrypt::Equality>>` to implement `Chooses<Contains, std::string::String, Whole>`
 
