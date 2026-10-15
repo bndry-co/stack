@@ -61,18 +61,25 @@ jobs:
 
       # The fallback stays within one tool/policy AND target branch. Never use a
       # repository-wide fallback: another release branch has different history.
+      # Saves append the run to the commit's key (see "Save baselines"), so the
+      # first restore key finds this commit's newest pair before any ancestor's.
+      # No entry is ever saved under the primary key itself, so it never matches:
+      # it is kept only to supply cache-primary-key to REFRESH and the save key.
       - name: Restore baselines
         id: restore
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.BASELINE_DIR }}
           key: impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-${{ github.event.pull_request.base.sha || github.sha }}
-          restore-keys: impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-
+          restore-keys: |
+            impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-${{ github.event.pull_request.base.sha || github.sha }}-
+            impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-
 
       - name: Validate or build baselines
         id: prepare
         env:
-          REFRESH: ${{ github.event_name == 'push' && steps.restore.outputs.cache-hit != 'true' }}
+          # Main refreshes unless it restored a pair saved for this very commit.
+          REFRESH: ${{ github.event_name == 'push' && !startsWith(steps.restore.outputs.cache-matched-key, format('{0}-', steps.restore.outputs.cache-primary-key)) }}
         run: |
           args=()
           if [[ "$REFRESH" == 'true' ]]; then args+=(--refresh); fi
@@ -80,13 +87,16 @@ jobs:
 
       # Any rebuilt pair is saved, including on pull requests: a PR's cache is
       # scoped to its own ref, so it cannot replace main's, and later pushes to
-      # the PR reuse it instead of rebuilding both scopes again.
+      # the PR reuse it instead of rebuilding both scopes again. Cache keys are
+      # immutable, so the key names this run: when the pair restored for this
+      # commit fails validation, its replacement saves beside it rather than
+      # being refused, and the next run restores the newer one.
       - name: Save baselines
         if: steps.prepare.outputs.rebuilt == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.BASELINE_DIR }}
-          key: ${{ steps.restore.outputs.cache-primary-key }}
+          key: ${{ steps.restore.outputs.cache-primary-key }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Report pull request impact
         if: github.event_name == 'pull_request'

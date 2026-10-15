@@ -6,9 +6,20 @@ import { readWorkflow } from './lib/workflows.mjs'
 
 const workflowPath = '.github/workflows/impact.yml'
 
+// The Actions functions these expressions call. hashFiles stands in for the
+// policy digest, which is constant within one run of these tests.
+const functions = {
+  startsWith: (value, prefix) =>
+    String(value).toLowerCase().startsWith(String(prefix).toLowerCase()),
+  format: (template, ...args) =>
+    String(template).replace(/\{(\d+)\}/g, (_, index) => String(args[index])),
+  hashFiles: () => 'policy',
+}
+
 // Evaluates the small subset of the Actions expression language these guards
-// need (context paths, string literals, ==, !=, &&, ||, !), so a test asserts
-// what an expression DOES for an event rather than how it is spelled.
+// need (context paths, string literals, ==, !=, &&, ||, !, and the functions
+// above), so a test asserts what an expression DOES for an event rather than
+// how it is spelled.
 function evaluate(expression, context) {
   const body = String(expression)
     .replace(/^\s*\$\{\{\s*/, '')
@@ -24,7 +35,9 @@ function evaluate(expression, context) {
     )
     .replace(/==/g, '===')
     .replace(/!===/g, '!==')
-  return new Function(`return (${js})`)()
+  return new Function(...Object.keys(functions), `return (${js})`)(
+    ...Object.values(functions),
+  )
 }
 
 function interpolate(template, context) {
@@ -80,13 +93,16 @@ describe('advisory change impact', () => {
     expect(restore.with.key).toContain(
       'github.event.pull_request.base.sha || github.sha',
     )
-    expect(restore.with['restore-keys']).toBe(
+    // This commit's run-suffixed saves first, then the target branch's
+    // ancestors — never a broader prefix.
+    expect(restore.with['restore-keys'].trim().split('\n')).toEqual([
+      `${restore.with.key}-`,
       restore.with.key.replace(
         // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Actions expression
         '-${{ github.event.pull_request.base.sha || github.sha }}',
         '-',
       ),
-    )
+    ])
     const save = job.steps.find((step) =>
       step.uses?.startsWith('actions/cache/save@'),
     )
@@ -107,6 +123,61 @@ describe('advisory change impact', () => {
       }
     }
     expect(save.with.path).toBe(restore.with.path)
+  })
+
+  it('replaces a corrupt same-commit cache instead of colliding with its key', () => {
+    // A cache key is immutable. When the entry saved for a commit fails
+    // validation, prepare rebuilds; saving under that same key is refused
+    // ("Unable to reserve cache"), so the bad entry stayed and every later run
+    // for the commit rebuilt again. Each save now takes a run-unique key that
+    // the next run for the commit restores ahead of any ancestor's.
+    const job = readWorkflow(workflowPath).jobs.impact
+    const restore = job.steps.find((step) =>
+      step.uses?.startsWith('actions/cache/restore@'),
+    )
+    const prepare = job.steps.find((step) => step.id === 'prepare')
+    const save = job.steps.find((step) =>
+      step.uses?.startsWith('actions/cache/save@'),
+    )
+    const run = (event, runId, attempt, restored) => {
+      const context = {
+        github: { ...event.github, run_id: runId, run_attempt: attempt },
+        steps: { target: { outputs: { key: 'main' } } },
+      }
+      const primary = interpolate(restore.with.key, context)
+      context.steps.restore = {
+        outputs: {
+          'cache-primary-key': primary,
+          'cache-matched-key': restored ?? '',
+          'cache-hit': String(restored === primary),
+        },
+      }
+      return {
+        primary,
+        restoreKeys: interpolate(restore.with['restore-keys'], context)
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean),
+        refresh: String(interpolate(prepare.env.REFRESH, context)),
+        saved: interpolate(save.with.key, context),
+      }
+    }
+
+    // A rerun of the same commit's push, restoring the first attempt's entry.
+    const first = run(pushEvent('c0ffee'), '41', '1')
+    const rerun = run(pushEvent('c0ffee'), '41', '2', first.saved)
+    expect(rerun.saved).not.toBe(first.saved)
+    // A later run for the commit finds its newest save before any ancestor's.
+    expect(first.saved.startsWith(rerun.restoreKeys[0])).toBe(true)
+    expect(rerun.restoreKeys.at(-1)).not.toBe(rerun.restoreKeys[0])
+    // A same-commit entry is reused without a forced rebuild; an ancestor's
+    // fallback, or nothing, still refreshes main.
+    expect(rerun.refresh).toBe('false')
+    const ancestor = run(pushEvent('ancest'), '40', '1').saved
+    expect(run(pushEvent('c0ffee'), '42', '1', ancestor).refresh).toBe('true')
+    expect(run(pushEvent('c0ffee'), '42', '1').refresh).toBe('true')
+    // Pull requests never force a rebuild.
+    expect(run(pullRequestEvent('feed'), '43', '1').refresh).toBe('false')
   })
 
   it('never lets one main push cancel another before its baselines are saved', () => {
