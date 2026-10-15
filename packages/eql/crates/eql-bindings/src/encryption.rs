@@ -2,8 +2,10 @@
 //!
 //! The target declares its operations; Stack Encrypt invokes Vitamin C's
 //! plaintext implementations. These adapters only encode encrypted outputs.
-//! Equality uses Vitamin C's exact string semantics: no normalization or case
-//! folding. The stored identifier supplies context for ciphertext and terms.
+//! Equality compares text in Unicode 16 NFC, the normal form
+//! `vitaminc-normalize` gives it, and folds no case: `café` written with a
+//! precomposed `é` and with `e` and a combining accent is one value, `Café`
+//! another. The stored identifier supplies context for ciphertext and terms.
 //!
 //! This is a new producer profile, independent of existing cipherstash-client
 //! ciphertext and terms, so it writes the `eql_v4` domains ([`crate::v4`]),
@@ -92,7 +94,6 @@ use stack_encrypt::{
     Describe, Description, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
     NonEmpty, SealedValue, StackCipherText,
 };
-use vitaminc_prf::PrfValue;
 
 use crate::{
     v3::terms::{BloomFilter, Ciphertext, Hmac256},
@@ -236,7 +237,7 @@ impl Transcode for Hmac256 {
         EqualityVisitor
     }
 }
-impl<S: PrfValue + Clone> EncryptFrom<S> for Hmac256 {
+impl<S: Encrypt + Clone> EncryptFrom<S> for Hmac256 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where

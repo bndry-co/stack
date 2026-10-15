@@ -121,13 +121,26 @@ async fn independent_queries_match_native_terms_without_requesting_data_keys() {
     let json = serde_json::to_value(&query).unwrap();
     assert!(json.get("c").is_none());
     assert_eq!(serde_json::from_value::<TextEqQuery>(json).unwrap(), query);
-    for different in ["CAFÉ", "cafe\u{301}", "café "] {
-        let probe: TextEqQuery = reader
-            .default_keyset()
-            .encrypt_as(&different.to_owned(), column())
-            .await
-            .unwrap();
-        assert_ne!(query.hm, probe.hm, "no added normalization or case folding");
+    let probe = |text: &str| {
+        let text = text.to_owned();
+        let keyset = reader.default_keyset();
+        async move {
+            let probe: TextEqQuery = keyset.encrypt_as(&text, column()).await.unwrap();
+            probe.hm
+        }
+    };
+    // Unicode 16 NFC: the same text in its other normal form is one value.
+    assert_eq!(
+        probe("cafe\u{301}").await,
+        probe("caf\u{e9}").await,
+        "text is compared in NFC"
+    );
+    for different in ["CAFÉ", "café "] {
+        assert_ne!(
+            query.hm,
+            probe(different).await,
+            "no case folding or trimming"
+        );
     }
     let calls = calls.lock().unwrap();
     assert!(calls.generate.is_empty());

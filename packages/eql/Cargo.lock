@@ -1205,7 +1205,6 @@ dependencies = [
  "thiserror 2.0.20",
  "ts-rs",
  "vitaminc-aead 0.6.0",
- "vitaminc-prf",
  "zeroize",
 ]
 
