@@ -1,7 +1,6 @@
 import {
   appendEvent,
   type DecryptBackfillResult,
-  ForcedPassIncompleteError,
   formatCodes,
   installMigrationsSchema,
   PlaintextWriteError,
@@ -283,8 +282,7 @@ export async function decryptBackfillCommand(
     if (
       error instanceof BackfillConfigError ||
       error instanceof UndecryptableBatchError ||
-      error instanceof PlaintextWriteError ||
-      error instanceof ForcedPassIncompleteError
+      error instanceof PlaintextWriteError
     ) {
       // Author-controlled diagnostics carrying only names, counts and error
       // codes — never a value — so they print verbatim.

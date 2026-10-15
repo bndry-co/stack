@@ -100,25 +100,6 @@ export class PlaintextWriteError extends Error {
 }
 
 /**
- * Thrown, before anything is recorded, when a run without `force` would
- * resume a pass that was started WITH it. That pass was overwriting every
- * row's plaintext from the ciphertext; continuing it without `force` would
- * leave every row after the cursor with whatever plaintext it already had,
- * which is exactly what `force` was chosen to replace. Names only.
- */
-export class ForcedPassIncompleteError extends Error {
-  constructor(
-    readonly tableName: string,
-    readonly encryptedColumn: string,
-  ) {
-    super(
-      `The decrypt pass in progress for ${tableName}.${encryptedColumn} was started with --force and has not finished. Re-run with --force to finish it: without it, the rows it has not reached would keep their existing plaintext instead of being overwritten from the ciphertext.`,
-    )
-    this.name = 'ForcedPassIncompleteError'
-  }
-}
-
-/**
  * The largest chunk one write can carry. Each decrypted row binds TWO
  * parameters in the chunk's `UPDATE … FROM (VALUES ($1, $2), …)` (the primary
  * key and the value), and Postgres's wire protocol caps a statement at 65535
@@ -219,6 +200,37 @@ export interface DecryptBackfillResult {
   completed: boolean
 }
 
+/**
+ * Whether this column migration owes a forced pass: one was started and none
+ * has completed since. While it is open every run is forced, whatever the
+ * caller passes, because the rows that pass has not reached still hold the
+ * plaintext it was started to replace.
+ */
+export async function forceObligationOpen(
+  db: ClientBase,
+  tableName: string,
+  encryptedColumn: string,
+): Promise<boolean> {
+  const { rows } = await db.query<{
+    event: string
+    phase: string
+    details: Record<string, unknown> | null
+  }>(
+    `SELECT event, phase, details
+     FROM cipherstash.cs_migrations
+     WHERE table_name = $1 AND column_name = $2
+     ORDER BY id`,
+    [tableName, encryptedColumn],
+  )
+  let open = false
+  for (const row of rows) {
+    if (row.details?.force !== true) continue
+    if (row.event === REVERSE_EVENTS.completed) open = false
+    else if (row.phase === REVERSE_EVENTS.runningPhase) open = true
+  }
+  return open
+}
+
 /** How many `NULL_PLAINTEXT` primary keys a result carries. */
 export const NULL_PLAINTEXT_SAMPLE_SIZE = 20
 
@@ -260,9 +272,10 @@ const REVERSE_EVENTS = {
  *
  * **Resume.** A run resumes from its last checkpoint, and also from an
  * `error` event, which records the last committed cursor; a failed run does
- * not throw away the progress before it. A pass keeps the mode it started
- * in: resuming a `force` pass without `force` throws
- * {@link ForcedPassIncompleteError}, and a `force` run over an unforced pass
+ * not throw away the progress before it. A forced pass, once started, opens
+ * an obligation ({@link forceObligationOpen}): until a forced pass completes,
+ * every run is forced whether or not `force` is passed, so an interrupted
+ * forced pass is always finished as one. A `force` run over an unforced pass
  * starts from the first row.
  *
  * **Write errors.** A failed chunk write throws {@link PlaintextWriteError},
@@ -289,7 +302,9 @@ export async function runDecryptBackfill(
     plaintextColumn,
     plaintextSqlType,
   } = options
-  const force = options.force ?? false
+  const force =
+    (options.force ?? false) ||
+    (await forceObligationOpen(db, tableName, encryptedColumn))
   const serialize = plaintextSerializer(plaintextSqlType)
   const skippedByCode: Record<string, number> = {}
   const nullPlaintextPks: string[] = []
@@ -305,15 +320,9 @@ export async function runDecryptBackfill(
     resumeFromError: true,
     // `force` on every event, so a resume knows which mode the pass ran in.
     baseDetails: force ? { plaintextColumn, force: true } : { plaintextColumn },
-    canResume: (last) => {
-      const lastForced = last.details?.force === true
-      if (lastForced && !force) {
-        throw new ForcedPassIncompleteError(tableName, encryptedColumn)
-      }
-      // A forced run never resumes an unforced pass: the rows before its
-      // cursor were never overwritten. It starts over from the first row.
-      return lastForced === force
-    },
+    // A forced run never resumes an unforced pass: the rows before its
+    // cursor were never overwritten. It starts over from the first row.
+    canResume: (last) => (last.details?.force === true) === force,
     countPending: (after) =>
       countUndecrypted(
         db,

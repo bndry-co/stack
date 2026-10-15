@@ -57,7 +57,7 @@ export {
   type DecryptBackfillProgress,
   type DecryptBackfillResult,
   type DecryptionClientLike,
-  ForcedPassIncompleteError,
+  forceObligationOpen,
   formatCodes,
   MAX_DECRYPT_CHUNK_SIZE,
   NULL_PLAINTEXT_SAMPLE_SIZE,

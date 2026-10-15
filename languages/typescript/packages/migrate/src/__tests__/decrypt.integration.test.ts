@@ -25,7 +25,6 @@ import { columnHasValues, countUndecrypted } from '../cursor.js'
 import {
   type BulkDecryptItem,
   type DecryptionClientLike,
-  ForcedPassIncompleteError,
   MAX_DECRYPT_CHUNK_SIZE,
   PlaintextWriteError,
   runDecryptBackfill,
@@ -310,7 +309,7 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     expect(await plaintextCount()).toBe(300)
   })
 
-  it('will not finish an interrupted --force pass without --force', async () => {
+  it('a plain run finishes an interrupted --force pass as a forced pass', async () => {
     await seed(300)
     // Stale plaintext everywhere: the case --force exists for.
     await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
@@ -323,25 +322,39 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
         if (p.rowsProcessed >= 100) controller.abort()
       },
     })
-    const db = await pool.connect()
-    let before: string | undefined
-    try {
-      before = (await progress(db, TABLE, 'email_encrypted'))?.id
-    } finally {
-      db.release()
-    }
 
-    // A plain re-run would resume at row 101 and keep rows 101-300 stale.
-    await expect(run()).rejects.toBeInstanceOf(ForcedPassIncompleteError)
-    const after = await pool.connect()
-    try {
-      expect((await progress(after, TABLE, 'email_encrypted'))?.id).toBe(before)
-    } finally {
-      after.release()
-    }
-
-    const finished = await run({ force: true })
+    // Unforced, this re-run would resume at row 101 and keep rows 101-300
+    // stale. The open obligation makes it forced, so it resumes the pass.
+    const finished = await run()
     expect(finished.resumed).toBe(true)
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ${TABLE} WHERE email = 'stale@example.com'`,
+    )
+    expect(rows[0]?.n).toBe('0')
+  })
+
+  it('a plain run after a forced pass failed before its first commit still overwrites every row', async () => {
+    await seed(300)
+    await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
+
+    // The forced pass fails on its first chunk, so no checkpoint and no
+    // cursor exist: nothing a resume could key on.
+    const wrongKeyset: DecryptionClientLike = {
+      bulkDecrypt: (payloads) =>
+        Promise.resolve({
+          data: payloads.map((payload) => ({
+            id: payload.id,
+            error: 'no key',
+          })),
+        }),
+    }
+    await expect(
+      run({ force: true, decryptionClient: wrongKeyset }),
+    ).rejects.toBeInstanceOf(UndecryptableBatchError)
+
+    // The forced pass opened an obligation; a plain run still has to meet it.
+    const finished = await run()
+    expect(finished.completed).toBe(true)
     const { rows } = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM ${TABLE} WHERE email = 'stale@example.com'`,
     )
