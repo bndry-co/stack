@@ -1,7 +1,11 @@
 github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20260902024806-f2c7f7d17fbc h1:iGbTgv9Kx5SaTI2tPxaxwDvS5BXZUO565N00cxRVwC8=
 github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20260902024806-f2c7f7d17fbc/go.mod h1:6jpaqAo6f7rjWuxoti0Ymoi9DQZyxpnieWVudhXv38Y=
+github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261015123909-2e895cb9caed h1:supKop+UADso55MvBLebaBjP2vyilWmbAxOtFZJOnQ8=
+github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261015123909-2e895cb9caed/go.mod h1:6jpaqAo6f7rjWuxoti0Ymoi9DQZyxpnieWVudhXv38Y=
 github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20260902024806-f2c7f7d17fbc h1:vlrjoILAURGfpBWucVZEywK22k4lfky1xGDIKV6kqNg=
 github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20260902024806-f2c7f7d17fbc/go.mod h1:RJODA1DCSm4H+1pbmCzDdT2pAIkxhinwIu6ewjh5sPs=
+github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261015123909-2e895cb9caed h1:do5JX9ovxiHzLc9G4wcybbr4f3xaVAYeIKFnOJk9NKw=
+github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261015123909-2e895cb9caed/go.mod h1:RJODA1DCSm4H+1pbmCzDdT2pAIkxhinwIu6ewjh5sPs=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
 github.com/tetratelabs/wazero v1.12.0 h1:DuWcpNu/FzgEXgGBDp8J1Spc+CWOvvtvVyjKlaZopYU=

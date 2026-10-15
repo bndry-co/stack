@@ -1489,6 +1489,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro-crate"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
+dependencies = [
+ "toml_edit",
+]
+
+[[package]]
 name = "proc-macro-error-attr2"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2078,7 +2087,7 @@ dependencies = [
  "thiserror 1.0.69",
  "uuid",
  "vitaminc-aead",
- "vitaminc-aead-value",
+ "vitaminc-aead-frame",
  "vitaminc-encrypt",
  "vitaminc-hmac",
  "vitaminc-prf",
@@ -2111,7 +2120,7 @@ dependencies = [
  "stack-guest-abi",
  "stack-kms",
  "uuid",
- "vitaminc-aead-value",
+ "vitaminc-aead-frame",
  "vitaminc-protected",
  "zeroize",
  "zerokms-protocol",
@@ -2124,7 +2133,8 @@ dependencies = [
  "miette",
  "serde_json",
  "thiserror 1.0.69",
- "vitaminc-aead-value",
+ "vitaminc-aead",
+ "vitaminc-aead-frame",
  "vitaminc-protected",
  "zeroize",
 ]
@@ -2360,6 +2370,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml_datetime"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.25.17+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c"
+dependencies = [
+ "indexmap",
+ "toml_datetime",
+ "toml_parser",
+ "winnow",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.1.5+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
+dependencies = [
+ "winnow",
+]
+
+[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2572,8 +2612,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vitaminc"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35042fb7a81d72dc43c53fec835e61027f18b4d01cc0f7e12d6c6a6ffbf3bfb9"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "vitaminc-aead",
  "vitaminc-context",
@@ -2586,11 +2625,12 @@ dependencies = [
 [[package]]
 name = "vitaminc-aead"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62cacd4dae485e98cfe5407e919187a8468dd933ea4234be5115b7d13a30f3c6"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "bytes",
+ "futures-util",
  "serde",
+ "thiserror 2.0.20",
  "vitaminc-aead-derive",
  "vitaminc-context",
  "vitaminc-protected",
@@ -2601,12 +2641,19 @@ dependencies = [
 [[package]]
 name = "vitaminc-aead-derive"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ff34056b70a8417ad3bf9db73b2bd3be97f448794566c6de2080bd8a7cd9b6b"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.4",
+]
+
+[[package]]
+name = "vitaminc-aead-frame"
+version = "0.5.1"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+dependencies = [
+ "vitaminc-aead",
 ]
 
 [[package]]
@@ -2623,8 +2670,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-context"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7df52501fe33cdb3ee9e155b5242fac184c037d147e58c96e5143ed011252a8"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "mutants",
  "vitaminc-protected",
@@ -2633,8 +2679,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-encrypt"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fbd0e1748055e381e02033e08af385de879c4dcf32e0f6739ac0c0cf0c6f13d"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -2647,8 +2692,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-hmac"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15fe558a5e92d4f2b3f811c5b67d863d9255da5f66d08a71d4f0dd3d0011c563"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "hmac",
  "sha2 0.11.0",
@@ -2660,8 +2704,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-prf"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "712d31d46d76b38c6b62deb35f516fc5636a35f90f39c0213d0ca9a052b4400b"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "mutants",
  "thiserror 2.0.20",
@@ -2672,8 +2715,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-protected"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7b514f605a63f88874ba46ffea81775fad64994475ab239cb19da159e884b7b"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "bitvec",
  "digest 0.11.3",
@@ -2689,9 +2731,9 @@ dependencies = [
 [[package]]
 name = "vitaminc-protected-derive"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cb0a3d11afbe2c909f0cfc9996fe37fd89b1196eb0b8d89a66e28716360ee09"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 3.0.4",
@@ -2700,8 +2742,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-random"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa7b1bfab35ee322de37269c6fd94d8cd94047a66f97cf6722e53e3321482167"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
@@ -2715,8 +2756,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-random-derives"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0915e2bfb417ce11e23123fb7ec122af5d27d8cfd22d6ad6a2cf7a1c2dbb4712"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2726,8 +2766,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-traits"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b31ec300e351a7a59e64899d0a2d7e7227cfa74ac0514f4e745acb2cc9335cee"
+source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2980,6 +3019,15 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "winnow"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "wit-bindgen"

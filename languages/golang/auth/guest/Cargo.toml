@@ -18,6 +18,17 @@ publish = false
 
 [workspace]
 
+# Temporary, as in the root Cargo.toml: the vitaminc crates stack-guest-abi
+# and the stack crates build on come from the branch that implements
+# vitaminc ADR 0001 (cipherstash/vitaminc PRs #439 to #445) until vitaminc
+# releases it.
+[patch.crates-io]
+vitaminc = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc-aead-frame = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+
 [lib]
 # cdylib: the .wasm guest module. rlib: lets the ops/status modules
 # unit-test natively (`cargo test` here, no wasm toolchain needed).
@@ -41,10 +52,6 @@ stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
 # hostname and the process id are native-only there, and creating a device
 # identity is CLI territory.
 stack-profile = { path = "../../../../packages/stack-profile" }
-# The FFI codec for the structured results (a list of workspace ids, the
-# fields of a token): the one codec every binding carries. Same vitaminc
-# version the crypto guest builds against.
-vitaminc-aead-value = "0.5.0"
 # The deserialized form of `secretkey.json` is wiped when it drops.
 zeroize = { version = "1", features = ["derive"] }
 
