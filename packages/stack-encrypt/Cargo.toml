@@ -31,7 +31,7 @@ stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.2.0" }
 # version or the aead crate is duplicated.
 vitaminc-aead = { workspace = true }
 # `dynamic`: the runtime value model every language binding funnels through.
-vitaminc-aead-value = { workspace = true, optional = true }
+vitaminc-aead-frame = { workspace = true, optional = true }
 vitaminc-encrypt = { workspace = true }
 vitaminc-hmac = { workspace = true }
 vitaminc-prf = { workspace = true }
@@ -60,8 +60,8 @@ default = ["http"]
 http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # `stack_encrypt::dynamic`: encrypt and decrypt values whose types are known
 # only at runtime, as an FFI binding's are. Off by default — it is only of
-# use to a binding author, and it pulls `vitaminc-aead-value` in.
-dynamic = ["dep:vitaminc-aead-value"]
+# use to a binding author, and it pulls `vitaminc-aead-frame` in.
+dynamic = ["dep:vitaminc-aead-frame"]
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.

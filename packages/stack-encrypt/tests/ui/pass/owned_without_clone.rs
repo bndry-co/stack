@@ -5,10 +5,10 @@ use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, EqualityTerm, MatchTerm
 use stack_encrypt::target::{
     ciphertext, equality, matching, ope, ore, CallerContext, Owned, Pending,
 };
-use stack_encrypt::{nonempty, Encrypt, KeysetCipher, StackCipherText};
+use stack_encrypt::{nonempty, KeysetCipher, Plaintext, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
-fn seal<'a, S: Encrypt>(
+fn seal<'a, S: Plaintext>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, StackCipherText, FakeDataKeySource> {

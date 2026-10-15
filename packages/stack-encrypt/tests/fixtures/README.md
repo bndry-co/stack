@@ -11,10 +11,9 @@ same seed. `tests/record_lowering.rs` opens each record with the other
 author and checks that both derive the terms it holds. That cross-opening
 is the proof that `dynamic::record` is a lowering into the plan builder and
 not a second executor (ADR-0007, amended 2026-10-06). A Go test reads the
-same file later, once the Go SDK's generated code is the third author. A
-chain over bare `u32` or `String` fields derives the same terms but a
-different leaf encoding, which the other reader cannot open or tell apart;
-`dynamic::record`'s docs say why the lowering does not bridge that.
+same file later, once the Go SDK's generated code is the third author.  A
+chain over bare `u32` or `String` fields seals the same leaves too: every
+leaf is tagged with its type (vitaminc ADR 0001), whoever wrote it.
 
 Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p
 stack-encrypt --all-features --test record_lowering`. Only the sealed bytes

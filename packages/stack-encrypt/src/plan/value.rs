@@ -356,7 +356,7 @@ pub trait ValueShape<S>: ValueLayout<S> {
 
 impl<S, X> ValueLayout<S> for Indexed<X>
 where
-    S: crate::Encrypt + Clone,
+    S: crate::Plaintext + Clone,
     X: Indexes<S> + Clone,
 {
     type Output = Encrypted<X::Terms>;
@@ -367,7 +367,7 @@ where
 
 impl<S, X> ValueShape<S> for Indexed<X>
 where
-    S: crate::Encrypt + Clone,
+    S: crate::Plaintext + Clone,
     X: Indexes<S> + Clone,
 {
     fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, Self::Output, K, CallerContext>
@@ -660,7 +660,7 @@ macro_rules! indexed_opens {
     ($([$($generics:tt)*] $record:ty;)+) => {$(
         impl<S, X, K, $($generics)*> Opens<$record, K> for ValuePlan<S, Indexed<X>>
         where
-            S: crate::Decrypt<'static> + 'static,
+            S: crate::Decrypt + Send + 'static,
             K: 'static,
         {
             type Output = S;
@@ -678,7 +678,7 @@ macro_rules! indexed_opens {
         }
         impl<S, X, K, $($generics)*> Opens<Vec<$record>, K> for ValuePlan<S, Indexed<X>>
         where
-            S: crate::Decrypt<'static> + 'static,
+            S: crate::Decrypt + Send + 'static,
             K: 'static,
         {
             type Output = Vec<S>;

@@ -108,8 +108,8 @@
 //! use stack_encrypt::target::transcode::{Transcode, Visitor};
 //! use stack_encrypt::target::{self, CallerContext};
 //! use stack_encrypt::{
-//!     CipherText, Decryptable, Encrypt, EncryptFrom, Encryption, Error, SealedValue, StackCipher,
-//!     nonempty,
+//!     CipherText, Decryptable, EncryptFrom, Encryption, Error, Plaintext, SealedValue,
+//!     StackCipher, nonempty,
 //! };
 //! use stack_encrypt::kms::FakeDataKeySource;
 //!
@@ -138,7 +138,7 @@
 //! }
 //! // The declaration: the canonical ciphertext operation, read into this type.
 //! // It seals under the AEAD half of the context the record threads to it.
-//! impl<S: Encrypt + Clone> EncryptFrom<S> for LeafBytes {
+//! impl<S: Plaintext + Clone> EncryptFrom<S> for LeafBytes {
 //!     type Context = CallerContext;
 //!     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
 //!     where

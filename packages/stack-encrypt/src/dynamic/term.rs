@@ -14,8 +14,8 @@
 //! going to be **stored** should come from the record path, where it shares
 //! one context with the ciphertext beside it (ADR-0004).
 
+use super::FfiValue;
 use stack_kms::DataKeySource;
-use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 use zeroize::Zeroizing;
 

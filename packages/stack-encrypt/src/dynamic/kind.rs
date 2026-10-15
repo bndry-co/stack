@@ -6,13 +6,11 @@
 //! JavaScript number is a float, and match is defined over text alone. So a
 //! plan field may say what its values are, in its `"type"` key.
 //!
-//! The vocabulary is vitaminc's, not this crate's: a declared type is a
-//! [`ValueKind`] (`vitaminc_aead_value::ValueKind`, re-exported here), whose
+//! The vocabulary is [`ValueKind`], whose
 //! [`name`](ValueKind::name)s (`"uint64"`, `"string"`, …, `"array"`,
-//! `"object"`) are frozen wire format beside vitaminc's tag table, and whose
+//! `"object"`) are frozen wire format, and whose
 //! [`holds`](ValueKind::holds) and [`FfiValue::kind`] say whether a value is
-//! of a kind. What vitaminc deliberately leaves to the declaring layer is the
-//! two rules this module adds:
+//! of a kind. Beside it, this module adds two rules:
 //!
 //! - [`admits`]: which indexes a kind is defined for, so a plan asking for
 //!   match on an integer or equality on a float is refused when it is built;
@@ -37,7 +35,7 @@
 //! field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field). A field that only seals, or
 //! only carries its value through, may leave it out: no term derives from it.
-use vitaminc_aead_value::{FfiValue, ValueKind};
+use super::{FfiValue, ValueKind};
 
 use super::{Error, Reason};
 use crate::target::IndexSpec;

@@ -1,7 +1,7 @@
 //! Encrypting values whose type is known only at runtime.
 //!
 //! Everything else in this crate is typed: a target names its source type,
-//! and the operations it composes are reached through bounds — `Encrypt` for
+//! and the operations it composes are reached through bounds — `Plaintext` for
 //! a ciphertext, [`PrfValue`](vitaminc_prf::PrfValue) for an equality term,
 //! `AsRef<str>` for a match term. That is what makes a term a cross-language
 //! contract: `equality_term(34u32)` derives the same bytes wherever it is
@@ -13,8 +13,8 @@
 //! the typed operation. This module is that something, written once here
 //! rather than once per language binding.
 //!
-//! The runtime value is [`FfiValue`], vitaminc's language-neutral value tree
-//! and the type every binding already funnels through.
+//! The runtime value is [`FfiValue`], a language-neutral value tree and
+//! the type every binding already funnels through.
 //!
 //! # What is here
 //!
@@ -37,7 +37,7 @@
 //!
 //! # What is not here
 //!
-//! Encrypting a whole value is not: [`FfiValue`] implements `Encrypt`
+//! Encrypting a whole value is not: [`FfiValue`] implements `Plaintext`
 //! already, so `keyset.encrypt(value, aad)` is the whole of it and needs
 //! nothing from this module. Nor is a second executor: nothing here calls
 //! the term functions or the seal path to produce a record. A capability a
@@ -70,6 +70,7 @@
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
+mod ffi_value;
 mod kind;
 pub mod record;
 mod target;
@@ -79,20 +80,22 @@ mod value;
 use std::fmt;
 
 pub use context::{borrowed, context};
+/// The language-neutral value tree — the runtime value every binding
+/// funnels through — and the value kinds, the type a plan field declares
+/// in its `"type"` key. A kind's names are frozen wire format; see
+/// [`admits`] and [`read`] for what a kind means to this engine. A value
+/// crosses a binding's boundary as a transport frame
+/// ([`FfiValue::to_frame`], [`FfiValue::from_frame`]); everything else here
+/// takes and returns values, never encoded bytes.
+pub use ffi_value::{
+    Element, Entry, FfiValue, FromFrameError, ParseValueKindError, Put, Root, Utf8String,
+    ValueKind, ValueMap, ValueSeq, ValueSink,
+};
 pub use kind::{admits, read};
 pub use record::{FieldPlan, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
 pub use term::{term, Scalar, TermBytes};
-pub use value::Value;
-/// vitaminc's language-neutral value tree — the runtime value every binding
-/// funnels through. Its transport codec is `vitaminc_aead_value::transport`,
-/// which stays the binding's: this crate takes and returns values, never
-/// encoded bytes.
-pub use vitaminc_aead_value::FfiValue;
-/// vitaminc's value kinds: the type a plan field declares in its `"type"`
-/// key. Its names are frozen wire format; see [`admits`] and [`read`] for
-/// what a kind means to this engine.
-pub use vitaminc_aead_value::ValueKind;
+pub use value::{AsValue, Value};
 
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
@@ -137,7 +140,7 @@ impl<K> fmt::Debug for Scope<'_, K> {
 
 /// The UTF-8 inside a string leaf. Valid by `Utf8String`'s construction
 /// invariant; checked rather than assumed because this is boundary code.
-fn utf8(s: &vitaminc_aead_value::Utf8String) -> Option<&str> {
+fn utf8(s: &Utf8String) -> Option<&str> {
     std::str::from_utf8(s.risky_ref()).ok()
 }
 

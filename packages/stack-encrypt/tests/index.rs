@@ -622,8 +622,9 @@ mod given_encrypted_terms_as_a_target {
     /// opens through the other's reader.
     async fn same_bytes<S, Terms, X>(value: S, indexes: X)
     where
-        S: stack_encrypt::Encrypt
-            + for<'a> stack_encrypt::Decrypt<'a>
+        S: stack_encrypt::Plaintext
+            + stack_encrypt::Decrypt
+            + Send
             + Clone
             + PartialEq
             + std::fmt::Debug

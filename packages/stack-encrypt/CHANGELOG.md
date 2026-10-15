@@ -142,6 +142,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same way. Storing the empty filter tells a reader of the database that the
   value is empty, separator-only or shorter than the n-gram length
   (ADR-0009).
+- **Values describe themselves with vitaminc's `Plaintext` and read back
+  with `Decrypt` (vitaminc ADR 0001).** `KeysetCipher::encrypt`,
+  `StackCipher::decrypt` and every target take `Plaintext` where they took
+  `Encrypt`, and `Decrypt` where they took `Decrypt<'static>`; derive both
+  with `vitaminc_aead::{Plaintext, Decrypt}`. `Encrypt`, `Decipher`,
+  `Element` and `Cipher` are no longer re-exported, and `StackDecipher` and
+  `BoxedPassthrough` are gone. A pending tree is planned rather than driven:
+  `PendingStackCipherText::plan(value, aad)`, then `seal` or
+  `into_pending` as before. The key fetch is unchanged: one batched
+  `generate_keys` per assembly to seal, one `retrieve_keys` per keyset to
+  open.
+- **Every leaf records its type, so a Rust field and a data-plan field
+  share leaves.** A Rust `u32` and a data plan's `uint32` field seal the
+  same leaf under the same context, and each opens the other's; a reader of
+  another type is refused rather than handed changed plaintext, as a bare
+  `String` reader used to read a binding's leaf as `"\nalice"` (#1118).
+  Leaves are vitaminc's wire version 2, so a ciphertext sealed by an
+  earlier build does not open.
+- **An absent value is a sealed null leaf**, a `Single` like any other
+  value: the absent marker (`CipherText::None`) and
+  `transcode::Visitor::absent` are gone.
+- **A passthrough travels as its frame.** `StackCipherText` is vitaminc's
+  `Node<SealedValue>`: a passthrough subtree is a `PassthroughFrame`, the
+  transport frame of its value, in place of a boxed value, and
+  `transcode::Visitor::passthrough` takes one.
+- **`dynamic::FfiValue` and `dynamic::ValueKind` are this crate's own**,
+  with the same variants and kind names, since vitaminc no longer has a
+  value tree. A value crosses a binding's boundary as a transport frame
+  (`FfiValue::to_frame`, `FfiValue::from_frame`), and is read through its
+  `Decrypt` sink: an 8- or 16-bit integer in a frame reads as the 32-bit
+  variant of its sign, and a scalar no variant holds is refused.
 
 - **`StackCipher::query_index` is gone**, with `QueryIndexBuilder` and
   `QueryIndex`. Every query names an operator now that the orderings have

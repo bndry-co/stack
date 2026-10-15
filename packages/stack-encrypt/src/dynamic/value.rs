@@ -2,9 +2,11 @@
 
 use std::fmt;
 
-use vitaminc_aead::{Cipher, Decipher, Decrypt, Encrypt, IntoAad};
-use vitaminc_aead_value::FfiValue;
+use vitaminc_aead::plaintext::Sink;
+use vitaminc_aead::{Decrypt, Plaintext};
 use vitaminc_protected::{Controlled, Protected};
+
+use super::{FfiValue, Put, ValueSink};
 
 use crate::plan::IntoLabel;
 use crate::{Label, LabelError};
@@ -24,11 +26,9 @@ use crate::{Label, LabelError};
 /// each once per operation that consumes it, as the derive's does.
 ///
 /// It seals and opens as the [`FfiValue`] it wraps, in vitaminc's
-/// self-describing tagged leaf encoding — a different leaf from a bare
-/// `u32`'s or `String`'s, and one the other reader cannot tell apart by
-/// inspection; [`dynamic::record`](super::record) says what follows from
-/// that. Its `Debug` names the type and nothing else: the value is
-/// plaintext.
+/// self-describing tagged leaf encoding — the same leaf a bare `u32` or
+/// `String` of the same value seals as. Its `Debug` names the type and
+/// nothing else: the value is plaintext.
 pub struct Value(FfiValue);
 
 impl Value {
@@ -105,23 +105,33 @@ fn duplicate(value: &FfiValue) -> FfiValue {
     }
 }
 
-impl Encrypt for Value {
-    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
-    where
-        C: Cipher,
-        A: IntoAad<'a>,
-    {
-        self.0.encrypt_with_aad(cipher, aad)
+impl Plaintext for Value {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.0.visit(sink)
     }
 }
 
-impl<'c> Decrypt<'c> for Value {
-    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
-    where
-        D: Decipher<'c>,
-        A: IntoAad<'a>,
-    {
-        D::map_ok(FfiValue::decrypt_with_aad(decipher, aad), Value)
+impl Plaintext for &Value {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (&self.0).visit(sink)
+    }
+}
+
+impl Decrypt for Value {
+    type Sink = ValueSink<AsValue>;
+    fn sink() -> Self::Sink {
+        ValueSink::new(AsValue)
+    }
+}
+
+/// Where [`Value`]'s [`Decrypt`] sink puts what it builds: the
+/// [`FfiValue`] sink's value, wrapped.
+pub struct AsValue;
+
+impl Put for AsValue {
+    type Ok = Value;
+    fn put(self, value: FfiValue) -> Value {
+        Value(value)
     }
 }
 
