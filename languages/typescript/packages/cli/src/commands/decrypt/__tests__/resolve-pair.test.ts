@@ -45,6 +45,7 @@ import {
   assessExistingTwin,
   type DecryptPair,
   derivePlaintextName,
+  openForwardMigrationMessage,
   resolveDecryptPair,
   twinHazardMessage,
 } from '../lib/resolve-pair.js'
@@ -369,18 +370,26 @@ describe('assessExistingTwin', () => {
     })
   })
 
-  it.each(['dual-writing', 'backfilling', 'backfilled'] as const)(
-    'flags the forward source column at %s, values or not',
-    async (phase) => {
+  it.each([
+    'schema-added',
+    'dual-writing',
+    'backfilling',
+    'backfilled',
+  ] as const)(
+    'refuses the source column of a forward migration still open at %s',
+    (phase) => {
       expect(
-        await assessExistingTwin(db, twin({ forwardState: forwardAt(phase) })),
-      ).toEqual({
-        kind: 'forward-source',
-        forwardPhase: phase,
-        hasValues: false,
-      })
+        openForwardMigrationMessage(twin({ forwardState: forwardAt(phase) })),
+      ).toContain(`still open at '${phase}'`)
     },
   )
+
+  it("does not refuse once the forward migration reached 'dropped'", () => {
+    expect(
+      openForwardMigrationMessage(twin({ forwardState: forwardAt('dropped') })),
+    ).toBeNull()
+    expect(openForwardMigrationMessage(twin())).toBeNull()
+  })
 
   it("a forward lifecycle at 'dropped' is no longer the source, but its values still count", async () => {
     expect(
@@ -402,13 +411,8 @@ describe('assessExistingTwin', () => {
   })
 
   it('explains both ways forward, with names only', () => {
-    const message = twinHazardMessage(twin(), {
-      kind: 'forward-source',
-      forwardPhase: 'backfilled',
-      hasValues: true,
-    })
-    expect(message).toContain('users.email is the source column')
-    expect(message).toContain("forward phase 'backfilled'")
+    const message = twinHazardMessage(twin())
+    expect(message).toContain('users.email already holds values')
     expect(message).toContain(
       '--force  overwrite every row of email with the decrypted ciphertext',
     )

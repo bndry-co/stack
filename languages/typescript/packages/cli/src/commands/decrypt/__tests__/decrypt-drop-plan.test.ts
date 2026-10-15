@@ -488,7 +488,7 @@ describe('decrypt plan', () => {
     )
   })
 
-  it('warns when the twin is the source of a forward encryption that was never dropped', async () => {
+  it('warns that the backfill will refuse a twin whose forward migration was never dropped', async () => {
     resolveMock.mockResolvedValue(
       pair({ state: null, forwardState: forward('backfilled') }),
     )
@@ -497,10 +497,9 @@ describe('decrypt plan', () => {
     await decryptPlanCommand({ table: 'users' })
 
     const warning = vi.mocked(p.log.warn).mock.calls[0]?.[0] ?? ''
-    expect(warning).toContain(
-      "forward phase 'backfilled' in cipherstash.cs_migrations",
-    )
-    expect(warning).toContain('every row updated since then has a stale value')
+    expect(warning).toContain('`stash decrypt backfill` will refuse')
+    expect(warning).toContain("still open at 'backfilled'")
+    expect(warning).toContain('stash encrypt drop')
   })
 
   it('does not second-guess a twin the reverse lifecycle in progress filled', async () => {

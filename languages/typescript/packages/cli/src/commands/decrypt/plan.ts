@@ -20,6 +20,7 @@ import { drizzleColumnLine, drizzleImports } from './lib/orm-hints.js'
 import {
   assessExistingTwin,
   type DecryptPair,
+  openForwardMigrationMessage,
   resolveDecryptPair,
   TWIN_HAZARD_FLAGS,
   type TwinHazard,
@@ -71,10 +72,11 @@ export interface DecryptPlanOptions {
  * original column had one.
  *
  * A twin that already exists is checked the way `decrypt backfill`'s first
- * run checks it ({@link assessExistingTwin}): when it holds values, or is the
- * source of a forward encryption that was never dropped, plan warns with the
- * same text the backfill refuses with, and names the flag the backfill will
- * need. Plan writes nothing for such a twin, so it warns rather than fails.
+ * run checks it: when it is the source of a forward encryption that was never
+ * dropped ({@link openForwardMigrationMessage}), or holds values
+ * ({@link assessExistingTwin}), plan warns with the same text the backfill
+ * refuses with. Plan writes nothing for such a twin, so it warns rather than
+ * fails.
  */
 export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
   p.intro(runnerCommand(detectPackageManager(), 'stash decrypt plan'))
@@ -130,6 +132,13 @@ export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
     const existing = pairs.filter((pair) => pair.plaintextSqlType !== null)
     const hazards = new Map<DecryptPair, TwinHazard>()
     for (const pair of existing) {
+      const openForward = openForwardMigrationMessage(pair)
+      if (openForward !== null) {
+        p.log.warn(
+          `\`stash decrypt backfill\` will refuse ${options.table}.${pair.encryptedColumn}: ${openForward}`,
+        )
+        continue
+      }
       const hazard = await assessExistingTwin(client, pair)
       if (hazard === null) {
         p.log.info(
@@ -139,7 +148,7 @@ export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
       }
       hazards.set(pair, hazard)
       p.log.warn(
-        `${options.table}.${pair.plaintextColumn} already exists (${pair.plaintextSqlType}), but it cannot be trusted as the plaintext twin of ${pair.encryptedColumn} as it stands. \`stash decrypt backfill\` will refuse it until you choose:\n${twinHazardMessage(pair, hazard)}`,
+        `${options.table}.${pair.plaintextColumn} already exists (${pair.plaintextSqlType}), but it cannot be trusted as the plaintext twin of ${pair.encryptedColumn} as it stands. \`stash decrypt backfill\` will refuse it until you choose:\n${twinHazardMessage(pair)}`,
       )
     }
     const toAdd = pairs.filter(
@@ -348,12 +357,19 @@ async function renderOverview(
         lines.push(
           `  → ${key} → ${pair.plaintextColumn}: ${phase} → ${runner(`stash decrypt backfill --table ${table} --column ${column}`)}`,
         )
+      } else if (
+        pair.forwardState !== null &&
+        pair.forwardState.phase !== 'dropped'
+      ) {
+        lines.push(
+          `  ! ${key} → ${target}: forward encryption still open at '${pair.forwardState.phase}' — finish or abandon it first, see ${runner(`stash decrypt plan --table ${table} --column ${column}`)}`,
+        )
       } else if (pair.plaintextSqlType !== null) {
         const hazard = await assessExistingTwin(client, pair)
         lines.push(
           hazard === null
             ? `  → ${key} → ${target}: twin exists → ${runner(`stash decrypt backfill --table ${table} --column ${column}`)}`
-            : `  ! ${key} → ${target}: ${hazard.kind === 'forward-source' ? `twin is the source of a forward encryption still at '${hazard.forwardPhase}'` : 'twin already holds values'}; the backfill needs ${TWIN_HAZARD_FLAGS.overwrite} or ${TWIN_HAZARD_FLAGS.keep} — see ${runner(`stash decrypt plan --table ${table} --column ${column}`)}`,
+            : `  ! ${key} → ${target}: twin already holds values; the backfill needs ${TWIN_HAZARD_FLAGS.overwrite} or ${TWIN_HAZARD_FLAGS.keep} — see ${runner(`stash decrypt plan --table ${table} --column ${column}`)}`,
         )
       } else if (pair.mapping === null) {
         lines.push(

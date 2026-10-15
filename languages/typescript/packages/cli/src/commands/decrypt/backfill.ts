@@ -24,6 +24,7 @@ import {
 import {
   assessExistingTwin,
   type DecryptPair,
+  openForwardMigrationMessage,
   resolveDecryptPair,
   type TwinHazard,
   twinHazardMessage,
@@ -177,12 +178,15 @@ export async function decryptBackfillCommand(
       `${options.table}.${pair.encryptedColumn} is ${pair.domain} — reversing into ${pair.plaintextColumn} (${plaintextSqlType}). Lifecycle: backfill → switch the app to ${pair.plaintextColumn} by name → stash decrypt drop.`,
     )
 
+    const openForward = openForwardMigrationMessage(pair)
+    if (openForward !== null) throw new BackfillConfigError(openForward)
+
     // Before anything is recorded: once the dual-write gate writes its event,
     // later runs treat the twin's values as this lifecycle's own.
     const hazard = await assessExistingTwin(db, pair)
     if (hazard !== null) {
       if (!options.force && !options.confirmPlaintextCurrent) {
-        throw new BackfillConfigError(twinHazardMessage(pair, hazard))
+        throw new BackfillConfigError(twinHazardMessage(pair))
       }
       if (!options.force) {
         p.log.warn(

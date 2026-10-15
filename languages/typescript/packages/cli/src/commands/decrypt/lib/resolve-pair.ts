@@ -5,7 +5,6 @@ import {
   detectColumnEqlVersion,
   isReverseMigrationPhase,
   listEncryptedColumns,
-  type MigrationPhase,
   type MigrationStateRow,
   type PlaintextTypeMapping,
   plaintextTypeForEqlDomain,
@@ -273,25 +272,14 @@ export async function resolveDecryptPair(
 
 /**
  * Why a plaintext twin that already exists cannot be trusted as-is when a
- * reverse lifecycle starts:
- *
- * - `forward-source` — it is the column a forward encryption started from,
- *   and that lifecycle never reached `dropped`. Its values are the plaintext
- *   from before the switch, stale for every row the application updated
- *   after it stopped writing this column.
- * - `prepopulated` — it already holds values, from wherever.
- *
- * The reverse backfill only fills NULLs, so either way it would keep those
+ * reverse lifecycle starts: it already holds values (`prepopulated`), from
+ * wherever. The reverse backfill only fills NULLs, so it would keep those
  * values, record `decrypted`, and let `decrypt drop` destroy the only current
- * copy, in the encrypted column.
+ * copy, in the encrypted column. (A twin that is the source of a forward
+ * migration still open is not a hazard to acknowledge but a refusal:
+ * {@link openForwardMigrationMessage}.)
  */
-export type TwinHazard =
-  | {
-      kind: 'forward-source'
-      forwardPhase: MigrationPhase
-      hasValues: boolean
-    }
-  | { kind: 'prepopulated' }
+export type TwinHazard = { kind: 'prepopulated' }
 
 /**
  * Check a twin before the FIRST reverse run trusts it. Returns `null` when
@@ -309,14 +297,25 @@ export async function assessExistingTwin(
     pair.table,
     pair.plaintextColumn,
   )
-  if (pair.forwardState !== null && pair.forwardState.phase !== 'dropped') {
-    return {
-      kind: 'forward-source',
-      forwardPhase: pair.forwardState.phase,
-      hasValues,
-    }
-  }
   return hasValues ? { kind: 'prepopulated' } : null
+}
+
+/**
+ * Why no reverse migration may start on this pair yet, or `null`: the twin is
+ * the source column of a forward migration into the encrypted column that was
+ * never dropped. At most one column migration is open per column pair, so the
+ * forward one must be finished (`stash encrypt drop`) or abandoned first.
+ * Names and phases only, never a value.
+ */
+export function openForwardMigrationMessage(
+  pair: Pick<
+    DecryptPair,
+    'table' | 'encryptedColumn' | 'plaintextColumn' | 'forwardState'
+  >,
+): string | null {
+  const forward = pair.forwardState
+  if (forward === null || forward.phase === 'dropped') return null
+  return `${pair.table}.${pair.plaintextColumn} is the source of a forward encryption into ${pair.encryptedColumn} that is still open at '${forward.phase}' in cipherstash.cs_migrations. A reverse migration cannot start while it is open. Finish it with \`stash encrypt drop\` first, or, to abandon encryption instead, stop writing ${pair.encryptedColumn}, switch reads back to ${pair.plaintextColumn} and drop ${pair.encryptedColumn}: while dual-writes are live, ${pair.plaintextColumn} is still current and there is nothing to decrypt.`
 }
 
 /** The two ways past a {@link TwinHazard}, as `decrypt backfill` flags. */
@@ -331,16 +330,11 @@ export const TWIN_HAZARD_FLAGS = {
  */
 export function twinHazardMessage(
   pair: Pick<DecryptPair, 'table' | 'encryptedColumn' | 'plaintextColumn'>,
-  hazard: TwinHazard,
 ): string {
   const twin = `${pair.table}.${pair.plaintextColumn}`
   const source = `${pair.table}.${pair.encryptedColumn}`
-  const why =
-    hazard.kind === 'forward-source'
-      ? `${twin} is the source column of a forward encryption into ${pair.encryptedColumn} that was never dropped (forward phase '${hazard.forwardPhase}' in cipherstash.cs_migrations).${hazard.hasValues ? ' It still holds the plaintext from before reads moved to the encrypted column.' : ''} If your application stopped writing ${pair.plaintextColumn} at that switch, every row updated since then has a stale value in it.`
-      : `${twin} already holds values, and no reverse migration is in progress for ${source}. Nothing records where they came from or whether they are current.`
   return [
-    why,
+    `${twin} already holds values, and no reverse migration is in progress for ${source}. Nothing records where they came from or whether they are current.`,
     `The reverse backfill only fills rows where ${pair.plaintextColumn} is NULL, so it would keep those values, mark the column decrypted, and \`stash decrypt drop\` would then drop ${pair.encryptedColumn}: the only current copy.`,
     'Choose one, once the application writes BOTH columns on every insert and update:',
     `  ${TWIN_HAZARD_FLAGS.overwrite}  overwrite every row of ${pair.plaintextColumn} with the decrypted ciphertext (the safe choice when in doubt).`,

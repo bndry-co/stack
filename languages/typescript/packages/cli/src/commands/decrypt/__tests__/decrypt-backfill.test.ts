@@ -306,13 +306,39 @@ describe('decrypt backfill', () => {
     exitSpy.mockRestore()
   })
 
+  it('refuses a twin whose forward migration was never dropped, even with --force, recording nothing', async () => {
+    resolveMock.mockResolvedValue(
+      pair({
+        state: null,
+        forwardState: {
+          ...reverseInFlight,
+          columnName: 'email',
+          event: 'backfilled',
+          phase: 'backfilled',
+          details: null,
+        },
+      }),
+    )
+    const exitSpy = spyExit()
+
+    await decryptBackfillCommand({
+      table: 'users',
+      column: 'email_encrypted',
+      confirmDualWritesDeployed: true,
+      force: true,
+    })
+
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining("still open at 'backfilled'"),
+    )
+    expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
+    expect(migrateMocks.runDecryptBackfill).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    exitSpy.mockRestore()
+  })
+
   describe('a plaintext twin that already holds values (first run)', () => {
     const prepopulated: TwinHazard = { kind: 'prepopulated' }
-    const forwardSource: TwinHazard = {
-      kind: 'forward-source',
-      forwardPhase: 'backfilled',
-      hasValues: true,
-    }
 
     beforeEach(() => {
       resolveMock.mockResolvedValue(pair({ state: null }))
@@ -338,27 +364,8 @@ describe('decrypt backfill', () => {
       exitSpy.mockRestore()
     })
 
-    it('refuses the source column of a forward encryption that was never dropped', async () => {
-      hazardMock.mockResolvedValue(forwardSource)
-      const exitSpy = spyExit()
-
-      await decryptBackfillCommand({
-        table: 'users',
-        column: 'email_encrypted',
-        confirmDualWritesDeployed: true,
-      })
-
-      const message = vi.mocked(p.log.error).mock.calls[0]?.[0] ?? ''
-      expect(message).toContain(
-        "forward phase 'backfilled' in cipherstash.cs_migrations",
-      )
-      expect(message).toContain('the only current copy')
-      expect(migrateMocks.runDecryptBackfill).not.toHaveBeenCalled()
-      exitSpy.mockRestore()
-    })
-
     it('--force overwrites it from the ciphertext, and the gate records the choice', async () => {
-      hazardMock.mockResolvedValue(forwardSource)
+      hazardMock.mockResolvedValue(prepopulated)
 
       await decryptBackfillCommand({
         table: 'users',
@@ -373,7 +380,7 @@ describe('decrypt backfill', () => {
           event: 'decrypt_dual_writing',
           details: {
             plaintextColumn: 'email',
-            existingPlaintext: 'forward-source',
+            existingPlaintext: 'prepopulated',
             acknowledgedWith: 'force',
           },
         }),
