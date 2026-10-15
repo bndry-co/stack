@@ -588,6 +588,49 @@ async fn verify_keeps_every_real_match_and_folds_case_as_the_index_does() {
     );
 }
 
+/// A match query is cut in Unicode 16 NFC, as the stored value is, so a
+/// query and a row that spell one string in its two normal forms match and
+/// verify. Text holding a code point unassigned in Unicode 16 has no normal
+/// form: the query is refused, and such a row verifies against nothing.
+#[tokio::test]
+async fn a_match_query_is_cut_in_nfc_and_refuses_text_with_no_normal_form() {
+    let cipher = stack_cipher().await;
+    let plan = people_plan();
+    let email_plan = plan.field("email").unwrap();
+
+    let query = cipher
+        .query(op::Matches, "Rene\u{301}e")
+        .on(&email_plan)
+        .await
+        .unwrap();
+    let precomposed = cipher
+        .query(op::Matches, "Ren\u{e9}e")
+        .on(&email_plan)
+        .await
+        .unwrap();
+    assert_eq!(query, precomposed, "one string, one filter");
+    assert!(query.verify("Ren\u{e9}e Martin"));
+    assert!(precomposed.verify("Rene\u{301}e Martin"));
+    assert!(
+        !query.verify("Ren\u{e9}e \u{378}"),
+        "a value with no normal form verifies against nothing"
+    );
+
+    let refused = cipher
+        .query(op::Matches, "Ren\u{378}e")
+        .on(&email_plan)
+        .await;
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Term(TermError::Normalize(
+                vitaminc_normalize::NormalizeError::UnassignedCodePoint
+            )))
+        ),
+        "{refused:?}"
+    );
+}
+
 #[tokio::test]
 async fn verify_drops_a_row_the_filter_matched_by_chance() {
     let cipher = stack_cipher().await;

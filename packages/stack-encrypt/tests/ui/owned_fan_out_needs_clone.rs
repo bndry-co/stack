@@ -6,7 +6,7 @@ use stack_encrypt::target::{ciphertext, equality, CallerContext, Owned};
 use stack_encrypt::{nonempty, KeysetCipher, Encrypt};
 use stack_kms::FakeDataKeySource;
 
-fn seal_and_index<S: Encrypt + vitaminc_prf::PrfValue>(
+fn seal_and_index<S: Encrypt>(
     keyset: &KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) {

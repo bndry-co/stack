@@ -685,7 +685,7 @@ impl QueryToken {
     }
 }
 
-impl<S: vitaminc_prf::PrfValue + 'static> Supports<Eq, S> for Equality {
+impl<S: crate::Encrypt + 'static> Supports<Eq, S> for Equality {
     type Query = EqualityTerm;
     type Verifier = ();
     fn check(&self, _: &S) -> Result<(), Error> {
@@ -708,7 +708,9 @@ where
         self.admit(value).map(drop)
     }
     fn verifier(&self, value: &S) -> QueryTokens {
-        QueryTokens::of::<O>(value.as_ref())
+        // `admit` refuses text the index cannot normalize, so this is the
+        // query's tokens; a query that got here otherwise verifies nothing.
+        QueryTokens::of::<O>(value.as_ref()).unwrap_or_default()
     }
     fn admit(&self, value: &S) -> Result<QueryTokens, Error> {
         let folds = O::options().downcase;
@@ -811,7 +813,7 @@ pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
     type Via: Supports<Op, In> + Default;
 }
 
-impl<S: vitaminc_prf::PrfValue + 'static> Answers<Eq, S> for EqualityTerm {
+impl<S: crate::Encrypt + 'static> Answers<Eq, S> for EqualityTerm {
     type Via = Equality;
 }
 
@@ -859,7 +861,7 @@ pub trait DefaultIndex<In: Input<Self::Arity>>: Operator {
     type Via: Supports<Self, In> + Default;
 }
 
-impl<S: vitaminc_prf::PrfValue + 'static> DefaultIndex<S> for Eq {
+impl<S: crate::Encrypt + 'static> DefaultIndex<S> for Eq {
     type Via = Equality;
 }
 

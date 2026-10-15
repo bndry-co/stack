@@ -14,7 +14,7 @@ fn seal<'a, S: Encrypt>(
 ) -> Pending<'a, StackCipherText, FakeDataKeySource> {
     keyset.run(ciphertext::<_, _, Owned>(), value, nonempty!("column").into())
 }
-fn index<'a, S: vitaminc_prf::PrfValue>(
+fn index<'a, S: Encrypt>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, EqualityTerm, FakeDataKeySource> {
