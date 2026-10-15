@@ -18,6 +18,8 @@ import tempfile
 from impact_gate.baseline import build_baseline, save_baseline
 from impact_gate.core.config import MeasureConfig
 import lizard
+from pygments.lexers import JavascriptLexer, TypeScriptLexer
+from pygments.token import Keyword, Name
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / '.github' / 'impact-gate'
@@ -140,6 +142,7 @@ def report(args: argparse.Namespace, policy: str) -> None:
             f'Baseline target: `{args.base}`; commit: `{meta["head"]}`. '
             f'History: latest {HISTORY_COMMITS} first-parent commits; recursively expanded '
             'merge observations may exceed this limit. p90/p98 are advisory; prior weight: 200.')
+    spans: dict = {}  # Both scopes list the same functions.
     for scope, label in SCOPES.items():
         path = args.cache_dir / f'{scope}.json'
         n = read_baseline(path, meta['head'])
@@ -150,7 +153,7 @@ def report(args: argparse.Namespace, policy: str) -> None:
                      '--enforcement', 'warn', '--format', 'markdown', '--warn-percentile', '90',
                      '--block-percentile', '98', '--curve-prior-weight', '200',
                      '--baseline-file', str(path), '--measure-config', str(POLICY / f'{scope}.yml'))
-        publish(mark_misread_spans(result, args.base))
+        publish(mark_misread_spans(result, args.base, spans))
 
 
 # lizard's TypeScript reader sometimes misses a function's closing brace (an
@@ -158,52 +161,72 @@ def report(args: argparse.Namespace, policy: str) -> None:
 # trigger) and runs the span on into the next top-level declaration. Edits to
 # that neighbour are then charged to a function the PR never touched. In
 # formatted code nothing inside a function body starts at column 0, so a
-# top-level declaration strictly inside a span is the tell.
+# top-level declaration strictly inside a span is the tell. Pygments decides
+# what is code: a column-0 `const` inside a template literal is string text.
 SPAN_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx')
-DECLARATION = re.compile(
-    r'(export\s+)?(default\s+)?(async\s+)?(function|const|let|var|class|interface|type|enum)\b')
-LOCATION = re.compile(r'^(\| [^|]* \| )`([^`]+):([^`:]+)`( \|)')
+DECLARATION = re.compile(r'@|(export|import|declare|abstract|async|function|const|let|var'
+                         r'|class|interface|type|enum)\b')
+LOCATION = re.compile(r'^\| [^|]* \| `(?P<path>[^`:]+):(?P<name>[^`]+)` \| '
+                      r'(?:`(?P<owner>[^`]+)`|_file scope_) \|')
 MISREAD = '⚠️ span may be misattributed'
 MISREAD_NOTE = (f'{MISREAD}: lizard read its line span to include a later top-level '
                 'declaration, so edits to that code are charged to this function. Check '
                 'the diff before refactoring it. Scores and grades are unchanged.')
 
 
-def misread_functions(revisions: list[str], path: str) -> set[str]:
-    names = set()
+def declaration_lines(path: str, source: str) -> set[int]:
+    lexer = TypeScriptLexer() if path.endswith(('.ts', '.tsx')) else JavascriptLexer()
+    line_at, offset = {}, 0
+    for number, line in enumerate(source.split('\n'), 1):
+        line_at[offset] = number
+        offset += len(line) + 1
+    return {line_at[offset] for offset, token, _ in lexer.get_tokens_unprocessed(source)
+            if offset in line_at and (token in Keyword or token in Name.Decorator)
+            and DECLARATION.match(source, offset)}
+
+
+def misread_functions(revisions: list[str], path: str) -> set[tuple[str, str]]:
+    """(owner, name) of each function whose span, in any revision, swallows a declaration."""
+    found = set()
     for revision in revisions:
-        shown = subprocess.run(['git', 'show', f'{revision}:{path}'],
-                               capture_output=True, text=True)
+        shown = subprocess.run(['git', 'show', f'{revision}:{path}'], capture_output=True)
         if shown.returncode != 0:  # Added or deleted on one side.
             continue
-        lines = shown.stdout.split('\n')
-        for function in lizard.analyze_file.analyze_source_code(path, shown.stdout).function_list:
+        source = shown.stdout.decode('utf-8', errors='replace')
+        declarations = declaration_lines(path, source)
+        for function in lizard.analyze_file.analyze_source_code(path, source).function_list:
+            owner, _, name = function.name.rpartition('::')
             # lizard often ends a span on the next declaration's first line;
             # that boundary is harmless, so only strictly inner lines count.
-            if any(DECLARATION.match(lines[n - 1])
-                   for n in range(function.start_line + 1, function.end_line)):
-                names.add(function.name.split('::')[-1])
-    return names
+            if name != '(anonymous)' and any(
+                    function.start_line < n < function.end_line for n in declarations):
+                found.add((owner, name))
+    return found
 
 
-def mark_misread_spans(markdown: str, base: str) -> str:
-    revisions = [run('git', 'merge-base', base, 'HEAD'), 'HEAD']
-    cache: dict[str, set[str]] = {}
-    marked = False
-    lines = markdown.split('\n')
-    for index, line in enumerate(lines):
-        match = LOCATION.match(line)
-        if not match or not match.group(2).endswith(SPAN_SUFFIXES):
-            continue
-        path, name = match.group(2), match.group(3)
-        if path not in cache:
-            cache[path] = misread_functions(revisions, path)
-        if name in cache[path]:
-            lines[index] = (match.group(1) + f'`{path}:{name}` {MISREAD}'
-                            + match.group(4) + line[match.end():])
-            marked = True
-    text = '\n'.join(lines)
-    return text + f'\n\n{MISREAD_NOTE}' if marked else text
+def mark_misread_spans(markdown: str, base: str, cache: dict | None = None) -> str:
+    """Label function rows whose span lizard misread. Never fails the report."""
+    cache = {} if cache is None else cache
+    try:
+        if 'revisions' not in cache:
+            cache['revisions'] = [run('git', 'merge-base', base, 'HEAD'), 'HEAD']
+        marked = False
+        lines = markdown.split('\n')
+        for index, line in enumerate(lines):
+            match = LOCATION.match(line)
+            if not match or not match['path'].endswith(SPAN_SUFFIXES):
+                continue
+            path = match['path']
+            if path not in cache:
+                cache[path] = misread_functions(cache['revisions'], path)
+            if (match['owner'] or '', match['name']) in cache[path]:
+                cell = f'`{path}:{match["name"]}`'
+                lines[index] = line.replace(cell, f'{cell} {MISREAD}', 1)
+                marked = True
+        text = '\n'.join(lines)
+        return text + f'\n\n{MISREAD_NOTE}' if marked else text
+    except Exception as error:  # A cosmetic label must not cost the report.
+        return markdown + f'\n\n_Note: could not check function spans ({describe(error)})._'
 
 
 def pin(args: argparse.Namespace) -> None:

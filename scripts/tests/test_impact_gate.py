@@ -1,4 +1,5 @@
 """Exercise the workflow driver against the pinned real CLI and Git histories."""
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -144,6 +145,33 @@ class ImpactWorkflowTest(unittest.TestCase):
         for row in third_rows:
             self.assertNotIn('span may be misattributed', row)
         self.assertIn('lizard read its line span', self.summary.read_text())
+
+    def load_driver(self):
+        spec = importlib.util.spec_from_file_location('impact_gate_driver', DRIVER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_code_generating_template_literals_are_not_read_as_declarations(self):
+        # A template that emits source puts `const`/`import` at column 0 inside
+        # the string; that is not a declaration lizard ran into.
+        self.commit('src/gen.ts', 'export function generate(name: string): string {\n'
+                    '  return `\nimport { x } from "y"\nconst ${name} = x\n'
+                    'export const client = ${name}\n`\n}\n')
+        head = self.git('rev-parse', 'HEAD')
+        cwd = os.getcwd()
+        os.chdir(self.repo)
+        self.addCleanup(os.chdir, cwd)
+        self.assertEqual(self.load_driver().misread_functions([head], 'src/gen.ts'), set())
+
+    def test_marking_failure_keeps_the_unmarked_report(self):
+        cwd = os.getcwd()
+        os.chdir(self.repo)
+        self.addCleanup(os.chdir, cwd)
+        report = '| 1 | `src/main.ts:count` | _file scope_ | 1 | 0 | mutation |'
+        marked = self.load_driver().mark_misread_spans(report, 'missing-target')
+        self.assertTrue(marked.startswith(report))
+        self.assertIn('could not check function spans', marked)
 
     def test_cold_baseline_then_reuse_and_refresh(self):
         self.run_driver('prepare')
