@@ -235,7 +235,7 @@ pub async fn deterministic_cipher(seed: [u8; 32]) -> StackCipher<DeterministicSo
 }
 
 /// A passthrough payload: the frame of `value`, in the clear.
-pub fn passthrough<P: stack_encrypt::Plaintext>(value: P) -> stack_encrypt::PassthroughFrame {
+pub fn passthrough<P: stack_encrypt::Encrypt>(value: P) -> stack_encrypt::PassthroughFrame {
     use vitaminc_protected::Controlled;
     stack_encrypt::PassthroughFrame(
         vitaminc_aead::to_frame(value)
@@ -248,5 +248,5 @@ pub fn passthrough<P: stack_encrypt::Plaintext>(value: P) -> stack_encrypt::Pass
 pub fn passthrough_u32(payload: &stack_encrypt::PassthroughFrame) -> u32 {
     use vitaminc_aead::Decrypt;
     let frame = payload.parse().expect("one frame");
-    vitaminc_aead::Plaintext::visit(frame, u32::sink()).expect("a u32")
+    vitaminc_aead::Encrypt::visit(frame, u32::sink()).expect("a u32")
 }

@@ -3,7 +3,7 @@
 //!
 //! Both were `vitaminc-aead-value`'s until vitaminc ADR 0001 reduced that
 //! crate to the transport (`vitaminc-aead-frame`). A value now describes
-//! itself to vitaminc through [`Plaintext`] and is read back through a
+//! itself to vitaminc through [`Encrypt`] and is read back through a
 //! [`Decrypt`] sink, so an [`FfiValue`] seals the same tagged leaves a
 //! typed Rust value of the same kind does, and crosses an FFI boundary as a
 //! transport frame ([`to_frame`](FfiValue::to_frame),
@@ -19,7 +19,7 @@ use vitaminc_aead::plaintext::{
     visit_map, visit_seq, Error as _, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
     SourceError,
 };
-use vitaminc_aead::{to_frame, DecodeError, Decrypt, Frame, Plaintext};
+use vitaminc_aead::{to_frame, DecodeError, Decrypt, Encrypt, Frame};
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
@@ -163,7 +163,7 @@ pub enum FromFrameError {
 
 /// Walks the value, leaving it where it is. Text and bytes are handed to
 /// the sink as borrows of the `Protected` payloads.
-impl Plaintext for &FfiValue {
+impl Encrypt for &FfiValue {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         match self {
             FfiValue::Null => sink.scalar(None, Physical::Null),
@@ -193,7 +193,7 @@ impl Plaintext for &FfiValue {
 
 /// Walks the value by reference, then drops it, which wipes its text and
 /// bytes.
-impl Plaintext for FfiValue {
+impl Encrypt for FfiValue {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (&self).visit(sink)
     }
@@ -304,7 +304,7 @@ impl<O: Put> Sink for ValueSink<O> {
         })
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<O::Ok, DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<O::Ok, DecodeError> {
         let inner = value.visit(ValueSink(Root))?;
         Ok(self.0.put(FfiValue::Passthrough(Box::new(inner))))
     }

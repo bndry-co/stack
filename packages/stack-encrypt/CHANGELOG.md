@@ -142,13 +142,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same way. Storing the empty filter tells a reader of the database that the
   value is empty, separator-only or shorter than the n-gram length
   (ADR-0009).
-- **Values describe themselves with vitaminc's `Plaintext` and read back
+- **Values describe themselves with vitaminc's new `Encrypt` and read back
   with `Decrypt` (vitaminc ADR 0001).** `KeysetCipher::encrypt`,
-  `StackCipher::decrypt` and every target take `Plaintext` where they took
-  `Encrypt`, and `Decrypt` where they took `Decrypt<'static>`; derive both
-  with `vitaminc_aead::{Plaintext, Decrypt}`. `Encrypt`, `Decipher`,
-  `Element` and `Cipher` are no longer re-exported, and `StackDecipher` and
-  `BoxedPassthrough` are gone. A pending tree is planned rather than driven:
+  `StackCipher::decrypt` and every target take the new `Encrypt`, a source
+  that describes its value to a sink, where they took the old
+  visitor-driven `Encrypt`, and `Decrypt` where they took
+  `Decrypt<'static>`; derive both with `vitaminc_aead::{Encrypt, Decrypt}`
+  (`stack_encrypt::{Encrypt, Decrypt}` re-exports them). The name is the
+  same and the trait is not: a hand-written impl of the old one does not
+  compile against the new one. `Decipher`, `Element` and `Cipher` are no
+  longer re-exported, and `StackDecipher` and `BoxedPassthrough` are gone. A pending tree is planned rather than driven:
   `PendingStackCipherText::plan(value, aad)`, then `seal` or
   `into_pending` as before. The key fetch is unchanged: one batched
   `generate_keys` per assembly to seal, one `retrieve_keys` per keyset to

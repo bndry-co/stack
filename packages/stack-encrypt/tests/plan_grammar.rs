@@ -22,7 +22,7 @@ use stack_encrypt::target::{
     EncryptFrom, Encrypted, Encryption, IndexSpec, Indexes, TermSet,
 };
 use stack_encrypt::{
-    nonempty, Decrypt, Equality, Error, ErrorPayload, Label, Match, NonEmpty, Ope, Ore, Plaintext,
+    nonempty, Decrypt, Encrypt, Equality, Error, ErrorPayload, Label, Match, NonEmpty, Ope, Ore,
     Plan, StackCipherText,
 };
 
@@ -960,7 +960,7 @@ struct One<F> {
 /// other plan.
 async fn same_field_bytes<F, Terms, X>(value: F, indexes: X)
 where
-    F: Plaintext + Decrypt + Clone + Send + Sync + PartialEq + Debug + 'static,
+    F: Encrypt + Decrypt + Clone + Send + Sync + PartialEq + Debug + 'static,
     Terms: TermSet<F> + PartialEq + Debug + Send,
     X: Indexes<F, Terms = Terms> + Clone + Send + Sync + 'static,
 {

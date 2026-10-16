@@ -26,9 +26,9 @@
 //! the cipher bound to one of that client's keysets, from
 //! [`default_keyset`](StackCipher::default_keyset) or
 //! [`keyset`](StackCipher::keyset) — encrypts any value that implements
-//! vitaminc's [`Plaintext`] (`String`, `Vec<T>`, `HashMap<K, V>`,
+//! vitaminc's [`Encrypt`] (`String`, `Vec<T>`, `HashMap<K, V>`,
 //! `Option<T>`, `Protected<T>`, your own types through
-//! `#[derive(vitaminc_aead::Plaintext)]`, and any nesting of them). Either
+//! `#[derive(vitaminc_aead::Encrypt)]`, and any nesting of them). Either
 //! cipher decrypts back into any [`Decrypt`] type. Every scalar inside the value is
 //! sealed under its **own** ZeroKMS data key, so each value access is an
 //! individually auditable key retrieval — there is no long-lived key in your
@@ -306,13 +306,13 @@ pub use target::{
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
 // don't have to depend on `vitaminc-aead` directly for the common path: a
-// value describes itself once (`Plaintext`) and names the sink that reads it
+// value describes itself once (`Encrypt`) and names the sink that reads it
 // back (`Decrypt`). A context type of your own implements `IntoContext` once;
 // `IntoAad` and `IntoPrfContext` are vitaminc's blankets over it, so both
 // derivations see the same bytes.
 pub use vitaminc_aead::{
-    CipherText, Context, ContextPiece, ContextTag, Decrypt, IntoAad, IntoContext, Node,
-    PassthroughFrame, Plaintext, Unspecified,
+    CipherText, Context, ContextPiece, ContextTag, Decrypt, Encrypt, IntoAad, IntoContext, Node,
+    PassthroughFrame, Unspecified,
 };
 // The vitaminc 0.4 names, deprecated there; re-exported for one transition so
 // a caller that spelled them keeps compiling with a warning.

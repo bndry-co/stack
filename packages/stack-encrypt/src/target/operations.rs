@@ -449,7 +449,7 @@ where
 /// `Encrypt` consumes the plaintext. In [`Owned`](super::Owned) mode it is
 /// handed over, so `S` need not be `Clone`; in the default [`Borrowed`] mode
 /// it is cloned once, which is what `M: ConsumeSource<'s, S>` asks.
-pub fn ciphertext<'s, S: crate::Plaintext + 's, K: 'static, M: ConsumeSource<'s, S>>(
+pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S>>(
 ) -> Encryption<'s, S, StackCipherText, K, AeadContext, M> {
     Encryption {
         build: Box::new(
@@ -878,7 +878,7 @@ impl<T: 'static> DecryptFrom for T {}
 // `Borrowed: ConsumeSource<'s, S>`, spelled out. The constructors themselves
 // (`ciphertext`, `equality`, `ore`, `ope`) ask only for the scheme's own
 // capability, and run a non-`Clone` plaintext in `Owned` mode.
-impl<S: crate::Plaintext + Clone> EncryptFrom<S> for StackCipherText {
+impl<S: crate::Encrypt + Clone> EncryptFrom<S> for StackCipherText {
     type Context = AeadContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where

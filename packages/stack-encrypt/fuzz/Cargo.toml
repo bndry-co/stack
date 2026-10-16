@@ -65,13 +65,13 @@ bench = false
 resolver = "2"
 
 # Temporary, as in the root Cargo.toml: the vitaminc crates stack-encrypt
-# builds on come from the branch that implements vitaminc ADR 0001
-# (cipherstash/vitaminc PRs #439 to #445) until vitaminc releases it.
+# builds on come from the same vitaminc commit (cipherstash/vitaminc#464)
+# until vitaminc releases 0.6.
 [patch.crates-io]
-vitaminc = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
-vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
-vitaminc-aead-frame = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
-vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
-vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
-vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", branch = "feat/aead-remove-legacy-traits" }
+vitaminc = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
+vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
+vitaminc-aead-frame = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
+vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
+vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
+vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
+vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }

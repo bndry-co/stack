@@ -38,7 +38,7 @@
 //! `zerokms_auth` example for the lookup order).
 
 use stack_encrypt::{CipherText, Label, StackCipher, StackCipherText};
-use vitaminc_aead::{Decrypt, Plaintext};
+use vitaminc_aead::{Decrypt, Encrypt};
 
 // --- The record type ---------------------------------------------------------
 
@@ -46,7 +46,7 @@ use vitaminc_aead::{Decrypt, Plaintext};
 // the clear; each *encrypted* value is sealed against an AAD derived from the
 // map's AAD + its key, so entries cannot be renamed or swapped. Passthrough
 // entries carry no such binding.
-#[derive(Debug, PartialEq, Plaintext, Decrypt)]
+#[derive(Debug, PartialEq, Encrypt, Decrypt)]
 struct User {
     #[aead(passthrough)]
     id: u32, // visible in the stored ciphertext

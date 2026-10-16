@@ -1,7 +1,7 @@
 //! Scalar plaintexts for the v4 number and boolean types.
 //!
 //! A Stack Encrypt target encrypts a plaintext through Vitamin C's
-//! `Plaintext` and reads it back through `Decrypt`. These newtypes name the
+//! `Encrypt` and reads it back through `Decrypt`. These newtypes name the
 //! plaintext of each storage-only EQL v4 type: [`Int32`] for `Integer`,
 //! [`Int64`] for `Bigint`, [`Bool`] for `Boolean`, and [`Float32`] /
 //! [`Float64`] for `Real` and `Double`.
@@ -32,7 +32,7 @@
 //! None of them implements `Debug`, so a plaintext does not reach a log by
 //! accident.
 
-use stack_encrypt::Plaintext;
+use stack_encrypt::Encrypt;
 use vitaminc_aead::{Float, FromScalar, Int, Logical, Physical, Sink};
 use zeroize::Zeroize;
 
@@ -67,7 +67,7 @@ macro_rules! fixed_scalar {
         }
 
         /// Describes itself as the primitive it wraps.
-        impl Plaintext for $name {
+        impl Encrypt for $name {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 self.0.visit(sink)
             }
@@ -122,7 +122,7 @@ impl From<Bool> for bool {
 }
 
 /// Describes itself as a `bool`.
-impl Plaintext for Bool {
+impl Encrypt for Bool {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.0.visit(sink)
     }

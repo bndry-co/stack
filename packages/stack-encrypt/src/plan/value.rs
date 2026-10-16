@@ -356,7 +356,7 @@ pub trait ValueShape<S>: ValueLayout<S> {
 
 impl<S, X> ValueLayout<S> for Indexed<X>
 where
-    S: crate::Plaintext + Clone,
+    S: crate::Encrypt + Clone,
     X: Indexes<S> + Clone,
 {
     type Output = Encrypted<X::Terms>;
@@ -367,7 +367,7 @@ where
 
 impl<S, X> ValueShape<S> for Indexed<X>
 where
-    S: crate::Plaintext + Clone,
+    S: crate::Encrypt + Clone,
     X: Indexes<S> + Clone,
 {
     fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, Self::Output, K, CallerContext>

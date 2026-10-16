@@ -21,7 +21,7 @@ use stack_encrypt::sem::{EqualityTerm, MatchTerms};
 use stack_encrypt::target::{
     ciphertext, equality, matching, AeadContext, Borrowed, CallerContext, Encryption, Owned,
 };
-use stack_encrypt::{nonempty, NonEmpty, Plaintext, StackCipherText};
+use stack_encrypt::{nonempty, Encrypt, NonEmpty, StackCipherText};
 use stack_kms::FakeDataKeySource;
 use vitaminc_aead::plaintext::Sink;
 use vitaminc_prf::{IntoPrfContext, Prf, PrfValue, PrfVisitor};
@@ -52,7 +52,7 @@ impl Secret {
         Self(Protected::new(text.to_string()))
     }
 }
-impl Plaintext for Secret {
+impl Encrypt for Secret {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.0.visit(sink)
     }
@@ -99,7 +99,7 @@ impl Clone for Counted {
         }
     }
 }
-impl Plaintext for Counted {
+impl Encrypt for Counted {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.text.visit(sink)
     }
@@ -229,7 +229,7 @@ async fn one_owned_operation_makes_no_copy() {
 fn sealed_and_indexed<'s, S, M>(
 ) -> Encryption<'s, S, (StackCipherText, EqualityTerm), FakeDataKeySource, CallerContext, M>
 where
-    S: Plaintext + PrfValue + 's,
+    S: Encrypt + PrfValue + 's,
     M: stack_encrypt::target::ConsumeSource<'s, S> + stack_encrypt::target::ShareSource<'s, S>,
 {
     ciphertext().accepting().zip(equality())
@@ -342,7 +342,7 @@ impl Drop for Dropped {
         let _ = self.drops.fetch_add(1, Ordering::SeqCst);
     }
 }
-impl Plaintext for Dropped {
+impl Encrypt for Dropped {
     fn visit<S: Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
         std::mem::take(&mut self.text).visit(sink)
     }

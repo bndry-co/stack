@@ -4109,7 +4109,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vitaminc"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "vitaminc-aead",
  "vitaminc-context",
@@ -4122,7 +4122,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-aead"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "bytes",
  "futures-util",
@@ -4138,7 +4138,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-aead-derive"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4148,7 +4148,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-aead-frame"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "vitaminc-aead",
 ]
@@ -4156,7 +4156,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-context"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "mutants",
  "vitaminc-protected",
@@ -4165,7 +4165,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-encrypt"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -4178,7 +4178,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-hmac"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "hmac",
  "sha2 0.11.0",
@@ -4190,7 +4190,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-prf"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "mutants",
  "thiserror 2.0.18",
@@ -4201,7 +4201,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-protected"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "bitvec",
  "digest 0.11.3",
@@ -4217,7 +4217,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-protected-derive"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -4228,7 +4228,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-random"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "chacha20",
  "getrandom 0.4.2",
@@ -4242,7 +4242,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-random-derives"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4252,7 +4252,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-traits"
 version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
+source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
 dependencies = [
  "anyhow",
  "bytes",

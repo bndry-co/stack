@@ -5,7 +5,7 @@
 //! cipher bound to one of that client's keysets — seals values whose
 //! per-leaf keys are ZeroKMS data keys, minted under that keyset, rather
 //! than one fixed key. The value side is vitaminc's: a value describes
-//! itself once ([`Plaintext`]), vitaminc plans it into a tree of pending
+//! itself once ([`Encrypt`]), vitaminc plans it into a tree of pending
 //! leaves, each with its tagged plaintext and the AAD its place derives,
 //! and a bytes-only [`Cipher`] seals and opens one leaf at a time. The
 //! result is a ciphertext tree ([`StackCipherText`], the analog of
@@ -105,8 +105,8 @@ use stack_kms::{FallbackKeyProvider, KeyProvider, KeyProviderError, ProfileStore
 use uuid::Uuid;
 use vitaminc_aead::seal::seal_all;
 use vitaminc_aead::{
-    Cipher, CipherText, Context, Decrypt, IntoAad, IntoContext, LocalCipherText, Node, Pending,
-    Plaintext, Unspecified,
+    Cipher, CipherText, Context, Decrypt, Encrypt, IntoAad, IntoContext, LocalCipherText, Node,
+    Pending, Unspecified,
 };
 use vitaminc_encrypt::{Aes256Cipher, Key as AesKey};
 use vitaminc_protected::Protected;
@@ -818,7 +818,7 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
     /// Every key is requested under the [`Descriptor`] of `aad`.
     pub async fn encrypt<'a, T, A>(&self, value: T, aad: A) -> Result<StackCipherText, Error>
     where
-        T: Plaintext,
+        T: Encrypt,
         A: IntoContext<'a>,
     {
         let context = aad.into_context();
@@ -1272,7 +1272,7 @@ impl PendingStackCipherText {
     /// key, a container whose every child is a passthrough, a nesting deeper
     /// than the transport carries) is [`Error::Aead`], as it is when the
     /// value is sealed in one step.
-    pub fn plan<'a, P: Plaintext>(value: P, aad: impl IntoAad<'a>) -> Result<Self, Error> {
+    pub fn plan<'a, P: Encrypt>(value: P, aad: impl IntoAad<'a>) -> Result<Self, Error> {
         vitaminc_aead::plan::<_, Unspecified, _>(value, aad)
             .map(Self)
             .map_err(|_| Error::Aead)

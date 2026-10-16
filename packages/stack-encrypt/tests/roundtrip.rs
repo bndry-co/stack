@@ -6,9 +6,7 @@
 
 use std::collections::HashMap;
 
-use stack_encrypt::{
-    CipherText, ContextTag, PassthroughFrame, Plaintext, SealedValue, StackCipher,
-};
+use stack_encrypt::{CipherText, ContextTag, Encrypt, PassthroughFrame, SealedValue, StackCipher};
 use stack_kms::FakeDataKeySource;
 use vitaminc_aead::plaintext::{MapSink, Sink};
 use vitaminc_aead::Decrypt;
@@ -244,7 +242,7 @@ impl Row {
     }
 }
 
-impl Plaintext for Row {
+impl Encrypt for Row {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let mut map = sink.map(None)?;
         map.entry("id")?.passthrough(self.id)?;

@@ -1,4 +1,4 @@
-error[E0277]: the trait bound `SerdeOnly: stack_encrypt::Plaintext` is not satisfied
+error[E0277]: the trait bound `SerdeOnly: stack_encrypt::Encrypt` is not satisfied
  --> tests/ui/plaintext_needs_encrypt.rs:9:33
   |
 9 |     let _=keyset.encrypt_as::<_,Target>(&SerdeOnly {value:"x".into()},nonempty!("column").into());
@@ -6,12 +6,12 @@ error[E0277]: the trait bound `SerdeOnly: stack_encrypt::Plaintext` is not satis
   |                  |
   |                  required by a bound introduced by this call
   |
-help: the trait `stack_encrypt::Plaintext` is not implemented for `SerdeOnly`
+help: the trait `stack_encrypt::Encrypt` is not implemented for `SerdeOnly`
  --> tests/ui/plaintext_needs_encrypt.rs:4:1
   |
 4 | struct SerdeOnly { value: String }
   | ^^^^^^^^^^^^^^^^
-  = help: the following other types implement trait `stack_encrypt::Plaintext`:
+  = help: the following other types implement trait `stack_encrypt::Encrypt`:
             &&'b T
             &'a BTreeMap<K, V>
             &'a HashMap<K, V>

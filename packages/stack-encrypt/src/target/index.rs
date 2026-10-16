@@ -507,7 +507,7 @@ impl<P: crate::Decrypt + Send + 'static, Terms> DecryptInto<P> for Encrypted<Ter
 /// the bytes are the data spelling's and the hand composition's.
 impl<S, Terms> EncryptFrom<S> for Encrypted<Terms>
 where
-    S: crate::Plaintext + Clone,
+    S: crate::Encrypt + Clone,
     Terms: TermSet<S>,
 {
     type Context = CallerContext;
@@ -621,7 +621,7 @@ pub fn indexed<'s, S, K, M, X>(
     indexes: X,
 ) -> Encryption<'s, S, Encrypted<X::Terms>, K, CallerContext, M>
 where
-    S: crate::Plaintext + 's,
+    S: crate::Encrypt + 's,
     K: 'static,
     M: ConsumeSource<'s, S> + ShareSource<'s, S>,
     X: Indexes<S>,

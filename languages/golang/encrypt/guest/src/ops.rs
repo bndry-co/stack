@@ -40,9 +40,7 @@ use stack_encrypt::dynamic::{self, FfiValue, Scalar, Scope};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::ErrorPayload;
-use stack_encrypt::{
-    CipherText, KeysetCipher, Label, Node, Plaintext, SealedValue, StackCipherText,
-};
+use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, Node, SealedValue, StackCipherText};
 use stack_kms::DataKeySource;
 use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext, FrameWriter};
 use vitaminc_protected::Controlled;

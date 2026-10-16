@@ -3,7 +3,7 @@
 use std::fmt;
 
 use vitaminc_aead::plaintext::Sink;
-use vitaminc_aead::{Decrypt, Plaintext};
+use vitaminc_aead::{Decrypt, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
 
 use super::{FfiValue, Put, ValueSink};
@@ -105,13 +105,13 @@ fn duplicate(value: &FfiValue) -> FfiValue {
     }
 }
 
-impl Plaintext for Value {
+impl Encrypt for Value {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.0.visit(sink)
     }
 }
 
-impl Plaintext for &Value {
+impl Encrypt for &Value {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (&self.0).visit(sink)
     }

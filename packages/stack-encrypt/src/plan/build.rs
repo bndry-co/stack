@@ -727,7 +727,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// `<context>/<identity>`. Lowers to [`ciphertext`]`().under(label)`.
     pub fn encrypt<F>(self, field: impl FieldRef<S, F>) -> Self
     where
-        F: crate::Plaintext + crate::Decrypt + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
     {
         let (name, access) = resolve(field);
         let read = Arc::clone(&access.read);
@@ -764,14 +764,14 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
         indexes: impl Indexes<F, Terms: Send> + Clone + Send + Sync + 'static,
     ) -> Self
     where
-        F: crate::Plaintext + crate::Decrypt + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
     {
         self.encrypt_index_of(field, indexes)
     }
 
     fn encrypt_index_of<F, X>(self, field: impl FieldRef<S, F>, indexes: X) -> Self
     where
-        F: crate::Plaintext + crate::Decrypt + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
         X: Indexes<F> + Clone + Send + Sync + 'static,
         X::Terms: Send,
     {

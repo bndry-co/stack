@@ -5,12 +5,12 @@
 //! fields of a token, the last error) crosses as one transport frame, the
 //! encoding vitaminc's `Frame` and `FrameWriter` define and the Go module
 //! reads with `vcffi`. A `HostValue` describes itself to vitaminc's
-//! [`Plaintext`] model, so [`encode`](HostValue::encode) is vitaminc's own
+//! [`Encrypt`] model, so [`encode`](HostValue::encode) is vitaminc's own
 //! frame writer, and [`decode`](HostValue::decode) reads a frame back
 //! through a [`Sink`], for the tests that check what a host is given.
 
 use vitaminc_aead::plaintext::{
-    visit_map, visit_seq, Float, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError,
+    visit_map, visit_seq, Encrypt, Float, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use vitaminc_aead_frame::{to_frame, Frame, FrameError, FrameWriteError};
 use vitaminc_protected::{Controlled, Protected};
@@ -140,7 +140,7 @@ impl vitaminc_aead::plaintext::Error for DecodeError {
 }
 
 /// Walks the value, leaving it where it is.
-impl Plaintext for &HostValue {
+impl Encrypt for &HostValue {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         match self {
             HostValue::Null => sink.scalar(None, Physical::Null),
@@ -238,7 +238,7 @@ impl<O: Put> Sink for ValueSink<O> {
     }
 
     /// A guest never hands its host a passthrough.
-    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<O::Ok, DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<O::Ok, DecodeError> {
         Err(DecodeError::Scalar)
     }
 }

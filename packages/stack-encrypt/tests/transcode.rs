@@ -6,7 +6,7 @@ use stack_encrypt::target::transcode::{MapReader, Reader, SequenceReader, Transc
 use stack_encrypt::target::{self, CallerContext, ExpectedContext};
 use stack_encrypt::{
     nonempty, CipherText, ContextPiece, DecryptField, DecryptInto, Decryptable, Decryption,
-    EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, PassthroughFrame, Plaintext,
+    Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, PassthroughFrame,
     SealedValue, StackCipherText,
 };
 use std::sync::atomic::Ordering;
@@ -51,7 +51,7 @@ impl Transcode for StoredLeaf {
         LeafVisitor
     }
 }
-impl<S: Plaintext + Clone> EncryptFrom<S> for StoredLeaf {
+impl<S: Encrypt + Clone> EncryptFrom<S> for StoredLeaf {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
@@ -223,12 +223,12 @@ async fn empty_stored_identifier_is_refused_before_any_key_is_retrieved() {
 
 #[derive(Clone)]
 struct WithoutSerde(String);
-impl Plaintext for WithoutSerde {
+impl Encrypt for WithoutSerde {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.0.visit(sink)
     }
 }
-impl Plaintext for &WithoutSerde {
+impl Encrypt for &WithoutSerde {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (&self.0).visit(sink)
     }
@@ -285,7 +285,7 @@ async fn scalar_destination_refuses_a_sequence() {
 // A target whose declaration carries every context it needs asks its caller
 // for none: `Context = ()`.
 struct FixedLeaf(StoredLeaf);
-impl<S: Plaintext + Clone> EncryptFrom<S> for FixedLeaf {
+impl<S: Encrypt + Clone> EncryptFrom<S> for FixedLeaf {
     type Context = ();
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where

@@ -2,7 +2,7 @@
 use super::{CipherScope, Pending, Request, Responses};
 use crate::cipher::{bind_keys, open_keyed, KeyedCipherText, PendingStackCipherText};
 use crate::{Descriptor, Error, KeysetCipher, StackCipher, StackCipherText};
-use vitaminc_aead::{CipherText, Decrypt, IntoAad, IntoContext, Plaintext};
+use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad, IntoContext};
 use vitaminc_protected::NonEmpty;
 
 /// Internal term operation. It is deliberately inaccessible to target authors.
@@ -21,12 +21,12 @@ pub(crate) trait Term<S, K, Ctx>: Sized {
 }
 
 /// Seal `source` into the native tree. It is consumed, as Vitamin C's
-/// by-value [`Plaintext`] walk consumes it: a caller holding only a borrow
+/// by-value [`Encrypt`] walk consumes it: a caller holding only a borrow
 /// clones before it gets here (see [`ConsumeSource`](super::ConsumeSource)),
 /// and one holding the value hands it over without a copy. The walk happens
 /// here, before any request exists, so the pending holds only the planned
 /// leaves.
-pub(crate) fn encrypt_native<'a, 'c, S: Plaintext, K, T: IntoContext<'c>>(
+pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
     source: S,
     cipher: &'a KeysetCipher<'_, K>,
     context: NonEmpty<T>,

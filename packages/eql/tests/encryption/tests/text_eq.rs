@@ -7,7 +7,7 @@ use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use eql_bindings::v4::SchemaVersion;
 use eql_bindings::Identifier;
 use stack_encrypt::target::transcode::{Reader, Transcode};
-use stack_encrypt::{NonEmpty, Plaintext};
+use stack_encrypt::{Encrypt, NonEmpty};
 use vitaminc_aead::plaintext::Sink;
 
 fn column() -> NonEmpty<Identifier> {
@@ -291,12 +291,12 @@ async fn a_column_batches_generation_and_retrieval_under_the_same_descriptors() 
 
 #[derive(Clone)]
 struct WithoutSerde(String);
-impl Plaintext for WithoutSerde {
+impl Encrypt for WithoutSerde {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.0.visit(sink)
     }
 }
-impl Plaintext for &WithoutSerde {
+impl Encrypt for &WithoutSerde {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (&self.0).visit(sink)
     }

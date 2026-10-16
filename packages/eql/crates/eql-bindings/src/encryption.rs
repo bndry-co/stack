@@ -63,7 +63,7 @@
 //! An encrypted EQL record is not a plaintext value:
 //! ```compile_fail
 //! use eql_bindings::v4::text::TextEq;
-//! fn require<T: stack_encrypt::Plaintext>() {}
+//! fn require<T: stack_encrypt::Encrypt>() {}
 //! require::<TextEq>();
 //! ```
 //! The text domain accepts text, and requires a concrete column identifier:
@@ -89,8 +89,8 @@ use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{self, AeadContext, CallerContext};
 use stack_encrypt::{
     CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
-    Describe, Description, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty,
-    Plaintext, SealedValue, StackCipherText,
+    Describe, Description, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
+    NonEmpty, SealedValue, StackCipherText,
 };
 use vitaminc_prf::PrfValue;
 
@@ -178,7 +178,7 @@ impl Reader for Ciphertext {
     }
 }
 
-impl<S: Plaintext + Clone> EncryptFrom<S> for Ciphertext {
+impl<S: Encrypt + Clone> EncryptFrom<S> for Ciphertext {
     type Context = AeadContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where

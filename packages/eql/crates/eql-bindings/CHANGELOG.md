@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `encryption::targets` takes `FfiValue` and `ValueKind` from
   `stack_encrypt::dynamic` (the feature turns on stack-encrypt's `dynamic`
   feature) in place of `vitaminc-aead-value`, which is gone, and the
-  `Ciphertext` target takes any `Plaintext` plaintext and opens into any
+  `Ciphertext` target takes any vitaminc `Encrypt` plaintext and opens into any
   `Decrypt + Send` type, as stack-encrypt's own targets do.
 
 - **Query-operand domain names switched to the `query_<name>` prefix, homed

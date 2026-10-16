@@ -5,18 +5,18 @@
 //! borrows its text, cannot be opened into, and a target with no
 //! `DecryptField` cannot open.
 use stack_encrypt::target::{Decryptable, Encryption, AeadContext};
-use stack_encrypt::{EncryptFrom, Plaintext, StackCipherText};
+use stack_encrypt::{EncryptFrom, Encrypt, StackCipherText};
 use vitaminc_aead::plaintext::Sink;
 
 /// Text it borrows: it seals, and there is nothing to open it into.
 #[derive(Clone)]
 struct Name(&'static str);
-impl Plaintext for Name {
+impl Encrypt for Name {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.0.visit(sink)
     }
 }
-impl Plaintext for &Name {
+impl Encrypt for &Name {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.0.visit(sink)
     }

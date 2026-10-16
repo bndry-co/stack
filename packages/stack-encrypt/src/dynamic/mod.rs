@@ -1,7 +1,7 @@
 //! Encrypting values whose type is known only at runtime.
 //!
 //! Everything else in this crate is typed: a target names its source type,
-//! and the operations it composes are reached through bounds — `Plaintext` for
+//! and the operations it composes are reached through bounds — `Encrypt` for
 //! a ciphertext, [`PrfValue`](vitaminc_prf::PrfValue) for an equality term,
 //! `AsRef<str>` for a match term. That is what makes a term a cross-language
 //! contract: `equality_term(34u32)` derives the same bytes wherever it is
@@ -37,7 +37,7 @@
 //!
 //! # What is not here
 //!
-//! Encrypting a whole value is not: [`FfiValue`] implements `Plaintext`
+//! Encrypting a whole value is not: [`FfiValue`] implements `Encrypt`
 //! already, so `keyset.encrypt(value, aad)` is the whole of it and needs
 //! nothing from this module. Nor is a second executor: nothing here calls
 //! the term functions or the seal path to produce a record. A capability a
