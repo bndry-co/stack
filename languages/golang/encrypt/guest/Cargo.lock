@@ -710,9 +710,7 @@ dependencies = [
  "thiserror 2.0.20",
  "ts-rs",
  "vitaminc-aead",
- "vitaminc-aead-value",
  "vitaminc-prf",
- "vitaminc-protected",
  "zeroize",
 ]
 
@@ -2654,17 +2652,6 @@ version = "0.5.1"
 source = "git+https://github.com/cipherstash/vitaminc?branch=feat%2Faead-remove-legacy-traits#2e895cb9caedeb04d1adc7d98fc3b067d24fd35d"
 dependencies = [
  "vitaminc-aead",
-]
-
-[[package]]
-name = "vitaminc-aead-value"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d78cdadbc6374c3bd7c19fb4d99abca693b96953b18fef8c608efbe092cf3ea"
-dependencies = [
- "vitaminc-aead",
- "vitaminc-protected",
- "zeroize",
 ]
 
 [[package]]

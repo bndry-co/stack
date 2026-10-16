@@ -1,17 +1,20 @@
 //! Scalar plaintexts for the v4 number and boolean types.
 //!
 //! A Stack Encrypt target encrypts a plaintext through Vitamin C's
-//! `Encrypt` and `Decrypt` traits, and vitaminc 0.5 implements
-//! `Encrypt` for `String` but not for `i32`, `i64`, `bool`, `f32` or `f64`.
-//! These newtypes fill that gap for the storage-only EQL v4 types: [`Int32`]
-//! for `Integer`, [`Int64`] for `Bigint`, [`Bool`] for `Boolean`, and
-//! [`Float32`] / [`Float64`] for `Real` and `Double`.
+//! `Plaintext` and reads it back through `Decrypt`. These newtypes name the
+//! plaintext of each storage-only EQL v4 type: [`Int32`] for `Integer`,
+//! [`Int64`] for `Bigint`, [`Bool`] for `Boolean`, and [`Float32`] /
+//! [`Float64`] for `Real` and `Double`.
 //!
-//! Each seals as vitaminc's tagged leaf, `[tag] ++ payload` from the frozen
-//! table in `vitaminc_aead_value::tags`, which is exactly what the value enum
-//! (`FfiValue`) seals for the same value. So a value written through these
-//! types and one written by the Go SDK as a plain `int32` field open each
-//! other.
+//! Each describes itself as the primitive it wraps, so it seals the leaf
+//! vitaminc seals for that primitive, which is the leaf a data plan's field of
+//! the same type seals. So a value written through these types and one
+//! written by the Go SDK as a plain `int32` field open each other.
+//!
+//! Each reads back only its own width. vitaminc's primitive targets convert
+//! an integer of any width that fits, and widen an `f32` to an `f64`; these
+//! refuse a leaf of another width, so a column's type is the one it was
+//! written with.
 //!
 //! None of them derives an equality term. `IntegerEq` and `BigintEq` are held
 //! back until vitaminc 0.6, whose integer equality term uses one PRF domain
@@ -29,41 +32,12 @@
 //! None of them implements `Debug`, so a plaintext does not reach a log by
 //! accident.
 
-use stack_encrypt::{Cipher, Decipher, Decrypt, Encrypt, IntoAad, Unspecified};
-use vitaminc_aead::DecipherVisitor;
-use vitaminc_aead_value::tagged::{
-    TaggedBoolFalse, TaggedBoolTrue, TaggedFloat32, TaggedFloat64, TaggedInt32, TaggedInt64,
-};
-use vitaminc_aead_value::tags;
-use vitaminc_protected::{Controlled, Protected};
+use stack_encrypt::Plaintext;
+use vitaminc_aead::{Float, FromScalar, Int, Logical, Physical, Sink};
 use zeroize::Zeroize;
 
-/// Reads one tagged scalar leaf back, refusing any other tag or width: a
-/// value sealed as one kind never opens as another.
-struct LeafVisitor<T> {
-    tag: u8,
-    parse: fn(&[u8]) -> Option<T>,
-}
-
-impl<'c, T: Send> DecipherVisitor<'c> for LeafVisitor<T> {
-    type Value = T;
-
-    fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<T, Unspecified> {
-        match data.risky_ref().split_first() {
-            Some((&tag, payload)) if tag == self.tag => (self.parse)(payload).ok_or(Unspecified),
-            _ => Err(Unspecified),
-        }
-    }
-}
-
-/// Bytes a [`LeafVisitor`] reads back: one tag, then exactly `N` payload
-/// bytes. Anything else is not this kind.
-fn leaf_payload<const N: usize>(payload: &[u8]) -> Option<[u8; N]> {
-    payload.try_into().ok()
-}
-
 macro_rules! fixed_scalar {
-    ($(#[$doc:meta])* $name:ident($inner:ty), $tagged:ty, $tag:expr, $width:literal, |$bytes:ident| $decode:expr, |$a:ident, $b:ident| $eq:expr) => {
+    ($(#[$doc:meta])* $name:ident($inner:ty), $read:pat => $value:expr, |$a:ident, $b:ident| $eq:expr) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Zeroize)]
         pub struct $name(pub $inner);
@@ -92,35 +66,21 @@ macro_rules! fixed_scalar {
             }
         }
 
-        impl Encrypt for $name {
-            fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
-            where
-                C: Cipher,
-                A: IntoAad<'a>,
-            {
-                <$tagged>::from(self.0).encrypt_with_aad(cipher, aad)
+        /// Describes itself as the primitive it wraps.
+        impl Plaintext for $name {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                self.0.visit(sink)
             }
         }
 
-        impl<'c> Decrypt<'c> for $name {
-            fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
-            where
-                D: Decipher<'c>,
-                A: IntoAad<'a>,
-            {
-                decipher.decrypt_any(Self::visitor(), aad)
-            }
-        }
-
-        impl $name {
-            /// The reader [`Decrypt`] opens this type's leaf with.
-            fn visitor() -> LeafVisitor<Self> {
-                LeafVisitor {
-                    tag: $tag,
-                    parse: |payload| {
-                        let $bytes = leaf_payload::<$width>(payload)?;
-                        Some($name($decode))
-                    },
+        /// Reads back a leaf of exactly this kind and width, and nothing
+        /// else: a value sealed as one kind never opens as another.
+        impl FromScalar for $name {
+            const EXPECTED: &'static str = stringify!($inner);
+            fn from_scalar(ty: Option<Logical>, value: Physical<'_>) -> Option<Self> {
+                match (ty, value) {
+                    (None, $read) => Some($name($value)),
+                    _ => None,
                 }
             }
         }
@@ -129,25 +89,23 @@ macro_rules! fixed_scalar {
 
 fixed_scalar!(
     /// The plaintext of `Integer`: a 32-bit signed integer.
-    Int32(i32), TaggedInt32, tags::INT32, 4, |b| i32::from_le_bytes(b), |a, b| a == b
+    Int32(i32), Physical::Int(Int::I32(v)) => v, |a, b| a == b
 );
 fixed_scalar!(
     /// The plaintext of `Bigint`: a 64-bit signed integer.
-    Int64(i64), TaggedInt64, tags::INT64, 8, |b| i64::from_le_bytes(b), |a, b| a == b
+    Int64(i64), Physical::Int(Int::I64(v)) => v, |a, b| a == b
 );
 fixed_scalar!(
     /// The plaintext of `Real`: a 32-bit float, sealed by its bit pattern, so
     /// `-0.0` and a NaN's payload survive a round trip.
-    Float32(f32), TaggedFloat32, tags::FLOAT32, 4, |b| f32::from_bits(u32::from_le_bytes(b)),
-    |a, b| a.to_bits() == b.to_bits()
+    Float32(f32), Physical::Float(Float::F32(v)) => v, |a, b| a.to_bits() == b.to_bits()
 );
 fixed_scalar!(
     /// The plaintext of `Double`: a 64-bit float, sealed by its bit pattern.
-    Float64(f64), TaggedFloat64, tags::FLOAT64, 8, |b| f64::from_bits(u64::from_le_bytes(b)),
-    |a, b| a.to_bits() == b.to_bits()
+    Float64(f64), Physical::Float(Float::F64(v)) => v, |a, b| a.to_bits() == b.to_bits()
 );
 
-/// The plaintext of `Boolean`. A boolean is the tag itself: no payload.
+/// The plaintext of `Boolean`.
 #[derive(Clone, Copy, PartialEq, Eq, Zeroize)]
 pub struct Bool(pub bool);
 
@@ -163,118 +121,82 @@ impl From<Bool> for bool {
     }
 }
 
-impl Encrypt for Bool {
-    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
-    where
-        C: Cipher,
-        A: IntoAad<'a>,
-    {
-        if self.0 {
-            TaggedBoolTrue::tag_only().encrypt_with_aad(cipher, aad)
-        } else {
-            TaggedBoolFalse::tag_only().encrypt_with_aad(cipher, aad)
-        }
+/// Describes itself as a `bool`.
+impl Plaintext for Bool {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.0.visit(sink)
     }
 }
 
-/// Opens either boolean tag, and nothing else.
-struct BoolVisitor;
-
-impl<'c> DecipherVisitor<'c> for BoolVisitor {
-    type Value = Bool;
-
-    fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Bool, Unspecified> {
-        match data.risky_ref().as_slice() {
-            [tags::BOOL_TRUE] => Ok(Bool(true)),
-            [tags::BOOL_FALSE] => Ok(Bool(false)),
-            _ => Err(Unspecified),
+/// Reads back a boolean leaf, and nothing else.
+impl FromScalar for Bool {
+    const EXPECTED: &'static str = "bool";
+    fn from_scalar(ty: Option<Logical>, value: Physical<'_>) -> Option<Self> {
+        match (ty, value) {
+            (None, Physical::Bool(b)) => Some(Bool(b)),
+            _ => None,
         }
-    }
-}
-
-impl<'c> Decrypt<'c> for Bool {
-    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
-    where
-        D: Decipher<'c>,
-        A: IntoAad<'a>,
-    {
-        decipher.decrypt_any(BoolVisitor, aad)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    //! The leaf each type reads back, byte for byte. Sealing goes through
-    //! vitaminc's own `Tagged*` types; what is hand-written here is the
-    //! reading, so these pin its tag, width and byte order. The round trip
-    //! against the value enum (`FfiValue`) is in the encryption test crate
+    //! What each type reads back. Sealing is the primitive's own; what is
+    //! written here is the reading, so these pin that each type takes only
+    //! its own kind and width. The round trip against the value enum
+    //! (`FfiValue`) is in the encryption test crate
     //! (`tests/encryption/tests/v4_types.rs`).
     use super::*;
 
-    fn leaf(tag: u8, payload: &[u8]) -> Protected<Vec<u8>> {
-        let mut bytes = vec![tag];
-        bytes.extend_from_slice(payload);
-        Protected::new(bytes)
-    }
-
-    fn read<'c, V: DecipherVisitor<'c>>(visitor: V, bytes: Protected<Vec<u8>>) -> Option<V::Value> {
-        visitor.visit_bytes_vec(bytes).ok()
+    fn read<T: FromScalar>(value: Physical<'_>) -> Option<T> {
+        T::from_scalar(None, value)
     }
 
     #[test]
-    fn integers_read_their_own_little_endian_leaf() {
-        let (int32, int64) = (Int32::visitor, Int64::visitor);
+    fn integers_read_their_own_width() {
         for v in [0, 1, -1, 42, i32::MIN, i32::MAX] {
-            assert!(read(int32(), leaf(tags::INT32, &v.to_le_bytes())) == Some(Int32(v)));
+            assert!(read::<Int32>(Physical::Int(Int::I32(v))) == Some(Int32(v)));
         }
         for v in [0, -1, 42, i64::MIN, i64::MAX] {
-            assert!(read(int64(), leaf(tags::INT64, &v.to_le_bytes())) == Some(Int64(v)));
+            assert!(read::<Int64>(Physical::Int(Int::I64(v))) == Some(Int64(v)));
         }
-        // Little-endian, not big: 1 is 01 00 00 00.
-        assert!(read(int32(), leaf(tags::INT32, &[1, 0, 0, 0])) == Some(Int32(1)));
     }
 
     #[test]
-    fn a_leaf_of_another_tag_or_width_is_refused() {
-        let (int32, int64) = (Int32::visitor, Int64::visitor);
+    fn a_scalar_of_another_kind_or_width_is_refused() {
         // An Int64 leaf is not an Int32, even when its value would fit.
-        assert!(read(int32(), leaf(tags::INT64, &1i64.to_le_bytes())).is_none());
-        assert!(read(int64(), leaf(tags::INT32, &1i32.to_le_bytes())).is_none());
-        // The right tag with the wrong width.
-        assert!(read(int32(), leaf(tags::INT32, &1i64.to_le_bytes())).is_none());
-        assert!(read(int32(), leaf(tags::INT32, &[1, 0, 0])).is_none());
-        assert!(read(int64(), leaf(tags::INT64, &1i32.to_le_bytes())).is_none());
-        // No tag at all.
-        assert!(read(int32(), Protected::new(Vec::new())).is_none());
-        // A float's leaf is not an integer's.
-        assert!(read(int32(), leaf(tags::FLOAT32, &1f32.to_le_bytes())).is_none());
+        assert!(read::<Int32>(Physical::Int(Int::I64(1))).is_none());
+        assert!(read::<Int64>(Physical::Int(Int::I32(1))).is_none());
+        assert!(read::<Int32>(Physical::Int(Int::U32(1))).is_none());
+        // A float's leaf is not an integer's, nor a boolean's.
+        assert!(read::<Int32>(Physical::Float(Float::F32(1.0))).is_none());
+        assert!(read::<Bool>(Physical::Int(Int::I32(1))).is_none());
+        // An f32 leaf is not an f64, though it would widen exactly.
+        assert!(read::<Float64>(Physical::Float(Float::F32(1.0))).is_none());
+        assert!(read::<Float32>(Physical::Float(Float::F64(1.0))).is_none());
+        // A logical type on the leaf is not the bare scalar.
+        assert!(Int32::from_scalar(Some(Logical::Date), Physical::Int(Int::I32(1))).is_none());
     }
 
     #[test]
     fn floats_read_their_bit_pattern() {
-        let (f32s, f64s) = (Float32::visitor, Float64::visitor);
         let nan32 = f32::from_bits(0x7fc0_1234);
         for v in [0.0, -0.0, 1.5, f32::INFINITY, f32::NEG_INFINITY, nan32] {
-            let opened = read(f32s(), leaf(tags::FLOAT32, &v.to_bits().to_le_bytes())).unwrap();
+            let opened = read::<Float32>(Physical::Float(Float::F32(v))).unwrap();
             assert_eq!(opened.0.to_bits(), v.to_bits());
         }
         let nan64 = f64::from_bits(0x7ff8_0000_0000_beef);
         for v in [0.0, -0.0, 1.5, f64::INFINITY, nan64] {
-            let opened = read(f64s(), leaf(tags::FLOAT64, &v.to_bits().to_le_bytes())).unwrap();
+            let opened = read::<Float64>(Physical::Float(Float::F64(v))).unwrap();
             assert_eq!(opened.0.to_bits(), v.to_bits());
         }
-        assert!(read(f64s(), leaf(tags::FLOAT32, &1f32.to_le_bytes())).is_none());
-        assert!(read(f32s(), leaf(tags::FLOAT32, &1f64.to_le_bytes())).is_none());
     }
 
     #[test]
-    fn booleans_are_the_tag_alone() {
-        assert!(read(BoolVisitor, Protected::new(vec![tags::BOOL_TRUE])) == Some(Bool(true)));
-        assert!(read(BoolVisitor, Protected::new(vec![tags::BOOL_FALSE])) == Some(Bool(false)));
-        // A payload after the tag, or another tag, is not a boolean.
-        assert!(read(BoolVisitor, Protected::new(vec![tags::BOOL_TRUE, 0])).is_none());
-        assert!(read(BoolVisitor, leaf(tags::INT32, &1i32.to_le_bytes())).is_none());
-        assert!(read(BoolVisitor, Protected::new(Vec::new())).is_none());
+    fn booleans_read_both_values() {
+        assert!(read::<Bool>(Physical::Bool(true)) == Some(Bool(true)));
+        assert!(read::<Bool>(Physical::Bool(false)) == Some(Bool(false)));
+        assert!(read::<Bool>(Physical::Null).is_none());
     }
 
     #[test]

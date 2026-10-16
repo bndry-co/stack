@@ -226,7 +226,7 @@ unknown one with "no such EQL type".
 ```rust,ignore
 use eql_bindings::encryption::targets;
 use stack_encrypt::Label;
-use vitaminc_aead_value::FfiValue;
+use stack_encrypt::dynamic::FfiValue;
 
 let column = Label::new(["users", "email"])?; // the field's context: table/column
 let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, FfiValue::String("alice@example.com".into()))?.await?;

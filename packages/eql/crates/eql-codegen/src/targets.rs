@@ -277,7 +277,7 @@ fn render_targets_from(rows: &[Row]) -> String {
     let file = quote! {
         #![doc = #mod_doc]
 
-        use vitaminc_aead_value::FfiValue;
+        use stack_encrypt::dynamic::FfiValue;
 
         #imports
         use crate::encryption::targets::{#helpers refuse, refuse_query, Opener, Target, TargetError};

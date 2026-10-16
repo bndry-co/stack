@@ -20,9 +20,9 @@ use eql_bindings::v3::terms::Ciphertext;
 use eql_bindings::v4::{bigint, boolean, double, integer, real, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
+use stack_encrypt::dynamic::{FfiValue, ValueKind};
 use stack_encrypt::target::transcode::{Reader, Visitor};
 use stack_encrypt::{CipherText, Label, NonEmpty};
-use vitaminc_aead_value::{FfiValue, ValueKind};
 
 fn column() -> NonEmpty<Identifier> {
     Identifier::for_column("users", "age").unwrap()
