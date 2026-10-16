@@ -235,7 +235,9 @@ run = "bash tasks/schemas-parity.sh"
 [tasks."install-hooks"]
 description = "Point git at the committed hooks in tasks/githooks (run once per clone) so commits touching the catalog/generated surfaces are drift-gated locally"
 dir = "{{config_root}}"
-run = "git config core.hooksPath tasks/githooks"
+# Git resolves a relative core.hooksPath against the root of the working tree,
+# not this directory, so prefix the path from the root to this package.
+run = 'git config core.hooksPath "$(git rev-parse --show-prefix)tasks/githooks"'
 
 [tasks."test:codegen"]
 description = "Run the encrypted-domain catalog + generator tests (no database required)"
@@ -314,8 +316,8 @@ cargo clippy --locked -p eql-bindings -p eql-encryption-tests --all-features --a
 """
 
 [tasks."test:encryption:postgres"]
-description = "Install the EQL bundle built from the tree into the database EQL_TEST_DATABASE_URL names and run the stack-encrypt PostgreSQL test against it (fresh encryption, fake KMS)"
-# `build` writes release/cipherstash-encrypt.sql from the SQL in the tree. The
+description = "Install the EQL v4 bundle built from the tree into the database EQL_TEST_DATABASE_URL names and run the stack-encrypt PostgreSQL test against it (fresh encryption, fake KMS)"
+# `build` writes release/cipherstash-encrypt-v4.sql from the SQL in the tree. The
 # copy under crates/eql-bindings/sql is the RELEASED bundle, rewritten only by
 # the lockstep version bump, so a test that installs it cannot see a SQL edit
 # made in the same pull request.
@@ -327,7 +329,8 @@ run = """
 # different databases. psql accepts a libpq conninfo string as its dbname.
 set -euo pipefail
 : "${EQL_TEST_DATABASE_URL:?set EQL_TEST_DATABASE_URL to a libpq connection string for a disposable PostgreSQL}"
-psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f release/cipherstash-encrypt.sql
+# Stack Encrypt writes EQL v4 only (ADR-0002), so the test runs against the v4 bundle.
+psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f release/cipherstash-encrypt-v4.sql
 # `--ignored` selects by attribute, and cargo exits 0 on an empty selection, so
 # a test that loses its `#[ignore]` or is renamed would leave this task passing
 # on nothing. List what the filter selects before running it.
@@ -367,22 +370,25 @@ tmp="$(mktemp -d)"
 # the ts-rs/schemars derives below need the generated structs on disk to
 # compile, so (unlike the TS/JSON, which export to a temp dir and swap on
 # success) they cannot be temp-swapped. To keep the task atomic-on-failure,
-# snapshot the whole src/v3 tree (generated + hand-written) up front; if the
+# snapshot the whole src/v3 and src/v4 trees (generated + hand-written) up front; if the
 # regen or the cargo test that follows fails or is interrupted, the trap
 # restores the snapshot so the working tree is left exactly as it was — never
 # fresh structs against stale committed TS/JSON that an automated commit could
 # capture. The snapshot is a filesystem copy (not `git checkout`) so a dev's
 # legitimate uncommitted edits survive a failed run.
 v3="crates/eql-bindings/src/v3"
+v4="crates/eql-bindings/src/v4"
 bindings="crates/eql-bindings/bindings"
 schema="crates/eql-bindings/schema"
 cp -R "$v3" "$tmp/v3-snapshot"
+cp -R "$v4" "$tmp/v4-snapshot"
 cp -R "$bindings" "$tmp/bindings-snapshot"
 cp -R "$schema" "$tmp/schema-snapshot"
 ok=0
 trap 'if [ "$ok" != 1 ]; then
-  rm -rf "$v3" "$bindings" "$schema"
+  rm -rf "$v3" "$v4" "$bindings" "$schema"
   mv "$tmp/v3-snapshot" "$v3"
+  mv "$tmp/v4-snapshot" "$v4"
   mv "$tmp/bindings-snapshot" "$bindings"
   mv "$tmp/schema-snapshot" "$schema"
 fi
@@ -410,12 +416,12 @@ set -euo pipefail
 # runs in contexts (test-eql.yml's Rust job, the pre-commit hook) that
 # provision mise tools but not pnpm/node_modules.
 node packages/eql/scripts/sync-generated.mjs
-git diff --exit-code -- crates/eql-bindings/src/v3 crates/eql-bindings/bindings crates/eql-bindings/schema packages/eql/src/generated ../../languages/golang/encrypt/eql/eql_gen.go || {
+git diff --exit-code -- crates/eql-bindings/src/v3 crates/eql-bindings/src/v4 crates/eql-bindings/bindings crates/eql-bindings/schema packages/eql/src/generated ../../languages/golang/encrypt/eql/eql_gen.go || {
   echo "eql-bindings generated Rust/TS/JSON, the Go package encrypt/eql or @cipherstash/eql package output is stale — run 'mise run types:generate' and 'mise run typescript:generate' and commit the result" >&2
   exit 1
 }
 # git diff is blind to brand-new files; untracked output is stale too.
-untracked=$(git ls-files --others --exclude-standard -- crates/eql-bindings/src/v3 crates/eql-bindings/bindings crates/eql-bindings/schema packages/eql/src/generated ../../languages/golang/encrypt/eql/eql_gen.go)
+untracked=$(git ls-files --others --exclude-standard -- crates/eql-bindings/src/v3 crates/eql-bindings/src/v4 crates/eql-bindings/bindings crates/eql-bindings/schema packages/eql/src/generated ../../languages/golang/encrypt/eql/eql_gen.go)
 if [ -n "$untracked" ]; then
   echo "eql-bindings has uncommitted generated files:" >&2
   echo "$untracked" >&2
