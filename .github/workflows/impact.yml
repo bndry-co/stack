@@ -45,11 +45,16 @@ jobs:
         id: target
         env:
           TARGET_BRANCH: ${{ github.base_ref || github.ref_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           # Keep one logical target ref across push/PR events, pinned to the
-          # event's commit even if the remote branch advances while queued.
-          git update-ref "$BASE_REF" "$BASE_SHA"
+          # commit this run measures from even if the remote branch advances
+          # while queued. A PR pins its merge commit's first parent, not
+          # pull_request.base.sha, which lags main (see `pin` in the driver).
+          args=(--event-sha "$EVENT_SHA")
+          if [[ -n "$PR_HEAD" ]]; then args+=(--pr-head "$PR_HEAD"); fi
+          python scripts/impact-gate.py pin --base "$BASE_REF" "${args[@]}"
           echo "BASELINE_DIR=$RUNNER_TEMP/impact-baseline" >> "$GITHUB_ENV"
           python - <<'PY'
           import hashlib
@@ -70,9 +75,9 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.BASELINE_DIR }}
-          key: impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-${{ github.event.pull_request.base.sha || github.sha }}
+          key: impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-${{ steps.target.outputs.sha }}
           restore-keys: |
-            impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-${{ github.event.pull_request.base.sha || github.sha }}-
+            impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-${{ steps.target.outputs.sha }}-
             impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-
 
       - name: Validate or build baselines

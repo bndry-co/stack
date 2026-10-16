@@ -90,16 +90,16 @@ describe('advisory change impact', () => {
     expect(restore.with.key).toContain("'scripts/impact-gate.py'")
     expect(restore.with.key).toContain("'.github/workflows/impact.yml'")
     expect(restore.with.key).toContain('steps.target.outputs.key')
-    expect(restore.with.key).toContain(
-      'github.event.pull_request.base.sha || github.sha',
-    )
+    // The commit `pin` measured from, never pull_request.base.sha: that lags
+    // the target whenever it moved on after the PR last synced.
+    expect(restore.with.key).toContain('steps.target.outputs.sha')
     // This commit's run-suffixed saves first, then the target branch's
     // ancestors — never a broader prefix.
     expect(restore.with['restore-keys'].trim().split('\n')).toEqual([
       `${restore.with.key}-`,
       restore.with.key.replace(
         // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Actions expression
-        '-${{ github.event.pull_request.base.sha || github.sha }}',
+        '-${{ steps.target.outputs.sha }}',
         '-',
       ),
     ])
@@ -125,6 +125,25 @@ describe('advisory change impact', () => {
     expect(save.with.path).toBe(restore.with.path)
   })
 
+  it('measures a pull request from the commit its merge was built on', () => {
+    // pull_request.base.sha lags main whenever main moved on after the PR last
+    // synced, while the checkout is refs/pull/N/merge on main's current tip;
+    // scoring from the stale base counted main's newer commits as the PR's.
+    // `pin` takes the merge commit's first parent instead (test_impact_gate.py).
+    const job = readWorkflow(workflowPath).jobs.impact
+    const target = job.steps.find((step) => step.id === 'target')
+    expect(target.run).toContain(
+      'scripts/impact-gate.py pin --base "$BASE_REF"',
+    )
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Actions expression
+    expect(target.env.EVENT_SHA).toBe('${{ github.sha }}')
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal Actions expression
+    expect(target.env.PR_HEAD).toBe('${{ github.event.pull_request.head.sha }}')
+    expect(readFileSync(join(REPO_ROOT, workflowPath), 'utf8')).not.toContain(
+      'pull_request.base.sha }}',
+    )
+  })
+
   it('replaces a corrupt same-commit cache instead of colliding with its key', () => {
     // A cache key is immutable. When the entry saved for a commit fails
     // validation, prepare rebuilds; saving under that same key is refused
@@ -142,7 +161,7 @@ describe('advisory change impact', () => {
     const run = (event, runId, attempt, restored) => {
       const context = {
         github: { ...event.github, run_id: runId, run_attempt: attempt },
-        steps: { target: { outputs: { key: 'main' } } },
+        steps: { target: { outputs: { key: 'main', sha: event.github.sha } } },
       }
       const primary = interpolate(restore.with.key, context)
       context.steps.restore = {
