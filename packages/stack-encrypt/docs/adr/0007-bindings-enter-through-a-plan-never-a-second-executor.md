@@ -241,7 +241,8 @@ from, as bytes, and `between` derives one term per bound under the one
 context, as a list of two. A field that names an EQL type runs the type's
 query twin, and the term is the twin's JSON and the domain its
 `query_sql_domain`. One query domain per operator is EQL v4's (ADR-0009,
-decision 8, #1179); until then a type's twin carries every term of the type.
+decision 8); until that lands in the catalog a type's twin carries every term
+of the type.
 
 **`verify` and `target_limit` are engine exports.** `se_verify(input, values,
 plan, field, operator)` answers one boolean per decrypted value, a page in
@@ -274,10 +275,12 @@ on a term, because Rust says it with a trait. A generator asks before the
 program runs, so it needs the answer as data, and the code it generates
 carries `Verify` only where the answer is `probabilistic`, which rebuilds
 decision 4 of ADR-0009 in a language without traits. Today `TextEq` answers
-`eq` and no other type is produced. A type answers no probabilistic operator
-and no `between` yet: the catalog names a type's match index but not its
-options, which `verify` must cut tokens by, and a twin is one value, not a
-range. Both wait for the EQL v4 types (#1179).
+`eq` and no other produced type answers anything: `TextMatch` is produced and
+has a query twin, but answers no operator, and the storage-only types have no
+twin. A type answers no probabilistic operator and no `between` yet: the
+catalog names a type's match index but not its options, which `verify` must
+cut tokens by, and a twin is one value, not a range. Both wait for that
+catalog work, not for the types themselves.
 
 What does not change: a binding still reaches the engine through a plan, and
 nothing here derives a term outside the engine's own derivation, so a query

@@ -1749,12 +1749,48 @@ fn the_catalog_lists_each_types_operators() {
                     ("index", "eq")
                 ]
             );
-        } else if !producible {
-            assert!(
-                operators.is_empty(),
-                "{name} is not produced, so answers nothing"
-            );
+        } else {
+            // A type the engine does not produce answers nothing, and no
+            // produced type but TextEq answers anything yet: TextMatch has a
+            // twin, but the catalog does not carry the match options a
+            // probabilistic operator's `verify` cuts tokens by.
+            let why = if producible {
+                "is produced but answers no operator yet"
+            } else {
+                "is not produced, so answers nothing"
+            };
+            assert!(operators.is_empty(), "{name} {why}");
         }
+    }
+}
+
+/// `TextMatch` is produced and has a query twin, but answers no operator
+/// yet: a `matches` (or any) query on a field typed with it is refused as
+/// not answered, never sent as the twin with no `verify` to check its rows.
+#[test]
+fn a_text_match_field_answers_no_operator_yet() {
+    if !stack_encrypt_guest::targets::HOLDS_EQL {
+        return;
+    }
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    let plan = encode(obj(vec![(
+        "name",
+        obj(vec![("context", label("name")), ("target", s("TextMatch"))]),
+    )]));
+    for operator in ["matches", "eq"] {
+        assert_eq!(
+            block_on(ops::query_term(
+                &keyset,
+                &encode(s("alice")),
+                &plan,
+                b"name",
+                operator.as_bytes(),
+            ))
+            .map(|_| ()),
+            Err(STATUS_ENCODING),
+            "{operator} on a TextMatch field"
+        );
     }
 }
 

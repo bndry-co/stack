@@ -460,7 +460,7 @@ reasons! {
     /// What was wrong with a context, plan, source, stored record or query: the
     /// reason a dynamic input error carries beside the field it names.
     ///
-    /// One vocabulary for all four, since several reasons apply to more than
+    /// One vocabulary for all five, since several reasons apply to more than
     /// one (a field given twice is a misfit in a source and in a stored
     /// record). [`as_str`](Self::as_str) is the `snake_case` name a binding
     /// reports in its payload's `reason` field; `Display` is the phrase the

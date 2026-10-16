@@ -32,9 +32,10 @@
 //! declared kind: `eq` through an equality index, `matches` through a match
 //! index over text, and the orderings (`lt`, `lte`, `gt`, `gte`,
 //! `between`) through an ORE index over an integer, or an OPE index when
-//! the field declares no ORE. Those are the typed path's defaults: an
-//! ordering over text, bytes or a float is not answered, as `op::Ordered`
-//! covers the integers only.
+//! the field declares no ORE. The typed path's default for an ordering is
+//! ORE, and OPE is the typed path's `.via(Ope)`; here a field that declares
+//! only OPE is answered through it. An ordering over text, bytes or a float
+//! is not answered, as `op::Ordered` covers the integers only.
 //!
 //! A field that names an EQL type answers what its
 //! [`TargetDescriptor::operators`] lists: the exact operators of a single
@@ -43,7 +44,8 @@
 //! the type; one query domain per operator is EQL v4's (ADR-0009, decision
 //! 8). A probabilistic operator is not answered through a target yet: the
 //! descriptor names the type's match index but not its options, and
-//! `verify` must cut tokens as the stored filter did.
+//! `verify` must cut tokens as the stored filter did. So `TextMatch`, which
+//! is produced and has a twin, answers no operator.
 //!
 //! # Wire format
 //!

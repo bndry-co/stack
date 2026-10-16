@@ -355,8 +355,11 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 			if len(target.Operators) != 1 || target.Operators[0] != want[0] {
 				t.Fatalf("TextEq answers %+v, want %+v", target.Operators, want)
 			}
-		case !target.Producible && len(target.Operators) != 0:
-			t.Fatalf("%s is not produced and answers %+v", target.Name, target.Operators)
+		case len(target.Operators) != 0:
+			// No produced type but TextEq answers anything yet: TextMatch has
+			// a twin, but the catalog does not carry the match options its
+			// Verify would cut tokens by.
+			t.Fatalf("%s (producible %v) answers %+v, want none", target.Name, target.Producible, target.Operators)
 		}
 	}
 }
