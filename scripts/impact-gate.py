@@ -195,7 +195,7 @@ def declaration_lines(path: str, source: str) -> dict[int, bool]:
         line = bisect.bisect_right(starts, offset)
         if value.strip() and token not in Comment:
             first.setdefault(line, (token, value))
-            last[line] = (token, value)
+            last[line] = (token, value, offset)
         if (depth == 0 and starts[line - 1] == offset
                 and (token in Keyword or token in Name.Decorator)
                 and DECLARATION.match(source, offset)):
@@ -208,12 +208,20 @@ def declaration_lines(path: str, source: str) -> dict[int, bool]:
     # (`type T =`, `=>`) or the next code line leads with one (`| 'b'`, `.next()`).
     code_lines = sorted(first)
 
+    def closes(line: int, value: str, offset: int) -> bool:
+        # An operator that ends its operand: the `>` of a generic the line
+        # opened, or a postfix `!`/`++`/`--` written against that operand.
+        text = source[starts[line - 1]:offset + len(value)]
+        if value.strip('>') == '':
+            return text.count('<') >= text.count('>')
+        return value in ('!', '++', '--') and re.match(r'[\w)\]]', source[offset - 1]) is not None
+
     def continues(line: int) -> bool:
         following = code_lines[bisect.bisect_right(code_lines, line):]
-        token, value = last.get(line, (None, ''))
-        trails = (token in Operator and value not in ('>', '!', '++', '--')
+        token, value, offset = last.get(line, (None, '', 0))
+        trails = ((token in Operator and not closes(line, value, offset))
                   or value in ('=>', ',', '.'))
-        return trails or bool(following) and first[following[0]][1] in LEADING
+        return trails or (bool(following) and first[following[0]][1] in LEADING)
 
     return {line: not open_at_end.get(line, False) and not continues(line)
             for line in declarations}

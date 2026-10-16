@@ -203,6 +203,10 @@ class ImpactWorkflowTest(unittest.TestCase):
             'export const x = foo(\n  1,\n)\n': False,
             'export type Row = Record<string, number>\nexport const y = 1\n': True,
             'export const value = input!\n\nexport const y = 1\n': True,
+            'export const nested = new Map<string, Array<number>>()\nexport const y = 1\n': True,
+            'export type Nested = Map<string, Array<number>>\nexport const y = 1\n': True,
+            'export const large = value >\n  10\n': False,
+            'export const off = !\n  enabled\n': False,
         }
         driver = self.load_driver()
         for source, whole in cases.items():
