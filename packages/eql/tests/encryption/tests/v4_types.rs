@@ -688,3 +688,291 @@ mod erased {
         }
     }
 }
+
+/// `fixtures/v4_queries.json`: the query operands the Rust dispatch derives
+/// for one value of each v4 type that answers a query, under the key source
+/// every test in the repository derives terms under (`FakeDataKeySource`'s
+/// index key, keyset nil). The Go SDK's hermetic test derives the same
+/// queries through generated code over the deterministic guest build, whose
+/// index key is the same, and asserts the bytes are equal: a Go field typed
+/// `encrypt_into=TextMatch` runs this plan and no other. Regenerate with
+/// `EQL_UPDATE_FIXTURES=1`; the bytes must not change otherwise.
+#[tokio::test]
+async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let query = |name: &'static str, column: &'static str, value: FfiValue| {
+        let keyset = &keyset;
+        async move {
+            let label = Label::new(["profiles", column]).unwrap();
+            let bytes = targets::query(name, keyset, &label, value)
+                .unwrap()
+                .await
+                .unwrap();
+            String::from_utf8(bytes).unwrap()
+        }
+    };
+    let fixture = serde_json::json!({
+        "_comment": "The v4 query operands eql-bindings derives for each plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+        "table": "profiles",
+        "name": {
+            "plaintext": "alice",
+            "query": query("TextMatch", "name", FfiValue::String("alice".into())).await,
+        },
+    });
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_queries.json");
+    let rendered = serde_json::to_string_pretty(&fixture).unwrap() + "\n";
+    if std::env::var_os("EQL_UPDATE_FIXTURES").is_some() {
+        std::fs::write(&path, &rendered).unwrap();
+    }
+    let committed = std::fs::read_to_string(&path)
+        .expect("fixtures/v4_queries.json is committed; EQL_UPDATE_FIXTURES=1 writes it");
+    assert_eq!(
+        committed, rendered,
+        "the committed fixture is what the dispatch derives today"
+    );
+}
+
+/// `fixtures/v4_rows.json`: `Profile` rows the Go SDK's generated code sealed
+/// over the deterministic EQL guest (`TestV4RowsMatchTheCommittedFixture` in
+/// languages/golang/encrypt writes it). The guest derives its keys with
+/// stack-kms's `DeterministicSource`, so a cipher over the same seed opens
+/// what Go sealed.
+mod go_rows {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[derive(serde::Deserialize)]
+    pub struct Fixture {
+        pub seed: String,
+        pub table: String,
+        pub rows: Vec<Row>,
+    }
+    #[derive(serde::Deserialize)]
+    pub struct Row {
+        pub id: i32,
+        pub plaintext: Plain,
+        pub stored: BTreeMap<String, serde_json::Value>,
+    }
+    #[derive(serde::Deserialize, Clone)]
+    pub struct Plain {
+        pub visits: i32,
+        pub balance: i64,
+        pub active: bool,
+        pub ratio: f32,
+        pub score: f64,
+        pub note: String,
+        pub name: String,
+    }
+
+    /// The committed rows, or the file `EQL_V4_ROWS` names: CI points it at
+    /// rows the Go SDK sealed in the same job, so today's Go ciphertexts
+    /// reach Rust, not only the committed ones.
+    pub fn fixture() -> Fixture {
+        let path = std::env::var_os("EQL_V4_ROWS").map_or_else(
+            || std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_rows.json"),
+            std::path::PathBuf::from,
+        );
+        let raw = std::fs::read_to_string(path).expect(
+            "fixtures/v4_rows.json is written by the Go SDK's TestV4RowsMatchTheCommittedFixture",
+        );
+        serde_json::from_str(&raw).unwrap()
+    }
+
+    pub async fn cipher(seed: &str) -> stack_encrypt::StackCipher<stack_kms::DeterministicSource> {
+        let seed: [u8; 32] = seed.as_bytes().try_into().expect("a 32-byte seed");
+        stack_encrypt::StackCipher::builder()
+            .kms(stack_kms::DeterministicSource::new(seed))
+            .init()
+            .await
+            .unwrap()
+    }
+
+    pub fn column(name: &str) -> NonEmpty<Identifier> {
+        Identifier::for_column("profiles", name).unwrap()
+    }
+
+    /// The stored value under `column`, parsed as its v4 type: the shape, the
+    /// version and the terms the Go code wrote.
+    pub fn parsed<T: DeserializeOwned>(row: &Row, column: &str) -> T {
+        serde_json::from_value(row.stored[column].clone())
+            .unwrap_or_else(|e| panic!("row {} {column}: {e}", row.id))
+    }
+
+    /// Open every field of `row` and check it against the plaintext Go
+    /// sealed.
+    pub async fn open_row(
+        cipher: &stack_encrypt::StackCipher<stack_kms::DeterministicSource>,
+        row: &Row,
+    ) {
+        let p = &row.plaintext;
+        let visits: Int32 = cipher
+            .decrypt_as(
+                parsed::<integer::Integer>(row, "visits"),
+                column("visits").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(visits.0, p.visits);
+        let balance: Int64 = cipher
+            .decrypt_as(
+                parsed::<bigint::Bigint>(row, "balance"),
+                column("balance").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(balance.0, p.balance);
+        let active: Bool = cipher
+            .decrypt_as(
+                parsed::<boolean::Boolean>(row, "active"),
+                column("active").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(active.0, p.active);
+        let ratio: Float32 = cipher
+            .decrypt_as(parsed::<real::Real>(row, "ratio"), column("ratio").into())
+            .await
+            .unwrap();
+        assert_eq!(ratio.0.to_bits(), p.ratio.to_bits());
+        let score: Float64 = cipher
+            .decrypt_as(
+                parsed::<double::Double>(row, "score"),
+                column("score").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(score.0.to_bits(), p.score.to_bits());
+        let note: String = cipher
+            .decrypt_as(parsed::<text::Text>(row, "note"), column("note").into())
+            .await
+            .unwrap();
+        assert_eq!(note, p.note);
+        let name: String = cipher
+            .decrypt_as(
+                parsed::<text::TextMatch>(row, "name"),
+                column("name").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(name, p.name);
+    }
+}
+
+/// What the Go SDK sealed parses as each v4 type and opens in Rust, field by
+/// field, under the column it was stored under.
+#[tokio::test]
+async fn rows_the_go_sdk_sealed_open_in_rust() {
+    let fixture = go_rows::fixture();
+    assert_eq!(fixture.table, "profiles");
+    assert!(!fixture.rows.is_empty());
+    let cipher = go_rows::cipher(&fixture.seed).await;
+    for row in &fixture.rows {
+        go_rows::open_row(&cipher, row).await;
+    }
+}
+
+/// The Go-sealed rows in PostgreSQL: each value passes its `eql_v4_*` domain
+/// check, `@@` finds the row with the fixture's Go-derived query operand,
+/// and what comes back out still opens.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let fixture = go_rows::fixture();
+    let cipher = runtime.block_on(go_rows::cipher(&fixture.seed));
+    let mut db = postgres::Client::connect(
+        &std::env::var("EQL_TEST_DATABASE_URL").expect("EQL_TEST_DATABASE_URL"),
+        postgres::NoTls,
+    )
+    .unwrap();
+    db.batch_execute(
+        "CREATE TEMP TABLE go_profiles (
+            id int PRIMARY KEY,
+            visits public.eql_v4_integer,
+            balance public.eql_v4_bigint,
+            active public.eql_v4_boolean,
+            ratio public.eql_v4_real,
+            score public.eql_v4_double,
+            note public.eql_v4_text,
+            name public.eql_v4_text_match
+        );",
+    )
+    .unwrap();
+    for row in &fixture.rows {
+        let v = |column: &str| row.stored[column].to_string();
+        db.execute(
+            "INSERT INTO go_profiles VALUES ($1,
+                $2::text::jsonb::public.eql_v4_integer,
+                $3::text::jsonb::public.eql_v4_bigint,
+                $4::text::jsonb::public.eql_v4_boolean,
+                $5::text::jsonb::public.eql_v4_real,
+                $6::text::jsonb::public.eql_v4_double,
+                $7::text::jsonb::public.eql_v4_text,
+                $8::text::jsonb::public.eql_v4_text_match)",
+            &[
+                &row.id,
+                &v("visits"),
+                &v("balance"),
+                &v("active"),
+                &v("ratio"),
+                &v("score"),
+                &v("note"),
+                &v("name"),
+            ],
+        )
+        .unwrap();
+    }
+
+    let queries: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_queries.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let needle = queries["name"]["plaintext"].as_str().unwrap();
+    let ids: Vec<i32> = db
+        .query(
+            "SELECT id FROM go_profiles WHERE name @@ $1::text::jsonb::eql_v4.query_text_match ORDER BY id",
+            &[&queries["name"]["query"].as_str().unwrap()],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    // `@@` folds case, so the expectation does too. It is exact only because
+    // no committed row's filter covers the needle's bits by chance: a Bloom
+    // filter may, and a regenerated fixture that turns one up fails here
+    // against a correct database.
+    let needle_folded = needle.to_lowercase();
+    let expected: Vec<i32> = fixture
+        .rows
+        .iter()
+        .filter(|r| r.plaintext.name.to_lowercase().contains(&needle_folded))
+        .map(|r| r.id)
+        .collect();
+    assert!(!expected.is_empty());
+    assert_eq!(ids, expected, "@@ {needle:?} over Go-sealed names");
+
+    // Read back from the domains and open again.
+    for row in &fixture.rows {
+        let back = db
+            .query_one(
+                "SELECT (to_jsonb(p) - 'id')::text FROM go_profiles p WHERE id = $1",
+                &[&row.id],
+            )
+            .unwrap();
+        let stored: String = back.get(0);
+        let round_tripped = go_rows::Row {
+            id: row.id,
+            plaintext: row.plaintext.clone(),
+            stored: serde_json::from_str(&stored).unwrap(),
+        };
+        runtime.block_on(go_rows::open_row(&cipher, &round_tripped));
+    }
+}
