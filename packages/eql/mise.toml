@@ -66,6 +66,8 @@ description = "Clean release"
 run = """
   rm -f release/cipherstash-encrypt-uninstall.sql
   rm -f release/cipherstash-encrypt.sql
+  rm -f release/cipherstash-encrypt-v4-uninstall.sql
+  rm -f release/cipherstash-encrypt-v4.sql
 """
 
 [tasks."release:prepare_bindings_assets"]
@@ -251,11 +253,23 @@ bash tasks/test/symbol_order_selftest.sh
 bash tasks/test/verify_symbol_order_v3.sh build/render/eql_v3/deps-ordered.txt
 """
 
-[tasks."test:installer_complete"]
-description = "Assert the installer contains every ordered src/v3 file's body (DB-free)"
+[tasks."test:v4_isolation"]
+description = "Assert the eql_v4 bundle names nothing from eql_v3, and self-test that check (DB-free)"
 depends = ["build"]
 dir = "{{config_root}}"
-run = "bash tasks/test/verify_installer_complete.sh build/render/eql_v3/deps-ordered.txt release/cipherstash-encrypt.sql build/render/eql_v3"
+run = """
+bash tasks/test/v4_isolation_selftest.sh
+bash tasks/test/verify_no_v3_in_v4.sh
+"""
+
+[tasks."test:installer_complete"]
+description = "Assert the v3 and v4 installers each contain every ordered src/v3 file's body (DB-free)"
+depends = ["build"]
+dir = "{{config_root}}"
+run = """
+bash tasks/test/verify_installer_complete.sh build/render/eql_v3/deps-ordered.txt release/cipherstash-encrypt.sql build/render/eql_v3
+bash tasks/test/verify_installer_complete.sh build/render/eql_v4/deps-ordered.txt release/cipherstash-encrypt-v4.sql build/render/eql_v4
+"""
 
 [tasks."test:build_ordering_helpers"]
 description = "Unit tests for tasks/build/ordering.sh strip_require_lines (DB-free)"

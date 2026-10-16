@@ -85,7 +85,11 @@ AS $$
   -- User-column encrypted domains now live in public so application tables
   -- survive EQL uninstall. Keep this separate from owned_schemas(): public is
   -- not installer-owned, but its EQL jsonb-backed domains are still the domain
-  -- types whose blockers/operator surfaces the lint must understand.
+  -- types whose blockers/operator surfaces the lint must understand. Only this
+  -- version's public domains: with EQL v3 and v4 installed side by side, the
+  -- other version's domains and blockers are not this lint's to judge, and its
+  -- blockers sit outside owned_schemas() where they would read as errors.
+  -- starts_with, not LIKE: the underscores in the prefix are LIKE wildcards.
   encrypted_domain_types AS (
     SELECT
       dt.oid AS typid
@@ -97,7 +101,7 @@ AS $$
       AND bt.typname = 'jsonb'
       AND bn.nspname = 'pg_catalog'
       AND (
-           dn.nspname = 'public'
+           (dn.nspname = 'public' AND starts_with(dt.typname::text, '{{prefix}}_'))
         OR dn.nspname = ANY({{prefix}}_internal.owned_schemas())
       )
   ),
