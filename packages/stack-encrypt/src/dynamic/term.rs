@@ -647,8 +647,14 @@ impl<T> MapSink for NoContainer<T> {
 }
 
 /// A dynamic error, where an operation's pending can only carry the crate's.
+/// A cipher error is already the crate's, and passes through unchanged, so a
+/// term the scheme refused (text that does not normalize) keeps its kind;
+/// boxing it would report it as an internal failure.
 fn lifted(error: Error) -> crate::Error {
-    crate::Error::Other(Box::new(error))
+    match error {
+        Error::Cipher(error) => error,
+        other => crate::Error::Other(Box::new(other)),
+    }
 }
 
 /// An [`IndexSpec`] is an [`Index`] of an [`FfiValue`]: the index named as
@@ -747,6 +753,32 @@ mod tests {
                 ),
                 other => panic!("{what}: expected the lifted Error::Term, got {other:?}"),
             }
+        }
+    }
+
+    /// A term the scheme refuses while a record is written keeps its kind:
+    /// text that does not normalize (a code point unassigned in Unicode 16)
+    /// under equality or match is the cipher's `TermError::Normalize`, which
+    /// a guest reports as a term failure, not boxed as an internal error.
+    #[tokio::test]
+    async fn a_refused_term_in_a_record_keeps_its_kind() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        for kind in [IndexSpec::Equality, default_match()] {
+            let refused = keyset
+                .run(
+                    Index::<FfiValue>::operation::<FakeDataKeySource, crate::target::Owned>(&kind),
+                    s("a\u{0378}bc"),
+                    CallerContext::from(nonempty!("users/bio")),
+                )
+                .await;
+            assert!(
+                matches!(
+                    refused,
+                    Err(crate::Error::Term(crate::sem::TermError::Normalize(_)))
+                ),
+                "{kind:?}: {refused:?}"
+            );
         }
     }
 
