@@ -502,6 +502,69 @@ describe('decrypt plan', () => {
     expect(warning).toContain('stash encrypt drop')
   })
 
+  it('closes an open forward migration whose source column was removed outside stash', async () => {
+    resolveMock.mockResolvedValue(
+      pair({
+        plaintextSqlType: null,
+        state: null,
+        via: 'convention',
+        forwardState: forward('backfilled'),
+      }),
+    )
+
+    await decryptPlanCommand({ table: 'users' })
+
+    expect(migrateMocks.appendEvent).toHaveBeenCalledWith(expect.anything(), {
+      tableName: 'users',
+      columnName: 'email',
+      event: 'dropped',
+      phase: 'dropped',
+      details: { observedAbsent: true, recordedBy: 'stash decrypt plan' },
+    })
+    expect(p.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("still open at 'backfilled'"),
+    )
+    // The twin is still planned.
+    const [, sql] = writeFileMock.mock.calls[0] as [string, string]
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS "email" text')
+  })
+
+  it('--dry-run records nothing for a removed forward source', async () => {
+    resolveMock.mockResolvedValue(
+      pair({
+        plaintextSqlType: null,
+        state: null,
+        via: 'convention',
+        forwardState: forward('backfilled'),
+      }),
+    )
+
+    await decryptPlanCommand({ table: 'users', dryRun: true })
+
+    expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
+    expect(p.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('would record'),
+    )
+  })
+
+  it('records nothing for a missing twin with no open forward migration', async () => {
+    for (const forwardState of [null, forward('dropped')]) {
+      vi.clearAllMocks()
+      resolveMock.mockResolvedValue(
+        pair({
+          plaintextSqlType: null,
+          state: null,
+          via: 'convention',
+          forwardState,
+        }),
+      )
+
+      await decryptPlanCommand({ table: 'users' })
+
+      expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
+    }
+  })
+
   it('does not second-guess a twin the reverse lifecycle in progress filled', async () => {
     resolveMock.mockResolvedValue(
       pair({ state: { ...decrypted('email'), phase: 'decrypting' } }),

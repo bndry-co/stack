@@ -8,11 +8,11 @@ import {
   type MigrationStateRow,
   type PlaintextTypeMapping,
   plaintextTypeForEqlDomain,
-  progress,
   readManifest,
 } from '@cipherstash/migrate'
 import type pg from 'pg'
 import { BackfillConfigError } from '@/commands/encrypt/backfill.js'
+import { progressSafe } from '@/commands/encrypt/lib/db-readers.js'
 
 /**
  * How the plaintext twin's name was decided. Destructive steps trust only the
@@ -74,19 +74,9 @@ export async function reverseState(
   table: string,
   encryptedColumn: string,
 ): Promise<MigrationStateRow | null> {
-  const last = await progress(client, table, encryptedColumn).catch(
-    (error: unknown) => {
-      // `cs_migrations` not installed yet: no reverse history, which is a
-      // normal state for `plan`/`status` on a fresh project.
-      if (
-        error instanceof Error &&
-        /cs_migrations|schema "cipherstash"/i.test(error.message)
-      ) {
-        return null
-      }
-      throw error
-    },
-  )
+  // `cs_migrations` not installed yet reads as no reverse history, which is
+  // a normal state for `plan`/`status` on a fresh project.
+  const last = await progressSafe(client, table, encryptedColumn)
   return last && isReverseMigrationPhase(last.phase) ? last : null
 }
 
@@ -100,17 +90,7 @@ export async function forwardState(
   table: string,
   plaintextColumn: string,
 ): Promise<MigrationStateRow | null> {
-  const last = await progress(client, table, plaintextColumn).catch(
-    (error: unknown) => {
-      if (
-        error instanceof Error &&
-        /cs_migrations|schema "cipherstash"/i.test(error.message)
-      ) {
-        return null
-      }
-      throw error
-    },
-  )
+  const last = await progressSafe(client, table, plaintextColumn)
   return last && !isReverseMigrationPhase(last.phase) ? last : null
 }
 

@@ -1,4 +1,5 @@
 import {
+  appendEvent,
   classifyEqlDomain,
   listEncryptedColumns,
   type PlaintextSqlType,
@@ -155,6 +156,33 @@ export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
       (pair): pair is MappedPair =>
         pair.plaintextSqlType === null && pair.mapping !== null,
     )
+
+    // A twin that does not exist cannot be the live source of a forward
+    // encryption, so a forward lifecycle still open under its name lost its
+    // source column outside stash (an ORM migration, say). Plan is the only
+    // step that can see that: once the twin below is added, the column is
+    // back and indistinguishable from a forward source that was never
+    // dropped, which `decrypt backfill` refuses. So the forward lifecycle is
+    // closed here, recorded as observed rather than as a drop stash generated.
+    for (const pair of toAdd) {
+      const openForward = openForwardMigrationMessage(pair)
+      if (openForward === null || pair.forwardState === null) continue
+      const what = `${options.table}.${pair.plaintextColumn} does not exist, but the forward encryption into ${pair.encryptedColumn} is still open at '${pair.forwardState.phase}' in cipherstash.cs_migrations: the column was removed outside stash.`
+      if (options.dryRun) {
+        p.log.info(
+          `${what} Without --dry-run, plan would record that forward migration as dropped so \`stash decrypt backfill\` can start.`,
+        )
+        continue
+      }
+      await appendEvent(client, {
+        tableName: options.table,
+        columnName: pair.plaintextColumn,
+        event: 'dropped',
+        phase: 'dropped',
+        details: { observedAbsent: true, recordedBy: 'stash decrypt plan' },
+      })
+      p.log.info(`${what} Recorded it as dropped.`)
+    }
 
     for (const pair of toAdd) {
       p.log.step(

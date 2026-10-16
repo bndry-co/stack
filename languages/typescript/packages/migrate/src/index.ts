@@ -120,6 +120,7 @@ export {
   listColumnIndexes,
   listEncryptedColumns,
   pickEncryptedColumn,
+  primaryKeyColumns,
   type ResolvedEncryptedColumn,
   resolveEncryptedColumn,
 } from './version.js'

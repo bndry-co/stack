@@ -1,5 +1,22 @@
-import { latestByColumn } from '@cipherstash/migrate'
+import {
+  latestByColumn,
+  type MigrationStateRow,
+  primaryKeyColumns,
+  progress,
+} from '@cipherstash/migrate'
 import type pg from 'pg'
+
+/**
+ * Whether `err` says `cipherstash.cs_migrations` (or its schema) does not
+ * exist yet: the pre-install case, which every rollout reader treats as "no
+ * events" so the commands stay readable on a fresh project.
+ */
+function isMissingMigrationsTable(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    /cs_migrations|schema "cipherstash"/i.test(err.message)
+  )
+}
 
 /**
  * `latestByColumn` from `@cipherstash/migrate`, but tolerant of the
@@ -9,20 +26,29 @@ import type pg from 'pg'
  */
 export async function latestByColumnSafe(
   client: pg.ClientBase,
-): Promise<
-  ReturnType<typeof latestByColumn> extends Promise<infer T> ? T : never
-> {
+): Promise<Awaited<ReturnType<typeof latestByColumn>>> {
   try {
-    return (await latestByColumn(client)) as Awaited<
-      ReturnType<typeof latestByColumn>
-    >
+    return await latestByColumn(client)
   } catch (err) {
-    if (
-      err instanceof Error &&
-      /cs_migrations|schema "cipherstash"/i.test(err.message)
-    ) {
-      return new Map() as Awaited<ReturnType<typeof latestByColumn>>
-    }
+    if (isMissingMigrationsTable(err)) return new Map()
+    throw err
+  }
+}
+
+/**
+ * `progress` from `@cipherstash/migrate` — the latest event for one column —
+ * but `null` rather than a throw when `cipherstash.cs_migrations` doesn't
+ * exist yet, as {@link latestByColumnSafe} does.
+ */
+export async function progressSafe(
+  client: pg.ClientBase,
+  table: string,
+  column: string,
+): Promise<MigrationStateRow | null> {
+  try {
+    return await progress(client, table, column)
+  } catch (err) {
+    if (isMissingMigrationsTable(err)) return null
     throw err
   }
 }
@@ -138,32 +164,17 @@ export async function detectPkColumn(
   db: pg.ClientBase,
   tableName: string,
 ): Promise<string> {
-  const [schema, table] = tableName.includes('.')
-    ? tableName.split('.')
-    : [null, tableName]
-
-  const result = await db.query<{ column_name: string }>(
-    `SELECT a.attname AS column_name
-     FROM pg_index i
-     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-     JOIN pg_class c ON c.oid = i.indrelid
-     JOIN pg_namespace n ON n.oid = c.relnamespace
-     WHERE i.indisprimary
-       AND c.relname = $1
-       AND ($2::text IS NULL OR n.nspname = $2)
-     ORDER BY a.attnum ASC`,
-    [table, schema],
-  )
-
-  if (result.rows.length === 0) {
+  const columns = await primaryKeyColumns(db, tableName)
+  const [only] = columns
+  if (only === undefined) {
     throw new Error(
       `Could not detect a primary key on ${tableName}. Pass --pk-column <name>.`,
     )
   }
-  if (result.rows.length > 1) {
+  if (columns.length > 1) {
     throw new Error(
       `${tableName} has a composite primary key; composite keys are not yet supported. Pass --pk-column <name> to override.`,
     )
   }
-  return result.rows[0]?.column_name
+  return only
 }

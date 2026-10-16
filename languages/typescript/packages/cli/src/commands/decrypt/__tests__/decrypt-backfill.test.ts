@@ -89,7 +89,7 @@ vi.mock('@/commands/init/utils.js', () => ({
 }))
 
 import * as p from '@clack/prompts'
-import { decryptBackfillCommand } from '../backfill.js'
+import { decryptBackfillCommand, skippedReport } from '../backfill.js'
 
 function pair(overrides: Partial<DecryptPair> = {}): DecryptPair {
   return {
@@ -264,45 +264,6 @@ describe('decrypt backfill', () => {
     expect(messages).toContain(
       'Decrypt backfill failed (Error). Re-run with diagnostic logging if you need details.',
     )
-    exitSpy.mockRestore()
-  })
-
-  it('rejects a chunk size that is not a positive whole number', async () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((
-      code?: number,
-    ) => {
-      throw new Error(`exit ${code}`)
-    }) as never)
-
-    await expect(
-      decryptBackfillCommand({
-        table: 'users',
-        column: 'email_encrypted',
-        chunkSize: Number('abc'),
-      }),
-    ).rejects.toThrow('exit 1')
-    expect(migrateMocks.runDecryptBackfill).not.toHaveBeenCalled()
-    exitSpy.mockRestore()
-  })
-
-  it('rejects a chunk size above what one write can bind', async () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((
-      code?: number,
-    ) => {
-      throw new Error(`exit ${code}`)
-    }) as never)
-
-    await expect(
-      decryptBackfillCommand({
-        table: 'users',
-        column: 'email_encrypted',
-        chunkSize: 32768,
-      }),
-    ).rejects.toThrow('exit 1')
-    expect(p.log.error).toHaveBeenCalledWith(
-      expect.stringContaining('from 1 to 32767'),
-    )
-    expect(migrateMocks.runDecryptBackfill).not.toHaveBeenCalled()
     exitSpy.mockRestore()
   })
 
@@ -525,5 +486,28 @@ describe('decrypt backfill', () => {
     expect(nulls).toContain('decrypts to an empty (null) value')
     expect(nulls).toContain('not a credentials or lock-context problem')
     expect(nulls).toContain('Primary keys: 4, 9')
+  })
+})
+
+describe('skippedReport', () => {
+  it('does not blame credentials for skips carried over from an earlier run whose codes it does not know', () => {
+    // Run 1 skipped 10 NULL_PLAINTEXT rows and was interrupted. Run 2 resumes:
+    // `rowsSkipped` is restored cumulatively from the checkpoint, while
+    // `skippedByCode` and `nullPlaintextPks` cover this run only, so nothing
+    // here says those 10 rows failed to decrypt.
+    const report = skippedReport(
+      'users',
+      {
+        encryptedColumn: 'email_encrypted',
+        plaintextColumn: 'email',
+        plaintextSqlType: 'text',
+      },
+      { rowsSkipped: 10, skippedByCode: {}, nullPlaintextPks: [] },
+    )
+
+    expect(report).not.toMatch(
+      /10 row\(s\) of users\.email_encrypted could not be decrypted with these credentials/,
+    )
+    expect(report).not.toContain('lock context')
   })
 })

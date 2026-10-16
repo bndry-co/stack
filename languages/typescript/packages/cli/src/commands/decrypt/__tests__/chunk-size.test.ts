@@ -23,7 +23,6 @@ describe('parseDecryptChunkSize', () => {
     ['1', 1],
     [' 42 ', 42],
     ['32767', 32767],
-    [500, 500],
   ])('accepts %j as %d', (input, expected) => {
     expect(parseDecryptChunkSize(input)).toBe(expected)
   })
@@ -37,21 +36,12 @@ describe('parseDecryptChunkSize', () => {
     },
   )
 
-  it.each([Number.NaN, 0, 1.5, 32768, Number.POSITIVE_INFINITY])(
-    'rejects the number %s',
-    (input) => {
-      expect(() => parseDecryptChunkSize(input)).toThrow(
-        InvalidDecryptChunkSizeError,
-      )
-    },
-  )
-
   it('quotes what was typed and says why there is a ceiling', () => {
     expect(() => parseDecryptChunkSize('1e3')).toThrow(
       '--chunk-size must be a whole number of rows from 1 to 32767 (got "1e3").',
     )
-    expect(() => parseDecryptChunkSize('40000')).toThrow(
-      'Postgres allows 65535 per statement',
+    expect(() => parseDecryptChunkSize('32768')).toThrow(
+      'from 1 to 32767 (got "32768"). Each row binds two parameters in the write, and Postgres allows 65535 per statement.',
     )
   })
 })

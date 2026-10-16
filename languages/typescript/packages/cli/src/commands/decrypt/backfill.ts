@@ -18,10 +18,6 @@ import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { buildPgClientConfig, explainTlsError } from '@/db/client.js'
 import {
-  InvalidDecryptChunkSizeError,
-  parseDecryptChunkSize,
-} from './lib/chunk-size.js'
-import {
   assessExistingTwin,
   type DecryptPair,
   openForwardMigrationMessage,
@@ -57,7 +53,9 @@ export interface DecryptBackfillCommandOptions {
    * Rows per chunk, and so per `bulkDecrypt` call — one ZeroKMS request per
    * chunk. Default {@link DEFAULT_DECRYPT_CHUNK_SIZE}; at most
    * `MAX_DECRYPT_CHUNK_SIZE` (32767), because each row binds two parameters
-   * in the chunk's write.
+   * in the chunk's write. Validated by the caller with
+   * `parseDecryptChunkSize` (`./lib/chunk-size.ts`), where the raw flag text
+   * is still in hand; the handler trusts it.
    */
   chunkSize?: number
   /**
@@ -114,16 +112,7 @@ export async function decryptBackfillCommand(
 ) {
   p.intro(runnerCommand(detectPackageManager(), 'stash decrypt backfill'))
 
-  let chunkSize: number
-  try {
-    chunkSize = parseDecryptChunkSize(
-      options.chunkSize ?? DEFAULT_DECRYPT_CHUNK_SIZE,
-    )
-  } catch (error) {
-    if (!(error instanceof InvalidDecryptChunkSizeError)) throw error
-    p.log.error(error.message)
-    process.exit(1)
-  }
+  const chunkSize = options.chunkSize ?? DEFAULT_DECRYPT_CHUNK_SIZE
 
   const stashConfig = await loadStashConfig()
   // The same client loading `encrypt backfill` does — the user's encryption
@@ -402,6 +391,11 @@ async function ensureReverseDualWritesDeployed(
  * - `NULL_PLAINTEXT` rows, whose ciphertext decrypts to an empty value that a
  *   non-JSON column can only store as the same NULL that means "not
  *   decrypted yet". Lock contexts have nothing to do with them.
+ *
+ * `rowsSkipped` is cumulative across resumed runs, while `skippedByCode` and
+ * `nullPlaintextPks` cover this run only. Only what this run's codes show is
+ * attributed to a cause; skips carried over from an earlier, interrupted run
+ * are reported apart, without guessing which kind they were.
  */
 export function skippedReport(
   table: string,
@@ -416,14 +410,18 @@ export function skippedReport(
 ): string {
   const { NULL_PLAINTEXT: nullThisRun = 0, ...failedCodes } =
     result.skippedByCode
-  const failed = result.rowsSkipped - nullThisRun
+  const failed = Object.values(failedCodes).reduce((sum, n) => sum + n, 0)
+  const carriedOver = Math.max(0, result.rowsSkipped - nullThisRun - failed)
   const paragraphs: string[] = []
 
+  if (carriedOver > 0) {
+    paragraphs.push(
+      `${carriedOver.toLocaleString()} row(s) of ${table}.${pair.encryptedColumn} were skipped by an earlier run of this backfill, before this run resumed from its checkpoint, and were left with ${pair.plaintextColumn} NULL. This run did not revisit them, so it cannot say why they were skipped: the earlier run's report, or the per-code tallies in its cipherstash.cs_migrations events, name the cause. \`stash decrypt drop\` refuses while any of them still holds ciphertext.`,
+    )
+  }
+
   if (failed > 0) {
-    const codes =
-      Object.keys(failedCodes).length > 0
-        ? ` This run: ${formatCodes(failedCodes)}.`
-        : ''
+    const codes = ` This run: ${formatCodes(failedCodes)}.`
     paragraphs.push(
       `${failed.toLocaleString()} row(s) of ${table}.${pair.encryptedColumn} could not be decrypted with these credentials and were left with ${pair.plaintextColumn} NULL.${codes} The usual cause is a value bound to an end-user lock context: only that user's identity can decrypt it, and the CLI has no way to act as them. Decrypt those rows in your application on behalf of each user (writing ${pair.plaintextColumn}), then re-run this backfill. \`stash decrypt drop\` refuses while any of them remain, because dropping ${pair.encryptedColumn} would destroy their only copy.`,
     )

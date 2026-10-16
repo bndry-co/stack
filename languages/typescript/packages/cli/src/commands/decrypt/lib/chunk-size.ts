@@ -28,26 +28,19 @@ export class InvalidDecryptChunkSizeError extends Error {
 }
 
 /**
- * Parse a `--chunk-size` value: the flag's raw argv text (so the error can
- * quote it) or an already-coerced number (what a handler receives).
+ * Parse a `--chunk-size` flag's raw argv text, so the error can quote exactly
+ * what was typed.
  */
-export function parseDecryptChunkSize(input: string | number): number {
-  const value =
-    typeof input === 'string'
-      ? /^\s*\d+\s*$/.test(input)
-        ? Number(input)
-        : Number.NaN
-      : input
+export function parseDecryptChunkSize(input: string): number {
+  const value = /^\s*\d+\s*$/.test(input) ? Number(input) : Number.NaN
 
   if (
     !Number.isSafeInteger(value) ||
     value < 1 ||
     value > MAX_DECRYPT_CHUNK_SIZE
   ) {
-    const received =
-      typeof input === 'string' ? JSON.stringify(input) : String(input)
     throw new InvalidDecryptChunkSizeError(
-      `--chunk-size must be a whole number of rows from 1 to ${MAX_DECRYPT_CHUNK_SIZE} (got ${received}). Each row binds two parameters in the write, and Postgres allows 65535 per statement.`,
+      `--chunk-size must be a whole number of rows from 1 to ${MAX_DECRYPT_CHUNK_SIZE} (got ${JSON.stringify(input)}). Each row binds two parameters in the write, and Postgres allows 65535 per statement.`,
     )
   }
   return value

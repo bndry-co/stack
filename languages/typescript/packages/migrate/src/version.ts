@@ -135,6 +135,33 @@ export async function columnExists(
 }
 
 /**
+ * The columns of `tableName`'s primary key, in attribute order. Empty when
+ * the table has no primary key or does not exist.
+ *
+ * Resolves through {@link REGCLASS_SQL}, so an unqualified name follows
+ * `search_path` and stays case-exact. Matching `relname` in every schema
+ * instead would merge same-named tables (Supabase's `public.users` and
+ * `auth.users`) into one apparent composite key.
+ */
+export async function primaryKeyColumns(
+  client: ClientBase,
+  tableName: string,
+): Promise<string[]> {
+  const { schema, table } = splitTableName(tableName)
+  const { rows } = await client.query<{ column_name: string }>(
+    `SELECT a.attname AS column_name
+       FROM pg_index i
+       JOIN pg_attribute a
+         ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+      WHERE i.indisprimary
+        AND i.indrelid = ${REGCLASS_SQL}
+      ORDER BY a.attnum ASC`,
+    [table, schema],
+  )
+  return rows.map((row) => row.column_name)
+}
+
+/**
  * Every EQL-domain column on a table, classified. The EQL types are
  * self-describing, so this is the ground truth for "which columns on this
  * table are encrypted, and under which generation" — no naming convention
