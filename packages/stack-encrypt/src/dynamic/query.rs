@@ -490,10 +490,13 @@ fn integer_order(lo: &FfiValue, hi: &FfiValue) -> Option<Ordering> {
 ///
 /// # Errors
 ///
-/// [`Error::Cipher`] with [`TermError::Normalize`] for text the index cannot
-/// normalize, and [`TermError::EmptyTermText`] for text that cuts no token,
-/// whose filter would match every row. [`Error::Internal`] for a value that
-/// is not text, which [`read_input`] has ruled out.
+/// [`Error::Cipher`] with [`TermError::InvalidOptions`] for options the
+/// index cannot use (a [`FieldPlan`] built by hand is not
+/// checked, and an n-gram length of zero would panic in the tokenizer),
+/// [`TermError::Normalize`] for text the index cannot normalize, and
+/// [`TermError::EmptyTermText`] for text that cuts no token, whose filter
+/// would match every row. [`Error::Internal`] for a value that is not text,
+/// which [`read_input`] has ruled out.
 fn query_tokens(value: &FfiValue, options: &MatchOptions) -> Result<QueryTokens, Error> {
     let FfiValue::String(text) = value else {
         return Err(Error::Internal);
@@ -1405,6 +1408,47 @@ mod tests {
         assert!(
             matches!(term_error(&error), Some(TermError::EmptyTermText)),
             "{error:?}"
+        );
+    }
+
+    /// Match options on a field plan built by hand are not checked when the
+    /// plan is, so the query chain refuses them before it cuts a token: an
+    /// n-gram length of zero would otherwise panic in the tokenizer.
+    #[test]
+    fn invalid_match_options_are_refused_before_tokenising() {
+        let options = MatchOptions {
+            tokenizer: crate::sem::Tokenizer::Ngram { length: 0 },
+            ..MatchOptions::default()
+        };
+        let context = crate::dynamic::context(FfiValue::Array(vec![text("users"), text("name")]))
+            .expect("context");
+        let field = FieldPlan::new(
+            "name",
+            context,
+            vec![record::Output::Term(IndexSpec::Match(options))],
+        )
+        .and_then(|field| field.with_type(ValueKind::String))
+        .expect("the field");
+        let plan = Plan::new(vec![field]).expect("the plan");
+        let invalid = |error: Error| {
+            assert!(
+                matches!(term_error(&error), Some(TermError::InvalidOptions(_))),
+                "{error:?}"
+            );
+        };
+        invalid(
+            check_query(&plan, "name", OpSpec::Matches, text("alice"), &NoTargets).unwrap_err(),
+        );
+        invalid(
+            verify(
+                &plan,
+                "name",
+                OpSpec::Matches,
+                text("alice"),
+                &[text("alice")],
+                &NoTargets,
+            )
+            .unwrap_err(),
         );
     }
 
