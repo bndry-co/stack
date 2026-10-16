@@ -190,6 +190,25 @@ class ImpactWorkflowTest(unittest.TestCase):
         self.assertEqual(driver.misread_functions([head], 'src/path.ts'), {('', 'path')})
         self.assertEqual(driver.misread_functions([head], 'src/boundary.ts'), set())
 
+    def test_a_declaration_continued_on_the_next_line_is_not_whole(self):
+        # A first line with no open bracket still continues after `=`, `=>`
+        # or before a leading `|`, `&` or `.`; only a finished one is whole.
+        cases = {
+            "export type Foo =\n  | 'a'\n  | 'b'\n": False,
+            'export const LIMIT =\n  10\n': False,
+            'export const twice = (x: number) =>\n  x * 2\n': False,
+            'export const chain = start\n  .next()\n': False,
+            'export const LIMIT = 10\n': True,
+            'export const LIMIT = 10 // a comment\n\nexport const MORE = 11\n': True,
+            'export const x = foo(\n  1,\n)\n': False,
+            'export type Row = Record<string, number>\nexport const y = 1\n': True,
+            'export const value = input!\n\nexport const y = 1\n': True,
+        }
+        driver = self.load_driver()
+        for source, whole in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(driver.declaration_lines('a.ts', source)[1], whole)
+
     def test_marks_a_function_above_a_removed_declaration(self):
         # At the base, `pick`'s span swallows `gone`; the PR deletes `gone`.
         self.commit('src/pick.ts', PICK + '\nexport function gone(x: number): number {\n'

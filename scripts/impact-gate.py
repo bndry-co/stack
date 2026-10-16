@@ -20,7 +20,7 @@ from impact_gate.baseline import build_baseline, save_baseline
 from impact_gate.core.config import MeasureConfig
 import lizard
 from pygments.lexers import JavascriptLexer, TypeScriptLexer
-from pygments.token import Keyword, Name, Punctuation
+from pygments.token import Comment, Keyword, Name, Operator, Punctuation
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / '.github' / 'impact-gate'
@@ -170,6 +170,9 @@ def report(args: argparse.Namespace, policy: str) -> None:
 SPAN_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx')
 DECLARATION = re.compile(r'@|(export|import|declare|abstract|async|function|const|let|var'
                          r'|class|interface|type|enum)\b')
+# Tokens that can only continue the previous line's expression. Unary
+# operators (`-`, `!`) are left out: a line may begin a new statement with one.
+LEADING = frozenset(('|', '&', '.', '?.', '?', ':', '=>', '&&', '||', '??', '=', ','))
 LOCATION = re.compile(r'^\| [^|]* \| `(?P<path>[^`:]+):(?P<name>[^`]+)` \| '
                       r'(?:`(?P<owner>[^`]+)`|_file scope_) \|')
 MISREAD = '⚠️ span may be misattributed'
@@ -187,8 +190,12 @@ def declaration_lines(path: str, source: str) -> dict[int, bool]:
     # Column 0 is not top level in unformatted code, so count braces too.
     # Brackets of every kind decide whether a declaration closes on its line.
     declarations, depth, nesting, open_at_end = set(), 0, 0, {}
+    first, last = {}, {}  # Each line's first and last code token.
     for offset, token, value in lexer.get_tokens_unprocessed(source):
         line = bisect.bisect_right(starts, offset)
+        if value.strip() and token not in Comment:
+            first.setdefault(line, (token, value))
+            last[line] = (token, value)
         if (depth == 0 and starts[line - 1] == offset
                 and (token in Keyword or token in Name.Decorator)
                 and DECLARATION.match(source, offset)):
@@ -197,7 +204,19 @@ def declaration_lines(path: str, source: str) -> dict[int, bool]:
             depth = max(0, depth + value.count('{') - value.count('}'))
             nesting = max(0, nesting + sum(map(value.count, '({[')) - sum(map(value.count, ')}]')))
             open_at_end[line] = nesting > 0
-    return {line: not open_at_end.get(line, False) for line in declarations}
+    # A balanced first line still continues when it ends on an operator
+    # (`type T =`, `=>`) or the next code line leads with one (`| 'b'`, `.next()`).
+    code_lines = sorted(first)
+
+    def continues(line: int) -> bool:
+        following = code_lines[bisect.bisect_right(code_lines, line):]
+        token, value = last.get(line, (None, ''))
+        trails = (token in Operator and value not in ('>', '!', '++', '--')
+                  or value in ('=>', ',', '.'))
+        return trails or bool(following) and first[following[0]][1] in LEADING
+
+    return {line: not open_at_end.get(line, False) and not continues(line)
+            for line in declarations}
 
 
 def misread_functions(revisions: list[str], path: str) -> set[tuple[str, str]]:
