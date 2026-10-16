@@ -220,8 +220,9 @@ pub trait Ranked: QueryTerm {
 ```
 
 - A term that implements `QueryTerm` only is **exact**. The server's answer
-  is the answer. HMAC `Eq`, ORE and OPE (`Lt`, `Between`) on numbers and on
-  text, JSON `AtPath<Eq>`.
+  is the answer. HMAC `Eq`, ORE and OPE (`Lt`, `Between`) on numbers, JSON
+  `AtPath<Eq>`, and ORE and OPE on text if the catalog keeps text ordering
+  (see "Text ordering" below).
 - A `Probabilistic` term can return **false positives and no false
   negatives**. `verify` is the operator's own meaning, run on a decrypted
   value: it decides whether a row the server returned is a real match. Bloom
@@ -490,9 +491,11 @@ call derives both bounds, under one context, so a caller cannot pair a bound
 from one column with a bound from another.
 
 In SQL the term stays one operand. EQL v4 gains a function that takes the
-column and the range, and a range query domain beside each ordered family's
-`ord` domain to carry it (shown here as `query_integer_range_ore`; the
-catalog names it):
+column and the range, and a range query domain beside each ordered query
+domain to carry it, for OPE as well as ORE: `query_integer_ord_ore` gains
+`query_integer_range_ore` and `query_integer_ord_ope` gains
+`query_integer_range_ope`, one per (family, term) as decision 8 has it. The
+example uses the ORE one; the catalog names them:
 
 ```sql
 WHERE eql_v4.between(age, $1::eql_v4.query_integer_range_ore)
@@ -509,8 +512,11 @@ had just joined, and every SDK had to grow a `bounds()` to feed it.
 What the one-operand form asks of EQL is that the planner still see a range.
 `eql_v4.between` must be a SQL function PostgreSQL inlines at planning time
 (`LANGUAGE sql`, one expression, `$1 >= lo($2) AND $1 <= hi($2)` with
-immutable accessors), so that a btree over the ORE term serves it as one
-range scan. A function the planner cannot inline is a call per row on a
+immutable accessors, and not `STRICT`), so that a btree over the ORE term
+serves it as one range scan. `STRICT` matters: PostgreSQL inlines a `STRICT`
+SQL function only when its body is strict too, and `a >= x AND b <= y` is not
+(`NULL AND false` is `false`), so a `STRICT` declaration would pass a test
+that only calls the function and then not be inlined. A function the planner cannot inline is a call per row on a
 sequential scan, which no index can rescue. That is an EQL-side requirement
 with an EQL-side test, and it is why the function and the domain arrive
 together.
@@ -601,13 +607,13 @@ JSON column's query already selects it. A similarity index stores its vector
 separately, so a `Nearest` query must select the embedding, or the sketch,
 as well.
 
-Text ordering needs no special case: `Lt` on text is an exact term over the
-order key, and what that key folds is the system ADR-0002's decision (the
-value model, linked above), which keeps equality off the order term for the
-same reason.
+Text ordering, if the catalog keeps it, needs no special case: `Lt` on text
+is an exact term over the order key, and what that key folds is the system
+ADR-0002's decision (the value model, linked above), which keeps equality off
+the order term for the same reason.
 
 EQL v4 gains `eql_v4.between(column, range)` and a range query domain per
-ordered family, under the inlining requirement of decision 7. That is
+ordered query domain, ORE and OPE, under the inlining requirement of decision 7. That is
 EQL-side work this ADR asks for, not a deferral.
 
 It is a breaking change to the query chain. `QueryUsing::index(..)` goes;
@@ -769,8 +775,9 @@ let rows: Vec<UserRow> = sqlx::query_as(
 .fetch_all(&pool).await?;
 ```
 
-`AtPath<Lt>` on a text leaf is exact, as `Lt` on a text column is: the
-leaf's order term compares order keys, and there is nothing to verify.
+`AtPath<Lt>` on a text leaf, if the catalog keeps text ordering, is exact,
+as `Lt` on a text column would be: the leaf's order term compares order
+keys, and there is nothing to verify.
 
 **`Nearest`, ranked.** Stack Similarity has no EQL spelling yet, so this is
 the shape and not a statement that runs. The term is a set of band tokens;
