@@ -253,8 +253,36 @@ impl<S: 'static> Input<Pair> for (S, S) {
 /// terms order as the values do and whose order key is the value itself.
 /// Text is not one: its order term is a catalog question (ADR-0009, ADR-0002),
 /// and an ordering on a text plan does not compile.
+///
+/// Sealed: `Between` refuses an inverted range with the type's `PartialOrd`
+/// while the server compares ORE terms, so a type whose two orders could
+/// disagree (a newtype over folded text, say) must not be able to join. A
+/// type that meets every other bound is still refused:
+///
+/// ```compile_fail
+/// # use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt, Error, Key};
+/// use stack_encrypt::op::Ordered;
+///
+/// #[derive(PartialEq, PartialOrd)]
+/// struct Folded(u32);
+/// # impl CllwOreEncrypt for Folded {
+/// #     type Output = <u32 as CllwOreEncrypt>::Output;
+/// #     fn encrypt_with_salt(self, key: &Key, salt: Option<&[u8]>) -> Result<Self::Output, Error> {
+/// #         self.0.encrypt_with_salt(key, salt)
+/// #     }
+/// # }
+/// # impl CllwOpeEncrypt for Folded {
+/// #     type Output = <u32 as CllwOpeEncrypt>::Output;
+/// #     fn encrypt_ope_with_salt(self, key: &Key, salt: Option<&[u8]>) -> Result<Self::Output, Error> {
+/// #         self.0.encrypt_ope_with_salt(key, salt)
+/// #     }
+/// # }
+///
+/// impl Ordered for Folded {} // `Ordered` is sealed
+/// ```
 pub trait Ordered:
-    PartialOrd
+    sealed::Sealed
+    + PartialOrd
     + CllwOreEncrypt<Output: Send + 'static>
     + CllwOpeEncrypt<Output: Send + 'static>
     + Send
@@ -264,6 +292,7 @@ pub trait Ordered:
 
 macro_rules! ordered {
     ($($int:ty),+ $(,)?) => {$(
+        impl sealed::Sealed for $int {}
         impl Ordered for $int {}
     )+};
 }
