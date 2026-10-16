@@ -9,7 +9,7 @@ use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::op::{self, Limit, MatchCase, Probabilistic, Stats};
 use stack_encrypt::plan::{Field, FieldSchema, Fields, PlanError};
 use stack_encrypt::sem::{
-    EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms, TermError,
+    EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms, TermError, Tokenizer,
 };
 use stack_encrypt::target::{Encrypted, IndexSpec};
 use stack_encrypt::{Equality, Error, Match, Plan};
@@ -27,6 +27,20 @@ impl MatchConfig for Exact {
 }
 impl MatchCase for Exact {
     type Case = op::CaseSensitive;
+}
+
+/// A match configuration the index cannot use: an n-gram length of zero.
+struct ZeroGram;
+impl MatchConfig for ZeroGram {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            tokenizer: Tokenizer::Ngram { length: 0 },
+            ..Default::default()
+        }
+    }
+}
+impl MatchCase for ZeroGram {
+    type Case = op::CaseInsensitive;
 }
 
 #[derive(Clone)]
@@ -937,4 +951,30 @@ async fn a_match_query_with_no_tokens_is_refused_before_any_term_or_keyset() {
         .using(&plan)
         .await;
     assert!(row.is_ok(), "short values store: {row:?}");
+}
+
+/// A match query under options the index cannot use is refused with
+/// `InvalidOptions`, as storing under them is, and never reaches the
+/// tokenizer: an n-gram length of zero would panic there.
+#[tokio::test]
+async fn a_match_query_under_invalid_options_is_refused_not_tokenised() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/name")
+        .with::<String, _>(Match::<ZeroGram>::new())
+        .build()
+        .unwrap();
+    let refused = cipher
+        .query(op::Matches, "alice")
+        .via(Match::<ZeroGram>::new())
+        .on(&plan)
+        .await;
+    assert!(
+        matches!(refused, Err(Error::Term(TermError::InvalidOptions(_)))),
+        "{refused:?}"
+    );
+    let stored = cipher.encrypt(&"alice".to_owned()).using(&plan).await;
+    assert!(
+        matches!(stored, Err(Error::Term(TermError::InvalidOptions(_)))),
+        "{stored:?}"
+    );
 }

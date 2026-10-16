@@ -280,7 +280,10 @@ library refuses, a query value too short to tokenise, is refused when the query
 is awaited, before a term exists. The stored side refuses nothing: a value
 too short to tokenise is stored as the empty filter, which no query matches,
 so a two-letter name is a valid value in a match column and `verify` is
-never asked about it.
+never asked about it. The empty filter is visible to anyone who can read the
+column: it tells them the value is empty, separator-only or shorter than the
+n-gram length. A filter's fill already leaks its value's approximate length;
+this is an exact class, and the price of storing such values at all.
 
 `Plaintext` is the decrypted value the term is defined over, and that
 is not always the value the user wrote. For `Matches` it is the text. For

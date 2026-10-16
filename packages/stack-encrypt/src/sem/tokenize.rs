@@ -44,10 +44,12 @@ impl Default for Tokenizer {
 /// are case-insensitive.
 ///
 /// May return no tokens (empty text, separator-only text, or text shorter
-/// than the n-gram length); [`match_terms`] rejects that case so an empty
-/// term can never reach a query.
+/// than the n-gram length). A stored value with none is the empty filter; a
+/// query with none is refused before a term exists, because its filter would
+/// match every row (ADR-0009).
 ///
-/// [`match_terms`]: crate::StackCipher::match_terms
+/// The tokenizer must be valid: an n-gram length of zero panics. Callers
+/// validate the [`MatchOptions`](super::MatchOptions) first.
 ///
 /// An n-gram length of zero yields no tokens rather than panicking, so a
 /// caller that tokenizes before validating the options (a query's verifier)

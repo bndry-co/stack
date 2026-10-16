@@ -119,8 +119,10 @@
 // A match index stores text with no token (an empty string, separator-only
 // text, or text shorter than the n-gram length of 3 characters) as the empty
 // filter: a valid value that no query matches, so an optional or short value
-// can live under match. A match *query* of such text is refused with
-// [ErrTerm], because an empty filter as a query would match every row.
+// can live under match. The empty filter tells anyone who can read the
+// column that the value is one of those. A match *query* of such text is
+// refused with [ErrTerm], because an empty filter as a query would match every
+// row.
 //
 // # Transport and auth
 //

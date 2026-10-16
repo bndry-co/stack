@@ -311,6 +311,11 @@ where
     D: IntoPrfContext<'c>,
 {
     if let (IndexSpec::Match(options), Scalar::Text(text)) = (kind, &scalar) {
+        // Options the index cannot use are refused before the text is
+        // tokenised, as the record path refuses them.
+        let _mask = options
+            .validate()
+            .map_err(|error| Error::Cipher(error.into()))?;
         if QueryTokens::under(text, options).is_empty() {
             return Err(Error::Cipher(TermError::EmptyTermText.into()));
         }
@@ -660,6 +665,31 @@ mod tests {
         // Text with a token is a query like any other.
         let scalar = Scalar::of(&s("hello"), &default_match()).expect("a scalar");
         assert!(term(&keyset, scalar, &default_match(), ctx).await.is_ok());
+    }
+
+    /// Options the index cannot use are refused before the query's text is
+    /// tokenised: an n-gram length of zero is `InvalidOptions`, not a panic
+    /// in the tokenizer.
+    #[tokio::test]
+    async fn a_match_query_under_invalid_options_is_refused_not_tokenised() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let ctx = context(s("users/bio")).expect("context");
+        let zero = IndexSpec::Match(MatchOptions {
+            tokenizer: Tokenizer::Ngram { length: 0 },
+            ..MatchOptions::default()
+        });
+        let scalar = Scalar::of(&s("hello"), &zero).expect("a scalar");
+        let refused = term(&keyset, scalar, &zero, ctx).await;
+        assert!(
+            matches!(
+                refused,
+                Err(Error::Cipher(crate::Error::Term(
+                    TermError::InvalidOptions(_)
+                )))
+            ),
+            "{refused:?}"
+        );
     }
 
     /// A `TermBytes` reads as the typed term's bytes, through every

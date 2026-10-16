@@ -358,6 +358,10 @@ where
             }
             .into());
         }
+        // Options the index cannot use are refused before the text is
+        // tokenised, as term derivation refuses them: an n-gram length of
+        // zero would otherwise reach the tokenizer.
+        let _mask = O::options().validate()?;
         // A query with no tokens would match every row. The stored side
         // keeps such a value as the empty filter; the query side refuses it
         // here, before any term is derived.
