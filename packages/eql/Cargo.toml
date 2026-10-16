@@ -43,7 +43,6 @@ unused_imports = "deny"
 [patch.crates-io]
 vitaminc = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
 vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-aead-frame = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
 vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
 vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
 vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }

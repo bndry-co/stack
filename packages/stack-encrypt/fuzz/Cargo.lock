@@ -2042,7 +2042,6 @@ dependencies = [
  "thiserror 1.0.69",
  "uuid",
  "vitaminc-aead",
- "vitaminc-aead-frame",
  "vitaminc-encrypt",
  "vitaminc-hmac",
  "vitaminc-prf",
@@ -2547,14 +2546,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
-]
-
-[[package]]
-name = "vitaminc-aead-frame"
-version = "0.5.1"
-source = "git+https://github.com/cipherstash/vitaminc?rev=2413bd0e4bf7eb8932a31101c635e2373c1096c6#2413bd0e4bf7eb8932a31101c635e2373c1096c6"
-dependencies = [
- "vitaminc-aead",
 ]
 
 [[package]]

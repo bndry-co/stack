@@ -3299,7 +3299,6 @@ dependencies = [
  "trybuild",
  "uuid",
  "vitaminc-aead",
- "vitaminc-aead-frame",
  "vitaminc-encrypt",
  "vitaminc-hmac",
  "vitaminc-prf",
