@@ -80,9 +80,12 @@ impl HostValue {
 
     /// This value as a transport frame.
     ///
-    /// The frame is returned bare, as every guest output is: it is copied
-    /// into a registered buffer, which the registry wipes when the host
-    /// releases it.
+    /// The frame is returned bare, as every guest output is: it becomes a
+    /// registered buffer, which the registry wipes when the host releases
+    /// it. Its capacity is its length: registering a `Vec` with spare
+    /// capacity reallocates it (`into_boxed_slice`), and the allocation left
+    /// behind is not wiped. So the frame is copied into an exactly sized
+    /// buffer, and the writer's own buffer is wiped when it drops.
     ///
     /// # Errors
     ///
@@ -90,7 +93,10 @@ impl HostValue {
     /// deeper than a frame carries. A guest builds its outputs itself, so
     /// either is a bug in the guest.
     pub fn encode(&self) -> Result<Vec<u8>, FrameWriteError> {
-        to_frame(self).map(Protected::risky_unwrap)
+        let frame = to_frame(self)?;
+        let mut out = Vec::with_capacity(frame.risky_ref().len());
+        out.extend_from_slice(frame.risky_ref());
+        Ok(out)
     }
 
     /// Read one value from a transport frame.
@@ -298,6 +304,19 @@ mod tests {
     /// dropped, by every path that builds one: the constructor, JSON and a
     /// decoded frame. A plain `String` here would leave it in freed guest
     /// memory.
+    /// An encoded frame has no spare capacity, so registering it does not
+    /// reallocate and leave an unwiped copy behind.
+    #[test]
+    fn an_encoded_frame_has_no_spare_capacity() {
+        let out = HostValue::Map(vec![(
+            "access_token".to_string(),
+            HostValue::text("a-bearer-token"),
+        )])
+        .encode()
+        .unwrap();
+        assert_eq!(out.capacity(), out.len());
+    }
+
     #[test]
     fn text_is_wiped_on_drop() {
         fn held(value: HostValue) -> Zeroizing<String> {

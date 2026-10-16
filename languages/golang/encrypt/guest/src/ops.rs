@@ -44,6 +44,7 @@ use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, Node, SealedValue,
 use stack_kms::DataKeySource;
 use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext, FrameWriter};
 use vitaminc_protected::Controlled;
+use zeroize::Zeroizing;
 
 use stack_guest_abi::last_error;
 
@@ -377,21 +378,23 @@ fn decode_value(bytes: &[u8]) -> Result<FfiValue, u32> {
         .map_err(|_| last_error::malformed("an input is not a value in the transport frame"))
 }
 
-/// Encode a value tree into a buffer sized **before** the first byte is
-/// written.
+/// Encode a value tree into a buffer whose capacity is exactly its length.
 ///
-/// This buffer is plaintext on the decrypt path, and a `Vec` grown by the
-/// frame writer's pushes would leave partial plaintext in every abandoned
-/// allocation a reallocation could not extend in place — memory nothing
-/// wipes, undercutting the guarantee the registry makes about the buffer it
-/// eventually hands the host. Reserving the exact encoded length up front
-/// means the writer never reallocates, and `register`'s `into_boxed_slice`
-/// (capacity == length) does not copy either.
+/// This buffer is plaintext on the decrypt path, and the registry wipes only
+/// the buffer it holds: `register`'s `into_boxed_slice` reallocates a `Vec`
+/// whose capacity exceeds its length, leaving the old allocation unwiped.
+/// The frame writer reserves an upper bound per leaf (a six-byte string
+/// reserves 14 for 11), so writing straight into the exactly sized buffer
+/// can still grow it. It writes into a `Zeroizing` staging buffer instead
+/// (the writer wipes any allocation it replaces), which is copied into an
+/// exactly sized output and then wiped.
 fn encode_value(value: FfiValue) -> Result<Vec<u8>, u32> {
-    let mut out = exact_buffer(value_encoded_len(&value))?;
+    let mut staging = Zeroizing::new(exact_buffer(value_encoded_len(&value))?);
     (&value)
-        .visit(FrameWriter::new(&mut out))
+        .visit(FrameWriter::new(&mut staging))
         .map_err(|_| STATUS_ENCODING)?;
+    let mut out = exact_buffer(Some(staging.len()))?;
+    out.extend_from_slice(&staging);
     Ok(out)
 }
 
@@ -543,6 +546,18 @@ mod tests {
                 "deep".into(),
             )]))),
         ]
+    }
+
+    /// The registry wipes the buffer it is handed, and `into_boxed_slice`
+    /// reallocates one whose capacity exceeds its length, leaving the old
+    /// allocation unwiped. So every encoded output's capacity is its length,
+    /// not only its length the frame's.
+    #[test]
+    fn an_encoded_value_has_no_spare_capacity() {
+        for (i, value) in every_value_shape().into_iter().enumerate() {
+            let out = encode_value(value).expect("encodes");
+            assert_eq!(out.capacity(), out.len(), "shape {i}");
+        }
     }
 
     #[test]
