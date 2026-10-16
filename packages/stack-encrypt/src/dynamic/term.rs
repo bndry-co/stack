@@ -1,7 +1,7 @@
 //! One index term for a runtime value.
 //!
 //! A value arrives here as anything that describes itself to vitaminc
-//! ([`Plaintext`]): a transport frame a guest walks in place, an
+//! ([`Encrypt`]): a transport frame a guest walks in place, an
 //! [`FfiValue`] a binding decoded, a Rust value. It is walked to the one
 //! scalar it must be, and the term derives there, from the scalar vitaminc
 //! hands the sink, so this module restates none of vitaminc's vocabulary.

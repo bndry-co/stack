@@ -471,7 +471,7 @@ fn normalized<T: Encrypt>(value: T) -> Result<Normalized, TermError> {
     }
 }
 
-/// An equality term of any [`Plaintext`] source that is one scalar with an
+/// An equality term of any [`Encrypt`] source that is one scalar with an
 /// equality domain (see [`equality`]). Under the local HMAC backend,
 /// derived during the synchronous build — the returned [`Pending`] carries
 /// no requests.
