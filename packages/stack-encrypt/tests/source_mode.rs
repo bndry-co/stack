@@ -1,6 +1,6 @@
 //! How a description receives its plaintext (`target::{Borrowed, Owned}`).
 //!
-//! Vitamin C's by-value `Plaintext` walk and `PrfValue` consume their input. A description
+//! Vitamin C's by-value `Encrypt` walk and `PrfValue` consume their input. A description
 //! handed a borrow (the default, and what every `EncryptFrom` declaration
 //! runs in) clones before an operation consumes; one handed the value
 //! (`Owned`) gives it to the operation. These tests hold the two claims that

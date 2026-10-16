@@ -254,7 +254,7 @@ mod tests {
         let HostValue::Text(s) = value else {
             panic!("not a string");
         };
-        s.clone()
+        s.to_string()
     }
 
     fn as_bytes(value: &HostValue) -> Vec<u8> {

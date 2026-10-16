@@ -151,7 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`stack_encrypt::{Encrypt, Decrypt}` re-exports them). The name is the
   same and the trait is not: a hand-written impl of the old one does not
   compile against the new one. `Decipher`, `Element` and `Cipher` are no
-  longer re-exported, and `StackDecipher` and `BoxedPassthrough` are gone. A pending tree is planned rather than driven:
+  longer re-exported, and `StackDecipher` and `BoxedPassthrough` are gone.
+  A pending tree is planned rather than driven:
   `PendingStackCipherText::plan(value, aad)`, then `seal` or
   `into_pending` as before. The key fetch is unchanged: one batched
   `generate_keys` per assembly to seal, one `retrieve_keys` per keyset to
@@ -159,8 +160,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every leaf records its type, so a Rust field and a data-plan field
   share leaves.** A Rust `u32` and a data plan's `uint32` field seal the
   same leaf under the same context, and each opens the other's; a reader of
-  another type is refused rather than handed changed plaintext, as a bare
-  `String` reader used to read a binding's leaf as `"\nalice"` (#1118).
+  another kind (text for an integer, an integer for bytes) is refused rather
+  than handed changed plaintext, as a bare `String` reader used to read a
+  binding's leaf as `"\nalice"` (#1118). An integer reader accepts an integer
+  leaf of any width whose value fits, and an `f64` reader an `f32` leaf,
+  which change no value.
   Leaves are vitaminc's wire version 2, so a ciphertext sealed by an
   earlier build does not open.
 - **An absent value is a sealed null leaf**, a `Single` like any other

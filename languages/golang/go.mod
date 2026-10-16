@@ -3,8 +3,8 @@ module github.com/cipherstash/stack/languages/golang
 go 1.26.0
 
 require (
-	github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261015123909-2e895cb9caed
-	github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261015123909-2e895cb9caed
+	github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261016121549-2413bd0e4bf7
+	github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261016121549-2413bd0e4bf7
 	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/oauth2 v0.37.0
 )

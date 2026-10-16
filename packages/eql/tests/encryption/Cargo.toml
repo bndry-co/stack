@@ -20,7 +20,7 @@ eql-domains = { path = "../../crates/eql-domains" }
 # `dynamic`: `FfiValue`, the runtime plaintext the target dispatch takes,
 # as eql-bindings names it.
 stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic"] }
-# `plaintext::Sink`, for a plaintext type with its own `Plaintext` impl.
+# `plaintext::Sink`, for a plaintext type with its own `Encrypt` impl.
 vitaminc-aead = "0.5.1"
 stack-kms = { path = "../../../stack-kms", default-features = false, features = ["test-support"] }
 serde = "1"

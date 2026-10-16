@@ -102,7 +102,7 @@ fn get<'a>(value: &'a HostValue, key: &str) -> Option<&'a HostValue> {
 
 fn text(value: Option<&HostValue>) -> Option<String> {
     match value? {
-        HostValue::Text(s) => Some(s.clone()),
+        HostValue::Text(s) => Some(s.to_string()),
         _ => None,
     }
 }

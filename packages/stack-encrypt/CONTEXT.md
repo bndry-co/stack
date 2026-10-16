@@ -9,7 +9,7 @@ derivation of searchable index terms from the same values. Covers
 
 **Cipher-directed**:
 Encryption driven by the value's shape: the value describes itself once
-(vitaminc's `Plaintext`), vitaminc walks it into sealed leaves, and the
+(vitaminc's `Encrypt`), vitaminc walks it into sealed leaves, and the
 caller decides the context, which may be absent.
 Nothing declares an index and no output type is involved. One of the two
 preferred entry points for a native Rust caller. A language SDK may leave it

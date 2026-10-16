@@ -14,6 +14,7 @@ use vitaminc_aead::plaintext::{
 };
 use vitaminc_aead_frame::{to_frame, Frame, FrameError, FrameWriteError};
 use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroizing;
 
 /// A value a guest hands its host: a scalar, a list or a map with string
 /// keys.
@@ -32,8 +33,9 @@ pub enum HostValue {
     Int(i64),
     /// A float.
     Float(f64),
-    /// Text.
-    Text(String),
+    /// Text, wiped when dropped: a guest hands secrets back as text (an
+    /// access token), and the guest heap is not cleared when it frees.
+    Text(Zeroizing<String>),
     /// Bytes.
     Bytes(Protected<Vec<u8>>),
     /// A list.
@@ -45,7 +47,7 @@ pub enum HostValue {
 impl HostValue {
     /// Text, from anything that converts to a `String`.
     pub fn text(value: impl Into<String>) -> Self {
-        Self::Text(value.into())
+        Self::Text(Zeroizing::new(value.into()))
     }
 
     /// A structured field as a host value: a JSON number becomes an
@@ -63,7 +65,7 @@ impl HostValue {
                     Self::Float(number.as_f64().unwrap_or(f64::NAN))
                 }
             }
-            serde_json::Value::String(value) => Self::Text(value),
+            serde_json::Value::String(value) => Self::Text(Zeroizing::new(value)),
             serde_json::Value::Array(items) => {
                 Self::List(items.into_iter().map(Self::from_json).collect())
             }
@@ -113,7 +115,7 @@ impl HostValue {
     /// The text, if this is text.
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            Self::Text(text) => Some(text),
+            Self::Text(text) => Some(text.as_str()),
             _ => None,
         }
     }
@@ -148,7 +150,7 @@ impl Encrypt for &HostValue {
             HostValue::UInt(u) => sink.scalar(None, Physical::Int((*u).into())),
             HostValue::Int(i) => sink.scalar(None, Physical::Int((*i).into())),
             HostValue::Float(f) => sink.scalar(None, Physical::Float(Float::F64(*f))),
-            HostValue::Text(text) => sink.scalar(None, Physical::Text(text)),
+            HostValue::Text(text) => sink.scalar(None, Physical::Text(text.as_str())),
             HostValue::Bytes(bytes) => sink.scalar(None, Physical::Bytes(bytes.risky_ref())),
             HostValue::List(items) => visit_seq(sink, Some(items.len()), items),
             HostValue::Map(entries) => visit_map(
@@ -216,7 +218,7 @@ impl<O: Put> Sink for ValueSink<O> {
                 }
             }
             (None, Physical::Float(Float::F64(f))) => HostValue::Float(f),
-            (None, Physical::Text(text)) => HostValue::Text(text.to_owned()),
+            (None, Physical::Text(text)) => HostValue::Text(Zeroizing::new(text.to_owned())),
             (None, Physical::Bytes(bytes)) => HostValue::Bytes(Protected::new(bytes.to_vec())),
             _ => return Err(DecodeError::Scalar),
         };
@@ -290,6 +292,28 @@ impl<O: Put> MapSink for ValueMap<O> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Text is held as `Zeroizing<String>`, so a secret a guest hands back
+    /// as text (the auth guest's access token) is wiped when the value is
+    /// dropped, by every path that builds one: the constructor, JSON and a
+    /// decoded frame. A plain `String` here would leave it in freed guest
+    /// memory.
+    #[test]
+    fn text_is_wiped_on_drop() {
+        fn held(value: HostValue) -> Zeroizing<String> {
+            match value {
+                HostValue::Text(text) => text,
+                _ => panic!("not text"),
+            }
+        }
+        assert_eq!(held(HostValue::text("token")).as_str(), "token");
+        assert_eq!(
+            held(HostValue::from_json(serde_json::json!("token"))).as_str(),
+            "token"
+        );
+        let frame = HostValue::text("token").encode().unwrap();
+        assert_eq!(held(HostValue::decode(&frame).unwrap()).as_str(), "token");
+    }
 
     #[test]
     fn a_value_reads_back_as_it_was_written() {
