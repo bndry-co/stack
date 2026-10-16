@@ -104,8 +104,29 @@ evolution plan.
 The optional `stack-encrypt` feature enables `EncryptFrom<String>` for
 `v4::text::TextEq` and `v4::text::TextEqQuery`, and `DecryptInto<String>` for
 `v4::text::TextEq`. Stack Encrypt writes EQL v4 only, so no `v3` type
-implements these traits. Other v4 domains do not yet expose these conversions.
-The derives are emitted by `eql-codegen`.
+implements these traits. The derives are emitted by `eql-codegen`.
+
+The other v4 types Stack Encrypt produces take a plaintext from
+`eql_bindings::encryption::plaintext`, because vitaminc 0.5 has no native
+encryption for the scalar types:
+
+| v4 type | Plaintext |
+| --- | --- |
+| `Text` | `String` |
+| `Integer` | `Int32` |
+| `Bigint` | `Int64` |
+| `Boolean` | `Bool` |
+| `Real` | `Float32` |
+| `Double` | `Float64` |
+
+Each seals as vitaminc's tagged leaf, the bytes the value enum (`FfiValue`)
+seals for the same value, so values written here and by the Go SDK open each
+other. `IntegerEq` and `BigintEq` wait for vitaminc 0.6, whose integer
+equality term uses one PRF domain for every width; terms derived under
+vitaminc 0.5's per-width domains would stop matching after that upgrade.
+Ordering types wait for vitaminc 0.6's order encodings, float
+equality for its canonical float form, and `Json` for a decision on sealing a
+document as one leaf.
 
 The generated API docs include a complete, executable example in the
 `eql_bindings::encryption` module, from cipher setup through decryption. Its
@@ -162,7 +183,7 @@ assumed. Outcomes against today's sources:
 
 | Writer | Reader and query producer | Outcome |
 | --- | --- | --- |
-| Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. |
+| Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. `tests/encryption/tests/v4_types.rs`: the same for the other producible v4 types, in both directions between the typed plaintexts and the value enum. |
 | JS / FFI (`cipherstash-client` profile) | Rust | **Not supported.** `c` lacks the `stack-encrypt:1:` prefix and is refused loudly on decryption. A Rust probe against such a column is accepted by SQL and matches nothing. |
 | Rust (`stack-encrypt` profile) | JS / FFI | **Not supported.** The JS reader does not know the `stack-encrypt:1:` prefix and the two profiles' equality terms never match. |
 
@@ -214,7 +235,8 @@ crate would need stack-encrypt API newer than the crates.io release the
 published crate names, and the guest already depends on both. A type is producible exactly
 when its generated struct carries the `stack-encrypt` derives
 (`ENCRYPTION_DOMAINS` in `eql-codegen`), because the dispatch runs the derived
-plan; `TextEq` is the only one today.
+plan; `targets::targets()` lists them, each with `producible` and, when it is
+`false`, the reason.
 
 ### Developing the `stack-encrypt` feature
 
