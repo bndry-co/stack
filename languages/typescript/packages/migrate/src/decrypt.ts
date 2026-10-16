@@ -102,7 +102,7 @@ export class PlaintextWriteError extends Error {
 /**
  * The largest chunk one write can carry. Each decrypted row binds TWO
  * parameters in the chunk's `UPDATE … FROM (VALUES ($1, $2), …)` (the primary
- * key and the value), and Postgres's wire protocol caps a statement at 65535
+ * key, and the value packed with the ciphertext it was decrypted from), and Postgres's wire protocol caps a statement at 65535
  * parameters, so 32767 rows is the most that can ever be written in one
  * statement. A larger chunk would fail only after its ZeroKMS request.
  */
@@ -205,39 +205,60 @@ export interface DecryptBackfillResult {
  * one whatever the caller passes. It is owed from the moment a forced pass
  * starts, or from the `decrypt_dual_writing` event when a twin that already
  * held values was acknowledged with `force` (`details.acknowledgedWith`), and
- * stops being owed when a forced pass completes. Reads only the events since
- * the latest `decrypt_dual_writing`, which starts the column migration.
+ * stops being owed when a forced pass completes. Reads at most two events:
+ * the latest `decrypt_dual_writing`, which starts the column migration, and
+ * the latest forced pass or completion event after it (after the first event
+ * when there is no `decrypt_dual_writing`). Unforced events neither open nor
+ * close the obligation, so they are not read.
  */
 export async function forceObligationOpen(
   db: ClientBase,
   tableName: string,
   encryptedColumn: string,
 ): Promise<boolean> {
+  // `scope` is the latest `decrypt_dual_writing` (absent for a pass run
+  // without one, when every event counts). `latest` is the newest forced
+  // event after it that opens or closes the obligation.
   const { rows } = await db.query<{
-    event: string
-    phase: string
-    details: Record<string, unknown> | null
+    acknowledged_with: string | null
+    latest_event: string | null
   }>(
-    `SELECT event, phase, details
-     FROM cipherstash.cs_migrations
-     WHERE table_name = $1 AND column_name = $2
-     ORDER BY id`,
-    [tableName, encryptedColumn],
+    `WITH scope AS (
+       SELECT id, details->>'acknowledgedWith' AS acknowledged_with
+       FROM cipherstash.cs_migrations
+       WHERE table_name = $1 AND column_name = $2
+         AND event = 'decrypt_dual_writing'
+       ORDER BY id DESC
+       LIMIT 1
+     ), latest AS (
+       SELECT event
+       FROM cipherstash.cs_migrations
+       WHERE table_name = $1 AND column_name = $2
+         AND id > COALESCE((SELECT id FROM scope), 0)
+         AND details->>'force' = 'true'
+         AND (event = $3 OR phase = $4)
+       ORDER BY id DESC
+       LIMIT 1
+     )
+     SELECT (SELECT acknowledged_with FROM scope) AS acknowledged_with,
+            (SELECT event FROM latest) AS latest_event`,
+    [
+      tableName,
+      encryptedColumn,
+      REVERSE_EVENTS.completed,
+      REVERSE_EVENTS.runningPhase,
+    ],
   )
-  let open = false
-  for (const row of rows) {
-    if (row.event === 'decrypt_dual_writing') {
-      // Starts a column migration. A twin that already held values and was
-      // acknowledged with `force` owes a forced pass before any has run.
-      open = row.details?.acknowledgedWith === 'force'
-    } else if (row.details?.force !== true) {
-    } else if (row.event === REVERSE_EVENTS.completed) {
-      open = false
-    } else if (row.phase === REVERSE_EVENTS.runningPhase) {
-      open = true
-    }
+  const row = rows[0]
+  if (row === undefined) return false
+  // The latest forced event decides: a completed forced pass closes the
+  // obligation, a started, checkpointed or failed one opens it.
+  if (row.latest_event !== null) {
+    return row.latest_event !== REVERSE_EVENTS.completed
   }
-  return open
+  // No forced event yet. A twin that already held values and was
+  // acknowledged with `force` owes a forced pass before any has run.
+  return row.acknowledged_with === 'force'
 }
 
 /** How many `NULL_PLAINTEXT` primary keys a result carries. */
@@ -366,8 +387,11 @@ export async function runDecryptBackfill(
         )
       }
 
-      const writes: Array<{ pk: string; value: string }> = []
+      const writes: DecryptedWrite[] = []
       const chunkCodes: Record<string, number> = {}
+      // Rows that decrypted, whether or not they produced a write. A row
+      // decrypting to `null` (NULL_PLAINTEXT) proves the credentials work.
+      let decryptedCount = 0
       for (const [i, item] of decrypted.data.entries()) {
         const { pk } = rows[i]
         if (item.error !== undefined) {
@@ -382,6 +406,7 @@ export async function runDecryptBackfill(
             `Decryption client returned an EQL envelope instead of plaintext for pk=${pk}. Refusing to write ciphertext into the plaintext column "${plaintextColumn}".`,
           )
         }
+        decryptedCount++
         const value = serialize(item.data)
         if (value === undefined) {
           tally(chunkCodes, 'NULL_PLAINTEXT')
@@ -390,13 +415,15 @@ export async function runDecryptBackfill(
           }
           continue
         }
-        writes.push({ pk, value })
+        // The ciphertext as read, so the write can refuse a row whose
+        // ciphertext changed while this chunk was being decrypted.
+        writes.push({ pk, value, ciphertext: rows[i].ciphertext })
       }
 
       // The first chunk of a run decrypting nothing is a credentials problem,
       // not a column of locked values — see UndecryptableBatchError.
       if (
-        writes.length === 0 &&
+        decryptedCount === 0 &&
         chunkIndex === 0 &&
         !options.continueOnUndecryptable
       ) {
@@ -416,6 +443,7 @@ export async function runDecryptBackfill(
           writeDecryptedChunk(client, {
             tableName,
             pkColumn,
+            encryptedColumn,
             plaintextColumn,
             plaintextSqlType,
             writes,
@@ -522,12 +550,22 @@ export function plaintextSerializer(
   }
 }
 
+/** One row's decrypted plaintext, with the ciphertext it was decrypted from. */
+interface DecryptedWrite {
+  pk: string
+  /** Text form of the plaintext, cast to the column's type in SQL. */
+  value: string
+  /** The ciphertext as the page query read it (parsed `jsonb`). */
+  ciphertext: unknown
+}
+
 interface WriteDecryptedChunkOptions {
   tableName: string
   pkColumn: string
+  encryptedColumn: string
   plaintextColumn: string
   plaintextSqlType: string
-  writes: Array<{ pk: string; value: string }>
+  writes: DecryptedWrite[]
   force: boolean
 }
 
@@ -535,8 +573,24 @@ interface WriteDecryptedChunkOptions {
  * One `UPDATE … FROM (VALUES …)` per chunk, the mirror of the forward
  * `writeEncryptedChunk`. Values travel as text and are cast to the column's
  * declared type in SQL, which is what lets one statement serve every type.
- * The `plaintext IS NULL` guard (dropped under `force`) keeps a concurrent
- * dual-write from being overwritten by an older decrypted value.
+ *
+ * Two guards keep a concurrent dual-write from being overwritten by an older
+ * decrypted value. The page is read, and decrypted, outside the chunk's
+ * transaction, so the application can write the row in between:
+ *
+ * - The ciphertext must still be the one that was decrypted. A row whose
+ *   ciphertext changed since it was read is left alone: the application's
+ *   dual-write already put the matching plaintext there. This is the only
+ *   guard under `force`, where the plaintext is expected to be set.
+ * - Unforced, the plaintext must still be NULL.
+ *
+ * A row left alone by either guard is still counted as processed. That is
+ * safe for coverage: if it was left with a NULL plaintext,
+ * `countUndecrypted` still counts it and a later run retries it.
+ *
+ * Each row binds two parameters — the primary key, and one `jsonb` array
+ * `[plaintext, ciphertext]` — which is what {@link MAX_DECRYPT_CHUNK_SIZE}
+ * is computed from.
  *
  * Identifiers are interpolated, never bound, because SQL cannot bind them:
  * the table and columns are quoted with `quoteIdent`/`qualifyTable`, and
@@ -551,21 +605,21 @@ async function writeDecryptedChunk(
 
   const table = qualifyTable(opts.tableName)
   const pk = quoteIdent(opts.pkColumn)
+  const enc = quoteIdent(opts.encryptedColumn)
   const plain = quoteIdent(opts.plaintextColumn)
 
   const params: unknown[] = []
   const valuesSql = opts.writes
-    .map(({ pk: pkValue, value }) => {
+    .map(({ pk: pkValue, value, ciphertext }) => {
       params.push(pkValue)
       const pkParam = `$${params.length}`
-      params.push(value)
-      return `(${pkParam}, $${params.length}::text)`
+      params.push(JSON.stringify([value, ciphertext]))
+      return `(${pkParam}, $${params.length}::jsonb)`
     })
     .join(', ')
 
-  const where = opts.force
-    ? `t.${pk}::text = v.pk::text`
-    : `t.${pk}::text = v.pk::text AND t.${plain} IS NULL`
+  const unchanged = `t.${pk}::text = v.pk::text AND t.${enc}::jsonb = v.w->1`
+  const where = opts.force ? unchanged : `${unchanged} AND t.${plain} IS NULL`
 
   // `plaintextSqlType` is `format_type()` output from the catalog — valid,
   // already-quoted type syntax — never user input.
@@ -573,8 +627,8 @@ async function writeDecryptedChunk(
     await db.query(
       `
     UPDATE ${table} AS t
-    SET ${plain} = v.val::${opts.plaintextSqlType}
-    FROM (VALUES ${valuesSql}) AS v(pk, val)
+    SET ${plain} = (v.w->>0)::${opts.plaintextSqlType}
+    FROM (VALUES ${valuesSql}) AS v(pk, w)
     WHERE ${where}
   `,
       params,

@@ -25,6 +25,7 @@ import { columnHasValues, countUndecrypted } from '../cursor.js'
 import {
   type BulkDecryptItem,
   type DecryptionClientLike,
+  forceObligationOpen,
   MAX_DECRYPT_CHUNK_SIZE,
   PlaintextWriteError,
   runDecryptBackfill,
@@ -607,6 +608,128 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
       `SELECT email FROM ${TABLE} WHERE id = 3`,
     )
     expect(forced.rows[0]?.email).toBe('user-3@example.com')
+  })
+
+  // F1: a forced write must not overwrite a dual-write that landed while the
+  // chunk's ciphertext was out for decryption.
+  it('a forced pass does not overwrite a concurrent dual-write that landed during bulkDecrypt', async () => {
+    await seed(10)
+    // The app dual-writes row 4 — both columns — while the chunk that read its
+    // old ciphertext is still in its bulkDecrypt round trip.
+    const racingClient: DecryptionClientLike = {
+      async bulkDecrypt(payloads) {
+        await pool.query(
+          `UPDATE ${TABLE} SET email_encrypted = $1::jsonb, email = $2 WHERE id = 4`,
+          [JSON.stringify(envelope('newer@example.com')), 'newer@example.com'],
+        )
+        return stubClient.bulkDecrypt(payloads)
+      },
+    }
+
+    await run({ force: true, decryptionClient: racingClient })
+
+    const { rows } = await pool.query<{ email: string }>(
+      `SELECT email FROM ${TABLE} WHERE id = 4`,
+    )
+    // The ciphertext now says newer@; plaintext must agree, or `decrypt drop`
+    // drops the only copy of the newer value.
+    expect(rows[0]?.email).toBe('newer@example.com')
+  })
+
+  // F7: a first chunk whose every row decrypts to null is not a credentials
+  // problem; decryption worked.
+  it('does not blame credentials when every row in the first chunk decrypts to null', async () => {
+    await pool.query(`
+      CREATE TABLE ${TABLE} (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        email_encrypted jsonb,
+        email integer
+      )
+    `)
+    await pool.query(
+      `INSERT INTO ${TABLE} (email_encrypted) VALUES ($1::jsonb), ($2::jsonb), ($3::jsonb)`,
+      [
+        JSON.stringify(envelope(null)),
+        JSON.stringify(envelope(null)),
+        JSON.stringify(envelope(7)),
+      ],
+    )
+
+    // Chunk of 2: the first chunk is entirely NULL_PLAINTEXT.
+    const outcome = await run({
+      plaintextSqlType: 'integer',
+      chunkSize: 2,
+    }).catch((error: unknown) => error)
+
+    expect(outcome).not.toBeInstanceOf(UndecryptableBatchError)
+    expect(outcome).toMatchObject({
+      completed: true,
+      skippedByCode: { NULL_PLAINTEXT: 2 },
+      nullPlaintextPks: ['1', '2'],
+      rowsDecrypted: 1,
+    })
+  })
+
+  // F8: behaviour-preservation pin for forceObligationOpen. The obligation is
+  // scoped to the latest decrypt_dual_writing; a forced pass left open in an
+  // earlier lifecycle does not carry into the next one.
+  it('a forced pass left open in an earlier lifecycle does not force the next one', async () => {
+    await seed(5)
+    const db = await pool.connect()
+    try {
+      const base = { tableName: TABLE, columnName: 'email_encrypted' }
+      // Lifecycle 1: acknowledged with force, a forced pass starts and never
+      // completes.
+      await appendEvent(db, {
+        ...base,
+        event: 'decrypt_dual_writing',
+        phase: 'decrypt-dual-writing',
+        details: { plaintextColumn: 'email', acknowledgedWith: 'force' },
+      })
+      await appendEvent(db, {
+        ...base,
+        event: 'decrypt_started',
+        phase: 'decrypting',
+        details: { plaintextColumn: 'email', force: true },
+      })
+      expect(await forceObligationOpen(db, TABLE, 'email_encrypted')).toBe(true)
+      // Lifecycle 2: a fresh dual-write confirmation over an empty twin.
+      await appendEvent(db, {
+        ...base,
+        event: 'decrypt_dual_writing',
+        phase: 'decrypt-dual-writing',
+        details: { plaintextColumn: 'email' },
+      })
+      expect(await forceObligationOpen(db, TABLE, 'email_encrypted')).toBe(
+        false,
+      )
+      // An unforced completed event does not close a forced obligation.
+      await appendEvent(db, {
+        ...base,
+        event: 'decrypt_started',
+        phase: 'decrypting',
+        details: { plaintextColumn: 'email', force: true },
+      })
+      await appendEvent(db, {
+        ...base,
+        event: 'decrypted',
+        phase: 'decrypted',
+        details: { plaintextColumn: 'email' },
+      })
+      expect(await forceObligationOpen(db, TABLE, 'email_encrypted')).toBe(true)
+      // A forced completed event does.
+      await appendEvent(db, {
+        ...base,
+        event: 'decrypted',
+        phase: 'decrypted',
+        details: { plaintextColumn: 'email', force: true },
+      })
+      expect(await forceObligationOpen(db, TABLE, 'email_encrypted')).toBe(
+        false,
+      )
+    } finally {
+      db.release()
+    }
   })
 
   it('ignores a forward checkpoint recorded under the same key — no cross-direction resume', async () => {
