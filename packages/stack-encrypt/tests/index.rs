@@ -752,3 +752,60 @@ mod given_encrypted_terms_as_a_target {
         );
     }
 }
+
+/// A boolean has no order term on the typed path, as on the dynamic one
+/// (`dynamic::admits`): cllw-ore would order a `bool`, and its two values
+/// would split a column into its `true` and `false` rows. Nor has it an
+/// equality term. Both are refused when the term is derived, before any
+/// key is minted, through the index, the typed term and a plan alike.
+#[tokio::test]
+async fn a_boolean_has_no_order_or_equality_term() {
+    use stack_encrypt::sem::TermError;
+    use stack_encrypt::{EncryptInto, Plan};
+
+    let (cipher, generates, _) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let ore_term: Result<OreTerm<bool>, _> = true
+        .encrypt_into_with_context(&keyset, nonempty!("users/flag"))
+        .await;
+    assert!(matches!(ore_term, Err(Error::Term(TermError::NoOrderTerm))));
+    let ope_term: Result<OpeTerm<bool>, _> = false
+        .encrypt_into_with_context(&keyset, nonempty!("users/flag"))
+        .await;
+    assert!(matches!(ope_term, Err(Error::Term(TermError::NoOrderTerm))));
+    let equality_term: Result<EqualityTerm, _> = true
+        .encrypt_into_with_context(&keyset, nonempty!("users/flag"))
+        .await;
+    assert!(matches!(
+        equality_term,
+        Err(Error::Term(TermError::NoEqualityTerm))
+    ));
+
+    for index in [IndexSpec::Ore, IndexSpec::Ope] {
+        let refused = match index {
+            IndexSpec::Ore => {
+                let plan = Plan::context("users/flag")
+                    .with::<bool, _>(Ore)
+                    .build()
+                    .unwrap();
+                cipher.encrypt(&true).using(&plan).await.map(|_| ())
+            }
+            _ => {
+                let plan = Plan::context("users/flag")
+                    .with::<bool, _>(Ope)
+                    .build()
+                    .unwrap();
+                cipher.encrypt(&true).using(&plan).await.map(|_| ())
+            }
+        };
+        assert!(
+            matches!(refused, Err(Error::Term(TermError::NoOrderTerm))),
+            "{index:?}: {refused:?}"
+        );
+    }
+    assert_eq!(
+        generates.load(Ordering::SeqCst),
+        0,
+        "refused before any key"
+    );
+}

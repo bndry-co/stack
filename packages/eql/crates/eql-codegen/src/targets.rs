@@ -410,7 +410,7 @@ mod tests {
             assert!(
                 gap(family(family_name), "eq")
                     .unwrap()
-                    .contains("integer-orderable/v1"),
+                    .contains("integer equality is produced once vitaminc 0.6"),
                 "{family_name}"
             );
             assert!(gap(family(family_name), "").is_none(), "{family_name}");
@@ -418,7 +418,9 @@ mod tests {
         assert!(gap(family("integer"), "ord_ore")
             .unwrap()
             .contains("ordering terms"));
-        assert!(gap(family("real"), "eq").unwrap().contains("float"));
+        assert!(gap(family("real"), "eq")
+            .unwrap()
+            .contains("float equality is produced once vitaminc 0.6"));
         assert!(gap(family("date"), "").unwrap().contains("has no kind"));
         assert!(gap(family("smallint"), "eq")
             .unwrap()

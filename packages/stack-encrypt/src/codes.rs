@@ -82,6 +82,7 @@ mod tests {
             TermError::EmptyTermText => TermError::EmptyTermText,
             TermError::InvertedRange => TermError::InvertedRange,
             TermError::NoEqualityTerm => TermError::NoEqualityTerm,
+            TermError::NoOrderTerm => TermError::NoOrderTerm,
             TermError::Normalize(_) => {
                 TermError::Normalize(vitaminc_normalize::NormalizeError::UnassignedCodePoint)
             },
@@ -392,6 +393,7 @@ mod tests {
             (Box::new(TermError::EmptyTermText), json!({})),
             (Box::new(TermError::InvertedRange), json!({})),
             (Box::new(TermError::NoEqualityTerm), json!({})),
+            (Box::new(TermError::NoOrderTerm), json!({})),
             (
                 Box::new(TermError::Normalize(
                     vitaminc_normalize::NormalizeError::UnassignedCodePoint,

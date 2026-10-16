@@ -191,7 +191,7 @@ async fn integer_equality_types_are_held_back_with_their_reason() {
         assert!(!target.producible, "{name}");
         let error = refused(targets::encrypt(name, &keyset, &label(), value));
         assert!(
-            matches!(&error, TargetError::Unproducible { reason, .. } if reason.contains("integer-orderable/v1")),
+            matches!(&error, TargetError::Unproducible { reason, .. } if reason.contains("integer equality is produced once vitaminc 0.6")),
             "{name}: {error}"
         );
     }

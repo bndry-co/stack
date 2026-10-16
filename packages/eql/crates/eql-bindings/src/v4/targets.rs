@@ -39,7 +39,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_integer_eq"),
         producible: false,
         reason: Some(
-            "the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF domain; producing it before that release would leave stored terms unmatchable after the upgrade",
+            "integer equality is produced once vitaminc 0.6 is released: its one integer domain is the one the engine derives in, and a term derived under vitaminc 0.5's per-width domains would stop matching after the upgrade",
         ),
     },
     Target {
@@ -177,7 +177,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_bigint_eq"),
         producible: false,
         reason: Some(
-            "the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF domain; producing it before that release would leave stored terms unmatchable after the upgrade",
+            "integer equality is produced once vitaminc 0.6 is released: its one integer domain is the one the engine derives in, and a term derived under vitaminc 0.5's per-width domains would stop matching after the upgrade",
         ),
     },
     Target {
@@ -573,7 +573,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_real_eq"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5 derives no equality term for a float; the canonical float form arrives in vitaminc 0.6 (ADR-0002)",
+            "float equality is produced once vitaminc 0.6, which gives a float its canonical equality form, is released (ADR-0002)",
         ),
     },
     Target {
@@ -641,7 +641,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_double_eq"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5 derives no equality term for a float; the canonical float form arrives in vitaminc 0.6 (ADR-0002)",
+            "float equality is produced once vitaminc 0.6, which gives a float its canonical equality form, is released (ADR-0002)",
         ),
     },
     Target {

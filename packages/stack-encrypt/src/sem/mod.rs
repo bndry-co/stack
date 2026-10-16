@@ -235,6 +235,16 @@ pub enum TermError {
         help("An equality term is defined for one integer, float, text, bytes, date, timestamp, decimal or uuid value, not for a boolean, a null or a container.")
     )]
     NoEqualityTerm,
+    /// No order term (ORE or OPE) is defined for a boolean: with two values,
+    /// an order term would tell anyone holding the column which rows are
+    /// `true`. Refused on the typed path as the dynamic path refuses it
+    /// (`dynamic::admits`).
+    #[error("no order term is defined for a boolean")]
+    #[diagnostic(
+        code(stack_encrypt::no_order_term),
+        help("A boolean column cannot be ordered without revealing which rows are true. Store it with no order index, and with no equality index either: a boolean has no equality term.")
+    )]
+    NoOrderTerm,
     /// The value cannot be normalized for its term: text with a code point
     /// unassigned in Unicode 16 (an equality or match term), or a value not
     /// valid for its logical type. The reason is vitaminc's, and names no
@@ -259,6 +269,7 @@ impl crate::ErrorPayload for TermError {
             | Self::EmptyTermText
             | Self::InvertedRange
             | Self::NoEqualityTerm
+            | Self::NoOrderTerm
             | Self::Normalize(_) => serde_json::Map::new(),
         }
     }
@@ -1292,6 +1303,7 @@ where
     T: CllwOreEncrypt + Send + 'static,
     T::Output: Send + 'static,
 {
+    refuse_bool::<T>()?;
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
@@ -1305,6 +1317,16 @@ where
         .map_err(TermError::Ore)
 }
 
+/// cllw-ore orders a `bool`, and its two values would split a column into
+/// its `true` and `false` rows, so no order term is derived for one, on the
+/// typed path as on the dynamic one.
+fn refuse_bool<T: 'static>() -> Result<(), TermError> {
+    if std::any::TypeId::of::<T>() == std::any::TypeId::of::<bool>() {
+        return Err(TermError::NoOrderTerm);
+    }
+    Ok(())
+}
+
 /// Derive an OPE term — as [`ore`], under the OPE domain so the two schemes
 /// never share a key.
 fn ope<T>(prf: &HmacSha256Prf, value: T, context: Context<'_>) -> Result<OpeTerm<T>, TermError>
@@ -1312,6 +1334,7 @@ where
     T: CllwOpeEncrypt + Send + 'static,
     T::Output: Send + 'static,
 {
+    refuse_bool::<T>()?;
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(

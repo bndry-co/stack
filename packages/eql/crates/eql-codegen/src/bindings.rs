@@ -401,12 +401,12 @@ pub fn encryption_gap(
     {
         "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"
     } else if matches!(family.name, "integer" | "bigint") && domain.terms == [Term::Hm] {
-        "the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF \
-         domain; producing it before that release would leave stored terms unmatchable after \
-         the upgrade"
+        "integer equality is produced once vitaminc 0.6 is released: its one integer domain is \
+         the one the engine derives in, and a term derived under vitaminc 0.5's per-width \
+         domains would stop matching after the upgrade"
     } else if matches!(family.name, "real" | "double") {
-        "vitaminc 0.5 derives no equality term for a float; the canonical float form \
-         arrives in vitaminc 0.6 (ADR-0002)"
+        "float equality is produced once vitaminc 0.6, which gives a float its canonical \
+         equality form, is released (ADR-0002)"
     } else {
         // Reached by an equality-only domain of a family whose plaintext is
         // specified but which is not listed: nothing in the catalog today.
@@ -1737,13 +1737,13 @@ mod tests {
                     {
                         "ordering terms"
                     } else if matches!(family.name, "integer" | "bigint") {
-                        "integer-orderable/v1"
+                        "integer equality is produced once vitaminc 0.6"
                     } else {
                         assert!(
                             matches!(family.name, "real" | "double"),
                             "{full}: every other specified, unordered domain is derived"
                         );
-                        "equality term for a float"
+                        "float equality is produced once vitaminc 0.6"
                     };
                     assert!(reason.contains(expected), "{full}: {reason}");
                 }

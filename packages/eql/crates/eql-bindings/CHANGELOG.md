@@ -39,9 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`stack-encrypt` feature). Their `hm` is Stack Encrypt's equality term,
   which now derives through `vitaminc-normalize`: `café` written with a
   precomposed `é` and with `e` and a combining accent is one value, and
-  text holding a code point unassigned in Unicode 16 is refused. Case and
+  text holding a code point unassigned in Unicode 16 is refused, when it is
+  stored as well as when it is queried. Case and
   whitespace are kept. Every `hm` changes bytes; no stored value existed to
-  keep. `Hmac256` encrypts from any `Plaintext` where it took a
+  keep. `Hmac256` encrypts from any vitaminc `Encrypt` where it took a
   `PrfValue`, and the feature no longer depends on `vitaminc-prf`.
 
 - **The `stack-encrypt` feature builds on vitaminc ADR 0001.**

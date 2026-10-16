@@ -155,10 +155,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or uuid derives in a domain of its own. `KeysetCipher::equality_term`,
   `target::equality`, the `Equality` index and `op::Eq` take an `Encrypt`
   that is one scalar where they took a `PrfValue`. A boolean, a null or a
-  container has no equality term (`TermError::NoEqualityTerm`), and text
-  holding a code point unassigned in Unicode 16 is refused
-  (`TermError::Normalize`). Match text is tokenized in the same normal
-  form, and refused the same way. Every equality and match term changes
+  container has no equality term (`TermError::NoEqualityTerm`); a `bool`
+  satisfies the new bound, so equality on one now fails when the term is
+  derived where it used to fail to compile. Text holding a code point
+  unassigned in Unicode 16 (an emoji newer than it, say) is refused
+  (`TermError::Normalize`), when it is written to an equality or match
+  column as well as when it is queried: the whole record's encrypt fails.
+  Match text is tokenized in the same normal form, and refused the same
+  way. Every equality and match term changes
   bytes (the domains move to `/v2`); ORE and OPE terms do not. No stored
   term existed to keep; the record fixture is regenerated.
 - **`dynamic::Value` and `dynamic::Scalar` are gone.** A field lowered from
@@ -168,9 +172,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   walked in place, a Rust value) and derives at the one scalar it holds;
   `IndexSpec::defines(value)` replaces `IndexSpec::supports(&scalar)`, and
   `IndexSpec` is an `Index<FfiValue>`.
-- **A boolean has no order term**, through a plan or `dynamic::term`: with
-  two values, an ORE or OPE term would tell anyone holding the column which
-  rows are `true`. `dynamic::admits` now refuses ORE and OPE on `bool`, and
+- **A boolean has no order term**, on the typed path and through a plan or
+  `dynamic::term`: with two values, an ORE or OPE term would tell anyone
+  holding the column which rows are `true`. An ORE or OPE term of a `bool`
+  (`KeysetCipher::ore_term`, the `Ore` and `Ope` indexes) is refused with
+  the new `TermError::NoOrderTerm`, before any key is minted, where cllw-ore
+  used to order one. `dynamic::admits` now refuses ORE and OPE on `bool`, and
   admits equality on `float32` and `float64`, which vitaminc gives an
   equality domain. A 128-bit integer has an equality term and no order
   term.

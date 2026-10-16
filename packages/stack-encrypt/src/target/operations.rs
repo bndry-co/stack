@@ -535,7 +535,7 @@ macro_rules! term_operation {
 }
 term_operation!(
     /// The equality term of `S` under the context the tree hands it. Requires
-    /// only that `S` describes itself (`Plaintext`), as one scalar with an
+    /// only that `S` describes itself (`Encrypt`), as one scalar with an
     /// equality domain; not recoverable encryption.
     equality, crate::sem::EqualityTerm, consume, [], [S: crate::Encrypt]
 );

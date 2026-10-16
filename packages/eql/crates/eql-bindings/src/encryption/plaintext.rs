@@ -16,10 +16,10 @@
 //! refuse a leaf of another width, so a column's type is the one it was
 //! written with.
 //!
-//! None of them derives an equality term. `IntegerEq` and `BigintEq` are held
-//! back until vitaminc 0.6, whose integer equality term uses one PRF domain
-//! for every width; a term derived here under vitaminc 0.5's per-width
-//! domains would stop matching after that upgrade.
+//! None of them derives an equality term. `IntegerEq`, `BigintEq`, `RealEq`
+//! and `DoubleEq` are held back until vitaminc 0.6 is released: the engine
+//! already derives integer and float equality in 0.6's shared domains, and a
+//! published build must not derive them under vitaminc 0.5's.
 //!
 //! ```rust,ignore
 //! use eql_bindings::encryption::plaintext::Int32;
