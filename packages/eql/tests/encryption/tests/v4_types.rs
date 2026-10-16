@@ -1,9 +1,9 @@
 //! The EQL v4 types Stack Encrypt produces besides `TextEq`: the
-//! storage-only integer, bigint, boolean, float and text types. `Json` is not
-//! producible yet: a JSON value seals as a tree of leaves and EQL's `c` holds
-//! one. `IntegerEq` and `BigintEq` are held back: their equality term moves to
-//! vitaminc 0.6's shared integer PRF domain, and terms stored before that
-//! would stop matching.
+//! storage-only integer, bigint, boolean, float and text types, and
+//! `TextMatch`. `Json` is not producible yet: a JSON value seals as a tree of
+//! leaves and EQL's `c` holds one. `IntegerEq` and `BigintEq` are held back:
+//! their equality term moves to vitaminc 0.6's shared integer PRF domain, and
+//! terms stored before that would stop matching.
 //!
 //! Each type must round-trip through both entry points (the typed
 //! `encrypt_as` and the by-name dispatch a Go plan reaches), seal exactly the
@@ -365,6 +365,90 @@ async fn storage_only_text_round_trips_through_both_entry_points() {
     );
 }
 
+/// A match query's filter positions, which EQL's `@@` tests for containment.
+fn positions(filter: &eql_bindings::v3::terms::BloomFilter) -> std::collections::BTreeSet<i16> {
+    filter.0.iter().copied().collect()
+}
+
+#[tokio::test]
+async fn text_match_filters_contain_their_substrings() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored: text::TextMatch = keyset
+        .encrypt_as(&"Alice@Example.com".to_owned(), column())
+        .await
+        .unwrap();
+    assert_v4_envelope(&stored, &["v", "i", "c", "bf"]);
+    assert!(
+        stored.bf.0.iter().all(|&p| (0..2048).contains(&p)),
+        "a 2048-bit filter"
+    );
+    let opened: String = cipher
+        .decrypt_as(stored.clone(), column().into())
+        .await
+        .unwrap();
+    assert_eq!(opened, "Alice@Example.com");
+
+    // `true` is a property of the filter: every bit a contained needle sets
+    // is set in the stored value's. `false` is not: a Bloom filter can cover
+    // an absent needle's bits by chance. "bob" is clear of it under the
+    // test key source and the pinned configuration, so a change to either
+    // can flip that case with no bug behind it.
+    let all = positions(&stored.bf);
+    for (needle, contained) in [
+        ("alice", true),
+        ("EXAMPLE", true),
+        ("ice@ex", true),
+        ("bob", false),
+    ] {
+        let query: text::TextMatchQuery = keyset
+            .encrypt_as(&needle.to_owned(), column())
+            .await
+            .unwrap();
+        assert_eq!(
+            positions(&query.bf).is_subset(&all),
+            contained,
+            "{needle:?} in Alice@Example.com"
+        );
+    }
+
+    // The dispatch derives the same filter.
+    let named: text::TextMatch = by_name(
+        &keyset,
+        "TextMatch",
+        FfiValue::String("Alice@Example.com".into()),
+    )
+    .await;
+    assert_eq!(named.bf, stored.bf);
+
+    // Text shorter than a 3-gram has no tokens. Stack Encrypt 0.2 refuses it
+    // for a stored value as well as a query, so a short value cannot be
+    // written to a TextMatch column yet.
+    let short: Result<text::TextMatch, _> = keyset.encrypt_as(&"ab".to_owned(), column()).await;
+    assert!(short.is_err());
+}
+
+/// The filter bits for one query under the test key source. The
+/// configuration is part of the stored format (`EqlMatch`): if these move,
+/// every stored filter stops agreeing with new queries, so a change here must
+/// arrive as a new domain or payload version.
+#[tokio::test]
+async fn text_match_filter_positions_are_pinned() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let query: text::TextMatchQuery = keyset
+        .encrypt_as(&"alice".to_owned(), column())
+        .await
+        .unwrap();
+    // 3 tokens ("ali", "lic", "ice") at 6 positions each, de-duplicated.
+    assert_eq!(query.bf.0, PINNED_ALICE);
+}
+
+const PINNED_ALICE: [i16; 18] = [
+    52, 99, 224, 311, 899, 1190, 1228, 1232, 1290, 1378, 1486, 1505, 1529, 1613, 1763, 1848, 1880,
+    2027,
+];
+
 #[tokio::test]
 async fn a_value_of_another_kind_is_refused_not_converted() {
     let (cipher, _) = common::cipher().await;
@@ -419,7 +503,8 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
             active public.eql_v4_boolean,
             ratio public.eql_v4_real,
             score public.eql_v4_double,
-            note public.eql_v4_text
+            note public.eql_v4_text,
+            name public.eql_v4_text_match
         );",
     )
     .unwrap();
@@ -452,6 +537,10 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
                     .encrypt_as::<_, text::Text>(&"note".to_owned(), column())
                     .await
                     .unwrap(),
+                keyset
+                    .encrypt_as::<_, text::TextMatch>(&format!("user{id}@example.com"), column())
+                    .await
+                    .unwrap(),
             )
         });
         db.execute(
@@ -461,7 +550,8 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
                 $4::text::jsonb::public.eql_v4_boolean,
                 $5::text::jsonb::public.eql_v4_real,
                 $6::text::jsonb::public.eql_v4_double,
-                $7::text::jsonb::public.eql_v4_text)",
+                $7::text::jsonb::public.eql_v4_text,
+                $8::text::jsonb::public.eql_v4_text_match)",
             &[
                 &id,
                 &json(&row.0),
@@ -470,10 +560,50 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
                 &json(&row.3),
                 &json(&row.4),
                 &json(&row.5),
+                &json(&row.6),
             ],
         )
         .unwrap();
     }
+
+    let mut matching = |needle: &str| -> Vec<i32> {
+        let probe: text::TextMatchQuery = runtime
+            .block_on(async { keyset.encrypt_as(&needle.to_owned(), column()).await })
+            .unwrap();
+        db.query(
+            "SELECT id FROM v4_types WHERE name @@ $1::text::jsonb::eql_v4.query_text_match ORDER BY id",
+            &[&json(&probe)],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect()
+    };
+    assert_eq!(matching("example.com"), [1, 2, 3], "TextMatch: every row");
+    assert_eq!(matching("user2"), [2], "TextMatch: one row");
+    assert_eq!(matching("nobody"), Vec::<i32>::new(), "TextMatch: none");
+
+    // Known gap in the SQL (#1171), pinned so its fix shows here: with the
+    // query on the left, `@@` asks whether the query's filter contains the
+    // stored value's, so that operand order finds nothing. Only
+    // `stored @@ query` works until then; the README says so.
+    let probe: text::TextMatchQuery = runtime
+        .block_on(async { keyset.encrypt_as(&"user2".to_owned(), column()).await })
+        .unwrap();
+    let reversed: Vec<i32> = db
+        .query(
+            "SELECT id FROM v4_types WHERE $1::text::jsonb::eql_v4.query_text_match @@ name",
+            &[&json(&probe)],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(
+        reversed,
+        Vec::<i32>::new(),
+        "query @@ stored still finds nothing (#1171); when the SQL is fixed this becomes [2]"
+    );
 
     // Every stored value reads back from its domain and opens.
     let row = db
