@@ -660,6 +660,38 @@ mod tests {
         assert_eq!(format!("{:?}", FfiValue::UInt32(34)), "UInt32(34)");
     }
 
+    /// Every variant's `Debug` form: numbers and booleans print, text and
+    /// bytes are redacted at any depth, so a container or a passthrough
+    /// holding a secret prints none of it.
+    #[test]
+    fn debug_prints_every_variant_and_redacts_at_any_depth() {
+        let cases = [
+            (FfiValue::Null, "Null"),
+            (FfiValue::Undefined, "Undefined"),
+            (FfiValue::Bool(true), "Bool(true)"),
+            (FfiValue::Int32(-1), "Int32(-1)"),
+            (FfiValue::Int64(-2), "Int64(-2)"),
+            (FfiValue::UInt64(3), "UInt64(3)"),
+            (FfiValue::Float32(1.5), "Float32(1.5)"),
+            (FfiValue::Float64(2.5), "Float64(2.5)"),
+            (
+                FfiValue::Array(vec![s("secret"), FfiValue::UInt32(1)]),
+                "Array([String(<redacted>), UInt32(1)])",
+            ),
+            (
+                FfiValue::Object(vec![("k".into(), s("secret"))]),
+                "Object([(\"k\", String(<redacted>))])",
+            ),
+            (
+                FfiValue::Passthrough(Box::new(FfiValue::Bytes(Protected::new(vec![1])))),
+                "Passthrough(Bytes(<redacted>))",
+            ),
+        ];
+        for (value, printed) in cases {
+            assert_eq!(format!("{value:?}"), printed);
+        }
+    }
+
     #[test]
     fn kind_names_parse_back_exactly() {
         for kind in ValueKind::ALL {
