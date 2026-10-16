@@ -1494,6 +1494,35 @@ fn a_query_term_is_the_term_of_the_index_that_answers_its_operator() {
 /// before a keyset is resolved: an operator the field does not answer, or
 /// one the engine does not know, as a mistyped value is refused; the typed
 /// path's own query refusals as `STATUS_TERM`.
+/// Equality text that does not normalize (a code point unassigned in
+/// Unicode 16) is refused by the cipher-free check as a term failure, as
+/// derivation would refuse it, so a guest with no cipher reports
+/// STATUS_TERM rather than STATUS_STATE, and the query op agrees.
+#[test]
+fn equality_text_that_does_not_normalize_is_a_term_failure_before_any_cipher() {
+    let plan = encode(obj(vec![(
+        "email",
+        obj(vec![
+            ("context", label("email")),
+            ("outputs", FfiValue::Array(vec![s("c"), s("eq")])),
+            ("type", s("string")),
+        ]),
+    )]));
+    let input = encode(s("a\u{0378}bc"));
+    assert_eq!(
+        ops::validate::query_term(&input, &plan, b"email", b"eq"),
+        Err(STATUS_TERM),
+        "validation"
+    );
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    assert_eq!(
+        block_on(ops::query_term(&keyset, &input, &plan, b"email", b"eq")).map(|_| ()),
+        Err(STATUS_TERM),
+        "the op"
+    );
+}
+
 #[test]
 fn query_term_validation_refuses_what_the_query_op_refuses() {
     let cipher = cipher();

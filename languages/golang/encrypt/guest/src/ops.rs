@@ -332,8 +332,10 @@ pub fn target_limit(
     want: u64,
 ) -> Result<Vec<u8>, u32> {
     let (plan, field, operator) = parse_query(plan, field, operator)?;
+    // Statistics are read without a field to hand; the error names the
+    // query's, as every other refusal of a query does.
     let stats = stack_encrypt::op::Stats::from_value(&decode_value(stats)?)
-        .map_err(|e| fail_dynamic(&e))?;
+        .map_err(|e| fail_dynamic(&e.in_field(field)))?;
     let limit = dynamic::target_limit(&plan, field, operator, term, want, &stats, &resolver())
         .map_err(|e| fail_dynamic(&e))?;
     encode_value(dynamic::limit_to_value(limit))

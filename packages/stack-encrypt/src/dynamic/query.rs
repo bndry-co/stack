@@ -464,6 +464,12 @@ fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
         (IndexSpec::Match(options), Input::One(value)) => {
             query_tokens(value, options).map(drop)?;
         }
+        // Equality text the scheme cannot normalize (a code point
+        // unassigned in Unicode 16) is refused here, before a term or a
+        // keyset, as derivation would refuse it after one.
+        (IndexSpec::Equality, Input::One(value)) => {
+            crate::sem::normalized(value).map(drop).map_err(refused)?;
+        }
         _ => {}
     }
     Ok(())
@@ -1224,6 +1230,7 @@ mod tests {
             ("age", OpSpec::Between, pair(65, 18), "inverted"),
             ("name", OpSpec::Matches, text("al"), "empty"),
             ("name", OpSpec::Matches, text("\u{0378}abc"), "normalize"),
+            ("email", OpSpec::Eq, text("a\u{0378}bc"), "normalize"),
         ];
         for (name, op, input, what) in cases {
             for error in [

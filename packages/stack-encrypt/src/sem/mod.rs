@@ -466,7 +466,7 @@ fn equality_of_normalized(
 /// is one scalar with an equality domain, and [`TermError::Normalize`] for a
 /// scalar the sink refuses (text with a code point unassigned in Unicode 16,
 /// a value not valid for its logical type).
-fn normalized<T: Encrypt>(value: T) -> Result<Normalized, TermError> {
+pub(crate) fn normalized<T: Encrypt>(value: T) -> Result<Normalized, TermError> {
     let mut terms = terms(value).map_err(|error| match error.term() {
         Some(refused) => TermError::Normalize(refused.error()),
         // A shape refusal or a source failure: not one scalar the sink could

@@ -571,8 +571,12 @@ pub unsafe extern "C" fn se_verify(
     op_len: u32,
 ) -> u64 {
     export(|| {
-        let query = unsafe { take_plaintext(in_ptr, in_len)? };
-        let values = unsafe { take_plaintext(vals_ptr, vals_len)? };
+        // Both buffers are taken, and so wiped, before either result is
+        // acted on: a bad query pointer must not leave the page of
+        // decrypted values unwiped behind an early return.
+        let query = unsafe { take_plaintext(in_ptr, in_len) };
+        let values = unsafe { take_plaintext(vals_ptr, vals_len) };
+        let (query, values) = (query?, values?);
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns.
         let plan = unsafe { input(plan_ptr, plan_len)? };
