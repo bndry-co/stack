@@ -235,8 +235,7 @@ pub trait QueryTerm {}
 pub trait Probabilistic: QueryTerm {
     type Plaintext;
     fn verify(&self, value: &Self::Plaintext) -> bool;
-    // `target_limit(&self, want, &Stats) -> Limit` joins it with decision 5
-    // (#1184).
+    fn target_limit(&self, want: u64, stats: &Stats) -> Limit;
 }
 
 pub trait Ranked: QueryTerm {
@@ -337,6 +336,15 @@ positives); the mean fill, 0.25, raised to 6 predicts 245. The number the
 bound needs is therefore `p = mean(f_i^b)`, and the statistics the client
 holds must let it compute that for the `b` of each query.
 
+The model assumes a non-matching row shares no token with the query. The
+same token sets the same bits in every filter, so a row holding part of the
+query has fewer bits left to chance: "police" already holds two of
+"alice"'s three 3-grams, and passes at `f^6` rather than `f^18`. On natural
+text the stated confidence is therefore nominal, and a measured histogram
+cannot correct it, because it measures fill, not overlap. Correctness does
+not depend on it: `verify` decides every row, and the candidate count says
+whether a fetch was complete.
+
 False positives are then `Poisson(λ = p·N)`, and the worst case that still
 satisfies the caller is exactly `want` true matches preceded by every false
 positive, so
@@ -363,9 +371,10 @@ index declaration. The library takes either as numbers in `Stats` and does
 not care which it was given. A column has the prior from the day it is
 declared.
 
-**Declared.** A match index declares `expected_tokens`, the typical token
-count of the values it will hold, beside `m` and `k`: 20 for a name column,
-200 for a notes column. From it `Stats::declared(rows)` takes
+**Declared.** A match configuration declares `expected_tokens()`, the typical
+token count of the values it will hold, beside the `m` and `k` of its
+options: 20 for a name column, 200 for a notes column. It is not part of the
+index's identity and changes no term. From it `Stats::declared(rows)` takes
 `f = 1 − e^(−k·expected_tokens/m)` and `p = f^b`. This is a prior, and
 `rows` is a planning estimate too. It is enough to warn before a query runs
 (a three-letter needle against a notes column) and to size a first fetch; it
@@ -379,6 +388,7 @@ fills. One aggregate gives it, at most `m` buckets:
 ```sql
 SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*)
 FROM users TABLESAMPLE SYSTEM (1)
+WHERE name IS NOT NULL
 GROUP BY 1
 ```
 
@@ -388,8 +398,34 @@ query has. The sample bounds the cost on a large table; `TABLESAMPLE` is a
 page sample, which is fine for a distribution and unsuited to an exact count.
 It is also a sample of pages, so on a table of a few thousand rows a 1%
 sample can select none; below that size the clause is dropped and the whole
-table is read, which costs nothing worth saving. `rows` comes from `SELECT reltuples FROM pg_class WHERE oid =
-'users'::regclass`, a catalog read.
+table is read, which costs nothing worth saving. `rows` counts the rows the
+predicate can match, the non-NULL ones, since the histogram's pass rate is
+over those and a NULL never passes. One catalog read gives it:
+
+```sql
+SELECT (c.reltuples * (1 - coalesce(s.null_frac, 0)))::bigint
+FROM pg_class c
+LEFT JOIN pg_stats s
+  ON s.schemaname = 'public' AND s.tablename = 'users' AND s.attname = 'name'
+WHERE c.oid = 'users'::regclass AND c.reltuples >= 0
+```
+
+`reltuples` is −1 for a table that has never been vacuumed or analysed,
+such as one just bulk-loaded. That is an unknown count, not an empty
+table, so the statement returns no row and the application builds no
+`Stats`: it pages with a cursor, as for `Unbounded`, or runs `ANALYZE`.
+Clamping −1 to 0 would give λ = 0 and a confident fetch of exactly `want`.
+A `Limit` never exceeds `i64::MAX`, the largest `LIMIT` PostgreSQL takes.
+An empty histogram falls back to the declared prior.
+
+`target_limit` returns a `Limit`: `Rows(n)`, or `Unbounded` when the
+statistics say nothing about the stored filters (no prior and no
+histogram) or the confidence is not below 1. A `want` of 0 is `Rows(0)`.
+`fetch_or(page)` reads either as a fetch size, for a caller that pages
+anyway, and cuts `page` to `i64::MAX`. Past ten million expected false
+positives the quantile is the conservative `λ + 8√λ`, since the query is
+hopeless at that point; it covers a confidence up to `1 − 1e-15`, and a
+higher one there is `Unbounded`.
 
 Where the numbers live and who keeps them in step was asked on the review,
 so it is written down. They are read from the server by the application, at
@@ -458,7 +494,7 @@ shot, with a bound, and the completeness check from decision 5:
 
 ```rust
 let term  = cipher.query(op::Matches, "ali").on(&users::name).await?;
-let fetch = term.target_limit(10, &stats).fetch();
+let fetch = term.target_limit(10, &stats).fetch_or(50);
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, name FROM users WHERE name @@ $1 ORDER BY id LIMIT $2",
@@ -719,7 +755,7 @@ the operator is `@@`, column on the left. The query selects the ciphertext
 
 ```rust
 let term  = cipher.query(op::Matches, "ali").on(&users::name).await?;
-let fetch = term.target_limit(10, &stats).fetch();
+let fetch = term.target_limit(10, &stats).fetch_or(50);
 
 let rows: Vec<UserRow> = sqlx::query_as(
     "SELECT id, name FROM users WHERE name @@ $1::eql_v4.query_text_match ORDER BY id LIMIT $2",
@@ -739,14 +775,23 @@ let hits: Vec<User> = cipher.open(rows).using(&users_plan).await?
 The `Stats` it used were read once, at startup, by the application:
 
 ```rust
-let rows: i64 = sqlx::query_scalar("SELECT reltuples::bigint FROM pg_class WHERE oid = 'users'::regclass")
-    .fetch_one(&pool).await?;
-let histogram: Vec<(i16, i64)> = sqlx::query_as(
+// No row while `users` has never been analysed: the count is unknown.
+let rows: Option<i64> = sqlx::query_scalar(
+    "SELECT (c.reltuples * (1 - coalesce(s.null_frac, 0)))::bigint
+     FROM pg_class c
+     LEFT JOIN pg_stats s
+       ON s.schemaname = 'public' AND s.tablename = 'users' AND s.attname = 'name'
+     WHERE c.oid = 'users'::regclass AND c.reltuples >= 0",
+)
+.fetch_optional(&pool).await?;
+let histogram: Vec<(i32, i64)> = sqlx::query_as(
     "SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*)
-     FROM users TABLESAMPLE SYSTEM (1) GROUP BY 1",
+     FROM users TABLESAMPLE SYSTEM (1) WHERE name IS NOT NULL GROUP BY 1",
 )
 .fetch_all(&pool).await?;
-let stats = Stats::measured(rows as u64, histogram.into_iter().map(|(b, n)| (b as u16, n as u64)));
+let stats = rows.map(|rows| {
+    Stats::measured(rows as u64, histogram.into_iter().map(|(b, n)| (b as u32, n as u64)))
+});
 ```
 
 or, before anyone has measured, `Stats::declared(1_000_000)`, which uses the
@@ -766,7 +811,7 @@ let rows: Vec<UserRow> = sqlx::query_as(
 )
 .bind(sqlx::types::Json(&name))
 .bind(sqlx::types::Json(&age))
-.bind(name.target_limit(10, &stats).fetch() as i64)
+.bind(name.target_limit(10, &stats).fetch_or(50) as i64)
 .fetch_all(&pool).await?;
 let hits: Vec<User> = cipher.open(rows).using(&users_plan).await?
     .into_iter().filter(|u| name.verify(&u.name)).take(10).collect();
@@ -908,7 +953,7 @@ it binds as a parameter in any library built on `database/sql` or pgx:
 
 ```go
 q, _ := users.Fields.Name.Matches(ctx, cipher, "ali")
-limit := q.TargetLimit(10, stats).Fetch()
+limit := q.TargetLimit(10, stats).FetchOr(50)
 
 rows, err := db.QueryContext(ctx,
     `SELECT id, name FROM users WHERE name @@ $1::eql_v4.query_text_match ORDER BY id LIMIT $2`,
@@ -1014,7 +1059,7 @@ TypeScript programs use:
 
 ```ts
 // pg
-const limit = name.targetLimit(10, stats).fetch()
+const limit = name.targetLimit(10, stats).fetchOr(50)
 const { rows } = await pool.query(
   'SELECT id, name FROM users WHERE name @@ $1::eql_v4.query_text_match ORDER BY id LIMIT $2',
   [name, limit],
@@ -1058,7 +1103,7 @@ const q = await ops.matches(users.name, 'ali')          // { sql, verify, target
 const rows = await db.select().from(users)
   .where(q.sql)                                         // name @@ '…'::eql_v4.query_text_match
   .orderBy(users.id)
-  .limit(q.targetLimit(10, stats).fetch())
+  .limit(q.targetLimit(10, stats).fetchOr(50))
 const hits = (await cipher.decrypt(users, rows)).filter((u) => q.verify(u.name)).slice(0, 10)
 ```
 
@@ -1071,9 +1116,11 @@ one helper that binds one parameter.
 application, or from the declared prior:
 
 ```ts
-const stats = Stats.measured(
-  (await pool.query("SELECT reltuples::bigint AS rows FROM pg_class WHERE oid = 'users'::regclass")).rows[0].rows,
-  (await pool.query('SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*) FROM users TABLESAMPLE SYSTEM (1) GROUP BY 1')).rows,
+// ROWS_SQL is decision 5's rows statement: no row while the count is unknown
+const [count] = (await pool.query(ROWS_SQL)).rows
+const stats = count && Stats.measured(
+  count.rows,
+  (await pool.query('SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*) FROM users TABLESAMPLE SYSTEM (1) WHERE name IS NOT NULL GROUP BY 1')).rows,
 )
 const prior = Stats.declared(1_000_000)   // uses users.name's expectedTokens
 ```

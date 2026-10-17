@@ -45,6 +45,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copies of the text. An exact term has no `verify`, and none of this
   crate's indexes can answer `op::Matches` but with a probabilistic term
   (`op::TermFor`).
+- **`target_limit` says how many rows a match query should fetch.**
+  `query.target_limit(want, &stats)` is `want` plus the false positives
+  expected at the confidence `stats` names (99% by default), as an
+  `op::Limit`. `op::Stats::declared(rows)` uses the new
+  `MatchConfig::expected_tokens()` prior; `op::Stats::measured(rows,
+  histogram)` uses a histogram of the stored filters' set-bit counts. With
+  neither, the limit is `Limit::Unbounded`, and the caller pages with a
+  cursor. A `want` of 0 is `Limit::Rows(0)`. A limit, and `fetch_or`'s
+  page, never exceeds `op::MAX_ROWS` (`i64::MAX`), the largest SQL `LIMIT`.
+  `rows` counts the non-NULL rows; a table never analysed has an unknown
+  count, not 0, and gets no `Stats` (the docs give the catalog read). The
+  bound assumes a non-matching row shares no token with
+  the query, so on natural text its confidence is nominal; `verify` still
+  decides every row.
 
 - **Errors now expose stable codes, help text, and structured details.**
   All error types implement `miette::Diagnostic` with codes such as

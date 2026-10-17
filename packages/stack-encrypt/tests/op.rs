@@ -6,7 +6,7 @@ mod common;
 
 use common::{loads_counting_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::op::{self, MatchCase, Probabilistic};
+use stack_encrypt::op::{self, Limit, MatchCase, Probabilistic, Stats};
 use stack_encrypt::plan::{Field, FieldSchema, Fields, PlanError};
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms};
 use stack_encrypt::target::{Encrypted, IndexSpec};
@@ -719,5 +719,115 @@ async fn verify_is_a_token_test_not_a_substring_test() {
     assert!(
         !query.verify("worldly hello"),
         "a word is a token, not a prefix"
+    );
+}
+
+/// EQL v4's match parameters, with a notes column's prior.
+struct Notes;
+impl MatchConfig for Notes {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            k: 6,
+            m: 2048,
+            ..Default::default()
+        }
+    }
+    fn expected_tokens() -> Option<u32> {
+        Some(200)
+    }
+}
+impl MatchCase for Notes {
+    type Case = op::CaseInsensitive;
+}
+
+#[tokio::test]
+async fn target_limit_sizes_the_fetch_from_the_query_and_the_prior() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("notes/body")
+        .with::<String, _>(Match::<Notes>::new())
+        .build()
+        .unwrap();
+    let query = |text: &'static str| {
+        cipher
+            .query(op::Matches, text)
+            .via(Match::<Notes>::new())
+            .on(&plan)
+    };
+    let stats = Stats::declared(1_000_000);
+
+    let short = query("ali").await.unwrap();
+    let long = query("alice nguyen").await.unwrap();
+    let (Limit::Rows(short_rows), Limit::Rows(long_rows)) = (
+        short.target_limit(10, &stats),
+        long.target_limit(10, &stats),
+    ) else {
+        panic!("a declared prior gives a finite fetch");
+    };
+    assert!(
+        short_rows > 1_000,
+        "three letters against long text match thousands of rows by chance: {short_rows}"
+    );
+    assert!(long_rows < 20, "a long query sets enough bits: {long_rows}");
+    assert!(long_rows >= 10, "never fewer than `want`");
+
+    // A tighter confidence asks for more.
+    let strict = short.target_limit(10, &stats.clone().with_confidence(0.9999));
+    assert!(strict.rows().unwrap() > short_rows);
+}
+
+#[tokio::test]
+async fn target_limit_without_a_prior_needs_a_measured_column() {
+    let cipher = stack_cipher().await;
+    let plan = people_plan();
+    let email_plan = plan.field("email").unwrap();
+    let query = cipher
+        .query(op::Matches, "bob")
+        .on(&email_plan)
+        .await
+        .unwrap();
+
+    // The default configuration declares no prior.
+    assert_eq!(
+        query.target_limit(10, &Stats::declared(1_000)),
+        Limit::Unbounded
+    );
+
+    // Measure the column: the set-bit count of each stored filter.
+    let mut histogram = std::collections::BTreeMap::<u32, u64>::new();
+    for email in [
+        "bob@example.com",
+        "alice@example.org",
+        "carol.smith@example.net",
+    ] {
+        let mut row = cipher
+            .encrypt(&Person {
+                email: email.into(),
+                name: "x".repeat(4),
+            })
+            .using(&plan)
+            .await
+            .unwrap();
+        let stored: Encrypted<(EqualityTerm, MatchTerms)> = row.take("email").unwrap();
+        *histogram
+            .entry(stored.terms.1.positions().len() as u32)
+            .or_default() += 1;
+    }
+    // The pass rate the histogram gives this query, over a large table.
+    let bits = query.positions().len() as i32;
+    let rows_seen: u64 = histogram.values().sum();
+    let p = histogram
+        .iter()
+        .map(|(&set, &n)| n as f64 * (f64::from(set) / 256.0).powi(bits))
+        .sum::<f64>()
+        / rows_seen as f64;
+    let lambda = p * 1_000_000.0;
+    let stats = Stats::measured(1_000_000, histogram);
+    let Limit::Rows(rows) = query.target_limit(10, &stats) else {
+        panic!("a measured column gives a finite fetch");
+    };
+    let extra = (rows - 10) as f64;
+    assert!(
+        extra >= lambda && extra <= lambda + 4.0 * lambda.sqrt() + 3.0,
+        "10 wanted, λ = {lambda}: {rows}"
     );
 }
