@@ -881,6 +881,20 @@ mod tests {
         );
     }
 
+    /// A match index's verifier is the query's tokens: a query built from
+    /// it verifies a row that holds them and no other. A query chain takes
+    /// them through `admit`, so this is the one test that calls `verifier`.
+    #[test]
+    fn a_match_verifier_is_the_query_tokens() {
+        let index = Match::<DefaultMatch>::default();
+        let verifier =
+            Supports::<Matches<CaseInsensitive>, String>::verifier(&index, &"alice".to_owned());
+        let filter = MatchTerms::<DefaultMatch>::from_positions(vec![1]).expect("in range");
+        let query = MatchQuery::new(filter, verifier);
+        assert!(Probabilistic::verify(&query, "say hi to Alice"));
+        assert!(!Probabilistic::verify(&query, "bob"));
+    }
+
     #[test]
     fn an_operator_is_equal_to_itself() {
         assert_eq!(Matches::<CaseInsensitive>::new(), Matches);
