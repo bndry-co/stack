@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`IntegerEq`, `BigintEq`, `RealEq` and `DoubleEq` are producible**
+  (`stack-encrypt` feature), from the `Int32`, `Int64`, `Float32` and
+  `Float64` plaintexts. Their equality term follows ADR-0002's semantic
+  baseline, so `=` compares as PostgreSQL's own integer and `float8 =` do:
+  one term per integer value whatever its width, `-0.0 = 0.0` and
+  `NaN = NaN`. The ciphertext keeps the exact value.
 - **`Target::match_options`** (`stack-encrypt` feature): the options a type's
   match index is built under, `EqlMatch`'s, for a type that carries one
   (`TextMatch`), and `None` otherwise. Stack Encrypt answers `matches`
