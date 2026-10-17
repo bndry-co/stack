@@ -46,7 +46,7 @@ schemars = "1"
 # `dynamic`: `FfiValue` / `ValueKind`, the runtime plaintext a plan field
 # target takes and the kind names a plan's `"type"` key spells
 # (`encryption::targets`).
-stack-encrypt = { path = "../../../stack-encrypt", version = "0.2.0", optional = true, default-features = false, features = ["dynamic"] }
+stack-encrypt = { path = "../../../stack-encrypt", version = "0.3.0", optional = true, default-features = false, features = ["dynamic"] }
 # The vitaminc line stack-encrypt is built on. `PrfValue` is named from this
 # crate directly (stack-encrypt re-exports only `IntoPrfContext` and
 # `PrfContext`), and two vitaminc lines in one graph do not interoperate, so
