@@ -11,6 +11,7 @@
 //! in shape, so the engine and the bindings built on it keep their
 //! behaviour while they move onto vitaminc's model.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
 
@@ -301,6 +302,7 @@ impl<O: Put> Sink for ValueSink<O> {
         Ok(ValueMap {
             out: self.0,
             entries: Vec::new(),
+            keys: BTreeSet::new(),
         })
     }
 
@@ -338,6 +340,11 @@ impl<O: Put> SeqSink for ValueSeq<O> {
 pub struct ValueMap<O> {
     out: O,
     entries: Vec<(String, FfiValue)>,
+    /// The keys seen so far, so the repeated-key check is a lookup rather
+    /// than a scan of `entries`: a frame is host input, and a scan made an
+    /// object of `n` keys cost `n²` comparisons. Ordered rather than hashed,
+    /// so no key can be chosen to collide.
+    keys: BTreeSet<String>,
 }
 
 impl<O: Put> MapSink for ValueMap<O> {
@@ -349,7 +356,7 @@ impl<O: Put> MapSink for ValueMap<O> {
         Self: 's;
 
     fn entry(&mut self, key: &str) -> Result<ValueSink<Entry<'_>>, DecodeError> {
-        if self.entries.iter().any(|(k, _)| k == key) {
+        if !self.keys.insert(key.to_owned()) {
             return Err(DecodeError::duplicate_key(key));
         }
         Ok(ValueSink(Entry(&mut self.entries, key.to_owned())))
@@ -569,6 +576,27 @@ mod tests {
             ),
             ("empty".to_string(), FfiValue::Array(vec![])),
         ])
+    }
+
+    /// Reading an object refuses a key it has already read, wherever the
+    /// repeat falls.
+    #[test]
+    fn reading_a_repeated_key_is_refused() {
+        let keys: Vec<String> = (0..1000).map(|i| format!("k{i}")).collect();
+        let entries = |repeat: &str| {
+            let mut entries: Vec<(String, FfiValue)> =
+                keys.iter().map(|k| (k.clone(), FfiValue::Null)).collect();
+            entries.push((repeat.to_string(), FfiValue::Null));
+            FfiValue::Object(entries)
+        };
+        for repeat in ["k0", "k500", "k999"] {
+            let refused = entries(repeat).visit(FfiValue::sink());
+            assert!(refused.is_err(), "{repeat} read twice is refused");
+        }
+        let read = entries("k1000")
+            .visit(FfiValue::sink())
+            .expect("all distinct");
+        assert!(matches!(read, FfiValue::Object(e) if e.len() == 1001));
     }
 
     #[test]

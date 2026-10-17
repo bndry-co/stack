@@ -174,6 +174,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Node<SealedValue>`: a passthrough subtree is a `PassthroughFrame`, the
   transport frame of its value, in place of a boxed value, and
   `transcode::Visitor::passthrough` takes one.
+  A dynamic passthrough value the frame cannot carry is refused when the
+  source is read, before any key is requested, as `Error::Source` naming
+  the field: a repeated key as `Reason::RepeatedKey`, and a value nested
+  deeper, or holding text, bytes or a key longer, than a frame carries as
+  the new `Reason::Unframeable` (`"unframeable"`).
 - **`dynamic::FfiValue` and `dynamic::ValueKind` are this crate's own**,
   with the same variants and kind names, since vitaminc no longer has a
   value tree. A value crosses a binding's boundary as a transport frame

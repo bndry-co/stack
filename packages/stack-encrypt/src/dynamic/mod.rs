@@ -529,6 +529,9 @@ reasons! {
         FieldType => "field_type", "a value is not of the type its field declares";
         /// A passthrough sits where a sealed value, or a ciphertext, must be.
         Passthrough => "passthrough", "a passthrough where a sealed value must be";
+        /// A passthrough value cannot be stored as a frame: it nests deeper,
+        /// or holds text, bytes or a key longer, than a frame carries.
+        Unframeable => "unframeable", "a passthrough value nests deeper, or holds a longer value, than a frame carries";
         /// A stored field is not a map of outputs.
         OutputsNotMap => "outputs_not_map", "a stored field is not a map of outputs";
         /// A stored sealed field has no `"c"` node.

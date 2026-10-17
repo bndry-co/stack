@@ -138,6 +138,7 @@
 //! that a round-trip invariant rather than data loss.
 
 use super::{FfiValue, ValueKind};
+use vitaminc_aead::frame::FrameWriteError;
 use vitaminc_protected::Controlled;
 
 use super::{
@@ -1832,10 +1833,24 @@ fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), Error> {
                     });
                 }
             }
-            Output::Passthrough => {}
+            Output::Passthrough => check_frame(value, &field.name)?,
         }
     }
     Ok(())
+}
+
+/// A passthrough value is stored as its frame ([`passthrough`]), so one the
+/// frame cannot carry is refused here, naming its field, before any key is
+/// requested: a repeated key as [`Reason::RepeatedKey`], anything else (too
+/// deep, too long) as [`Reason::Unframeable`]. Left to the output adapter it
+/// failed the whole record as a bare [`Aead`](crate::Error::Aead), after the
+/// key round trip. The trial frame is wiped as it drops.
+fn check_frame(value: &FfiValue, field: &str) -> Result<(), Error> {
+    match value.to_frame() {
+        Ok(_) => Ok(()),
+        Err(FrameWriteError::DuplicateKey) => Err(FfiValue::misfit(field, Reason::RepeatedKey)),
+        Err(_) => Err(FfiValue::misfit(field, Reason::Unframeable)),
+    }
 }
 
 // =============================================================================
@@ -1867,9 +1882,10 @@ fn term_node(term: TermBytes) -> Result<StackCipherText, crate::Error> {
     )))
 }
 
-/// A value as a passthrough node: the value's frame, in the clear. A value
-/// the frame cannot carry (nested deeper than it allows) is refused as a
-/// value vitaminc refuses to encrypt is, with [`Aead`](crate::Error::Aead).
+/// A value as a passthrough node: the value's frame, in the clear. A source
+/// value the frame cannot carry is refused before this runs
+/// ([`check_frame`]); one that reaches it anyway is refused as a value
+/// vitaminc refuses to encrypt is, with [`Aead`](crate::Error::Aead).
 fn passthrough(value: &FfiValue) -> Result<StackCipherText, crate::Error> {
     let frame = value.to_frame().map_err(|_| crate::Error::Aead)?;
     Ok(CipherText::Passthrough(PassthroughFrame(
@@ -2075,6 +2091,7 @@ mod tests {
         IdentifiedBy, IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
     };
     use uuid::Uuid;
+    use vitaminc_aead::frame::MAX_DEPTH;
     use vitaminc_protected::{Controlled, Protected};
 
     use crate::dynamic::{context, term};
@@ -2145,6 +2162,11 @@ mod tests {
     }
 
     // ---- values, as a binding would decode them ----------------------------
+
+    /// A null inside `depth` nested arrays.
+    fn nested(depth: usize) -> FfiValue {
+        (0..depth).fold(FfiValue::Null, |inner, _| FfiValue::Array(vec![inner]))
+    }
 
     fn s(value: &str) -> FfiValue {
         FfiValue::String(value.into())
@@ -6501,6 +6523,27 @@ mod tests {
             }
         }
 
+        /// A passthrough the frame cannot carry is refused when the source is
+        /// read, naming its field, before any key is generated.
+        #[tokio::test]
+        async fn an_unframeable_passthrough_is_refused_before_keys_are_generated() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let mut source = object(row(34));
+            let _ = take(&mut source, "id");
+            source.push(("id".to_string(), nested(MAX_DEPTH + 1)));
+            let refused = encrypt(&keyset, FfiValue::Object(source), &the_plan())
+                .err()
+                .expect("refused before the pending exists");
+            expect(&refused, "Source", Some("id"), Reason::Unframeable);
+            assert_eq!(generates(&cipher), 0, "no key was generated");
+
+            let mut source = object(row(34));
+            let _ = take(&mut source, "id");
+            source.push(("id".to_string(), nested(MAX_DEPTH - 1)));
+            let _ = seal(&keyset, FfiValue::Object(source), &the_plan()).await;
+        }
+
         #[test]
         fn a_source_that_does_not_fit() {
             use Reason::*;
@@ -6521,8 +6564,30 @@ mod tests {
                 "email".to_string(),
                 FfiValue::Passthrough(Box::new(s("a@x"))),
             ));
+            let mut deep_id = without("id");
+            deep_id.push(("id".to_string(), nested(MAX_DEPTH + 1)));
+            let mut repeated_id = without("id");
+            repeated_id.push((
+                "id".to_string(),
+                FfiValue::Object(vec![
+                    ("k".to_string(), FfiValue::Null),
+                    ("k".to_string(), FfiValue::Null),
+                ]),
+            ));
             let cases: Vec<(&str, FfiValue, Option<&str>, Reason)> = vec![
                 ("not an object", s("x"), None, NotAnObject),
+                (
+                    "a passthrough deeper than a frame carries",
+                    FfiValue::Object(deep_id),
+                    Some("id"),
+                    Unframeable,
+                ),
+                (
+                    "a passthrough with a repeated key",
+                    FfiValue::Object(repeated_id),
+                    Some("id"),
+                    RepeatedKey,
+                ),
                 (
                     "a batch row that is not an object",
                     FfiValue::Array(vec![s("x")]),

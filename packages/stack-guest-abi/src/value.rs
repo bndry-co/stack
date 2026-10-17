@@ -299,11 +299,6 @@ impl<O: Put> MapSink for ValueMap<O> {
 mod tests {
     use super::*;
 
-    /// Text is held as `Zeroizing<String>`, so a secret a guest hands back
-    /// as text (the auth guest's access token) is wiped when the value is
-    /// dropped, by every path that builds one: the constructor, JSON and a
-    /// decoded frame. A plain `String` here would leave it in freed guest
-    /// memory.
     /// An encoded frame has no spare capacity, so registering it does not
     /// reallocate and leave an unwiped copy behind.
     #[test]
@@ -317,6 +312,11 @@ mod tests {
         assert_eq!(out.capacity(), out.len());
     }
 
+    /// Text is held as `Zeroizing<String>`, so a secret a guest hands back
+    /// as text (the auth guest's access token) is wiped when the value is
+    /// dropped, by every path that builds one: the constructor, JSON and a
+    /// decoded frame. A plain `String` here would leave it in freed guest
+    /// memory.
     #[test]
     fn text_is_wiped_on_drop() {
         fn held(value: HostValue) -> Zeroizing<String> {
