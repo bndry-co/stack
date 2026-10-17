@@ -64,7 +64,7 @@ func (w *writer) header(f *genFile) {
 	w.b.WriteString(f.imports.block())
 	w.nl()
 	w.p("// Stops compiling when the library does not accept this version of generated file.")
-	w.p("const _ = gensupport.GeneratedVersion2")
+	w.p("const _ = gensupport.GeneratedVersion1")
 	for _, n := range f.notices {
 		w.nl()
 		w.b.WriteString(wrapComment(n, 80))

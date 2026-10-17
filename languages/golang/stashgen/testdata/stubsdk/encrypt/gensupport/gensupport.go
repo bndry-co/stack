@@ -14,8 +14,8 @@ import (
 
 type generatedVersion uint8
 
-// GeneratedVersion2 is the layout of files stashgen writes today.
-const GeneratedVersion2 generatedVersion = 2
+// GeneratedVersion1 is the layout of files stashgen writes today.
+const GeneratedVersion1 generatedVersion = 1
 
 // OpaqueField is the one field of an opaque declaration.
 const OpaqueField = "value"

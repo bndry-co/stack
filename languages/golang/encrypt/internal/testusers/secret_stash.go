@@ -11,7 +11,7 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion2
+const _ = gensupport.GeneratedVersion1
 
 type EncryptedSecret struct {
 	ID    int64
