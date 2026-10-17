@@ -96,9 +96,9 @@ A query on such a type derives its term under the context the cipher names, so i
 > To update one column, use its `Fields` entry, such as `Fields.Email.Encrypt`.
 
 The index names are `equality`, `match`, `ore`, `ope` and `json`.
-A `match` index needs text with at least one token: the engine derives no match term for an empty string, separator-only text, or text shorter than the n-gram length (3 characters), because an empty term would match every row.
-`Encrypt` then fails for the whole batch, with an error naming the row, the field and the index.
-So an optional or short value does not belong under `match`: give the field `equality` alone, or make the value required.
+A `match` index stores text with no token (an empty string, separator-only text, or text shorter than the n-gram length of 3 characters) as the empty filter, which no query matches, so an optional or short value can live under `match`; the empty filter tells a reader of the column that the value is one of those.
+A match query of such text is refused, because an empty filter as a query would match every row.
+An EQL `TextMatch` field is stricter: see below.
 An index takes its options in parentheses after its name, separated by commas: `index=equality;match(k=3)`.
 This build refuses an index with options: a query term is derived with the default options only, so a stored term with other options would never match one.
 These words are the same as the Rust API's words for the same behaviour, with two that only Go has.

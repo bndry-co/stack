@@ -116,12 +116,13 @@
 // [Match], [Ore] and [Ope]; [JSON] is declared and refused until the engine
 // derives it. Every stored type implements driver.Valuer and sql.Scanner.
 //
-// A match index needs text with at least one token: the engine derives no
-// match term for an empty string, separator-only text, or text shorter than
-// the n-gram length (3 characters), because an empty term would match every
-// row. Encrypt then fails for the whole batch with [ErrTerm], naming the row,
-// the field and the index, so an optional or short value does not belong
-// under match.
+// A match index stores text with no token (an empty string, separator-only
+// text, or text shorter than the n-gram length of 3 characters) as the empty
+// filter: a valid value that no query matches, so an optional or short value
+// can live under match. The empty filter tells anyone who can read the
+// column that the value is one of those. A match *query* of such text is
+// refused with [ErrTerm], because an empty filter as a query would match every
+// row.
 //
 // # Transport and auth
 //

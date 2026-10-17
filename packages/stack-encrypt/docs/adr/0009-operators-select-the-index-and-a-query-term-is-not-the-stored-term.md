@@ -273,11 +273,17 @@ times `want`, so it takes nothing else.
 `verify` is infallible. It runs on a value that is already decrypted and
 already the type the index was declared over, so the only question it can
 answer is "does this row match", and every other outcome is "no": a JSON
-path absent from the document, text the index would have refused to store.
+path absent from the document, text too short to hold the query's tokens.
 A `bool` is what `Iterator::filter` takes; an error would have no recovery
 except dropping the row, which is `false` by another name. The one input the
-library refuses, a needle too short to tokenise, is refused at
-`cipher.query`, before a term exists.
+library refuses, a query value too short to tokenise, is refused when the query
+is awaited, before a term exists. The stored side refuses nothing: a value
+too short to tokenise is stored as the empty filter, which no query matches,
+so a two-letter name is a valid value in a match column and `verify` is
+never asked about it. The empty filter is visible to anyone who can read the
+column: it tells them the value is empty, separator-only or shorter than the
+n-gram length. A filter's fill already leaks its value's approximate length;
+this is an exact class, and the price of storing such values at all.
 
 `Plaintext` is the decrypted value the term is defined over, and that
 is not always the value the user wrote. For `Matches` it is the text. For

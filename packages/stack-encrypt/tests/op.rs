@@ -8,7 +8,9 @@ use common::{loads_counting_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::op::{self, Limit, MatchCase, Probabilistic, Stats};
 use stack_encrypt::plan::{Field, FieldSchema, Fields, PlanError};
-use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms};
+use stack_encrypt::sem::{
+    EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms, TermError, Tokenizer,
+};
 use stack_encrypt::target::{Encrypted, IndexSpec};
 use stack_encrypt::{Equality, Error, Match, Plan};
 
@@ -25,6 +27,20 @@ impl MatchConfig for Exact {
 }
 impl MatchCase for Exact {
     type Case = op::CaseSensitive;
+}
+
+/// A match configuration the index cannot use: an n-gram length of zero.
+struct ZeroGram;
+impl MatchConfig for ZeroGram {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            tokenizer: Tokenizer::Ngram { length: 0 },
+            ..Default::default()
+        }
+    }
+}
+impl MatchCase for ZeroGram {
+    type Case = op::CaseInsensitive;
 }
 
 #[derive(Clone)]
@@ -467,44 +483,6 @@ async fn a_query_names_its_context_before_or_after_the_index() {
     assert_eq!(before, after);
 }
 
-/// A configuration with an n-gram length of zero, which `MatchOptions`
-/// refuses when a term is derived.
-struct ZeroGram;
-impl MatchConfig for ZeroGram {
-    fn options() -> MatchOptions {
-        MatchOptions {
-            tokenizer: stack_encrypt::sem::Tokenizer::Ngram { length: 0 },
-            ..Default::default()
-        }
-    }
-}
-impl MatchCase for ZeroGram {
-    type Case = op::CaseInsensitive;
-}
-
-#[tokio::test]
-async fn a_match_query_under_invalid_options_is_refused_not_a_panic() {
-    let cipher = stack_cipher().await;
-    let plan = Plan::context("users/name")
-        .with::<String, _>(Match::<ZeroGram>::new())
-        .build()
-        .unwrap();
-    let refused = cipher
-        .query(op::Matches, "Bob")
-        .via(Match::<ZeroGram>::new())
-        .on(&plan)
-        .await;
-    assert!(
-        matches!(
-            refused,
-            Err(Error::Term(stack_encrypt::sem::TermError::InvalidOptions(
-                _
-            )))
-        ),
-        "{refused:?}"
-    );
-}
-
 #[tokio::test]
 async fn a_refused_operator_query_loads_no_keyset() {
     let (cipher, loads) = loads_counting_cipher().await;
@@ -829,5 +807,136 @@ async fn target_limit_without_a_prior_needs_a_measured_column() {
     assert!(
         extra >= lambda && extra <= lambda + 4.0 * lambda.sqrt() + 3.0,
         "10 wanted, λ = {lambda}: {rows}"
+    );
+}
+
+/// A value too short to cut a token (two letters under 3-grams, or nothing
+/// at all) is a valid thing to store in a match column. ADR-0009: the
+/// stored term is the empty filter, which no query matches, and the value
+/// itself seals and opens as any other.
+#[tokio::test]
+async fn a_short_match_value_stores_as_the_empty_filter_and_no_query_finds_it() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/name")
+        .with::<String, _>((Equality, Match))
+        .build()
+        .unwrap();
+    let query = cipher.query(op::Matches, "alice").on(&plan).await.unwrap();
+
+    for short in ["Al", "", " "] {
+        let stored: Encrypted<(EqualityTerm, MatchTerms)> = cipher
+            .encrypt(&short.to_owned())
+            .using(&plan)
+            .await
+            .unwrap_or_else(|error| panic!("{short:?} stores: {error}"));
+        assert!(
+            stored.terms.1.positions().is_empty(),
+            "{short:?} is stored as the empty filter"
+        );
+        assert!(
+            !stored.terms.1.matches(&query),
+            "{short:?}: the empty filter holds none of a query's positions"
+        );
+        assert!(!query.verify(short));
+        let back: String = cipher.open(stored).using(&plan).await.unwrap();
+        assert_eq!(back, short, "{short:?} opens as written");
+    }
+
+    // The equality term still finds it: only the match term is empty.
+    let stored: Encrypted<(EqualityTerm, MatchTerms)> =
+        cipher.encrypt(&"Al".to_owned()).using(&plan).await.unwrap();
+    let eq = cipher.query(op::Eq, "Al").on(&plan).await.unwrap();
+    assert_eq!(eq, stored.terms.0);
+}
+
+/// A query with no tokens would match every row, so it is the one query
+/// value the library refuses: when the query is awaited, before a term
+/// exists and before any keyset is loaded.
+#[tokio::test]
+async fn a_match_query_with_no_tokens_is_refused_before_any_term_or_keyset() {
+    let (cipher, loads) = loads_counting_cipher().await;
+    let plan: Plan<Person, common::CountingSource> = Plan::context("people")
+        .fields()
+        .encrypt_index::<String>("email", (Equality, Match))
+        .encrypt_index::<String>("name", Match::<Exact>::new())
+        .build()
+        .unwrap();
+    let email_plan = plan.field("email").unwrap();
+
+    for text in ["", "  ", "bo"] {
+        let refused = cipher
+            .query(op::Matches, text)
+            .on(&email_plan)
+            .keyset("tenant")
+            .await;
+        assert!(
+            matches!(refused, Err(Error::Term(TermError::EmptyTermText))),
+            "{text:?}: {refused:?}"
+        );
+    }
+    // Through `via`, under another configuration, and in a batch.
+    let refused = cipher
+        .query(op::Matches.case_sensitive(), "Al")
+        .via(Match::<Exact>::new())
+        .on(&plan.field("name").unwrap())
+        .await;
+    assert!(matches!(
+        refused,
+        Err(Error::Term(TermError::EmptyTermText))
+    ));
+    let refused = stack_encrypt::all((
+        cipher.query(op::Eq, "bob@example.com").on(&email_plan),
+        cipher.query(op::Matches, "bo").on(&email_plan),
+    ))
+    .await;
+    assert!(matches!(
+        refused,
+        Err(Error::Term(TermError::EmptyTermText))
+    ));
+    assert_eq!(
+        loads.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "refused before the named keyset is loaded"
+    );
+    assert_eq!(
+        TermError::EmptyTermText.to_string(),
+        "the query's text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
+    );
+
+    // The same text is a fine equality query, and a fine stored value.
+    assert!(cipher.query(op::Eq, "").on(&email_plan).await.is_ok());
+    let row = cipher
+        .encrypt(&Person {
+            email: "bo".into(),
+            name: "Al".into(),
+        })
+        .using(&plan)
+        .await;
+    assert!(row.is_ok(), "short values store: {row:?}");
+}
+
+/// A match query under options the index cannot use is refused with
+/// `InvalidOptions`, as storing under them is, and never reaches the
+/// tokenizer: an n-gram length of zero would panic there.
+#[tokio::test]
+async fn a_match_query_under_invalid_options_is_refused_not_tokenised() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/name")
+        .with::<String, _>(Match::<ZeroGram>::new())
+        .build()
+        .unwrap();
+    let refused = cipher
+        .query(op::Matches, "alice")
+        .via(Match::<ZeroGram>::new())
+        .on(&plan)
+        .await;
+    assert!(
+        matches!(refused, Err(Error::Term(TermError::InvalidOptions(_)))),
+        "{refused:?}"
+    );
+    let stored = cipher.encrypt(&"alice".to_owned()).using(&plan).await;
+    assert!(
+        matches!(stored, Err(Error::Term(TermError::InvalidOptions(_)))),
+        "{stored:?}"
     );
 }

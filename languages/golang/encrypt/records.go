@@ -470,10 +470,12 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p
 // locateTermFailure names the row, field and index behind an ErrTerm from a
 // record call. The guest's error says what was wrong with the term but not
 // which value or field it came from, so the host asks the engine again, one
-// term at a time, which costs no key request: a term derives locally. The engine defines no match term for text that yields no
-// token (empty, separator-only, or shorter than the n-gram), because an
-// empty term would match every row; a program hands such a field a value or
-// drops the match index. p is the plan without this cipher's extension,
+// term at a time, which costs no key request: a term derives locally. A
+// stored value is never refused for its text (text with no token is stored
+// as the empty filter), so a term failure on a record is the scheme refusing
+// the value's kind under that index. Derive asks the query path, which does
+// refuse text with no token, so that one refusal is skipped here: it cannot
+// be why the record failed. p is the plan without this cipher's extension,
 // which Derive adds.
 func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows []record.Source, err error) error {
 	for i, row := range rows {
@@ -482,14 +484,26 @@ func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows [
 				if !o.IsTerm() {
 					continue
 				}
-				if _, derr := cph.Derive(ctx, p, f.Name, o, row[f.Name]); errors.Is(derr, ErrTerm) {
-					return fmt.Errorf("%w: value %d, field %q: the engine derives no %s term for this value (a match index needs text with at least one token; an empty or separator-only string has none)", err, i, f.Name, indexWord(o))
+				if _, derr := cph.Derive(ctx, p, f.Name, o, row[f.Name]); errors.Is(derr, ErrTerm) && !queryOnlyRefusal(o, derr) {
+					return fmt.Errorf("%w: value %d, field %q: the engine derives no %s term for this value", err, i, f.Name, indexWord(o))
 				}
 			}
 		}
 	}
 	return err
 }
+
+// queryOnlyRefusal reports whether derr is the one term refusal the query
+// path makes and the record path does not: match text that cuts no token,
+// which a record stores as the empty filter.
+func queryOnlyRefusal(o record.Output, derr error) bool {
+	var d *Diagnostic
+	return o == record.Match && errors.As(derr, &d) && d.Code == emptyTermTextCode
+}
+
+// emptyTermTextCode is the stable code of the engine's refusal of match text
+// that cuts no token.
+const emptyTermTextCode = "stack_encrypt::empty_term_text"
 
 func indexWord(o record.Output) string {
 	switch o {

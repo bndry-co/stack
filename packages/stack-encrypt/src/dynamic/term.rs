@@ -20,7 +20,9 @@ use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 use zeroize::Zeroizing;
 
 use super::{utf8, Error, Reason, Value};
-use crate::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, MatchOptions, Tokenizer};
+use crate::sem::{
+    CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, MatchOptions, QueryTokens, Tokenizer,
+};
 use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
 use crate::{IntoPrfContext, KeysetCipher, NonEmpty};
 
@@ -293,7 +295,11 @@ impl Scalar {
 /// [`Error::Term`] if the scheme defines no such term for the scalar
 /// ([`IndexSpec::supports`] is the table, and checking it first is how a
 /// binding turns this into a boundary rejection). [`Error::Cipher`] if the
-/// derivation itself fails.
+/// derivation itself fails, or for the one query value the engine refuses:
+/// match text that cuts no token under the index's options
+/// ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)), whose filter would match every row. That
+/// refusal is the query path's alone; the record path stores such a value
+/// as the empty filter, which no query matches.
 pub async fn term<'c, K, D>(
     cipher: &KeysetCipher<'_, K>,
     scalar: Scalar,
@@ -304,6 +310,12 @@ where
     K: DataKeySource + Sync + 'static,
     D: IntoPrfContext<'c>,
 {
+    if let (IndexSpec::Match(options), Scalar::Text(text)) = (kind, &scalar) {
+        // The query chain's rule, from the same helper: options the index
+        // cannot use, then text that cuts no token.
+        let _tokens =
+            QueryTokens::of_query(text, options).map_err(|error| Error::Cipher(error.into()))?;
+    }
     scalar_term(cipher, scalar, kind, context)?
         .await
         .map(TermBytes::into_bytes)
@@ -556,6 +568,7 @@ impl Index<Value> for IndexSpec {
 mod tests {
     use super::*;
     use crate::dynamic::{context, Output};
+    use crate::sem::TermError;
     use crate::{nonempty, StackCipher};
     use stack_kms::FakeDataKeySource;
 
@@ -611,6 +624,69 @@ mod tests {
                 other => panic!("{what}: expected the lifted Error::Term, got {other:?}"),
             }
         }
+    }
+
+    /// The query path refuses match text with no tokens; the record path,
+    /// which runs the same dispatch as an index of a `Value`, stores it as
+    /// the empty filter. Same scalar, same options, two answers, because a
+    /// query with no tokens would match every row and a stored value with
+    /// none is matched by no query.
+    #[tokio::test]
+    async fn match_text_with_no_tokens_is_refused_as_a_query_and_stored_empty() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let ctx = context(s("users/bio")).expect("context");
+        for text in ["", "  ", "hi"] {
+            let scalar = Scalar::of(&s(text), &default_match()).expect("a scalar");
+            let refused = term(&keyset, scalar, &default_match(), ctx.clone()).await;
+            assert!(
+                matches!(
+                    refused,
+                    Err(Error::Cipher(crate::Error::Term(TermError::EmptyTermText)))
+                ),
+                "{text:?} as a query: {refused:?}"
+            );
+
+            let stored: TermBytes = keyset
+                .run(
+                    Index::<Value>::operation::<FakeDataKeySource, crate::target::Owned>(
+                        &default_match(),
+                    ),
+                    Value::new(s(text)),
+                    CallerContext::from(nonempty!("users/bio")),
+                )
+                .await
+                .unwrap_or_else(|error| panic!("{text:?} stores: {error}"));
+            assert!(stored.as_bytes().is_empty(), "{text:?} is the empty filter");
+        }
+        // Text with a token is a query like any other.
+        let scalar = Scalar::of(&s("hello"), &default_match()).expect("a scalar");
+        assert!(term(&keyset, scalar, &default_match(), ctx).await.is_ok());
+    }
+
+    /// Options the index cannot use are refused before the query's text is
+    /// tokenised: an n-gram length of zero is `InvalidOptions`, not a panic
+    /// in the tokenizer.
+    #[tokio::test]
+    async fn a_match_query_under_invalid_options_is_refused_not_tokenised() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let ctx = context(s("users/bio")).expect("context");
+        let zero = IndexSpec::Match(MatchOptions {
+            tokenizer: Tokenizer::Ngram { length: 0 },
+            ..MatchOptions::default()
+        });
+        let scalar = Scalar::of(&s("hello"), &zero).expect("a scalar");
+        let refused = term(&keyset, scalar, &zero, ctx).await;
+        assert!(
+            matches!(
+                refused,
+                Err(Error::Cipher(crate::Error::Term(
+                    TermError::InvalidOptions(_)
+                )))
+            ),
+            "{refused:?}"
+        );
     }
 
     /// A `TermBytes` reads as the typed term's bytes, through every

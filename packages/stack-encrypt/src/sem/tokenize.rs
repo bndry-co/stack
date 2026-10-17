@@ -17,11 +17,12 @@ use zeroize::Zeroizing;
 pub enum Tokenizer {
     /// Sliding character n-grams of the given length over the whole text
     /// (whitespace included). Text shorter than `length` yields **no tokens**,
-    /// exactly like the v1 match indexer — so a probe shorter than the gram
-    /// length is rejected by
-    /// [`match_terms`](crate::KeysetCipher::match_terms) rather than
-    /// silently never matching. This is the default, matching the existing
-    /// match indexer's 3-gram configuration.
+    /// exactly like the v1 match indexer — so a query shorter than the gram
+    /// length is refused by the query chain
+    /// ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText))
+    /// rather than silently never matching, and a stored value shorter than
+    /// it is the empty filter, which no query matches. This is the default,
+    /// matching the existing match indexer's 3-gram configuration.
     Ngram { length: usize },
     /// Split on the v1 match indexer's separator set — space, comma,
     /// semicolon, colon and exclamation mark — one token per run of
@@ -43,10 +44,12 @@ impl Default for Tokenizer {
 /// are case-insensitive.
 ///
 /// May return no tokens (empty text, separator-only text, or text shorter
-/// than the n-gram length); [`match_terms`] rejects that case so an empty
-/// term can never reach a query.
+/// than the n-gram length). A stored value with none is the empty filter; a
+/// query with none is refused before a term exists, because its filter would
+/// match every row (ADR-0009).
 ///
-/// [`match_terms`]: crate::StackCipher::match_terms
+/// The tokenizer must be valid: an n-gram length of zero panics. Callers
+/// validate the [`MatchOptions`](super::MatchOptions) first.
 ///
 /// An n-gram length of zero yields no tokens rather than panicking, so a
 /// caller that tokenizes before validating the options (a query's verifier)

@@ -958,15 +958,9 @@ pub struct QueryOp<'a, F, Op, I, K> {
 
 impl<'a, F, Op: Operator, I: Supports<Op, F>, K: 'static> QueryOp<'a, F, Op, I, K> {
     /// The chain for `inner`'s index, refused when awaited if the index
-    /// cannot answer `Op` as it is configured. A refusal the plan already
-    /// gave (an index it does not declare, or no context) is kept: it is
-    /// the more basic fault, and the one to fix first.
-    fn new(mut inner: QueryIndex<'a, F, I, K>, _op: Op) -> Self {
-        if inner.label.is_ok() {
-            if let Err(error) = inner.index.check() {
-                inner.label = Err(error);
-            }
-        }
+    /// cannot answer `Op` as it is configured or over the query's value
+    /// ([`Supports::check`]).
+    fn new(inner: QueryIndex<'a, F, I, K>, _op: Op) -> Self {
         Self {
             inner,
             op: PhantomData,
@@ -1005,7 +999,8 @@ where
         self.inner.take_keyset()
     }
     fn check(&self) -> Result<(), Error> {
-        self.inner.check()
+        self.inner.check()?;
+        self.inner.index.check(&self.inner.value)
     }
     fn prepare<'p>(
         self,
@@ -1015,7 +1010,14 @@ where
     where
         'a: 'p,
     {
-        let verifier = self.inner.index.verifier(&self.inner.value);
+        // `check` ran before any keyset was resolved; a chain prepared on
+        // its own is held to the same refusal, so no term is derived from a
+        // value the index refuses. `admit` checks and takes the verifier in
+        // one pass over the value.
+        let verifier = match self.inner.index.admit(&self.inner.value) {
+            Ok(verifier) => verifier,
+            Err(error) => return Pending::failed(keyset, error),
+        };
         self.inner
             .prepare(keyset, scoped)
             .map(move |term| I::query(verifier, term, QueryToken::new()))

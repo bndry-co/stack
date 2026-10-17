@@ -421,11 +421,15 @@ async fn text_match_filters_contain_their_substrings() {
     .await;
     assert_eq!(named.bf, stored.bf);
 
-    // Text shorter than a 3-gram has no tokens. Stack Encrypt 0.2 refuses it
-    // for a stored value as well as a query, so a short value cannot be
-    // written to a TextMatch column yet.
+    // Text shorter than a 3-gram has no tokens. eql-bindings refuses it for a
+    // stored value as well as a query: one filter type builds both, and an
+    // empty filter as a query would match every row. So a short value cannot
+    // be written to a TextMatch column yet.
     let short: Result<text::TextMatch, _> = keyset.encrypt_as(&"ab".to_owned(), column()).await;
     assert!(short.is_err());
+    let short_query: Result<text::TextMatchQuery, _> =
+        keyset.encrypt_as(&"ab".to_owned(), column()).await;
+    assert!(short_query.is_err(), "a short query would match every row");
 }
 
 /// The filter bits for one query under the test key source. The

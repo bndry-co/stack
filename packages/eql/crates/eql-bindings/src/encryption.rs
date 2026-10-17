@@ -84,7 +84,7 @@ pub mod targets;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 #[allow(deprecated)]
 use stack_encrypt::sem::MatchTerm;
-use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, Tokenizer};
+use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, TermError, Tokenizer};
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{self, AeadContext, CallerContext};
 use stack_encrypt::{
@@ -286,6 +286,14 @@ impl MatchConfig for EqlMatch {
 /// take it from the same type, so they always agree; matching
 /// cipherstash-client's parameters is not a goal, because cipherstash-client
 /// never writes an `eql_v4` column.
+///
+/// Text that cuts no token (empty, separator-only, or shorter than a 3-gram)
+/// is refused with [`TermError::EmptyTermText`], stored or queried. Stack
+/// Encrypt stores such a value as the empty filter, but EQL treats an empty
+/// filter as contained by every stored filter, and this one type builds both
+/// the stored filter and the query operand, so it cannot tell a query from a
+/// stored value: refusing both is the one way a query cannot match every
+/// row.
 #[doc(hidden)]
 pub struct MatchVisitor;
 impl Visitor for MatchVisitor {
@@ -295,6 +303,9 @@ impl Visitor for MatchVisitor {
     // tree: the one spelling that compiles against both.
     #[allow(deprecated)]
     fn matching<O: MatchConfig>(self, terms: MatchTerm<O>) -> Result<Self::Value, Error> {
+        if terms.positions().is_empty() {
+            return Err(Error::Term(TermError::EmptyTermText));
+        }
         terms
             .positions()
             .iter()

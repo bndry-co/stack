@@ -23,7 +23,7 @@ impl Index<String> for Shortcut {
 impl op::Supports<op::Matches, String> for Shortcut {
     type Query = EqualityTerm;
     type Verifier = ();
-    fn check(&self) -> Result<(), stack_encrypt::PlanError> {
+    fn check(&self, _: &String) -> Result<(), stack_encrypt::Error> {
         Ok(())
     }
     fn verifier(&self, _: &String) {}
