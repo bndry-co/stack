@@ -118,24 +118,9 @@ func (cph *Cipher) Open(ctx context.Context, plan *record.Plan, records []record
 // with [Cipher.Context], and a cipher that names none is refused as
 // [ErrEncoding]. For generated code.
 func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, output record.Output, value any) ([]byte, error) {
-	p, err := cph.plan(plan)
+	p, err := cph.queryPlan(plan, field)
 	if err != nil {
 		return nil, err
-	}
-	if p.ContextField != "" {
-		if cph.context == "" {
-			return nil, fmt.Errorf("%w: field %q: the type takes its context from its field %q, so a query names it with Cipher.Context", ErrEncoding, field, p.ContextField)
-		}
-		// The label a query compares against is <context>/<identity>, as
-		// the record stored it: the plan under the named context, with no
-		// context field of its own. Validate has checked the label.
-		segments, err := record.ParseContext(cph.context)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
-		}
-		under := *p
-		under.Context, under.ContextField = segments, ""
-		p = &under
 	}
 	f := p.Field(field)
 	if f == nil {
@@ -170,6 +155,34 @@ func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, 
 	return cph.client.call(ctx, func(inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.term, buf(encodedValue), buf(encodedContext), scalar(uint64(code)), buf(opts))
 	})
+}
+
+// queryPlan is the plan a query on field derives under: the declaration's
+// plan with this cipher's extension and, for a plan that takes its context
+// from a field, the context named with [Cipher.Context] in that field's
+// place. A cipher that names none is refused as [ErrEncoding]: a term
+// derives under a context, and such a plan has none until a record names it.
+func (cph *Cipher) queryPlan(plan *record.Plan, field string) (*record.Plan, error) {
+	p, err := cph.plan(plan)
+	if err != nil {
+		return nil, err
+	}
+	if p.ContextField == "" {
+		return p, nil
+	}
+	if cph.context == "" {
+		return nil, fmt.Errorf("%w: field %q: the type takes its context from its field %q, so a query names it with Cipher.Context", ErrEncoding, field, p.ContextField)
+	}
+	// The label a query compares against is <context>/<identity>, as the
+	// record stored it: the plan under the named context, with no context
+	// field of its own. Validate has checked the label.
+	segments, err := record.ParseContext(cph.context)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
+	}
+	under := *p
+	under.Context, under.ContextField = segments, ""
+	return &under, nil
 }
 
 // Query derives the EQL query value of a field that names an EQL type, for

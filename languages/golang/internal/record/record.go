@@ -417,7 +417,9 @@ type Sealed = map[string]Outputs
 // format, written by eql-bindings' serialiser and read by [ParseTargets]:
 // name, family, suffix, plaintext (a ValueKind name, or null), sql_domain,
 // indexes (eq | match | ore | ope | json), query (or null), query_sql_domain
-// (or null), producible and reason (or null).
+// (or null), producible, reason (or null), and operators, which the engine
+// adds: the operators it answers for the type, each an object of operator,
+// fidelity (exact | probabilistic), arity (one | pair) and index.
 type Target struct {
 	// Name is the Go type name, and the value of encrypt_into: TextEq.
 	Name string
@@ -439,4 +441,36 @@ type Target struct {
 	// Reason says why not when it does not.
 	Producible bool
 	Reason     string
+	// Operators are the operators the engine answers for a field that names
+	// the type, in the engine's order; none for a type it does not produce.
+	Operators []TargetOperator
+}
+
+// Fidelity says how far the server's answer to an operator can be trusted:
+// [Exact], or [Probabilistic], whose rows a caller verifies after decrypt.
+type Fidelity string
+
+// The fidelities an operator has.
+const (
+	// Exact is an answer the server gives whole: nothing to verify.
+	Exact Fidelity = "exact"
+	// Probabilistic is an answer that can hold false positives and no false
+	// negatives: each decrypted row is verified, and the fetch is sized for
+	// the false positives.
+	Probabilistic Fidelity = "probabilistic"
+)
+
+// TargetOperator is one operator the engine answers for an EQL type, as
+// se_targets lists it.
+type TargetOperator struct {
+	// Name is the operator's name, as a query names it: eq, lt, lte, gt,
+	// gte, between or matches.
+	Name string
+	// Fidelity is how far the server's answer can be trusted.
+	Fidelity Fidelity
+	// Pair says the operator takes two values, low then high, as between
+	// does, where every other takes one.
+	Pair bool
+	// Index is the type's index that answers it.
+	Index Output
 }

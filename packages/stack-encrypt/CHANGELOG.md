@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A binding queries by operator** (`dynamic` feature; ADR-0009, ADR-0007
+  amended 2026-10-16). `dynamic::query_term(keyset, &plan, field, op,
+  input, &resolver)` derives the query term for a field of a data plan, an
+  operator (`dynamic::OpSpec`, named `eq`, `lt`, `lte`, `gt`, `gte`,
+  `between` or `matches`) and its input, reading the input as the field's
+  declared type first. The index that answers is the typed path's default
+  (`OpSpec::answered_by`), and the term is the bytes the typed query chain
+  derives for the same query. A field that names an EQL type answers through
+  the type's query twin. An operator the field does not answer is refused
+  as a mistyped value is, `dynamic::Error::Source` naming the field with
+  `Reason::OperatorNotAnswered`; `check_query` refuses the same without a
+  cipher. `dynamic::verify` checks a page of decrypted values against a
+  probabilistic query and `dynamic::target_limit` sizes its fetch from the
+  term's bytes and `Stats` (`Stats::from_value` reads their wire form), by
+  the code the typed `MatchQuery` runs, with the field's own match options;
+  neither uses a key. The catalog entry of an EQL type
+  (`TargetDescriptor::to_value`) lists the operators the engine answers for
+  it, each with its fidelity (`dynamic::Fidelity`), arity and index
+  (`TargetDescriptor::operators`).
 - **A query names an operator, not an index.**
   `cipher.query(op::Eq, "bob@example.com").on(&plan)` and
   `cipher.query(op::Matches, "ali").on(&plan)`: the operator comes first, as

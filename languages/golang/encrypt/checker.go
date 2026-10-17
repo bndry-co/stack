@@ -165,6 +165,8 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 			t.Producible = b
 		case "reason":
 			t.Reason, err = targetOptionalString(f)
+		case "operators":
+			t.Operators, err = targetOperators(f.Value)
 		default:
 			return t, fmt.Errorf("unknown key %q", f.Key)
 		}
@@ -175,12 +177,99 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 	if t.Name == "" {
 		return t, errors.New("no name")
 	}
-	for _, key := range []string{"indexes", "producible"} {
+	for _, key := range []string{"indexes", "producible", "operators"} {
 		if !seen[key] {
 			return t, fmt.Errorf("no %s", key)
 		}
 	}
 	return t, nil
+}
+
+// targetOperators reads an entry's operators: a list of objects, each with
+// exactly the keys operator, fidelity, arity and index, every value one the
+// engine writes.
+func targetOperators(value any) ([]record.TargetOperator, error) {
+	list, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("operators is %T, not a list", value)
+	}
+	operators := make([]record.TargetOperator, 0, len(list))
+	for i, item := range list {
+		entry, ok := item.(vcvalue.Object)
+		if !ok {
+			return nil, fmt.Errorf("operator %d is %T, not an object", i, item)
+		}
+		var op record.TargetOperator
+		seen := map[string]bool{}
+		for _, f := range entry {
+			if seen[f.Key] {
+				return nil, fmt.Errorf("operator %d: key %q twice", i, f.Key)
+			}
+			seen[f.Key] = true
+			s, err := targetString(f)
+			if err != nil {
+				return nil, fmt.Errorf("operator %d: %v", i, err)
+			}
+			switch f.Key {
+			case "operator":
+				op.Name, err = parseOperatorName(s)
+			case "fidelity":
+				op.Fidelity, err = parseFidelity(s)
+			case "arity":
+				switch s {
+				case "one":
+				case "pair":
+					op.Pair = true
+				default:
+					return nil, fmt.Errorf("operator %d: unknown arity %q", i, s)
+				}
+			case "index":
+				op.Index, err = parseOperatorIndex(s)
+			default:
+				return nil, fmt.Errorf("operator %d: unknown key %q", i, f.Key)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("operator %d: %v", i, err)
+			}
+		}
+		if len(seen) != 4 || op.Name == "" {
+			return nil, fmt.Errorf("operator %d: not every key, or no name", i)
+		}
+		operators = append(operators, op)
+	}
+	return operators, nil
+}
+
+// parseOperatorName reads an operator's name as the engine writes it: one
+// of eq, lt, lte, gt, gte, between and matches, the names the engine's
+// OpSpec::parse accepts. The catalog (se_targets) and se_query_term are
+// read through this, parseFidelity and parseOperatorIndex, so the two
+// readers refuse the same values.
+func parseOperatorName(s string) (string, error) {
+	switch s {
+	case "eq", "lt", "lte", "gt", "gte", "between", "matches":
+		return s, nil
+	}
+	return "", fmt.Errorf("unknown operator %q", s)
+}
+
+// parseFidelity reads an operator's fidelity: exact or probabilistic.
+func parseFidelity(s string) (record.Fidelity, error) {
+	switch f := record.Fidelity(s); f {
+	case record.Exact, record.Probabilistic:
+		return f, nil
+	}
+	return "", fmt.Errorf("unknown fidelity %q", s)
+}
+
+// parseOperatorIndex reads the index that answers an operator: eq, match,
+// ore or ope.
+func parseOperatorIndex(s string) (record.Output, error) {
+	switch o := record.Output(s); o {
+	case record.Equality, record.Match, record.Ore, record.Ope:
+		return o, nil
+	}
+	return "", fmt.Errorf("unknown index %q", s)
 }
 
 func targetString(f vcvalue.Field) (string, error) {

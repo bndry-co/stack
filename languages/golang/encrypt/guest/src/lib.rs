@@ -46,7 +46,9 @@
 //!
 //! The exports are the record path (`se_encrypt_record`, `se_decrypt_record`),
 //! per-field term derivation (`se_term`), a target field's EQL query value
-//! (`se_query`), keyset resolution (`se_keyset`), the generator's two
+//! (`se_query`), a query named by operator and a probabilistic query's two
+//! questions (`se_query_term`, `se_verify`, `se_target_limit`; ADR-0007,
+//! amended 2026-10-16), keyset resolution (`se_keyset`), the generator's two
 //! questions (`se_plan_check`, `se_targets`) and the lifetime pair
 //! (`se_cipher_init`, `se_shutdown`). There is no whole-value export: the
 //! Go SDK seals every value under a declaration (ADR-0007).

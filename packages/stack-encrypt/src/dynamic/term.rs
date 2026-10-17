@@ -343,7 +343,7 @@ impl AsRef<[u8]> for TermBytes {
 /// What a derived term is for: a query refuses match text that cuts no
 /// token, which a stored value keeps as the empty filter.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Use {
+pub(super) enum Use {
     Query,
     Store,
 }
@@ -357,7 +357,7 @@ enum Use {
 /// [`Error::Term`] if the value is not one scalar `kind` takes, and
 /// [`Error::Cipher`] for a query's match text with no token or text the
 /// index cannot normalize, as for [`term`].
-fn derive<'a, 'c, K: 'static, P, D>(
+pub(super) fn derive<'a, 'c, K: 'static, P, D>(
     cipher: &'a KeysetCipher<'_, K>,
     value: P,
     kind: &IndexSpec,

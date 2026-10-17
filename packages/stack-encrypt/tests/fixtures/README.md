@@ -86,3 +86,55 @@ by hand.
 
 `label_segments.json` beside this file is a different fixture: the one rule
 for a plain label segment, read by the Rust, derive and Go tests.
+
+# Query fixture: `query_operators.json`
+
+Queries named by operator through the data path
+(`stack_encrypt::dynamic::query_term`, what a language binding calls), each
+term equal to the one the typed query chain (`cipher.query(op::Lt,
+&40u32).on(&plan)`) derives for the same query, with a page `verify`
+answered and fetch limits `target_limit` sized (ADR-0009; ADR-0007, amended
+2026-10-16). `tests/query_operators.rs` derives every entry and checks it
+against the typed path; the Go SDK's `encrypt` tests derive, verify and size
+the same queries through the guest's `se_query_term`, `se_verify` and
+`se_target_limit` exports and compare. No entry depends on a nonce, so the
+file changes only when a derivation does: regenerate it with
+`STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p stack-encrypt --all-features
+--test query_operators`, and do not edit it by hand.
+
+```json
+{
+  "_comment":     "what this file is",
+  "key_source":   { "kind": "deterministic-sha256", "seed": "<32 bytes, hex>" },
+  "keyset_id":    "<uuid the terms were derived under>",
+  "plan":         { "<field>": { "context": [...], "outputs": [...], "type": "<kind>" }, ... },
+  "queries": [
+    { "field": "<field>", "operator": "<name>", "input": <value, or [lo, hi]>,
+      "term": { "operator": "<name>", "fidelity": "exact" | "probabilistic",
+                "index": "<index key>", "domain": null, "term": "<hex>" | ["<hex>", "<hex>"] } }
+  ],
+  "verify": { "field": "<field>", "operator": "matches", "input": "<text>",
+              "values": [<text or null>, ...], "verified": [<bool>, ...] },
+  "target_limit": [
+    { "field": "<field>", "operator": "matches", "input": "<text>", "term": "<hex>",
+      "want": <integer>, "stats": { "rows": <integer>, "histogram": [[<bits>, <rows>], ...],
+      "confidence": <float> }, "limit": <integer or null> }
+  ]
+}
+```
+
+- **`key_source`**, **`keyset_id`.** As in the record fixture: terms derive
+  under `FakeDataKeySource`'s index key for the nil keyset, whatever the
+  seed, so the Go tests run the deterministic guest built from the same
+  source.
+- **`queries`.** Each query as a binding sends it, and its term in the wire
+  form `QueryTerm::to_value` writes, the bytes in hex: one term, or for
+  `between` the low bound's then the high's. An input is JSON, read as the
+  field's declared type, so `40` queries the `uint32` field `age`.
+- **`verify`.** A page of decrypted values, null for an empty field, and the
+  boolean `verify` answers for each, which is what the typed `MatchQuery`
+  answers.
+- **`target_limit`.** A match term's bytes, the statistics in the wire form
+  `Stats::from_value` reads (an absent histogram is the declared prior), and
+  the limit, null when no finite fetch can be promised, which is what the
+  typed `MatchQuery` answers.

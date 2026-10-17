@@ -237,6 +237,134 @@ where
         .map_err(|e| fail_error(&e))
 }
 
+// =============================================================================
+// Queries by operator
+// =============================================================================
+
+/// Derive the query term for one plan field, an operator and its input
+/// (ADR-0009; ADR-0007, amended 2026-10-16): a codec-encoded input, the
+/// codec-encoded plan, the field's name and the operator's name (both UTF-8)
+/// in, the term's codec-encoded object out ([`dynamic::QueryTerm::to_value`]):
+///
+/// ```text
+/// { "operator": "matches", "fidelity": "probabilistic", "index": "match",
+///   "domain": null, "term": <bytes> }
+/// ```
+///
+/// The input is one value for every operator but `between`, whose input is
+/// a list of two, low then high. It is read as the field's declared kind
+/// first, so a host's float `34.0` queries a `uint64` field. A field with
+/// indexes derives the term of the index that answers the operator, as
+/// bytes; `between` derives one per bound, as a list of two. A field that
+/// names an EQL type runs the type's query twin through this build's
+/// resolver, and `term` holds the twin's JSON bytes and `domain` its
+/// PostgreSQL domain. No data key is minted.
+pub async fn query_term<K>(
+    cipher: &KeysetCipher<'_, K>,
+    input: &[u8],
+    plan: &[u8],
+    field: &[u8],
+    operator: &[u8],
+) -> Result<Vec<u8>, u32>
+where
+    K: DataKeySource + Sync + 'static,
+{
+    let (plan, field, operator) = parse_query(plan, field, operator)?;
+    let term = dynamic::query_term(
+        cipher,
+        &plan,
+        field,
+        operator,
+        decode_value(input)?,
+        &resolver(),
+    )
+    .map_err(|e| fail_dynamic(&e))?
+    .await
+    .map_err(|e| fail_error(&e))?;
+    encode_value(term.to_value())
+}
+
+/// Verify a page of decrypted values against a probabilistic query: the
+/// query's codec-encoded input and a codec-encoded list of values, with the
+/// plan, the field's name and the operator's name, in; a codec-encoded list
+/// of booleans out, one per value in order ([`dynamic::verify`]). The query
+/// is named as it was derived, and its tokens are cut again from the input:
+/// they are plaintext, so no term carries them. A null value is `false`.
+/// Needs no cipher and no key.
+pub fn verify(
+    input: &[u8],
+    values: &[u8],
+    plan: &[u8],
+    field: &[u8],
+    operator: &[u8],
+) -> Result<Vec<u8>, u32> {
+    let (plan, field, operator) = parse_query(plan, field, operator)?;
+    let FfiValue::Array(values) = decode_value(values)? else {
+        return Err(last_error::malformed("the values to verify are not a list"));
+    };
+    let verified = dynamic::verify(
+        &plan,
+        field,
+        operator,
+        decode_value(input)?,
+        &values,
+        &resolver(),
+    )
+    .map_err(|e| fail_dynamic(&e))?;
+    encode_value(FfiValue::Array(
+        verified.into_iter().map(FfiValue::Bool).collect(),
+    ))
+}
+
+/// How many rows a probabilistic query should fetch for `want` of them to
+/// verify: the term's bytes as [`query_term`] returned them (not a frame),
+/// the codec-encoded statistics
+/// ([`Stats::from_value`](stack_encrypt::op::Stats::from_value)), the plan,
+/// the field's name and the operator's name in; the codec-encoded limit out,
+/// an unsigned 64-bit integer or null for no finite fetch
+/// ([`dynamic::limit_to_value`]). Needs no cipher and no key.
+pub fn target_limit(
+    term: &[u8],
+    stats: &[u8],
+    plan: &[u8],
+    field: &[u8],
+    operator: &[u8],
+    want: u64,
+) -> Result<Vec<u8>, u32> {
+    let (plan, field, operator) = parse_query(plan, field, operator)?;
+    // Statistics are read without a field to hand; the error names the
+    // query's, as every other refusal of a query does.
+    let stats = stack_encrypt::op::Stats::from_value(&decode_value(stats)?)
+        .map_err(|e| fail_dynamic(&e.in_field(field)))?;
+    let limit = dynamic::target_limit(&plan, field, operator, term, want, &stats, &resolver())
+        .map_err(|e| fail_dynamic(&e))?;
+    encode_value(dynamic::limit_to_value(limit))
+}
+
+/// The plan, field name and operator a query names: the plan parsed against
+/// this build's resolver, the field's name UTF-8, and the operator one the
+/// engine knows ([`dynamic::OpSpec::parse`]); an unknown operator is
+/// refused naming the field, as an operator the field does not answer is.
+fn parse_query<'f>(
+    plan: &[u8],
+    field: &'f [u8],
+    operator: &[u8],
+) -> Result<(dynamic::record::Plan, &'f str, dynamic::OpSpec), u32> {
+    let plan = parse_plan(plan)?;
+    let field = std::str::from_utf8(field)
+        .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
+    let operator = std::str::from_utf8(operator)
+        .ok()
+        .and_then(dynamic::OpSpec::parse)
+        .ok_or_else(|| {
+            fail_dynamic(&dynamic::Error::Source {
+                field: Some(field.to_owned()),
+                reason: dynamic::Reason::UnknownOperator,
+            })
+        })?;
+    Ok((plan, field, operator))
+}
+
 /// A codec-encoded plan, parsed against this build's resolver: a target
 /// name this build cannot run is refused here, the same way at every
 /// export that takes a plan.
@@ -284,6 +412,11 @@ pub fn plan_check(plan: &[u8]) -> Result<(), u32> {
 /// | `query_sql_domain` | string or null    | the Postgres domain of the query value |
 /// | `producible`       | bool              | whether this build produces the type |
 /// | `reason`           | string or null    | why not, when `producible` is false |
+/// | `operators`        | list of objects   | the operators the engine answers for the type, each `{"operator", "fidelity", "arity", "index"}` ([`TargetDescriptor`](stack_encrypt::dynamic::TargetDescriptor#wire-format)) |
+///
+/// The first ten keys are eql-bindings' row; `operators` is the engine's,
+/// computed from the row, so a generator asks the engine which operators a
+/// type answers and how far each answer can be trusted.
 pub fn targets() -> Result<Vec<u8>, u32> {
     use stack_encrypt::dynamic::TargetResolver as _;
     encode_value(FfiValue::Object(vec![(
@@ -360,6 +493,17 @@ pub mod validate {
             }));
         }
         Ok(())
+    }
+
+    /// A query's inputs, as [`query_term`](super::query_term) takes them:
+    /// the plan parses, the field is one of its fields, the operator is one
+    /// the engine knows and the field answers, and the input reads as the
+    /// field's kind and passes the refusals the typed path makes before a
+    /// term exists ([`dynamic::check_query`]).
+    pub fn query_term(input: &[u8], plan: &[u8], field: &[u8], operator: &[u8]) -> Result<(), u32> {
+        let (plan, field, operator) = parse_query(plan, field, operator)?;
+        dynamic::check_query(&plan, field, operator, decode_value(input)?, &resolver())
+            .map_err(|e| fail_dynamic(&e))
     }
 
     /// A record tree against its plan, as [`decrypt_record`] takes them:
@@ -699,10 +843,15 @@ mod tests {
                 "query",
                 "query_sql_domain",
                 "producible",
-                "reason"
+                "reason",
+                "operators"
             ]
         );
         assert!(matches!(text_eq[8].1, FfiValue::Bool(true)));
+        assert!(
+            matches!(&text_eq[10].1, FfiValue::Array(operators) if operators.len() == 1),
+            "TextEq answers one operator"
+        );
     }
 
     #[test]
