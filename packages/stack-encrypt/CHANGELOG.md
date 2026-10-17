@@ -133,11 +133,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (ADR-0009).
 
 - **`StackCipher::query_index` is gone**, with `QueryIndexBuilder` and
-  `QueryIndex`: every index a plan can declare is reachable through an
-  operator now that the orderings have arrived. `query_index(Ore, &v)` is
-  `query(op::Lt, &v)` (or any ordering; the term is the same), and
-  `query_index(Match, text)` is `query(op::Matches, text)`, whose
-  `MatchQuery` carries the same filter.
+  `QueryIndex`. Every query names an operator now that the orderings have
+  arrived:
+  - `query_index(Ore, &v)` over an integer is `query(op::Lt, &v)` (or any
+    ordering; the term is the same `OreTerm`).
+  - `query_index(Match, text)` is `query(op::Matches, text)`, which is not
+    the same call. It returns a `MatchQuery`, not the stored `MatchTerms`;
+    it refuses text that cuts no token (`TermError::EmptyTermText`); and it
+    compiles only for a configuration that implements `op::MatchCase`. A
+    configuration without one needs that one-line impl to be queried.
+  - `query_index(Ore, text)` and `query_index(Ope, text)` have no
+    replacement: an ordering over text does not compile until the order of
+    text is settled (ADR-0009). A text column can still store ORE and OPE
+    terms.
 - **`op::Supports`, `op::Answers` and `op::DefaultIndex` are keyed by the
   query's input**, `Supports<Op, In>` with `In: Input<Op::Arity>`, in
   place of the plaintext; for every operator but `Between` the input is
@@ -152,9 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queries only (a write still runs `using` a plan). An index's own term, for
   an index no operator answers yet (`Ore`, `Ope`), is
   `cipher.query_index(Ore, v).on(&plan)`, which goes when the ordering
-  operators arrive. `query_index` does not compile for `Equality` or `Match`
-  (`plan::Unanswered`), since an operator answers both. `QueryUsing` is
-  gone; the chain's types are `QueryBuilder`, `QueryVia`,
+  operators arrive. `QueryUsing` is gone; the chain's types are `QueryBuilder`, `QueryVia`,
   `QueryIndexBuilder`, `QueryIndex` and `QueryOp`, and the plan shapes
   implement `plan::Chooses` and `plan::Resolves`.
 - **`Match::default()` is `Match`.** The match index under the default

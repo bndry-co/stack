@@ -171,6 +171,11 @@ impl Arity for Pair {}
 ///
 /// Those are the two impls. The arity decides how the chain derives terms
 /// from the input, which is what [`derive`](Self::derive) does.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not what a query of arity `{A}` is given",
+    label = "the operator takes another shape of value",
+    note = "`op::Between` takes a pair of bounds, `cipher.query(op::Between, &(lo, hi))`; every other operator takes one value"
+)]
 pub trait Input<A: Arity>: Sized + 'static {
     /// The plaintext the index is declared over.
     type Plaintext: 'static;
@@ -280,6 +285,11 @@ impl<S: 'static> Input<Pair> for (S, S) {
 ///
 /// impl Ordered for Folded {} // `Ordered` is sealed
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not ordered: the ordering operators are answered over the integer types only",
+    label = "no ordering operator over this type",
+    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128` or `i8` to `i128`; the order of text is not settled (ADR-0009), so an ordering over text does not compile"
+)]
 pub trait Ordered:
     sealed::Sealed
     + PartialOrd
@@ -408,8 +418,10 @@ impl Case for CaseSensitive {
 /// cannot see the options, so a query through a configuration whose two
 /// disagree is refused when it is awaited, with
 /// [`PlanError::MatchCase`]. A configuration
-/// that does not implement this can still store match terms and query them
-/// by index; it cannot be queried by [`Matches`](struct@Matches).
+/// that does not implement this can still store match terms, but nothing
+/// queries them: [`Matches`](struct@Matches) needs this impl, and there is
+/// no index-level query. Implementing it is one line, `type Case =
+/// CaseSensitive;` or `type Case = CaseInsensitive;`, matching `downcase`.
 pub trait MatchCase: MatchConfig {
     /// The case the configuration's index answers.
     type Case: Case;
@@ -560,7 +572,11 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     /// `QueryToken` cannot be made outside this crate, so no caller can
     /// pair one query's tokens with another value's filter, or pass a
     /// stored term off as a query.
-    fn query(verifier: Self::Verifier, terms: In::Terms<Self::Term>, token: QueryToken) -> Self::Query;
+    fn query(
+        verifier: Self::Verifier,
+        terms: In::Terms<Self::Term>,
+        token: QueryToken,
+    ) -> Self::Query;
 }
 
 /// Proof that [`Supports::query`] is called by a query chain. Only this

@@ -294,6 +294,7 @@ impl<K: 'static> StackCipher<K> {
     where
         Op: Operator,
         Q: ToOwned + ?Sized,
+        F<Q>: Input<Op::Arity>,
     {
         let _: Op = op;
         QueryBuilder {
