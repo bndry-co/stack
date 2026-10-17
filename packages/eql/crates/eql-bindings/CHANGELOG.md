@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Target::match_options`** (`stack-encrypt` feature): the options a type's
+  match index is built under, `EqlMatch`'s, for a type that carries one
+  (`TextMatch`), and `None` otherwise. Stack Encrypt answers `matches`
+  through the type with them, cutting the query's tokens for `verify` as the
+  stored filter was cut.
 - **EQL types as plan field targets, by name** (`stack-encrypt` feature).
   `eql_bindings::encryption::targets` holds a catalog-generated table
   (`targets()`) of every EQL type a Stack Encrypt data plan may name as a

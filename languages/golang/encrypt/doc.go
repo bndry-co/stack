@@ -40,10 +40,12 @@
 //	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
 //	encrypted, err := users.Encrypt(ctx, cipher, people) // []users.EncryptedUser
 //	opened, err := users.Decrypt(ctx, cipher, encrypted) // []users.User
-//	query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com")
+//	term, err := users.Fields.Email.Eq(ctx, cipher, "bob@example.com")
 //
 // Encrypt and Decrypt send one ZeroKMS request for each 500 sealed values in
-// the batch, plus one the first time a keyset is used.
+// the batch, plus one the first time a keyset is used. A query derives its
+// term locally, with no request of its own; only the first use of a keyset,
+// by a query or anything else, loads it from ZeroKMS. See Queries below.
 //
 // 6. Store the encrypted type. Each encrypt_into field is one EQL v4 column
 // (an eql.TextEq goes in a public.eql_v4_text_eq column), implementing
@@ -123,6 +125,49 @@
 // column that the value is one of those. A match *query* of such text is
 // refused with [ErrTerm], because an empty filter as a query would match every
 // row.
+//
+// # Queries
+//
+// A generated Fields entry has one method for each operator the engine
+// answers on the field, named for it: Eq, Lt, Lte, Gt, Gte, Between and
+// Matches. A field has no method for an operator it does not answer, so
+// such a query does not compile; the generator asks the engine which
+// operators each field answers, and holds no copy of the rules. Each method
+// takes the field's own Go type.
+//
+// Eq returns an [EqualityTerm] (or, for a field with encrypt_into, the EQL
+// type's query value), an ordering an [OreTerm] or [OpeTerm], and Between a
+// [Range] of two. Their answers are exact. Matches returns a [MatchQuery],
+// whose answer can hold rows that do not match: size the fetch with
+// [MatchQuery.TargetLimit], then decrypt the rows and keep those
+// [MatchQuery.Verify] reports true, one call into the engine for the page.
+// On a field with encrypt_into=TextMatch, Matches returns an
+// [EQLMatchQuery], the type's query value with the same two methods.
+// Every query type implements driver.Valuer, so it binds as a parameter
+// through database/sql or pgx. With separate byte columns, as the example/
+// program declares its fields (Email `stash:"email,encrypt,index=equality;match"`,
+// Age `stash:"age,encrypt,index=equality;ore"`), not the encrypt_into User
+// above:
+//
+//	q, err := users.Fields.Email.Matches(ctx, cipher, "alice")
+//	limit, err := q.TargetLimit(ctx, 10, encrypt.Stats{Rows: rowCount})
+//	rows, err := db.QueryContext(ctx, `SELECT id, email, email_eq, email_match, age, age_eq, age_ore
+//		FROM users WHERE match_positions(email_match) @> match_positions($1)
+//		ORDER BY id LIMIT $2`, q, limit.FetchOr(50))
+//	// scan into []users.EncryptedUser, then
+//	people, err := users.Decrypt(ctx, cipher, encrypted)
+//	emails := make([]string, len(people))
+//	for i, p := range people {
+//		emails[i] = p.Email
+//	}
+//	verified, err := q.Verify(ctx, emails) // one bool per row
+//
+// match_positions is a SQL function of your own that reads a match term's
+// little-endian uint16 positions into an int[]; the package README has one.
+// A MatchQuery keeps the text it was derived from, because Verify cuts its
+// tokens again in the engine. Go cannot wipe a string, so the text stays in
+// memory until the garbage collector reclaims it; a MatchQuery never prints
+// it.
 //
 // # Transport and auth
 //

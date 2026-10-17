@@ -91,7 +91,7 @@ impl TargetResolver for EqlTargets {
 /// crate's `to_value`.
 #[cfg(feature = "eql")]
 fn describe(target: &eql_bindings::encryption::targets::Target) -> TargetDescriptor {
-    TargetDescriptor::new(
+    let descriptor = TargetDescriptor::new(
         target.name,
         target.family,
         target.suffix,
@@ -102,7 +102,13 @@ fn describe(target: &eql_bindings::encryption::targets::Target) -> TargetDescrip
         target.query_sql_domain.map(str::to_owned),
         target.producible,
         target.reason.map(str::to_owned),
-    )
+    );
+    // A type with a match index answers `matches` through its twin only
+    // when the engine knows the options its filter is built under.
+    match target.match_options() {
+        Some(options) => descriptor.with_match_options(options),
+        None => descriptor,
+    }
 }
 
 /// An `eql-bindings` refusal as the engine's. The field name is left empty:

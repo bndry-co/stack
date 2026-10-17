@@ -162,7 +162,7 @@ func TestTextEqQueryMatchesTheStoredValueAndTheRustFixture(t *testing.T) {
 		t.Fatalf("the fixture's column changed: %+v", fixture)
 	}
 
-	query, err := testusers.ContactFields.Email.Query(ctx, cipher, fixture.Plaintext)
+	query, err := testusers.ContactFields.Email.Eq(ctx, cipher, fixture.Plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestTextEqQueryMatchesTheStoredValueAndTheRustFixture(t *testing.T) {
 	if env := decodeEnvelope(t, stored); env.HM != probe.HM {
 		t.Fatalf("the query's hm %s does not match the stored %s", probe.HM, env.HM)
 	}
-	if other, _ := testusers.ContactFields.Email.Query(ctx, cipher, "Bob@example.com"); string(other) == fixture.Query {
+	if other, _ := testusers.ContactFields.Email.Eq(ctx, cipher, "Bob@example.com"); string(other) == fixture.Query {
 		t.Fatal("no case folding: a different plaintext has a different term")
 	}
 }

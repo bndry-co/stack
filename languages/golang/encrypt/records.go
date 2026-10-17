@@ -69,7 +69,7 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 		return inst.call(ctx, inst.encryptRecord, buf(encodedSource), buf(encodedPlan), buf(opts))
 	})
 	if errors.Is(err, ErrTerm) {
-		// The plan as given: Derive applies the extension itself.
+		// The plan as given: derive applies the extension itself.
 		return nil, cph.locateTermFailure(ctx, plan, rows, err)
 	}
 	if err != nil {
@@ -111,13 +111,15 @@ func (cph *Cipher) Open(ctx context.Context, plan *record.Plan, records []record
 	return cph.client.open(ctx, cph.keyset, cph.context, p, records)
 }
 
-// Derive derives one index term for one value of a field, under the plan's
-// context for that field and this cipher's extension: the term a query
-// compares against the stored one. A plan that takes its context from a
-// field has none of its own, so the term derives under the context named
-// with [Cipher.Context], and a cipher that names none is refused as
-// [ErrEncoding]. For generated code.
-func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, output record.Output, value any) ([]byte, error) {
+// derive derives one index term for one value of a field, under the plan's
+// context for that field and this cipher's extension: the term the record
+// call stores for it. It is how locateTermFailure names the field
+// behind a record's term failure; a query asks [Cipher.QueryTerm], which
+// names an operator. A plan that takes its context from a field has none of
+// its own, so the term derives under the context named with
+// [Cipher.Context], and a cipher that names none is refused as
+// [ErrEncoding].
+func (cph *Cipher) derive(ctx context.Context, plan *record.Plan, field string, output record.Output, value any) ([]byte, error) {
 	p, err := cph.queryPlan(plan, field)
 	if err != nil {
 		return nil, err
@@ -183,42 +185,6 @@ func (cph *Cipher) queryPlan(plan *record.Plan, field string) (*record.Plan, err
 	under := *p
 	under.Context, under.ContextField = segments, ""
 	return &under, nil
-}
-
-// Query derives the EQL query value of a field that names an EQL type, for
-// one value: the operand that matches stored values of the field, as the
-// JSON bytes the field's eql_v4.query_* domain takes. The engine runs the
-// EQL type's own query plan; no data key is minted. For generated code.
-func (cph *Cipher) Query(ctx context.Context, plan *record.Plan, field string, value any) ([]byte, error) {
-	p, err := cph.plan(plan)
-	if err != nil {
-		return nil, err
-	}
-	f := p.Field(field)
-	if f == nil {
-		return nil, fmt.Errorf("%w: the plan has no field %q", ErrEncoding, field)
-	}
-	if !f.IsTarget() {
-		return nil, fmt.Errorf("%w: field %q names no EQL type; its terms are derived by index", ErrEncoding, field)
-	}
-	encodedValue, err := vcffi.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
-	}
-	// The probe value is plaintext: its transport copy is wiped once it is
-	// in the guest.
-	defer wipe(encodedValue)
-	encodedPlan, err := vcffi.Marshal(p.Wire())
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
-	}
-	opts, err := vcffi.Marshal(options(cph.keyset, ""))
-	if err != nil {
-		return nil, err
-	}
-	return cph.client.call(ctx, func(inst *instance) ([]byte, error) {
-		return inst.call(ctx, inst.query, buf(encodedValue), buf(encodedPlan), buf([]byte(field)), buf(opts))
-	})
 }
 
 // Open decrypts records sealed under the plan by any keyset of this client:
@@ -486,10 +452,10 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p
 // term at a time, which costs no key request: a term derives locally. A
 // stored value is never refused for its text (text with no token is stored
 // as the empty filter), so a term failure on a record is the scheme refusing
-// the value's kind under that index. Derive asks the query path, which does
+// the value's kind under that index. derive asks the query path, which does
 // refuse text with no token, so that one refusal is skipped here: it cannot
 // be why the record failed. p is the plan without this cipher's extension,
-// which Derive adds.
+// which derive adds.
 func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows []record.Source, err error) error {
 	for i, row := range rows {
 		for _, f := range p.Fields {
@@ -497,7 +463,7 @@ func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows [
 				if !o.IsTerm() {
 					continue
 				}
-				if _, derr := cph.Derive(ctx, p, f.Name, o, row[f.Name]); errors.Is(derr, ErrTerm) && !queryOnlyRefusal(o, derr) {
+				if _, derr := cph.derive(ctx, p, f.Name, o, row[f.Name]); errors.Is(derr, ErrTerm) && !queryOnlyRefusal(o, derr) {
 					return fmt.Errorf("%w: value %d, field %q: the engine derives no %s term for this value", err, i, f.Name, indexWord(o))
 				}
 			}

@@ -79,6 +79,37 @@ func (k *Checker) Targets(ctx context.Context) ([]record.Target, error) {
 	return parseTargets(decoded)
 }
 
+// Operators lists the operators one field of a plan answers, in the
+// engine's order, each with its fidelity, its arity and the index that
+// answers it: exactly the operators [Cipher.QueryTerm] derives a term for
+// on that field, so stashgen writes one query method for each and holds no
+// copy of which index answers which operator. A field the plan does not
+// have is [ErrEncoding].
+func (k *Checker) Operators(ctx context.Context, plan *record.Plan, field string) ([]record.Operator, error) {
+	if err := plan.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
+	}
+	encoded, err := vcffi.Marshal(plan.Wire())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
+	}
+	out, err := k.c.call(ctx, func(inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.operators, buf(encoded), buf([]byte(field)))
+	})
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := vcffi.Unmarshal(out)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
+	}
+	operators, err := parseOperators(decoded)
+	if err != nil {
+		return nil, fmt.Errorf("%w: se_operators: %v", ErrInternal, err)
+	}
+	return operators, nil
+}
+
 // parseTargets reads se_targets's decoded value: {"targets": [entry, ...]},
 // each entry an object with exactly the keys record.Target documents. The
 // shape is a contract between eql-bindings' serialiser and this reader, so
@@ -166,7 +197,7 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 		case "reason":
 			t.Reason, err = targetOptionalString(f)
 		case "operators":
-			t.Operators, err = targetOperators(f.Value)
+			t.Operators, err = parseOperators(f.Value)
 		default:
 			return t, fmt.Errorf("unknown key %q", f.Key)
 		}
@@ -185,21 +216,21 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 	return t, nil
 }
 
-// targetOperators reads an entry's operators: a list of objects, each with
-// exactly the keys operator, fidelity, arity and index, every value one the
-// engine writes.
-func targetOperators(value any) ([]record.TargetOperator, error) {
+// parseOperators reads a list of operators, an se_targets entry's or
+// se_operators's: a list of objects, each with exactly the keys operator,
+// fidelity, arity and index, every value one the engine writes.
+func parseOperators(value any) ([]record.Operator, error) {
 	list, ok := value.([]any)
 	if !ok {
 		return nil, fmt.Errorf("operators is %T, not a list", value)
 	}
-	operators := make([]record.TargetOperator, 0, len(list))
+	operators := make([]record.Operator, 0, len(list))
 	for i, item := range list {
 		entry, ok := item.(vcvalue.Object)
 		if !ok {
 			return nil, fmt.Errorf("operator %d is %T, not an object", i, item)
 		}
-		var op record.TargetOperator
+		var op record.Operator
 		seen := map[string]bool{}
 		for _, f := range entry {
 			if seen[f.Key] {

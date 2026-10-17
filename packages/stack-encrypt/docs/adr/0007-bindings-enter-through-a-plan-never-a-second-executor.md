@@ -275,12 +275,16 @@ on a term, because Rust says it with a trait. A generator asks before the
 program runs, so it needs the answer as data, and the code it generates
 carries `Verify` only where the answer is `probabilistic`, which rebuilds
 decision 4 of ADR-0009 in a language without traits. Today `TextEq` answers
-`eq` and no other produced type answers anything: `TextMatch` is produced and
-has a query twin, but answers no operator, and the storage-only types have no
-twin. A type answers no probabilistic operator and no `between` yet: the
-catalog names a type's match index but not its options, which `verify` must
-cut tokens by, and a twin is one value, not a range. Both wait for that
-catalog work, not for the types themselves.
+`eq`, `TextMatch` answers `matches`, and the storage-only types have no twin,
+so answer nothing. A type answers `matches` through its twin only when the
+engine knows the options its match index is built under, since `verify`
+must cut the query's tokens as the stored filter was cut: `eql-bindings`
+gives them for each type with a match index (`Target::match_options`, EQL's
+one match configuration), and the guest hands them to the engine with the
+type's descriptor. They are not on the wire, because a host has no use for
+them. `verify` and `target_limit` then run under those options, reading the
+twin's `bf`. No type answers `between` yet: a twin is one value, not a
+range.
 
 What does not change: a binding still reaches the engine through a plan, and
 nothing here derives a term outside the engine's own derivation, so a query
@@ -288,10 +292,20 @@ from Go and the typed query chain derive the same bytes. A cross-language
 fixture holds them together (`tests/fixtures/query_operators.json`): the Rust
 side checks each recorded term against the typed chain, and the Go SDK's
 tests derive, verify and size the same queries through the guest.
-`se_query`, which derives a target field's twin with no operator, stays until
-the generated Go code names operators (#1189), and is removed then.
-`se_term`, a term by index under an explicit context, stays for the generated
-code of fields declared with indexes until that code names operators too.
+The catalog answers for an EQL type; a field declared with indexes has no
+type to look up, so `se_operators` answers for any field of a plan: the
+plan and the field's name in, the same operator objects out, computed by the
+one table `se_query_term` reads (`dynamic::field_operators`). The Go
+generator asks it for every sealed field, `encrypt_into` fields included,
+and writes one method per operator (#1189).
+
+`se_query`, which derived a target field's twin with no operator, is
+removed: the generated Go code names operators (#1189), and `eq` on a target
+field is the twin. `se_term`, a term by index under an explicit context, no
+longer serves a query. It stays for one host need: a record call's term
+failure does not say which row and field it came from, and the Go SDK asks
+`se_term` again for each term to name them. When the record exports name the
+field themselves, it goes too.
 
 A data plan's match index declares no `expected_tokens` prior, so
 `target_limit` on a field declared as data is unbounded without a measured

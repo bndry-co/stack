@@ -111,6 +111,24 @@ jobs:
       # caches) the whole test toolset, which `mise run` would otherwise
       # install uncached.
       MISE_ENV: test
+    # The Go module's PostgreSQL test (encrypt/postgres_test.go) stores
+    # generated rows and runs the query methods against it through
+    # database/sql; it skips where DATABASE_URL is unset, as on the macOS
+    # and Windows jobs.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        # Container port only: Docker picks the host port, and the Go step
+        # reads it from `job.services`, so the number is written once.
+        ports:
+          - 5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -224,6 +242,7 @@ jobs:
       - name: Go binding
         env:
           STACK_ENCRYPT_TESTS_REQUIRE_LOCK: "1"
+          DATABASE_URL: "postgres://postgres:postgres@localhost:${{ job.services.postgres.ports['5432'] }}/postgres?sslmode=disable"
         run: |
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"

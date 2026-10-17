@@ -28,6 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`TargetDescriptor::to_value`) lists the operators the engine answers for
   it, each with its fidelity (`dynamic::Fidelity`), arity and index
   (`TargetDescriptor::operators`).
+- **An EQL type with a match index answers `matches` through its twin.**
+  `TargetDescriptor::with_match_options` gives the engine the options a
+  type's match index is built under (`TargetDescriptor::match_options`, not
+  on the wire), and such a type answers `matches` (probabilistic) as well as
+  its exact operators: `query_term` derives the type's query twin, and
+  `verify` and `target_limit` run under the type's options, the latter
+  reading the twin's `bf`. A type with a match index and no options still
+  answers no probabilistic operator. The Go guest gives `TextMatch` EQL's
+  match options, so it answers `matches` through `TextMatchQuery`.
+- **A binding asks which operators a field answers.**
+  `dynamic::field_operators(&plan, field, &resolver)` lists the operators a
+  field of a data plan answers, each with the index that answers it: what
+  `query_term` derives a term for on that field and nothing else, for a
+  field declared with indexes as for one that names an EQL type.
+  `dynamic::operator_to_value` writes one entry in the catalog's wire form.
+  A generator asks this before the program runs, so it writes one query
+  method per operator and holds no copy of the table.
 - **A query names an operator, not an index.**
   `cipher.query(op::Eq, "bob@example.com").on(&plan)` and
   `cipher.query(op::Matches, "ali").on(&plan)`: the operator comes first, as

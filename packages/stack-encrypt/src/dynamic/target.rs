@@ -27,9 +27,10 @@
 
 use std::fmt;
 
-use super::query::target_operators;
+use super::query::{operator_to_value, target_operators};
 use super::{FfiValue, OpSpec, ValueKind};
 
+use crate::sem::MatchOptions;
 use crate::{KeysetCipher, Label, Pending, StackCipher};
 
 /// One EQL type a plan may name as a target, as the host describes it.
@@ -91,6 +92,15 @@ pub struct TargetDescriptor {
     pub producible: bool,
     /// Why it does not, when it does not.
     pub reason: Option<String>,
+    /// The options the type's match index is built under, for a type that
+    /// carries one and whose builder says which ([`with_match_options`]).
+    /// Not on the wire: the engine needs them to answer `matches` through
+    /// the type (to cut the query's tokens for [`verify`] as the stored
+    /// filter was cut, and to read a query term), and a host does not.
+    ///
+    /// [`with_match_options`]: Self::with_match_options
+    /// [`verify`]: super::verify
+    pub match_options: Option<MatchOptions>,
 }
 
 impl TargetDescriptor {
@@ -120,7 +130,19 @@ impl TargetDescriptor {
             query_sql_domain,
             producible,
             reason,
+            match_options: None,
         }
+    }
+
+    /// The descriptor of a type whose match index is built under `options`:
+    /// such a type answers `matches` through its query twin
+    /// ([`operators`](Self::operators)). A type with a match index and no
+    /// options given answers no probabilistic operator, since `verify`
+    /// could not cut the query's tokens as the stored filter was cut.
+    #[must_use]
+    pub fn with_match_options(mut self, options: MatchOptions) -> Self {
+        self.match_options = Some(options);
+        self
     }
 
     /// The descriptor in its wire form: the object a guest's `se_targets`
@@ -153,18 +175,8 @@ impl TargetDescriptor {
                 "operators".to_string(),
                 FfiValue::Array(
                     target_operators(self)
-                        .into_iter()
-                        .map(|(op, index)| {
-                            FfiValue::Object(vec![
-                                ("operator".to_string(), text(op.name())),
-                                ("fidelity".to_string(), text(op.fidelity().name())),
-                                (
-                                    "arity".to_string(),
-                                    text(if op.takes_pair() { "pair" } else { "one" }),
-                                ),
-                                ("index".to_string(), text(index.key())),
-                            ])
-                        })
+                        .iter()
+                        .map(|(op, index)| operator_to_value(*op, index))
                         .collect(),
                 ),
             ),
@@ -173,11 +185,13 @@ impl TargetDescriptor {
 
     /// The operators the engine answers for a field that names this type,
     /// in [`OpSpec::ALL`]'s order: none for a type it does not produce or
-    /// that has no query twin, and otherwise each exact operator of one value
+    /// that has no query twin, and otherwise each operator of one value
     /// that one of the type's indexes answers for its plaintext kind
-    /// ([`OpSpec::answered_by`]). The query for each is the type's query
-    /// twin. A probabilistic operator and `between` are not answered through
-    /// a type yet: see [`query_term`](super::query_term)'s module.
+    /// ([`OpSpec::answered_by`]): the exact ones, and `matches` when the
+    /// type's match options are known ([`with_match_options`](Self::with_match_options)).
+    /// The query for each is the type's query twin. `between` is not
+    /// answered through a type yet: see [`query_term`](super::query_term)'s
+    /// module.
     pub fn operators(&self) -> Vec<OpSpec> {
         target_operators(self)
             .into_iter()

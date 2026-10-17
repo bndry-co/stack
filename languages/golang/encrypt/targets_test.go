@@ -39,9 +39,9 @@ func TestParseTargetsReadsEachEntry(t *testing.T) {
 	}
 	want := []record.Target{
 		{Name: "TextEq", Family: "Text", Suffix: "Eq", Plaintext: record.String, SQLDomain: "eql_v4_text_eq", Indexes: []record.Output{record.Equality}, Query: "TextEqQuery", QuerySQLDomain: "eql_v4.query_text_eq", Producible: true,
-			Operators: []record.TargetOperator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}},
-		{Name: "JSON", Family: "JSON", Plaintext: record.Untyped, SQLDomain: "eql_v4_json", Indexes: []record.Output{"json"}, Reason: "the JSON index is a new operation in the engine", Operators: []record.TargetOperator{}},
-		{Name: "IntegerOrdOre", Plaintext: record.Int64, Indexes: []record.Output{record.Ore}, Producible: true, Operators: []record.TargetOperator{
+			Operators: []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}},
+		{Name: "JSON", Family: "JSON", Plaintext: record.Untyped, SQLDomain: "eql_v4_json", Indexes: []record.Output{"json"}, Reason: "the JSON index is a new operation in the engine", Operators: []record.Operator{}},
+		{Name: "IntegerOrdOre", Plaintext: record.Int64, Indexes: []record.Output{record.Ore}, Producible: true, Operators: []record.Operator{
 			{Name: "lt", Fidelity: record.Exact, Index: record.Ore},
 			{Name: "between", Fidelity: record.Exact, Pair: true, Index: record.Ore},
 			{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match},

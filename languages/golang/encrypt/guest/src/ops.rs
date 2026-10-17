@@ -212,31 +212,6 @@ where
     encode_value(value)
 }
 
-/// Derive the EQL query value of one target field: a codec-encoded
-/// plaintext, the codec-encoded plan and the field's name (UTF-8) in, the
-/// query value's JSON bytes out — the operand `eql_v4.query_<name>` takes.
-/// Runs the EQL type's own query plan through this build's resolver
-/// ([`crate::targets`]); a build without EQL types refuses the plan before
-/// this is reached. No data key is minted: under the local backend the
-/// equality term is one PRF derivation.
-pub async fn query<K>(
-    cipher: &KeysetCipher<'_, K>,
-    value: &[u8],
-    plan: &[u8],
-    field: &[u8],
-) -> Result<Vec<u8>, u32>
-where
-    K: DataKeySource + Sync + 'static,
-{
-    let plan = parse_plan(plan)?;
-    let field = std::str::from_utf8(field)
-        .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
-    dynamic::record::query(cipher, &plan, field, decode_value(value)?, &resolver())
-        .map_err(|e| fail_dynamic(&e))?
-        .await
-        .map_err(|e| fail_error(&e))
-}
-
 // =============================================================================
 // Queries by operator
 // =============================================================================
@@ -431,6 +406,36 @@ pub fn targets() -> Result<Vec<u8>, u32> {
     )]))
 }
 
+/// The operators one field of a codec-encoded plan answers, as a
+/// codec-encoded list: one object per operator, in the order the engine
+/// lists them, each written by
+/// [`dynamic::operator_to_value`]:
+///
+/// ```text
+/// [ { "operator": "eq", "fidelity": "exact", "arity": "one", "index": "eq" }, ... ]
+/// ```
+///
+/// Exactly the operators [`query_term`] derives a term for on that field
+/// ([`dynamic::field_operators`]): the operators a field declared with
+/// indexes answers, and those its EQL type answers for a field that names
+/// one. The Go generator (`stashgen`) asks this for every sealed field it
+/// writes and generates one query method per entry, so it holds no copy of
+/// which index answers which operator. A field the plan does not have is
+/// [`STATUS_ENCODING`]. Needs no cipher.
+pub fn operators(plan: &[u8], field: &[u8]) -> Result<Vec<u8>, u32> {
+    let plan = parse_plan(plan)?;
+    let field = std::str::from_utf8(field)
+        .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
+    let operators =
+        dynamic::field_operators(&plan, field, &resolver()).map_err(|e| fail_dynamic(&e))?;
+    encode_value(FfiValue::Array(
+        operators
+            .iter()
+            .map(|(operator, index)| dynamic::operator_to_value(*operator, index))
+            .collect(),
+    ))
+}
+
 // =============================================================================
 // Boundary validation
 // =============================================================================
@@ -462,37 +467,6 @@ pub mod validate {
     pub fn record(source: &[u8], plan: &[u8]) -> Result<(), u32> {
         let plan = parse_plan(plan)?;
         dynamic::record::check_source(decode_value(source)?, &plan).map_err(|e| fail_dynamic(&e))
-    }
-
-    /// A target query's inputs, as [`query`] takes them: the plan parses
-    /// against this build's resolver, the field is one of its target fields,
-    /// and the value is of the field's declared kind.
-    pub fn query(value: &[u8], plan: &[u8], field: &[u8]) -> Result<(), u32> {
-        let plan = parse_plan(plan)?;
-        let field = std::str::from_utf8(field)
-            .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
-        let refuse = |reason| {
-            fail_dynamic(&dynamic::Error::Plan {
-                field: Some(field.to_owned()),
-                reason,
-            })
-        };
-        let field = plan
-            .fields()
-            .iter()
-            .find(|candidate| candidate.name() == field)
-            .ok_or_else(|| refuse(dynamic::Reason::NoSuchField))?;
-        if field.target().is_none() {
-            return Err(refuse(dynamic::Reason::NotATarget));
-        }
-        let value = decode_value(value)?;
-        if field.field_type().is_some_and(|kind| !kind.holds(&value)) {
-            return Err(fail_dynamic(&dynamic::Error::Source {
-                field: Some(field.name().to_owned()),
-                reason: dynamic::Reason::FieldType,
-            }));
-        }
-        Ok(())
     }
 
     /// A query's inputs, as [`query_term`](super::query_term) takes them:
@@ -940,11 +914,22 @@ mod tests {
         );
         assert!(matches!(&values[1].1, FfiValue::String(s) if s.risky_ref() == b"likes cats"));
 
-        // The query value matches the stored term.
+        // The eq query's term is the type's query value, and it matches the
+        // stored term.
         let probe = encoded(text("alice@example.com"));
-        validate::query(&probe, &plan, b"email").expect("a target field");
-        let query_bytes = block_on(query(&keyset, &probe, &plan, b"email")).expect("derives");
-        let probe_json: serde_json::Value = serde_json::from_slice(&query_bytes).expect("JSON");
+        validate::query_term(&probe, &plan, b"email", b"eq").expect("a target field answers eq");
+        let term = block_on(query_term(&keyset, &probe, &plan, b"email", b"eq")).expect("derives");
+        let FfiValue::Object(term) = decode_value(&term).expect("a value") else {
+            panic!("a query term is an object")
+        };
+        assert!(
+            matches!(&term[3].1, FfiValue::String(s) if s.risky_ref() == b"eql_v4.query_text_eq")
+        );
+        let FfiValue::Bytes(query_bytes) = &term[4].1 else {
+            panic!("the term is the query value's bytes")
+        };
+        let probe_json: serde_json::Value =
+            serde_json::from_slice(query_bytes.risky_ref()).expect("JSON");
         assert_eq!(
             probe_json["hm"], eql["hm"],
             "the query matches the stored value"
@@ -956,15 +941,15 @@ mod tests {
         // A query on a sealed field, an unknown field, or a wrong kind is
         // refused at validation.
         assert_eq!(
-            validate::query(&probe, &plan, b"notes"),
+            validate::query_term(&probe, &plan, b"notes", b"eq"),
             Err(STATUS_ENCODING)
         );
         assert_eq!(
-            validate::query(&probe, &plan, b"nope"),
+            validate::query_term(&probe, &plan, b"nope", b"eq"),
             Err(STATUS_ENCODING)
         );
         assert_eq!(
-            validate::query(&encoded(FfiValue::UInt32(1)), &plan, b"email"),
+            validate::query_term(&encoded(FfiValue::UInt32(1)), &plan, b"email", b"eq"),
             Err(STATUS_ENCODING)
         );
     }

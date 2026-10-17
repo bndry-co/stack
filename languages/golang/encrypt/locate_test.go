@@ -10,7 +10,7 @@ import (
 )
 
 // A record stores match text that cuts no token as the empty filter, so the
-// term-failure locator must not blame a row for it. Derive asks the query
+// term-failure locator must not blame a row for it. derive asks the query
 // path, which refuses that text; the locator skips that refusal and goes on
 // to the rows after it.
 func TestLocateTermFailureSkipsShortMatchText(t *testing.T) {
@@ -28,9 +28,9 @@ func TestLocateTermFailureSkipsShortMatchText(t *testing.T) {
 
 	// The query path refuses the short email, so without the skip the
 	// locator would name row 0 for it.
-	_, derr := cph.Derive(ctx, plan, "email", record.Match, "ab")
+	_, derr := cph.derive(ctx, plan, "email", record.Match, "ab")
 	if !queryOnlyRefusal(record.Match, derr) {
-		t.Fatalf("Derive of a short email: %v, want the empty-term-text refusal", derr)
+		t.Fatalf("derive of a short email: %v, want the empty-term-text refusal", derr)
 	}
 
 	sentinel := fmt.Errorf("%w: from the record call", ErrTerm)

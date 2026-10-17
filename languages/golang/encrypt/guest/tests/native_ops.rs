@@ -1763,41 +1763,47 @@ fn the_catalog_lists_each_types_operators() {
             panic!("{name}: operators is a list");
         };
         let producible = matches!(entry(fields, "producible"), FfiValue::Bool(true));
-        if name == "TextEq" {
-            assert_eq!(operators.len(), 1, "TextEq answers eq alone");
-            let FfiValue::Object(eq) = &operators[0] else {
+        let only = |want: [(&str, &str); 4]| {
+            assert_eq!(operators.len(), 1, "{name} answers one operator");
+            let FfiValue::Object(op) = &operators[0] else {
                 panic!("an object");
             };
-            let eq: Vec<(&str, &str)> = eq.iter().map(|(k, v)| (k.as_str(), text(v))).collect();
-            assert_eq!(
-                eq,
-                [
-                    ("operator", "eq"),
-                    ("fidelity", "exact"),
-                    ("arity", "one"),
-                    ("index", "eq")
-                ]
-            );
-        } else {
-            // A type the engine does not produce answers nothing, and no
-            // produced type but TextEq answers anything yet: TextMatch has a
-            // twin, but the catalog does not carry the match options a
-            // probabilistic operator's `verify` cuts tokens by.
-            let why = if producible {
-                "is produced but answers no operator yet"
-            } else {
-                "is not produced, so answers nothing"
-            };
-            assert!(operators.is_empty(), "{name} {why}");
+            let op: Vec<(&str, &str)> = op.iter().map(|(k, v)| (k.as_str(), text(v))).collect();
+            assert_eq!(op, want, "{name}");
+        };
+        match name.as_str() {
+            "TextEq" => only([
+                ("operator", "eq"),
+                ("fidelity", "exact"),
+                ("arity", "one"),
+                ("index", "eq"),
+            ]),
+            "TextMatch" => only([
+                ("operator", "matches"),
+                ("fidelity", "probabilistic"),
+                ("arity", "one"),
+                ("index", "match"),
+            ]),
+            _ => {
+                // A type the engine does not produce answers nothing, and
+                // the other produced types are storage-only: no twin.
+                let why = if producible {
+                    "is storage-only, so answers nothing"
+                } else {
+                    "is not produced, so answers nothing"
+                };
+                assert!(operators.is_empty(), "{name} {why}");
+            }
         }
     }
 }
 
-/// `TextMatch` is produced and has a query twin, but answers no operator
-/// yet: a `matches` (or any) query on a field typed with it is refused as
-/// not answered, never sent as the twin with no `verify` to check its rows.
+/// `TextMatch` answers `matches` through its query twin and nothing else:
+/// the term is a `TextMatchQuery` under `eql_v4.query_text_match`, and
+/// `verify` and `target_limit` run under EQL's match options, reading the
+/// twin's `bf`. `eq` is refused as not answered.
 #[test]
-fn a_text_match_field_answers_no_operator_yet() {
+fn a_text_match_field_answers_matches_through_its_twin() {
     if !stack_encrypt_guest::targets::HOLDS_EQL {
         return;
     }
@@ -1807,20 +1813,168 @@ fn a_text_match_field_answers_no_operator_yet() {
         "name",
         obj(vec![("context", label("name")), ("target", s("TextMatch"))]),
     )]));
-    for operator in ["matches", "eq"] {
-        assert_eq!(
-            block_on(ops::query_term(
-                &keyset,
-                &encode(s("alice")),
-                &plan,
-                b"name",
-                operator.as_bytes(),
-            ))
-            .map(|_| ()),
-            Err(STATUS_ENCODING),
-            "{operator} on a TextMatch field"
-        );
+    let term = block_on(ops::query_term(
+        &keyset,
+        &encode(s("Alice")),
+        &plan,
+        b"name",
+        b"matches",
+    ))
+    .expect("matches on a TextMatch field");
+    let FfiValue::Object(term) = decode(&term) else {
+        panic!("a term is an object");
+    };
+    let field = |key: &str| &term.iter().find(|(k, _)| k == key).expect(key).1;
+    assert_eq!(text(field("fidelity")), "probabilistic");
+    assert_eq!(text(field("index")), "match");
+    assert_eq!(text(field("domain")), "eql_v4.query_text_match");
+    let FfiValue::Bytes(twin) = field("term") else {
+        panic!("the term is bytes");
+    };
+    let twin: serde_json::Value = serde_json::from_slice(twin.risky_ref()).expect("JSON");
+    let bits = twin["bf"].as_array().expect("a bf").len();
+    assert!(
+        bits > 0 && bits <= 3 * 6,
+        "3 trigrams of k = 6 bits: {bits}"
+    );
+
+    let verified = ops::verify(
+        &encode(s("ALICE")),
+        &encode(FfiValue::Array(vec![
+            s("say alice"),
+            s("alison"),
+            FfiValue::Null,
+        ])),
+        &plan,
+        b"name",
+        b"matches",
+    )
+    .expect("verify");
+    let FfiValue::Array(verified) = decode(&verified) else {
+        panic!("a list");
+    };
+    let verified: Vec<bool> = verified
+        .iter()
+        .map(|v| matches!(v, FfiValue::Bool(true)))
+        .collect();
+    assert_eq!(verified, [true, false, false]);
+    let FfiValue::Bytes(twin_bytes) = field("term") else {
+        unreachable!()
+    };
+    let limit = ops::target_limit(
+        twin_bytes.risky_ref(),
+        &encode(obj(vec![("rows", FfiValue::UInt64(1000))])),
+        &plan,
+        b"name",
+        b"matches",
+        10,
+    )
+    .expect("target_limit reads the twin's bf");
+    assert!(
+        matches!(decode(&limit), FfiValue::Null),
+        "a declared count and no measured histogram give no finite fetch"
+    );
+
+    assert_eq!(
+        block_on(ops::query_term(
+            &keyset,
+            &encode(s("alice")),
+            &plan,
+            b"name",
+            b"eq",
+        ))
+        .map(|_| ()),
+        Err(STATUS_ENCODING),
+        "eq on a TextMatch field"
+    );
+}
+
+/// The operators of one field, each as `(operator, fidelity, arity, index)`.
+fn operators_of(plan: &[u8], field: &str) -> Vec<[String; 4]> {
+    let FfiValue::Array(items) =
+        decode(&ops::operators(plan, field.as_bytes()).expect("operators"))
+    else {
+        panic!("operators are a list");
+    };
+    items
+        .iter()
+        .map(|item| {
+            let FfiValue::Object(entries) = item else {
+                panic!("an operator is an object");
+            };
+            let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+            assert_eq!(keys, ["operator", "fidelity", "arity", "index"]);
+            [0, 1, 2, 3].map(|i| text(&entries[i].1).to_owned())
+        })
+        .collect()
+}
+
+/// A field's operators are the queries the engine answers on it, with
+/// their fidelity, arity and index: what the generator writes one method
+/// for. Every operator listed derives a term, and every other is refused.
+#[test]
+fn a_fields_operators_are_the_queries_it_answers() {
+    let row = |op: &str, fidelity: &str, arity: &str, index: &str| {
+        [op, fidelity, arity, index].map(str::to_owned)
+    };
+    assert_eq!(
+        operators_of(&plan(), "age"),
+        [
+            row("eq", "exact", "one", "eq"),
+            row("lt", "exact", "one", "ore"),
+            row("lte", "exact", "one", "ore"),
+            row("gt", "exact", "one", "ore"),
+            row("gte", "exact", "one", "ore"),
+            row("between", "exact", "pair", "ore"),
+        ]
+    );
+    assert_eq!(
+        operators_of(&plan(), "name"),
+        [row("matches", "probabilistic", "one", "match")]
+    );
+    for (field, input) in [("age", FfiValue::UInt32(7)), ("name", s("alice smith"))] {
+        let listed: Vec<String> = operators_of(&plan(), field)
+            .into_iter()
+            .map(|[op, ..]| op)
+            .collect();
+        for op in ["eq", "lt", "lte", "gt", "gte", "between", "matches"] {
+            let input = if op == "between" {
+                FfiValue::Array(vec![input.clone(), input.clone()])
+            } else {
+                input.clone()
+            };
+            let checked =
+                ops::validate::query_term(&encode(input), &plan(), field.as_bytes(), op.as_bytes());
+            if listed.iter().any(|l| l == op) {
+                assert_eq!(checked, Ok(()), "{field} {op} is listed and answered");
+            } else {
+                assert_eq!(checked, Err(STATUS_ENCODING), "{field} {op} is not listed");
+            }
+        }
     }
+    assert_eq!(
+        ops::operators(&plan(), b"phone"),
+        Err(STATUS_ENCODING),
+        "a field the plan lacks"
+    );
+    assert_eq!(ops::operators(b"\xff", b"age"), Err(STATUS_ENCODING));
+}
+
+/// In the `eql` build a field that names an EQL type answers what the
+/// catalog lists for the type: `TextEq` answers `eq`.
+#[test]
+fn a_target_fields_operators_are_its_types() {
+    if !stack_encrypt_guest::targets::HOLDS_EQL {
+        return;
+    }
+    let plan = encode(obj(vec![(
+        "email",
+        obj(vec![("context", label("email")), ("target", s("TextEq"))]),
+    )]));
+    assert_eq!(
+        operators_of(&plan, "email"),
+        [["eq", "exact", "one", "eq"].map(str::to_owned)]
+    );
 }
 
 // =============================================================================

@@ -1,16 +1,22 @@
 package encrypt_test
 
 import (
+	"bytes"
 	"context"
+	"database/sql/driver"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
@@ -50,6 +56,7 @@ type queryFixture struct {
 	TargetLimit []struct {
 		Field    string `json:"field"`
 		Operator string `json:"operator"`
+		Input    string `json:"input"`
 		Term     string `json:"term"`
 		Want     uint64 `json:"want"`
 		Stats    struct {
@@ -383,15 +390,221 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	for _, target := range targets {
 		switch {
 		case target.Name == "TextEq":
-			want := []record.TargetOperator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
+			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
 			if len(target.Operators) != 1 || target.Operators[0] != want[0] {
 				t.Fatalf("TextEq answers %+v, want %+v", target.Operators, want)
 			}
+		case target.Name == "TextMatch":
+			want := record.Operator{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match}
+			if len(target.Operators) != 1 || target.Operators[0] != want {
+				t.Fatalf("TextMatch answers %+v, want %+v", target.Operators, want)
+			}
 		case len(target.Operators) != 0:
-			// No produced type but TextEq answers anything yet: TextMatch has
-			// a twin, but the catalog does not carry the match options its
-			// Verify would cut tokens by.
+			// Every other type is storage-only or not produced.
 			t.Fatalf("%s (producible %v) answers %+v, want none", target.Name, target.Producible, target.Operators)
 		}
+	}
+}
+
+// The engine lists the operators each field of a plan answers, with the
+// fidelity, arity and index of each: what stashgen writes one method for.
+func TestTheCheckerListsAFieldsOperators(t *testing.T) {
+	wasm, err := encrypt.EmbeddedGuest()
+	if errors.Is(err, encrypt.ErrGuestNotBuilt) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	checker, err := encrypt.NewCheckerOver(ctx, wasm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = checker.Close() }()
+	exact := func(name string, index record.Output) record.Operator {
+		return record.Operator{Name: name, Fidelity: record.Exact, Index: index}
+	}
+	for field, want := range map[string][]record.Operator{
+		"email": {exact("eq", record.Equality)},
+		"age": {
+			exact("eq", record.Equality), exact("lt", record.Ore), exact("lte", record.Ore),
+			exact("gt", record.Ore), exact("gte", record.Ore),
+			{Name: "between", Fidelity: record.Exact, Pair: true, Index: record.Ore},
+		},
+		"name": {{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match}},
+	} {
+		got, err := checker.Operators(ctx, queryPlan, field)
+		if err != nil {
+			t.Fatalf("%s: %v", field, err)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%s answers %+v, want %+v", field, got, want)
+		}
+	}
+	if _, err := checker.Operators(ctx, queryPlan, "phone"); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a field the plan lacks: %v, want ErrEncoding", err)
+	}
+}
+
+// The generated query methods of Profile, whose declaration is the query
+// fixture's, derive the terms the fixture records: one method per operator
+// the engine answers, each returning the operator's query type.
+func TestGeneratedQueriesAreTheRustFixtures(t *testing.T) {
+	f := readQueryFixture(t)
+	c := queryFixtureClient(t, f)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	fields := testusers.QueryProfileFields
+	want := func(field, operator string) [][]byte {
+		t.Helper()
+		for _, q := range f.Queries {
+			if q.Field == field && q.Operator == operator {
+				return fixtureTerms(t, q.Term.Term)
+			}
+		}
+		t.Fatalf("the fixture has no %s on %s", operator, field)
+		return nil
+	}
+	check := func(name string, got []byte, err error, want []byte) {
+		t.Helper()
+		if err != nil || !bytes.Equal(got, want) {
+			t.Errorf("%s = %x, %v; want %x", name, got, err, want)
+		}
+	}
+	email, err := fields.Email.Eq(ctx, cipher, "bob@example.com")
+	check("Email.Eq", email, err, want("email", "eq")[0])
+	age, err := fields.Age.Eq(ctx, cipher, 34)
+	check("Age.Eq", age, err, want("age", "eq")[0])
+	lt, err := fields.Age.Lt(ctx, cipher, 40)
+	check("Age.Lt", lt, err, want("age", "lt")[0])
+	lte, err := fields.Age.Lte(ctx, cipher, 40)
+	check("Age.Lte", lte, err, want("age", "lte")[0])
+	gt, err := fields.Age.Gt(ctx, cipher, 18)
+	check("Age.Gt", gt, err, want("age", "gt")[0])
+	gte, err := fields.Age.Gte(ctx, cipher, 18)
+	check("Age.Gte", gte, err, want("age", "gte")[0])
+	between, err := fields.Age.Between(ctx, cipher, 18, 65)
+	bounds := want("age", "between")
+	check("Age.Between low", between.Low, err, bounds[0])
+	check("Age.Between high", between.High, err, bounds[1])
+	name, err := fields.Name.Matches(ctx, cipher, "alice")
+	check("Name.Matches", name.Term(), err, want("name", "matches")[0])
+
+	// Each query binds as a parameter: driver.Valuer gives the term's bytes.
+	for label, v := range map[string]driver.Valuer{"Eq": email, "Lt": lt, "Between.Low": between.Low, "Matches": name} {
+		got, err := v.Value()
+		if b, ok := got.([]byte); err != nil || !ok || len(b) == 0 {
+			t.Errorf("%s.Value() = %T %v", label, got, err)
+		}
+	}
+	// An inverted range is the typed path's refusal, from the engine.
+	if _, err := fields.Age.Between(ctx, cipher, 65, 18); !errors.Is(err, encrypt.ErrTerm) {
+		t.Errorf("an inverted range: %v, want ErrTerm", err)
+	}
+}
+
+// A matches query verifies a page of decrypted values in one call, as the
+// fixture's page verified, and sizes its fetch as the fixture's limits.
+func TestAMatchesQueryVerifiesAndSizesAsTheRustFixtures(t *testing.T) {
+	f := readQueryFixture(t)
+	c := queryFixtureClient(t, f)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	q, err := testusers.QueryProfileFields.Name.Matches(ctx, cipher, f.Verify.Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A string field has no null: the fixture's null value is left out.
+	var page []string
+	var verified []bool
+	for i, v := range f.Verify.Values {
+		if v != nil {
+			page = append(page, *v)
+			verified = append(verified, f.Verify.Verified[i])
+		}
+	}
+	got, err := q.Verify(ctx, page)
+	if err != nil || fmt.Sprint(got) != fmt.Sprint(verified) {
+		t.Fatalf("Verify(%q) = %v, %v; want %v", page, got, err, verified)
+	}
+	if got, err := q.Verify(ctx, nil); err != nil || len(got) != 0 {
+		t.Fatalf("an empty page: %v, %v", got, err)
+	}
+	for i, l := range f.TargetLimit {
+		q, err := testusers.QueryProfileFields.Name.Matches(ctx, cipher, l.Input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hex.EncodeToString(q.Term()) != l.Term {
+			t.Fatalf("case %d: Matches(%q) = %x, the fixture's term is %s", i, l.Input, q.Term(), l.Term)
+		}
+		stats := encrypt.Stats{Rows: l.Stats.Rows, Confidence: l.Stats.Confidence}
+		for _, b := range l.Stats.Histogram {
+			stats.Histogram = append(stats.Histogram, encrypt.Bucket{Bits: uint32(b[0]), Rows: b[1]})
+		}
+		limit, err := q.TargetLimit(ctx, l.Want, stats)
+		if err != nil {
+			t.Fatalf("case %d: %v", i, err)
+		}
+		rows, bounded := limit.Rows()
+		if (l.Limit == nil) == bounded || (l.Limit != nil && rows != *l.Limit) {
+			t.Fatalf("case %d: %d (bounded %v), want %v", i, rows, bounded, l.Limit)
+		}
+	}
+	var zero encrypt.MatchQuery[string]
+	if _, err := zero.Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("the zero MatchQuery binds: %v", err)
+	}
+	var zeroEQL encrypt.EQLMatchQuery[[]byte, string]
+	if _, err := zeroEQL.Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("the zero EQLMatchQuery binds: %v", err)
+	}
+	if _, err := zeroEQL.Verify(ctx, page); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("the zero EQLMatchQuery verifies: %v", err)
+	}
+	if zero.String() != "encrypt.MatchQuery{}" || zeroEQL.String() != "encrypt.EQLMatchQuery{}" {
+		t.Fatalf("the zero queries print as %q and %q", zero.String(), zeroEQL.String())
+	}
+	// A query with no cipher is an encoding error, from generated code as
+	// from the library.
+	if _, err := testusers.QueryProfileFields.Name.Matches(ctx, nil, "alice"); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("Matches with no cipher: %v", err)
+	}
+	if _, err := testusers.QueryProfileFields.Email.Eq(ctx, nil, "bob@example.com"); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("Eq with no cipher: %v", err)
+	}
+	if _, err := zero.Verify(ctx, page); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("the zero MatchQuery verifies: %v", err)
+	}
+	if _, err := zero.TargetLimit(ctx, 10, encrypt.Stats{Rows: 1}); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("the zero MatchQuery sizes a fetch: %v", err)
+	}
+}
+
+// A matches query holds its text for Verify and never prints it: not
+// through fmt with any verb, not through slog.
+func TestAMatchesQueryNeverPrintsItsText(t *testing.T) {
+	f := readQueryFixture(t)
+	c := queryFixtureClient(t, f)
+	const text = "zebrafish"
+	q, err := testusers.QueryProfileFields.Name.Matches(context.Background(), c.DefaultKeyset(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	fmt.Fprintf(&out, "%v %+v %#v %s %q %x %d", q, q, q, q, q, q, q)
+	// A verb fmt reports as wrong skips Format and prints by reflection, as
+	// it does a MatchQuery in an unexported struct field.
+	type search struct{ q encrypt.MatchQuery[string] }
+	held := search{q: q}
+	fmt.Fprintf(&out, " %p %+v %v %#v", q, held, held, held)
+	slog.New(slog.NewTextHandler(&out, nil)).Info("query", "q", q, "held", held)
+	slog.New(slog.NewJSONHandler(&out, nil)).Info("query", "q", q, "held", held)
+	if strings.Contains(out.String(), text) || strings.Contains(out.String(), hex.EncodeToString([]byte(text))) {
+		t.Fatalf("the text was printed: %s", out.String())
+	}
+	if !strings.Contains(out.String(), `field: "name"`) {
+		t.Fatalf("the field is not named: %s", out.String())
 	}
 }
