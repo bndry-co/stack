@@ -1012,11 +1012,12 @@ where
     {
         // `check` ran before any keyset was resolved; a chain prepared on
         // its own is held to the same refusal, so no term is derived from a
-        // value the index refuses.
-        if let Err(error) = self.inner.index.check(&self.inner.value) {
-            return Pending::failed(keyset, error);
-        }
-        let verifier = self.inner.index.verifier(&self.inner.value);
+        // value the index refuses. `admit` checks and takes the verifier in
+        // one pass over the value.
+        let verifier = match self.inner.index.admit(&self.inner.value) {
+            Ok(verifier) => verifier,
+            Err(error) => return Pending::failed(keyset, error),
+        };
         self.inner
             .prepare(keyset, scoped)
             .map(move |term| I::query(verifier, term, QueryToken::new()))

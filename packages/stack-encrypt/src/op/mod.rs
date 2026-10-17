@@ -66,9 +66,7 @@ use stack_kms::MaybeSend;
 pub(crate) mod stats;
 pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE, MAX_ROWS};
 
-use crate::sem::{
-    DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, QueryTokens, TermError,
-};
+use crate::sem::{DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, QueryTokens};
 use crate::target::{Equality, Index, Match};
 use crate::{Error, PlanError};
 
@@ -305,12 +303,21 @@ pub trait Supports<Op: Operator, S>: Index<S> {
     /// Why this index cannot answer `Op` as configured, or over `value`, if
     /// it cannot: a match index whose [`MatchCase`] disagrees with its
     /// options ([`PlanError::MatchCase`]), or a match query of text that
-    /// cuts no token ([`TermError::EmptyTermText`]), whose filter would
+    /// cuts no token ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)), whose filter would
     /// match every row. Run when the query is awaited, before any key is
     /// requested; an index that refuses nothing returns `Ok(())`.
     fn check(&self, value: &S) -> Result<(), Error>;
     /// The verifier of the query's plaintext `value`.
     fn verifier(&self, value: &S) -> Self::Verifier;
+    /// [`check`](Self::check), then [`verifier`](Self::verifier): the query's
+    /// verifier of `value`, or why the index refuses it. A query chain
+    /// calls this when it derives the term. An index whose check and verifier
+    /// do the same work overrides it to do that work once: a match index
+    /// tokenises the query's value for both.
+    fn admit(&self, value: &S) -> Result<Self::Verifier, Error> {
+        self.check(value)?;
+        Ok(self.verifier(value))
+    }
     /// The query term, from the verifier and the term the index derived for
     /// the query's value. Only a query chain calls this: `QueryToken`
     /// cannot be made outside this crate, so no caller can pair one query's tokens
@@ -350,6 +357,12 @@ where
     type Query = MatchQuery<O>;
     type Verifier = QueryTokens;
     fn check(&self, value: &S) -> Result<(), Error> {
+        self.admit(value).map(drop)
+    }
+    fn verifier(&self, value: &S) -> QueryTokens {
+        QueryTokens::of::<O>(value.as_ref())
+    }
+    fn admit(&self, value: &S) -> Result<QueryTokens, Error> {
         let folds = O::options().downcase;
         if folds != O::Case::FOLDS {
             return Err(PlanError::MatchCase {
@@ -358,20 +371,12 @@ where
             }
             .into());
         }
-        // Options the index cannot use are refused before the text is
-        // tokenised, as term derivation refuses them: an n-gram length of
-        // zero would otherwise reach the tokenizer.
-        let _mask = O::options().validate()?;
-        // A query with no tokens would match every row. The stored side
-        // keeps such a value as the empty filter; the query side refuses it
-        // here, before any term is derived.
-        if QueryTokens::of::<O>(value.as_ref()).is_empty() {
-            return Err(TermError::EmptyTermText.into());
-        }
-        Ok(())
-    }
-    fn verifier(&self, value: &S) -> QueryTokens {
-        QueryTokens::of::<O>(value.as_ref())
+        // Options the index cannot use, checked before the text is
+        // tokenised (an n-gram length of zero would otherwise reach the
+        // tokenizer), then a query with no tokens, which would match every
+        // row: the stored side keeps such a value as the empty filter, the
+        // query side refuses it here, before any term is derived.
+        Ok(QueryTokens::of_query(value.as_ref(), &O::options())?)
     }
     fn query(tokens: QueryTokens, term: MatchTerms<O>, _: QueryToken) -> MatchQuery<O> {
         MatchQuery::new(term, tokens)

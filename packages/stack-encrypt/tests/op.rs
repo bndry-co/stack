@@ -483,44 +483,6 @@ async fn a_query_names_its_context_before_or_after_the_index() {
     assert_eq!(before, after);
 }
 
-/// A configuration with an n-gram length of zero, which `MatchOptions`
-/// refuses when a term is derived.
-struct ZeroGram;
-impl MatchConfig for ZeroGram {
-    fn options() -> MatchOptions {
-        MatchOptions {
-            tokenizer: stack_encrypt::sem::Tokenizer::Ngram { length: 0 },
-            ..Default::default()
-        }
-    }
-}
-impl MatchCase for ZeroGram {
-    type Case = op::CaseInsensitive;
-}
-
-#[tokio::test]
-async fn a_match_query_under_invalid_options_is_refused_not_a_panic() {
-    let cipher = stack_cipher().await;
-    let plan = Plan::context("users/name")
-        .with::<String, _>(Match::<ZeroGram>::new())
-        .build()
-        .unwrap();
-    let refused = cipher
-        .query(op::Matches, "Bob")
-        .via(Match::<ZeroGram>::new())
-        .on(&plan)
-        .await;
-    assert!(
-        matches!(
-            refused,
-            Err(Error::Term(stack_encrypt::sem::TermError::InvalidOptions(
-                _
-            )))
-        ),
-        "{refused:?}"
-    );
-}
-
 #[tokio::test]
 async fn a_refused_operator_query_loads_no_keyset() {
     let (cipher, loads) = loads_counting_cipher().await;

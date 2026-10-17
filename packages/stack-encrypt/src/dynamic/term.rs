@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 
 use super::{utf8, Error, Reason, Value};
 use crate::sem::{
-    CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, MatchOptions, QueryTokens, TermError, Tokenizer,
+    CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, MatchOptions, QueryTokens, Tokenizer,
 };
 use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
 use crate::{IntoPrfContext, KeysetCipher, NonEmpty};
@@ -297,7 +297,7 @@ impl Scalar {
 /// binding turns this into a boundary rejection). [`Error::Cipher`] if the
 /// derivation itself fails, or for the one query value the engine refuses:
 /// match text that cuts no token under the index's options
-/// ([`TermError::EmptyTermText`]), whose filter would match every row. That
+/// ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)), whose filter would match every row. That
 /// refusal is the query path's alone; the record path stores such a value
 /// as the empty filter, which no query matches.
 pub async fn term<'c, K, D>(
@@ -311,14 +311,10 @@ where
     D: IntoPrfContext<'c>,
 {
     if let (IndexSpec::Match(options), Scalar::Text(text)) = (kind, &scalar) {
-        // Options the index cannot use are refused before the text is
-        // tokenised, as the record path refuses them.
-        let _mask = options
-            .validate()
-            .map_err(|error| Error::Cipher(error.into()))?;
-        if QueryTokens::under(text, options).is_empty() {
-            return Err(Error::Cipher(TermError::EmptyTermText.into()));
-        }
+        // The query chain's rule, from the same helper: options the index
+        // cannot use, then text that cuts no token.
+        let _tokens =
+            QueryTokens::of_query(text, options).map_err(|error| Error::Cipher(error.into()))?;
     }
     scalar_term(cipher, scalar, kind, context)?
         .await
@@ -572,6 +568,7 @@ impl Index<Value> for IndexSpec {
 mod tests {
     use super::*;
     use crate::dynamic::{context, Output};
+    use crate::sem::TermError;
     use crate::{nonempty, StackCipher};
     use stack_kms::FakeDataKeySource;
 

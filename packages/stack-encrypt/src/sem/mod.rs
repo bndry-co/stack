@@ -798,10 +798,21 @@ impl QueryTokens {
         )))
     }
 
-    /// Whether the text cut no token at all: the one query the library
-    /// refuses, because its filter would match every row.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    /// The tokens of a query's `text` under `options`, or why the query is
+    /// refused: options the index cannot use
+    /// ([`TermError::InvalidOptions`]), checked before the text is
+    /// tokenised, or text that cuts no token ([`TermError::EmptyTermText`]),
+    /// whose filter would match every row. The one rule for a match query:
+    /// the query chain and the `dynamic` path both apply it, so they cannot
+    /// disagree on what they refuse. The stored side keeps token-less text
+    /// as the empty filter instead.
+    pub(crate) fn of_query(text: &str, options: &MatchOptions) -> Result<Self, TermError> {
+        let _mask = options.validate()?;
+        let tokens = Self::under(text, options);
+        if tokens.0.is_empty() {
+            return Err(TermError::EmptyTermText);
+        }
+        Ok(tokens)
     }
 }
 
@@ -1401,6 +1412,31 @@ mod tests {
         );
         assert!(!crate::op::Probabilistic::verify(&query, "anything at all"));
         assert!(!crate::op::Probabilistic::verify(&query, ""));
+    }
+
+    /// A match query's one rule: options the index cannot use are refused
+    /// before the text is tokenised, then text that cuts no token; text
+    /// that cuts one comes back as its tokens.
+    #[test]
+    fn a_query_is_refused_for_its_options_then_for_cutting_no_token() {
+        let zero = MatchOptions {
+            tokenizer: Tokenizer::Ngram { length: 0 },
+            ..Default::default()
+        };
+        assert!(matches!(
+            QueryTokens::of_query("", &zero),
+            Err(TermError::InvalidOptions(_))
+        ));
+        let options = MatchOptions::default();
+        assert!(matches!(
+            QueryTokens::of_query("al", &options),
+            Err(TermError::EmptyTermText)
+        ));
+        let tokens = QueryTokens::of_query("ALICE", &options).expect("cuts tokens");
+        assert_eq!(
+            tokens.0.as_slice(),
+            QueryTokens::under("alice", &options).0.as_slice()
+        );
     }
 
     /// The Bloom fold reads a token *stream*: handed a map-shaped PRF input
