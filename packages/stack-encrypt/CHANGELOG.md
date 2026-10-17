@@ -52,8 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MatchConfig::expected_tokens()` prior; `op::Stats::measured(rows,
   histogram)` uses a histogram of the stored filters' set-bit counts. With
   neither, the limit is `Limit::Unbounded`, and the caller pages with a
-  cursor. A limit never exceeds `op::MAX_ROWS` (`i64::MAX`), the largest
-  SQL `LIMIT`. The bound assumes a non-matching row shares no token with
+  cursor. A `want` of 0 is `Limit::Rows(0)`. A limit, and `fetch_or`'s
+  page, never exceeds `op::MAX_ROWS` (`i64::MAX`), the largest SQL `LIMIT`.
+  `rows` counts the non-NULL rows; a table never analysed has an unknown
+  count, not 0, and gets no `Stats` (the docs give the catalog read). The
+  bound assumes a non-matching row shares no token with
   the query, so on natural text its confidence is nominal; `verify` still
   decides every row.
 

@@ -398,18 +398,34 @@ query has. The sample bounds the cost on a large table; `TABLESAMPLE` is a
 page sample, which is fine for a distribution and unsuited to an exact count.
 It is also a sample of pages, so on a table of a few thousand rows a 1%
 sample can select none; below that size the clause is dropped and the whole
-table is read, which costs nothing worth saving. `rows` comes from
-`SELECT greatest(reltuples, 0) FROM pg_class WHERE oid = 'users'::regclass`,
-a catalog read; `reltuples` is −1 for a table that has never been vacuumed
-or analysed, hence the `greatest`. A `Limit` never exceeds `i64::MAX`, the
-largest `LIMIT` PostgreSQL takes. An empty histogram falls back to the declared prior.
+table is read, which costs nothing worth saving. `rows` counts the rows the
+predicate can match, the non-NULL ones, since the histogram's pass rate is
+over those and a NULL never passes. One catalog read gives it:
+
+```sql
+SELECT (c.reltuples * (1 - coalesce(s.null_frac, 0)))::bigint
+FROM pg_class c
+LEFT JOIN pg_stats s
+  ON s.schemaname = 'public' AND s.tablename = 'users' AND s.attname = 'name'
+WHERE c.oid = 'users'::regclass AND c.reltuples >= 0
+```
+
+`reltuples` is −1 for a table that has never been vacuumed or analysed,
+such as one just bulk-loaded. That is an unknown count, not an empty
+table, so the statement returns no row and the application builds no
+`Stats`: it pages with a cursor, as for `Unbounded`, or runs `ANALYZE`.
+Clamping −1 to 0 would give λ = 0 and a confident fetch of exactly `want`.
+A `Limit` never exceeds `i64::MAX`, the largest `LIMIT` PostgreSQL takes.
+An empty histogram falls back to the declared prior.
 
 `target_limit` returns a `Limit`: `Rows(n)`, or `Unbounded` when the
 statistics say nothing about the stored filters (no prior and no
-histogram) or the confidence is not below 1. `fetch_or(page)` reads either
-as a fetch size, for a caller that pages anyway. Past ten million expected
-false positives the quantile is the conservative `λ + 8√λ`, since the query
-is hopeless at that point.
+histogram) or the confidence is not below 1. A `want` of 0 is `Rows(0)`.
+`fetch_or(page)` reads either as a fetch size, for a caller that pages
+anyway, and cuts `page` to `i64::MAX`. Past ten million expected false
+positives the quantile is the conservative `λ + 8√λ`, since the query is
+hopeless at that point; it covers a confidence up to `1 − 1e-15`, and a
+higher one there is `Unbounded`.
 
 Where the numbers live and who keeps them in step was asked on the review,
 so it is written down. They are read from the server by the application, at
@@ -759,14 +775,23 @@ let hits: Vec<User> = cipher.open(rows).using(&users_plan).await?
 The `Stats` it used were read once, at startup, by the application:
 
 ```rust
-let rows: i64 = sqlx::query_scalar("SELECT greatest(reltuples, 0)::bigint FROM pg_class WHERE oid = 'users'::regclass")
-    .fetch_one(&pool).await?;
+// No row while `users` has never been analysed: the count is unknown.
+let rows: Option<i64> = sqlx::query_scalar(
+    "SELECT (c.reltuples * (1 - coalesce(s.null_frac, 0)))::bigint
+     FROM pg_class c
+     LEFT JOIN pg_stats s
+       ON s.schemaname = 'public' AND s.tablename = 'users' AND s.attname = 'name'
+     WHERE c.oid = 'users'::regclass AND c.reltuples >= 0",
+)
+.fetch_optional(&pool).await?;
 let histogram: Vec<(i32, i64)> = sqlx::query_as(
     "SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*)
      FROM users TABLESAMPLE SYSTEM (1) WHERE name IS NOT NULL GROUP BY 1",
 )
 .fetch_all(&pool).await?;
-let stats = Stats::measured(rows as u64, histogram.into_iter().map(|(b, n)| (b as u32, n as u64)));
+let stats = rows.map(|rows| {
+    Stats::measured(rows as u64, histogram.into_iter().map(|(b, n)| (b as u32, n as u64)))
+});
 ```
 
 or, before anyone has measured, `Stats::declared(1_000_000)`, which uses the
@@ -1091,8 +1116,10 @@ one helper that binds one parameter.
 application, or from the declared prior:
 
 ```ts
-const stats = Stats.measured(
-  (await pool.query("SELECT greatest(reltuples, 0)::bigint AS rows FROM pg_class WHERE oid = 'users'::regclass")).rows[0].rows,
+// ROWS_SQL is decision 5's rows statement: no row while the count is unknown
+const [count] = (await pool.query(ROWS_SQL)).rows
+const stats = count && Stats.measured(
+  count.rows,
   (await pool.query('SELECT cardinality(eql_v4.match_term(name)) AS bits, count(*) FROM users TABLESAMPLE SYSTEM (1) WHERE name IS NOT NULL GROUP BY 1')).rows,
 )
 const prior = Stats.declared(1_000_000)   // uses users.name's expectedTokens

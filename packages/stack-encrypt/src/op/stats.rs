@@ -53,9 +53,25 @@ pub const MAX_ROWS: u64 = i64::MAX as u64;
 impl Stats {
     /// Statistics from the index's declared prior
     /// ([`MatchConfig::expected_tokens`](crate::sem::MatchConfig::expected_tokens))
-    /// and an estimate of the rows the query scans, such as
-    /// `greatest(pg_class.reltuples, 0)` (`reltuples` is −1 for a table
-    /// never analysed).
+    /// and an estimate of the rows the query scans.
+    ///
+    /// `rows` counts the rows the predicate can match: those whose value is
+    /// not NULL, since a NULL stores no filter and never passes. One catalog
+    /// read gives it, and gives no row while the count is unknown:
+    ///
+    /// ```sql
+    /// SELECT (c.reltuples * (1 - coalesce(s.null_frac, 0)))::bigint
+    /// FROM pg_class c
+    /// LEFT JOIN pg_stats s
+    ///   ON s.schemaname = 'public' AND s.tablename = 'users' AND s.attname = 'name'
+    /// WHERE c.oid = 'users'::regclass AND c.reltuples >= 0
+    /// ```
+    ///
+    /// `reltuples` is −1 for a table never vacuumed or analysed, such as one
+    /// just bulk-loaded. That is an unknown count, not an empty table: a
+    /// count of 0 would promise a fetch of exactly `want`. With no row,
+    /// build no `Stats`; page with a cursor ([`Limit::Unbounded`]) or run
+    /// `ANALYZE` first.
     ///
     /// The prior knows nothing about the spread of value lengths, so it
     /// underestimates a column of mixed lengths; measure the column
@@ -71,7 +87,7 @@ impl Stats {
 
     /// Statistics from a measured histogram of the stored filters' set-bit
     /// counts, as `(bits, rows)` pairs, and an estimate of the rows the
-    /// query scans.
+    /// query scans, read as [`declared`](Self::declared) says.
     ///
     /// One aggregate over the column gives the histogram, with at most `m`
     /// buckets; a page sample bounds its cost on a large table:
@@ -98,7 +114,9 @@ impl Stats {
     /// holds `want` real matches when the table has that many. Outside the
     /// open interval `(0, 1)` there is no finite fetch to promise, and
     /// [`target_limit`](super::Probabilistic::target_limit) answers
-    /// [`Limit::Unbounded`].
+    /// [`Limit::Unbounded`]. So it does past ten million expected false
+    /// positives for a confidence above `1 − 1e-15`, which the conservative
+    /// bound used there cannot meet.
     pub fn with_confidence(mut self, confidence: f64) -> Self {
         self.confidence = confidence;
         self
@@ -126,8 +144,12 @@ impl Stats {
         measured.or_else(|| declared.map(|fill| fill.powi(bits as i32)))
     }
 
-    /// The fetch for `want` real matches at pass rate `p`.
+    /// The fetch for `want` real matches at pass rate `p`. Wanting none
+    /// is a fetch of none, whatever is known of the table.
     pub(crate) fn limit(&self, want: u64, pass_rate: Option<f64>) -> Limit {
+        if want == 0 {
+            return Limit::Rows(0);
+        }
         let Some(p) = pass_rate else {
             return Limit::Unbounded;
         };
@@ -136,8 +158,10 @@ impl Stats {
             return Limit::Unbounded;
         }
         let lambda = p.clamp(0.0, 1.0) * self.rows as f64;
-        let rows = want.saturating_add(poisson_quantile(lambda, self.confidence));
-        Limit::Rows(rows.min(MAX_ROWS))
+        match poisson_quantile(lambda, self.confidence) {
+            Some(extra) => Limit::Rows(want.saturating_add(extra).min(MAX_ROWS)),
+            None => Limit::Unbounded,
+        }
     }
 }
 
@@ -174,7 +198,8 @@ pub enum Limit {
     /// stated confidence.
     Rows(u64),
     /// No finite fetch can be promised: the statistics say nothing about
-    /// the stored filters, or the confidence is not below 1. Page through
+    /// the stored filters, or the confidence is not below 1 (or, past ten
+    /// million expected false positives, not below `1 − 1e-15`). Page through
     /// the candidates with a cursor until `want` rows verify.
     Unbounded,
 }
@@ -189,9 +214,10 @@ impl Limit {
     }
 
     /// The rows to fetch, or `page` when no finite fetch can be promised,
-    /// for a caller that pages either way.
+    /// for a caller that pages either way. Never more than [`MAX_ROWS`]:
+    /// a larger `page` is cut to it.
     pub fn fetch_or(self, page: u64) -> u64 {
-        self.rows().unwrap_or(page)
+        self.rows().unwrap_or(page.min(MAX_ROWS))
     }
 }
 
@@ -206,13 +232,15 @@ impl Limit {
 /// answer is exact to within one at any confidence below `1 − 1e-12`. The
 /// work is about `22√λ` terms.
 /// Past `1e7` expected false positives the query is hopeless anyway and the
-/// answer is the conservative `λ + 8√λ`, which covers any confidence below
-/// `1 − 1e-15`.
+/// answer is the conservative `λ + 8√λ`, which covers any confidence up to
+/// [`FALLBACK_CONFIDENCE`]; above it there is no answer (`None`), since an
+/// eight-sigma tail is about `6e-16`.
 ///
 /// `λ ≤ 0` and NaN have a window of one term at 0, so the answer is 0.
-pub(crate) fn poisson_quantile(lambda: f64, confidence: f64) -> u64 {
+pub(crate) fn poisson_quantile(lambda: f64, confidence: f64) -> Option<u64> {
     if lambda > 1e7 {
-        return (lambda + 8.0 * lambda.sqrt()).ceil() as u64;
+        return (confidence <= FALLBACK_CONFIDENCE)
+            .then(|| (lambda + 8.0 * lambda.sqrt()).ceil() as u64);
     }
     let spread = lambda.sqrt();
     // A float-to-integer cast saturates, and maps NaN to 0.
@@ -250,8 +278,12 @@ pub(crate) fn poisson_quantile(lambda: f64, confidence: f64) -> u64 {
             break;
         }
     }
-    answer
+    Some(answer)
 }
+
+/// The highest confidence [`poisson_quantile`]'s bound past `1e7` meets:
+/// `λ + 8√λ` leaves about `6e-16` of the mass above it.
+const FALLBACK_CONFIDENCE: f64 = 1.0 - 1e-15;
 
 /// The most terms [`poisson_quantile`] sums: far more than any `λ` below
 /// `1e7` needs, and a bound on the work whatever it is handed.
@@ -280,32 +312,55 @@ mod tests {
         ] {
             assert_eq!(
                 poisson_quantile(lambda, confidence),
-                expected,
+                Some(expected),
                 "λ = {lambda}, confidence = {confidence}"
             );
         }
-        assert_eq!(poisson_quantile(0.0, 0.99), 0);
-        assert_eq!(poisson_quantile(-1.0, 0.99), 0);
+        assert_eq!(poisson_quantile(0.0, 0.99), Some(0));
+        assert_eq!(poisson_quantile(-1.0, 0.99), Some(0));
     }
 
     #[test]
     fn past_ten_million_the_quantile_is_conservative() {
         let lambda = 4e7;
-        let q = poisson_quantile(lambda, 0.999_999);
+        let q = poisson_quantile(lambda, 0.999_999).unwrap();
         assert!(q as f64 >= lambda + 4.9 * lambda.sqrt(), "{q}");
         assert!(q as f64 <= lambda + 8.0 * lambda.sqrt() + 1.0, "{q}");
+    }
+
+    /// The bound past ten million covers an eight-sigma tail and no more:
+    /// a confidence it cannot meet has no finite fetch.
+    #[test]
+    fn past_ten_million_a_confidence_beyond_eight_sigma_is_unbounded() {
+        let at = (4e7 + 8.0 * 4e7f64.sqrt()).ceil() as u64;
+        assert_eq!(poisson_quantile(4e7, FALLBACK_CONFIDENCE), Some(at));
+        let beyond = FALLBACK_CONFIDENCE.next_up();
+        assert_eq!(poisson_quantile(4e7, beyond), None);
+        assert_eq!(poisson_quantile(4e7, 1.0f64.next_down()), None);
+        assert_eq!(
+            Stats::declared(u64::MAX)
+                .with_confidence(beyond)
+                .limit(10, Some(0.5)),
+            Limit::Unbounded
+        );
+        assert_eq!(
+            Stats::declared(u64::MAX)
+                .with_confidence(FALLBACK_CONFIDENCE)
+                .limit(10, Some(0.5)),
+            Limit::Rows(MAX_ROWS)
+        );
     }
 
     #[test]
     fn a_confidence_at_one_still_ends() {
         // A float CDF may never reach 1; the window's end ends the sum.
-        let q = poisson_quantile(5.0, 1.0);
+        let q = poisson_quantile(5.0, 1.0).unwrap();
         // The window starts at 0 and is `⌈22√5 + 50⌉` wide.
         assert!((20..=100).contains(&q), "{q}");
-        assert_eq!(poisson_quantile(f64::NAN, 0.99), 0);
+        assert_eq!(poisson_quantile(f64::NAN, 0.99), Some(0));
         // A confidence above 1 allows no mass at all: the window's end.
-        assert_eq!(poisson_quantile(5.0, 1.5), 100);
-        assert_eq!(poisson_quantile(7600.0, 1.5), 6728 + 1968);
+        assert_eq!(poisson_quantile(5.0, 1.5), Some(100));
+        assert_eq!(poisson_quantile(7600.0, 1.5), Some(6728 + 1968));
     }
 
     /// High confidences over a large `λ`, where summing from `e^(−λ)`
@@ -319,7 +374,7 @@ mod tests {
             (4_750_922.0, 1.0 - 1e-12, 4_766_263),
             (1e7, 0.99, 10_007_357),
         ] {
-            let q = poisson_quantile(lambda, confidence);
+            let q = poisson_quantile(lambda, confidence).unwrap();
             assert!(
                 q == exact || q == exact + 1,
                 "λ = {lambda}, confidence = {confidence}: {q}, exact {exact}"
@@ -410,6 +465,22 @@ mod tests {
         assert_eq!(Limit::Rows(12).fetch_or(50), 12);
         assert_eq!(Limit::Unbounded.rows(), None);
         assert_eq!(Limit::Unbounded.fetch_or(50), 50);
+        assert_eq!(Limit::Unbounded.fetch_or(MAX_ROWS), MAX_ROWS);
+        assert_eq!(
+            Limit::Unbounded.fetch_or(u64::MAX),
+            MAX_ROWS,
+            "a page is cut to a SQL LIMIT"
+        );
+    }
+
+    /// Wanting no rows is a fetch of none, even over a table whose every
+    /// row passes and whose filters nothing is known about.
+    #[test]
+    fn wanting_no_rows_fetches_none() {
+        let stats = Stats::declared(1_000_000);
+        assert_eq!(stats.limit(0, Some(1.0)), Limit::Rows(0));
+        assert_eq!(stats.limit(0, None), Limit::Rows(0));
+        assert_eq!(stats.limit(1, Some(1.0)).rows().map(|r| r > 1), Some(true));
     }
 
     #[test]
@@ -418,8 +489,9 @@ mod tests {
             Stats::declared(10).limit(u64::MAX, Some(0.5)),
             Limit::Rows(MAX_ROWS)
         );
-        // `reltuples` is −1 for a table never analysed; read as a `u64` it is
-        // the largest count there is.
+        // The largest count there is: what `reltuples` −1 becomes if a
+        // caller casts it to a `u64`, rather than treating it as unknown as
+        // `Stats::declared` says. Still a valid `LIMIT`.
         assert_eq!(
             Stats::declared(u64::MAX).limit(10, Some(0.5)),
             Limit::Rows(MAX_ROWS)
