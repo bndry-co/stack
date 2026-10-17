@@ -267,8 +267,9 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"equality on a map", "Attrs", "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`", "seals only as part of an opaque struct"},
 		{"a sealed []string", "Tags", "\tTags []string `stash:\"tags,encrypt\"`", "seals only as part of an opaque struct"},
 		{"a sealed map[string]int64", "Counts", "\tCounts map[string]int64 `stash:\"counts,encrypt\"`", "seals only as part of an opaque struct"},
-		{"equality on a float", "Score", "\tScore float64 `stash:\"score,encrypt,index=equality\"`", "the engine refuses the declaration"},
 		{"equality on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=equality\"`", "the engine refuses the declaration"},
+		{"order on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=ore\"`", "the engine refuses the declaration"},
+		{"ope on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=ope\"`", "the engine refuses the declaration"},
 		{"match on an integer", "Age", "\tAge int32 `stash:\"age,encrypt,index=match\"`", "the engine refuses the declaration"},
 		{"encrypt_into, no EQL type in this build", "Email", "\tEmail string `stash:\"email,encrypt_into=TextEq\"`", "EQL types are not available yet"},
 	} {
@@ -286,6 +287,8 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 	}
 	// What the fake refuses, the engine refuses: the same cases against both.
 	for _, c := range []struct{ name, line string }{
+		{"equality on a bool", "\tDone bool `stash:\"done,encrypt,index=equality\"`"},
+		{"order on a bool", "\tDone bool `stash:\"done,encrypt,index=ore\"`"},
 		{"equality on a float", "\tScore float64 `stash:\"score,encrypt,index=equality\"`"},
 		{"a declaration the engine runs", "\tAge uint32 `stash:\"age,encrypt,index=equality;ore\"`\n\tName string `stash:\"name,encrypt,index=match\"`"},
 	} {

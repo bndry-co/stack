@@ -24,6 +24,9 @@ use vitaminc_aead::{to_frame, DecodeError, Decrypt, Encrypt, Frame};
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
+use crate::plan::IntoLabel;
+use crate::{Label, LabelError};
+
 /// An owned, `Send`, language-neutral representation of a dynamically typed
 /// host value: what a binding converts a host value into on the host's
 /// thread, so encryption and decryption can run on any thread.
@@ -125,6 +128,62 @@ impl TryFrom<Protected<Vec<u8>>> for Utf8String {
     fn try_from(bytes: Protected<Vec<u8>>) -> Result<Self, Self::Error> {
         let _ = std::str::from_utf8(bytes.risky_ref()).map_err(|_| vitaminc_aead::Unspecified)?;
         Ok(Self(bytes))
+    }
+}
+
+/// A deep copy, each text and bytes leaf into a fresh [`Protected`], which
+/// wipes on drop as the original does, so a copy is under the same custody
+/// as the value it was made from.
+///
+/// The engine hands a borrowed field to every operation that consumes it and
+/// clones it on the way in, as it does a `String` field of a derived record,
+/// so a field's plaintext type is `Clone`; this is what lets an `FfiValue`
+/// be that type for every field lowered from data. A record of a few fields
+/// clones each once per operation that consumes it, as the derive's does.
+impl Clone for FfiValue {
+    fn clone(&self) -> Self {
+        // Exhaustive, so a variant added later has to say how it is copied.
+        match self {
+            FfiValue::Null => FfiValue::Null,
+            FfiValue::Undefined => FfiValue::Undefined,
+            FfiValue::Bool(v) => FfiValue::Bool(*v),
+            FfiValue::Int32(v) => FfiValue::Int32(*v),
+            FfiValue::Int64(v) => FfiValue::Int64(*v),
+            FfiValue::UInt32(v) => FfiValue::UInt32(*v),
+            FfiValue::UInt64(v) => FfiValue::UInt64(*v),
+            FfiValue::Float32(v) => FfiValue::Float32(*v),
+            FfiValue::Float64(v) => FfiValue::Float64(*v),
+            FfiValue::String(s) => FfiValue::String(s.clone()),
+            FfiValue::Bytes(b) => FfiValue::Bytes(Protected::new(b.risky_ref().to_vec())),
+            FfiValue::Array(items) => FfiValue::Array(items.clone()),
+            FfiValue::Object(entries) => FfiValue::Object(entries.clone()),
+            FfiValue::Passthrough(inner) => FfiValue::Passthrough(inner.clone()),
+        }
+    }
+}
+
+/// A copy of the text in a fresh [`Protected`]: valid UTF-8 because the
+/// original is.
+impl Clone for Utf8String {
+    fn clone(&self) -> Self {
+        Self(Protected::new(self.0.risky_ref().to_vec()))
+    }
+}
+
+/// A string value read as a plan's context: what a data plan's
+/// `"context_field"` holds (`"tenants/acme"`), parsed as a Rust chain's
+/// `String` context field is ([`Label::parse`]). Any other variant is
+/// [`LabelError::NotText`], which the plan reports as
+/// `PlanError::ContextLabel` before any key is requested.
+impl IntoLabel for FfiValue {
+    fn into_label(self) -> Result<Label, LabelError> {
+        match &self {
+            FfiValue::String(s) => match s.as_str() {
+                Some(text) => Label::parse(text),
+                None => Err(LabelError::NotText),
+            },
+            _ => Err(LabelError::NotText),
+        }
     }
 }
 
@@ -576,6 +635,46 @@ mod tests {
             ),
             ("empty".to_string(), FfiValue::Array(vec![])),
         ])
+    }
+
+    /// A clone is the same value, leaf for leaf, at every depth and for
+    /// every variant, and shares no payload with its original.
+    #[test]
+    fn a_clone_is_the_same_value_in_fresh_payloads() {
+        let original = every_variant();
+        let copy = original.clone();
+        assert_eq!(copy, original, "the same value");
+        let (FfiValue::Object(a), FfiValue::Object(b)) = (&original, &copy) else {
+            panic!("objects");
+        };
+        let (FfiValue::String(x), FfiValue::String(y)) = (&a[9].1, &b[9].1) else {
+            panic!("strings");
+        };
+        assert_ne!(
+            x.risky_ref().as_ptr(),
+            y.risky_ref().as_ptr(),
+            "the text was copied, not shared"
+        );
+        let (FfiValue::Bytes(x), FfiValue::Bytes(y)) = (&a[10].1, &b[10].1) else {
+            panic!("bytes");
+        };
+        assert_ne!(
+            x.risky_ref().as_ptr(),
+            y.risky_ref().as_ptr(),
+            "the bytes were copied, not shared"
+        );
+    }
+
+    #[test]
+    fn a_string_reads_as_a_label_and_nothing_else_does() {
+        assert_eq!(
+            s("tenants/acme").into_label().expect("a label"),
+            Label::parse("tenants/acme").expect("a label")
+        );
+        assert!(matches!(
+            FfiValue::UInt32(7).into_label(),
+            Err(LabelError::NotText)
+        ));
     }
 
     /// Reading an object refuses a key it has already read, wherever the

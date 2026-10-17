@@ -203,7 +203,7 @@ impl<O> fmt::Debug for Match<O> {
     }
 }
 
-impl<S: vitaminc_prf::PrfValue> Index<S> for Equality {
+impl<S: crate::Encrypt> Index<S> for Equality {
     type Term = EqualityTerm;
     fn spec(&self) -> IndexSpec {
         IndexSpec::Equality
@@ -553,7 +553,7 @@ pub trait TermSet<S>: Sized + 'static {
     /// Those indexes, as a value.
     const INDEXES: Self::Indexes;
 }
-impl<S: vitaminc_prf::PrfValue> TermSet<S> for EqualityTerm {
+impl<S: crate::Encrypt> TermSet<S> for EqualityTerm {
     type Indexes = Equality;
     const INDEXES: Equality = Equality;
 }

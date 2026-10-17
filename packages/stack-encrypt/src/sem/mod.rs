@@ -138,7 +138,9 @@ use std::marker::PhantomData;
 // wrapper over the term APIs has to be able to name them without depending
 // on `cllw-ore` directly.
 pub use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt};
+use vitaminc_aead::Encrypt;
 use vitaminc_hmac::HmacSha256Prf;
+use vitaminc_normalize::{terms, NormalizeError, Normalized};
 use vitaminc_prf::{
     BlockVisitor, Context, IntoPrfContext, MapAccess, PrfError, PrfValue, PrfVisitor,
     PrfVisitorError, SeqAccess,
@@ -152,16 +154,22 @@ use crate::target::core::Term;
 use crate::target::{DecryptField, Decryptable, Decryption};
 use crate::{Error, KeysetCipher, Pending};
 
-// The `/v1` suffix versions the *derivation* (domain + input framing), not the
-// crate. Any change to the bytes a term derives from must bump it: a changed
+// The version suffix (`/v1`, `/v2`) versions the *derivation* (domain +
+// input framing), not the crate. Any change to the bytes a term derives from must bump it: a changed
 // derivation under an unchanged domain makes every existing term silently
 // unfindable, with no error to notice. The byte-level pins in
 // `tests/term_bytes.rs` are what force that bump to be deliberate.
 
 /// PAE domain for equality (exact-match) terms.
-const EQUALITY_DOMAIN: &[u8] = b"stack-encrypt/sem/equality/v1";
+///
+/// `v2`: the PRF input is the value's `vitaminc-normalize` encoding under
+/// its domain, where `v1` was the value's own PRF encoding.
+const EQUALITY_DOMAIN: &[u8] = b"stack-encrypt/sem/equality/v2";
 /// PAE domain for match (full-text) token terms.
-const MATCH_DOMAIN: &[u8] = b"stack-encrypt/sem/match/v1";
+///
+/// `v2`: the text is tokenized in Unicode 16 NFC, where `v1` tokenized it as
+/// written.
+const MATCH_DOMAIN: &[u8] = b"stack-encrypt/sem/match/v2";
 /// PAE domain for ORE key derivation.
 const ORE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ore-key/v1";
 /// PAE domain for OPE key derivation (distinct from ORE: OPE ciphertexts are
@@ -214,6 +222,36 @@ pub enum TermError {
         help("Give `op::Between` its bounds as `(lo, hi)` with `lo <= hi`. The range is inclusive at both ends, so one value is `(v, v)`.")
     )]
     InvertedRange,
+    /// The value is not one scalar an equality term is defined for: a
+    /// null, a boolean, a container, or a value of a logical type vitaminc
+    /// gives no equality domain. Equality derives over one scalar, in the
+    /// domain `vitaminc-normalize` gives its kind (every integer width one
+    /// domain, both float widths one, text, bytes, and the dates,
+    /// timestamps, decimals and uuids that opt in); there is no term for
+    /// anything else.
+    #[error("no equality term is defined for this value")]
+    #[diagnostic(
+        code(stack_encrypt::no_equality_term),
+        help("An equality term is defined for one integer, float, text, bytes, date, timestamp, decimal or uuid value, not for a boolean, a null or a container.")
+    )]
+    NoEqualityTerm,
+    /// No order term (ORE or OPE) is defined for a boolean: with two values,
+    /// an order term would tell anyone holding the column which rows are
+    /// `true`. Refused on the typed path as the dynamic path refuses it
+    /// (`dynamic::admits`).
+    #[error("no order term is defined for a boolean")]
+    #[diagnostic(
+        code(stack_encrypt::no_order_term),
+        help("A boolean column cannot be ordered without revealing which rows are true. Store it with no order index, and with no equality index either: a boolean has no equality term.")
+    )]
+    NoOrderTerm,
+    /// The value cannot be normalized for its term: text with a code point
+    /// unassigned in Unicode 16 (an equality or match term), or a value not
+    /// valid for its logical type. The reason is vitaminc's, and names no
+    /// part of the value.
+    #[error("the value cannot be normalized for its term: {0}")]
+    #[diagnostic(code(stack_encrypt::term_normalize))]
+    Normalize(#[from] NormalizeError),
     /// Term bytes do not decode under the term kind's frozen encoding — see
     /// [`TermBytesError`].
     #[error(transparent)]
@@ -229,7 +267,10 @@ impl crate::ErrorPayload for TermError {
             | Self::Ore(_)
             | Self::InvalidOptions(_)
             | Self::EmptyTermText
-            | Self::InvertedRange => serde_json::Map::new(),
+            | Self::InvertedRange
+            | Self::NoEqualityTerm
+            | Self::NoOrderTerm
+            | Self::Normalize(_) => serde_json::Map::new(),
         }
     }
 }
@@ -311,7 +352,8 @@ impl TermError {
 // Equality
 // =============================================================================
 
-/// An equality (exact-match) index term: one PRF block over the whole value.
+/// An equality (exact-match) index term: one PRF block over the value's
+/// normalized bytes (see [`KeysetCipher::equality_term`]).
 ///
 /// Terms are pseudorandom under the index key; they are stored server-side and
 /// are not secret key material.
@@ -385,27 +427,68 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for EqualityVisitor {
 /// deferred backend the same visitor runs after the round-trip instead).
 /// `context` is the encoding of a [`NonEmpty`] — every caller holds one —
 /// so there is nothing left to validate here.
+///
+/// The value is normalized first, by `vitaminc-normalize`'s [`terms`] sink:
+/// it must be one scalar with an equality domain, and the PRF derives over
+/// that scalar's [`Normalized`] bytes under its domain. So every integer
+/// width of one number is one term, both float widths of one number are
+/// one term, and text is compared in Unicode 16 NFC: `café` written with a
+/// precomposed `é` and with `e` and a combining accent is one term.
 fn equality<T>(
     prf: &HmacSha256Prf,
     value: T,
     context: Context<'_>,
 ) -> Result<EqualityTerm, TermError>
 where
-    T: PrfValue,
+    T: Encrypt,
 {
+    equality_of_normalized(prf, normalized(value)?, context)
+}
+
+/// The equality term of a scalar already normalized: the PRF over its
+/// bytes, under its `vitaminc-normalize` domain and the PAE-framed
+/// `[EQUALITY_DOMAIN, context]`. [`equality`] and the `dynamic` path, which
+/// normalizes the one scalar it walks to, both end here.
+fn equality_of_normalized(
+    prf: &HmacSha256Prf,
+    normalized: Normalized,
+    context: Context<'_>,
+) -> Result<EqualityTerm, TermError> {
     let context = Context::pae(&[EQUALITY_DOMAIN, context.as_bytes()]);
-    value
+    normalized
         .prf_visit_with_context(prf, context, EqualityVisitor)
         .into_result()
         .map_err(TermError::from_prf)
 }
 
-/// An equality term of any [`PrfValue`] source. Under the local HMAC
-/// backend, derived during the synchronous build — the returned [`Pending`]
-/// carries no requests.
+/// The one [`Normalized`] scalar of a value, as `vitaminc-normalize`'s
+/// [`terms`] sink derives it: [`TermError::NoEqualityTerm`] unless the value
+/// is one scalar with an equality domain, and [`TermError::Normalize`] for a
+/// scalar the sink refuses (text with a code point unassigned in Unicode 16,
+/// a value not valid for its logical type).
+fn normalized<T: Encrypt>(value: T) -> Result<Normalized, TermError> {
+    let mut terms = terms(value).map_err(|error| match error.term() {
+        Some(refused) => TermError::Normalize(refused.error()),
+        // A shape refusal or a source failure: not one scalar the sink could
+        // read, so there is no term.
+        None => TermError::NoEqualityTerm,
+    })?;
+    match (terms.pop(), terms.is_empty()) {
+        // One term, and at the root: the value is that scalar. A container
+        // with one indexable scalar inside is not a scalar, and a null or a
+        // boolean produces no term at all.
+        (Some(term), true) if term.path.steps().is_empty() => Ok(term.normalized),
+        _ => Err(TermError::NoEqualityTerm),
+    }
+}
+
+/// An equality term of any [`Encrypt`] source that is one scalar with an
+/// equality domain (see [`equality`]). Under the local HMAC backend,
+/// derived during the synchronous build — the returned [`Pending`] carries
+/// no requests.
 impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for EqualityTerm
 where
-    S: PrfValue,
+    S: Encrypt,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
@@ -728,11 +811,11 @@ impl<O: MatchConfig> crate::op::Probabilistic for MatchQuery<O> {
 
     fn verify(&self, value: &str) -> bool {
         let options = O::options();
-        let tokens = Zeroizing::new(tokenize::tokenize(
-            value,
-            options.tokenizer,
-            options.downcase,
-        ));
+        // A value the index cannot normalize holds no token of any query.
+        let Ok(tokens) = tokenize::tokens(value, options.tokenizer, options.downcase) else {
+            return false;
+        };
+        let tokens = Zeroizing::new(tokens);
         let have: HashSet<&str> = tokens.iter().map(String::as_str).collect();
         !self.tokens.0.is_empty() && self.tokens.0.iter().all(|t| have.contains(t.as_str()))
     }
@@ -836,22 +919,31 @@ impl<T> RangeQuery<T> {
 /// ([`Supports::query`](crate::op::Supports::query) takes a token no caller
 /// can make), so one query's tokens never verify rows for another value's
 /// filter.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct QueryTokens(Zeroizing<Vec<String>>);
 
 impl QueryTokens {
     /// The tokens of `text` under `O`'s tokenizer and case folding.
-    pub(crate) fn of<O: MatchConfig>(text: &str) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// [`TermError::Normalize`] for text the index cannot normalize (a code
+    /// point unassigned in Unicode 16).
+    pub(crate) fn of<O: MatchConfig>(text: &str) -> Result<Self, TermError> {
         Self::under(text, &O::options())
     }
 
     /// The tokens of `text` under `options`' tokenizer and case folding.
-    pub(crate) fn under(text: &str, options: &MatchOptions) -> Self {
-        Self(Zeroizing::new(tokenize::tokenize(
+    ///
+    /// # Errors
+    ///
+    /// As for [`of`](Self::of).
+    pub(crate) fn under(text: &str, options: &MatchOptions) -> Result<Self, TermError> {
+        Ok(Self(Zeroizing::new(tokenize::tokens(
             text,
             options.tokenizer,
             options.downcase,
-        )))
+        )?)))
     }
 
     /// The tokens of a query's `text` under `options`, or why the query is
@@ -864,7 +956,7 @@ impl QueryTokens {
     /// as the empty filter instead.
     pub(crate) fn of_query(text: &str, options: &MatchOptions) -> Result<Self, TermError> {
         let _mask = options.validate()?;
-        let tokens = Self::under(text, options);
+        let tokens = Self::under(text, options)?;
         if tokens.0.is_empty() {
             return Err(TermError::EmptyTermText);
         }
@@ -935,7 +1027,7 @@ fn match_term<O>(
     options: MatchOptions,
 ) -> Result<MatchTerms<O>, TermError> {
     let mask = options.validate()?;
-    let tokens = tokenize::tokenize(text, options.tokenizer, options.downcase);
+    let tokens = tokenize::tokens(text, options.tokenizer, options.downcase)?;
     if tokens.is_empty() {
         return Ok(MatchTerms::normalised(Vec::new()));
     }
@@ -1211,6 +1303,7 @@ where
     T: CllwOreEncrypt + Send + 'static,
     T::Output: Send + 'static,
 {
+    refuse_bool::<T>()?;
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
@@ -1224,6 +1317,16 @@ where
         .map_err(TermError::Ore)
 }
 
+/// cllw-ore orders a `bool`, and its two values would split a column into
+/// its `true` and `false` rows, so no order term is derived for one, on the
+/// typed path as on the dynamic one.
+fn refuse_bool<T: 'static>() -> Result<(), TermError> {
+    if std::any::TypeId::of::<T>() == std::any::TypeId::of::<bool>() {
+        return Err(TermError::NoOrderTerm);
+    }
+    Ok(())
+}
+
 /// Derive an OPE term — as [`ore`], under the OPE domain so the two schemes
 /// never share a key.
 fn ope<T>(prf: &HmacSha256Prf, value: T, context: Context<'_>) -> Result<OpeTerm<T>, TermError>
@@ -1231,6 +1334,7 @@ where
     T: CllwOpeEncrypt + Send + 'static,
     T::Output: Send + 'static,
 {
+    refuse_bool::<T>()?;
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
@@ -1343,13 +1447,22 @@ impl<K> KeysetCipher<'_, K> {
     /// the same term, at write time and at query time. Byte-identical to
     /// `value.encrypt_into_with_context(&keyset, descriptor)` into an
     /// `EqualityTerm`.
+    ///
+    /// The value is one scalar, normalized by `vitaminc-normalize` before the
+    /// PRF sees it: every integer width of one number is one term
+    /// (`34u32` and `34i64` match), both float widths of one number are one
+    /// term, text is compared in Unicode 16 NFC, and a date, timestamp,
+    /// decimal or uuid derives in a domain of its own. A boolean, a null or
+    /// a container has no term ([`TermError::NoEqualityTerm`]), and text with
+    /// a code point unassigned in Unicode 16 is refused
+    /// ([`TermError::Normalize`]).
     pub fn equality_term<'c, T>(
         &self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, EqualityTerm, K>
     where
-        T: PrfValue,
+        T: Encrypt,
     {
         let term = equality(self.prf(), value, descriptor.into_prf_context());
         Pending::ready(self, term.map_err(Error::from))
@@ -1384,6 +1497,20 @@ impl<K> KeysetCipher<'_, K> {
         O: MatchConfig + MaybeSend,
     {
         self.match_terms_under(text, descriptor, O::options())
+    }
+
+    /// [`equality_term`](Self::equality_term) of one scalar the caller has
+    /// normalized already, for the `dynamic` path, which walks a value to
+    /// its one scalar and normalizes it there, with the same
+    /// `vitaminc_normalize::normalize` the typed path's sink applies.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    pub(crate) fn equality_term_normalized<'c>(
+        &self,
+        normalized: Normalized,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Pending<'_, EqualityTerm, K> {
+        let term = equality_of_normalized(self.prf(), normalized, descriptor.into_prf_context());
+        Pending::ready(self, term.map_err(Error::from))
     }
 
     /// [`match_terms`](Self::match_terms) under runtime options, for the
@@ -1470,6 +1597,45 @@ mod tests {
         assert!(!crate::op::Probabilistic::verify(&query, ""));
     }
 
+    /// An equality term is one scalar's: a container, even one holding one
+    /// scalar, and a scalar with no equality domain have none, and text with
+    /// no normal form is refused for that reason.
+    #[test]
+    fn equality_is_defined_for_one_scalar_with_a_domain() {
+        let prf = HmacSha256Prf::new(Protected::new([7; 32]));
+        let derive = |value| equality(&prf, value, Context::empty());
+        assert!(equality(&prf, 34u32, Context::empty()).is_ok());
+        for (what, refused) in [
+            ("a boolean", equality(&prf, true, Context::empty())),
+            ("a null", equality(&prf, None::<u32>, Context::empty())),
+            (
+                "a sequence of one",
+                equality(&prf, vec![34u32], Context::empty()),
+            ),
+            (
+                "a map of one",
+                equality(&prf, BTreeMap::from([("a", 34u32)]), Context::empty()),
+            ),
+            (
+                "a map of two",
+                equality(
+                    &prf,
+                    BTreeMap::from([("a", 34u32), ("b", 35u32)]),
+                    Context::empty(),
+                ),
+            ),
+        ] {
+            assert!(
+                matches!(refused, Err(TermError::NoEqualityTerm)),
+                "{what}: {refused:?}"
+            );
+        }
+        assert!(matches!(
+            derive("a\u{378}b"),
+            Err(TermError::Normalize(NormalizeError::UnassignedCodePoint))
+        ));
+    }
+
     /// A match query's one rule: options the index cannot use are refused
     /// before the text is tokenised, then text that cuts no token; text
     /// that cuts one comes back as its tokens.
@@ -1491,7 +1657,10 @@ mod tests {
         let tokens = QueryTokens::of_query("ALICE", &options).expect("cuts tokens");
         assert_eq!(
             tokens.0.as_slice(),
-            QueryTokens::under("alice", &options).0.as_slice()
+            QueryTokens::under("alice", &options)
+                .expect("normalizes")
+                .0
+                .as_slice()
         );
     }
 

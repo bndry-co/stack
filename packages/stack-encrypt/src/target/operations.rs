@@ -535,8 +535,9 @@ macro_rules! term_operation {
 }
 term_operation!(
     /// The equality term of `S` under the context the tree hands it. Requires
-    /// only `S`'s PRF contract, not recoverable encryption.
-    equality, crate::sem::EqualityTerm, consume, [], [S: vitaminc_prf::PrfValue]
+    /// only that `S` describes itself (`Encrypt`), as one scalar with an
+    /// equality domain; not recoverable encryption.
+    equality, crate::sem::EqualityTerm, consume, [], [S: crate::Encrypt]
 );
 term_operation!(
     /// The match term of any text `S` under the context the tree hands it,
@@ -893,7 +894,7 @@ impl<P: crate::Decrypt + Send + 'static> DecryptInto<P> for StackCipherText {
         open(self, context)
     }
 }
-impl<S: vitaminc_prf::PrfValue + Clone> EncryptFrom<S> for crate::sem::EqualityTerm {
+impl<S: crate::Encrypt + Clone> EncryptFrom<S> for crate::sem::EqualityTerm {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where

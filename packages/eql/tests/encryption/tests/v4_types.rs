@@ -191,7 +191,7 @@ async fn integer_equality_types_are_held_back_with_their_reason() {
         assert!(!target.producible, "{name}");
         let error = refused(targets::encrypt(name, &keyset, &label(), value));
         assert!(
-            matches!(&error, TargetError::Unproducible { reason, .. } if reason.contains("integer-orderable/v1")),
+            matches!(&error, TargetError::Unproducible { reason, .. } if reason.contains("integer equality is produced once vitaminc 0.6")),
             "{name}: {error}"
         );
     }
@@ -449,8 +449,7 @@ async fn text_match_filter_positions_are_pinned() {
 }
 
 const PINNED_ALICE: [i16; 18] = [
-    52, 99, 224, 311, 899, 1190, 1228, 1232, 1290, 1378, 1486, 1505, 1529, 1613, 1763, 1848, 1880,
-    2027,
+    9, 203, 351, 542, 626, 697, 748, 872, 917, 1023, 1062, 1190, 1251, 1355, 1613, 1710, 1792, 2025,
 ];
 
 #[tokio::test]

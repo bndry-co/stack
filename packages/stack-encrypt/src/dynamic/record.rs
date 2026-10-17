@@ -86,7 +86,7 @@
 //!
 //! # What a field's `"type"` decides, and what it does not
 //!
-//! Every field lowered from data is a [`Value`]: its plaintext type is the
+//! Every field lowered from data is an [`FfiValue`]: its plaintext type is the
 //! runtime value itself, and it seals in vitaminc's self-describing tagged
 //! leaf encoding (`[tag] ++ payload`) whatever its declared `"type"`. The
 //! type decides which indexes the field admits ([`admits`]), which values it
@@ -99,13 +99,13 @@
 //! whatever tag each value arrived with (`34` sent once as a float and once
 //! as an integer would otherwise store two terms under one field). A field
 //! that only seals, or only carries its value through, may leave the type
-//! out. A field's terms dispatch on the value's variant — the declared kind,
-//! once checked — to the typed term operation, so they are the bytes a Rust
-//! `u32` or `String` field derives under the same label.
+//! out. A field's terms derive at the value's one scalar — of the declared
+//! kind, once checked — by the typed path's derivation, so they are the
+//! bytes a Rust `u32` or `String` field derives under the same label.
 //!
 //! The ciphertext is where a data plan and a Rust chain meet too. Since
 //! vitaminc ADR 0001 every leaf is tagged, a typed Rust value's as much as
-//! a [`Value`]'s, so a Rust `u32` field and a `uint32` data field seal the
+//! an [`FfiValue`]'s, so a Rust `u32` field and a `uint32` data field seal the
 //! same leaf under the same context, and each opens the other's. A reader
 //! of another type refuses a leaf rather than reading it as changed
 //! plaintext: the tag is authenticated. The lowering still never chooses an
@@ -142,8 +142,7 @@ use vitaminc_aead::frame::FrameWriteError;
 use vitaminc_protected::Controlled;
 
 use super::{
-    admits, utf8, Error, NoTargets, Reason, Scalar, Scope, TargetError, TargetResolver, TermBytes,
-    Value,
+    admits, utf8, Error, NoTargets, Reason, Scope, TargetError, TargetResolver, TermBytes,
 };
 use crate::plan::{FieldValues, FieldsBuilder, Opens, Runs};
 use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, IndexSpec};
@@ -342,8 +341,8 @@ impl FieldPlan {
     /// # Errors
     ///
     /// [`Error::Plan`] if the field asks for an index the kind is not
-    /// defined for ([`admits`]): match on an integer, equality on a float,
-    /// any index on a composite.
+    /// defined for ([`admits`]): match on an integer, equality or
+    /// an order index on a boolean, any index on a composite.
     pub fn with_type(mut self, field_type: ValueKind) -> Result<Self, Error> {
         for output in &self.outputs {
             if let Output::Term(index) = output {
@@ -845,7 +844,7 @@ impl Plan {
     ///
     /// Built afresh per call: a built plan is bound to its key source type,
     /// and a declaration is not. Every field is declared by name, as a
-    /// [`Value`], read out of the [`FieldValues`] the source is converted
+    /// [`FfiValue`], read out of the [`FieldValues`] the source is converted
     /// into. A context field is declared through the builder's own
     /// `context_field`, which carries it as a passthrough and reads it as
     /// the context; the loop then skips it.
@@ -853,7 +852,7 @@ impl Plan {
         let mut builder = match &self.context {
             Context::Label(label) => crate::Plan::context(label.clone()).fields::<FieldValues, K>(),
             Context::Field(name) => {
-                crate::Plan::fields::<FieldValues, K>().context_field::<Value>(name.as_str())
+                crate::Plan::fields::<FieldValues, K>().context_field::<FfiValue>(name.as_str())
             }
         };
         for field in &self.fields {
@@ -891,18 +890,18 @@ impl Plan {
     }
 }
 
-/// One field's verb, over a [`Value`]; its indexes are the [`IndexSpec`]s
-/// the plan named, each an [`Index`] of a `Value`.
+/// One field's verb, over an [`FfiValue`]; its indexes are the [`IndexSpec`]s
+/// the plan named, each an [`Index`] of a `FfiValue`.
 fn declare<K: 'static>(
     builder: FieldsBuilder<FieldValues, K>,
     field: &FieldPlan,
 ) -> FieldsBuilder<FieldValues, K> {
     let name = field.name.as_str();
     match field.verb() {
-        Verb::Encrypt => builder.encrypt::<Value>(name),
-        Verb::EncryptIndex => builder.encrypt_index::<Value>(name, field.indexes()),
-        Verb::Index => builder.index::<Value>(name, field.indexes()),
-        Verb::Passthrough => builder.passthrough::<Value>(name),
+        Verb::Encrypt => builder.encrypt::<FfiValue>(name),
+        Verb::EncryptIndex => builder.encrypt_index::<FfiValue>(name, field.indexes()),
+        Verb::Index => builder.index::<FfiValue>(name, field.indexes()),
+        Verb::Passthrough => builder.passthrough::<FfiValue>(name),
         // `lower` never hands a target field here: the resolver runs it.
         Verb::Target => builder,
     }
@@ -1793,7 +1792,7 @@ fn source_row(mut row: Vec<(String, FfiValue)>, plan: &Plan) -> Result<Row, Erro
         if field.is_target() {
             targets.push(value);
         } else {
-            let _ = values.insert(&field.name, Value::new(value));
+            let _ = values.insert(&field.name, value);
         }
     }
     // Every plan field is taken; anything left is a field the plan does not
@@ -1806,7 +1805,7 @@ fn source_row(mut row: Vec<(String, FfiValue)>, plan: &Plan) -> Result<Row, Erro
 
 /// A source value against its plan field: a typed field needs a value of
 /// its type, every term output needs a scalar the scheme defines the term
-/// for ([`IndexSpec::supports`]), and a ciphertext output refuses a
+/// for ([`IndexSpec::defines`]), and a ciphertext output refuses a
 /// passthrough, or a repeated map key, anywhere in the value
 /// ([`check_tree`]).
 fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), Error> {
@@ -1824,9 +1823,7 @@ fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), Error> {
         match output {
             Output::Ciphertext => check_tree(value, &field.name)?,
             Output::Term(kind) => {
-                let scalar =
-                    Scalar::of(value, kind).map_err(|error| error.in_field(&field.name))?;
-                if !kind.supports(&scalar) {
+                if !kind.defines(value) {
                     return Err(Error::Term {
                         field: Some(field.name.clone()),
                         kind: kind.clone(),
@@ -1960,7 +1957,7 @@ fn keyed_terms(
 
 /// The field `name` out of the record, as the value it holds.
 fn take_leaf(values: &mut FieldValues, name: &str) -> Result<FfiValue, crate::Error> {
-    Ok(slot::<Value>(values, name)?.into_inner())
+    slot::<FfiValue>(values, name)
 }
 
 /// The record the plan opened, as a value: the fields that come back, in
@@ -2068,7 +2065,7 @@ fn record_row(mut row: Vec<(String, StackCipherText)>, plan: &Plan) -> Result<St
                 if field.field_type.is_some_and(|kind| !kind.holds(&value)) {
                     return Err(misfit(Reason::FieldType));
                 }
-                let _ = values.insert(&field.name, Value::new(value));
+                let _ = values.insert(&field.name, value);
             }
             Verb::Encrypt | Verb::EncryptIndex | Verb::Index => {
                 let ciphertext = node("c", Reason::NoCiphertextNode)?;
@@ -3125,33 +3122,41 @@ mod tests {
             );
         }
 
-        /// A float cannot reach an equality index through a plan: a field
-        /// declared `float64` is refused when the plan is built, and a field
-        /// declared an integer refuses the float value as the wrong kind,
-        /// before any key request. There is no untyped indexed field for a
-        /// float to slip through.
+        /// A boolean cannot reach an equality or order index through a
+        /// plan: a field declared `bool` is refused when the plan is built,
+        /// and a field declared an integer refuses the boolean value as the
+        /// wrong kind, before any key request. There is no untyped indexed
+        /// field for a boolean to slip through. A float can: vitaminc gives
+        /// floats an equality domain.
         #[tokio::test]
-        async fn a_float_asked_for_equality_is_refused_at_build_or_as_the_wrong_kind() {
+        async fn a_boolean_asked_for_a_term_is_refused_at_build_or_as_the_wrong_kind() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let as_float = plan(obj(vec![(
-                "score",
-                typed(label("score"), &["c", "eq"], "float64"),
-            )]));
-            assert!(
-                matches!(as_float, Err(Error::Plan { .. })),
-                "no PRF encoding exists for a float: {as_float:?}"
-            );
+            for outputs in [&["c", "eq"], &["c", "ore"], &["c", "ope"]] {
+                let as_bool = plan(obj(vec![("flag", typed(label("flag"), outputs, "bool"))]));
+                assert!(
+                    matches!(as_bool, Err(Error::Plan { .. })),
+                    "a boolean has no {outputs:?} term: {as_bool:?}"
+                );
+            }
             let as_u32 = plan(obj(vec![(
-                "score",
-                typed(label("score"), &["c", "eq"], "uint32"),
+                "flag",
+                typed(label("flag"), &["c", "eq"], "uint32"),
             )]))
             .expect("plan");
-            let source = obj(vec![("score", FfiValue::Float64(1.5))]);
+            let source = obj(vec![("flag", FfiValue::Bool(true))]);
             let err = encrypt(&keyset, source, &as_u32).err();
             assert!(
                 matches!(err, Some(Error::Source { .. })),
-                "a float is not the declared kind: {err:?}"
+                "a boolean is not the declared kind: {err:?}"
+            );
+            assert!(
+                plan(obj(vec![(
+                    "score",
+                    typed(label("score"), &["c", "eq"], "float64"),
+                )]))
+                .is_ok(),
+                "a float has an equality term"
             );
             assert_eq!(generates(&cipher), 0, "refused before any key request");
         }
@@ -3282,7 +3287,7 @@ mod tests {
 
             let eq = term(
                 &keyset,
-                Scalar::U32(34),
+                &FfiValue::UInt32(34),
                 &IndexSpec::Equality,
                 age_ctx.clone(),
             )
@@ -3293,7 +3298,7 @@ mod tests {
                 eq,
                 "the equality term is the standalone derivation under the field label"
             );
-            let ore = term(&keyset, Scalar::U32(34), &IndexSpec::Ore, age_ctx)
+            let ore = term(&keyset, &FfiValue::UInt32(34), &IndexSpec::Ore, age_ctx)
                 .await
                 .expect("standalone ore term");
             assert_eq!(
@@ -3301,14 +3306,9 @@ mod tests {
                 ore,
                 "the ore term is the standalone derivation under the field label"
             );
-            let scalar = Scalar::of(
-                &s("al smith"),
-                &IndexSpec::Match(crate::sem::MatchOptions::default()),
-            )
-            .expect("text");
             let matched = term(
                 &keyset,
-                scalar,
+                &s("al smith"),
                 &IndexSpec::Match(crate::sem::MatchOptions::default()),
                 nick_ctx,
             )
@@ -3351,13 +3351,15 @@ mod tests {
             let stored = term_bytes(&node(&mut nick, "match"));
 
             let kind = IndexSpec::Match(options);
-            let scalar = Scalar::of(&s("al smith"), &kind).expect("text");
-            let expected = term(&keyset, scalar.clone(), &kind, ctx.clone())
+            let scalar = s("al smith");
+            let expected = term(&keyset, &scalar, &kind, ctx.clone())
                 .await
                 .expect("standalone");
             assert_eq!(stored, expected, "the term is the plan options' derivation");
             let default = IndexSpec::Match(crate::sem::MatchOptions::default());
-            let under_default = term(&keyset, scalar, &default, ctx).await.expect("default");
+            let under_default = term(&keyset, &scalar, &default, ctx)
+                .await
+                .expect("default");
             assert_ne!(stored, under_default, "and not the defaults'");
         }
 
@@ -3433,22 +3435,22 @@ mod tests {
 
         /// The lowering is the plan builder: the record a data plan seals is
         /// the record the chain seals under the same declaration over the
-        /// same plaintext type, a [`Value`] per field — the same terms, and
+        /// same plaintext type, an [`FfiValue`] per field — the same terms, and
         /// ciphertexts each side opens.
         #[tokio::test]
         async fn seals_what_the_chain_seals_under_the_same_declaration() {
             struct User {
-                age: Value,
-                email: Value,
-                nick: Value,
+                age: FfiValue,
+                email: FfiValue,
+                nick: FfiValue,
                 id: u64,
             }
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let user = User {
-                age: Value::new(FfiValue::UInt32(34)),
-                email: Value::new(s("a@x")),
-                nick: Value::new(s("al smith")),
+                age: FfiValue::UInt32(34),
+                email: s("a@x"),
+                nick: s("al smith"),
                 id: 7,
             };
             let default_match = IndexSpec::Match(crate::sem::MatchOptions::default());
@@ -4662,16 +4664,16 @@ mod tests {
                 parsed.fields()[0].outputs(),
                 [Output::Ciphertext, Output::Term(IndexSpec::Equality)]
             );
-            let refused = plan(obj(vec![("age", early("float64"))]));
+            let refused = plan(obj(vec![("age", early("bool"))]));
             assert!(
                 matches!(refused, Err(Error::Plan { .. })),
-                "equality on a float is refused whatever the key order: {refused:?}"
+                "equality on a boolean is refused whatever the key order: {refused:?}"
             );
         }
 
         #[test]
         fn the_plan_refuses_an_unresolvable_type_or_one_that_does_not_admit_an_index() {
-            let refused: [(&str, FfiValue); 8] = [
+            let refused: [(&str, FfiValue); 9] = [
                 ("an unknown type", typed(label("x"), &["c"], "u64")),
                 (
                     "a type in the wrong case",
@@ -4698,11 +4700,9 @@ mod tests {
                     "match on an integer",
                     typed(label("x"), &["c", "match"], "int64"),
                 ),
-                (
-                    "equality on a float",
-                    typed(label("x"), &["c", "eq"], "float64"),
-                ),
                 ("equality on a bool", typed(label("x"), &["eq"], "bool")),
+                ("order on a bool", typed(label("x"), &["c", "ore"], "bool")),
+                ("ope on a bool", typed(label("x"), &["ope"], "bool")),
                 (
                     "order on a composite",
                     typed(label("x"), &["c", "ore"], "object"),
@@ -4732,7 +4732,7 @@ mod tests {
                 .expect("equality admits a u32");
             assert_eq!(typed.field_type(), Some(ValueKind::UInt32));
             assert!(matches!(
-                field.with_type(ValueKind::Float32),
+                field.with_type(ValueKind::Bool),
                 Err(Error::Plan { .. })
             ));
             let sealed_only = FieldPlan::new(
@@ -4954,10 +4954,9 @@ mod tests {
             let declared = field.field_type().expect("typed");
             let value =
                 crate::dynamic::read(declared, FfiValue::Float64(34.0)).expect("an exact 34");
-            let scalar = Scalar::of(&value, &IndexSpec::Equality).expect("scalar");
             let query = term(
                 &keyset,
-                scalar,
+                &value,
                 &IndexSpec::Equality,
                 field.context().clone(),
             )
@@ -5087,8 +5086,7 @@ mod tests {
                 let mut fields = map(seal(&keyset, obj(vec![("f", value())]), &plan).await);
                 let mut f = map(node(&mut fields, "f"));
                 let stored = term_bytes(&node(&mut f, kind.key()));
-                let scalar = Scalar::of(&value(), &kind).expect("scalar");
-                let probe = term(&keyset, scalar, &kind, plan.fields()[0].context().clone())
+                let probe = term(&keyset, &value(), &kind, plan.fields()[0].context().clone())
                     .await
                     .expect("probe");
                 assert_eq!(stored, probe, "{ty} {kind}");

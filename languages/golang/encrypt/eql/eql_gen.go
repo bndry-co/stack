@@ -10,7 +10,7 @@ import "database/sql/driver"
 // it does not, with the Reason.
 var Types = []Type{
 	{Name: "Integer", GoName: "Integer", Family: "integer", Suffix: "", Plaintext: "int32", SQLDomain: "public.eql_v4_integer", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
-	{Name: "IntegerEq", GoName: "IntegerEq", Family: "integer", Suffix: "Eq", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_eq", Indexes: []string{"eq"}, Query: "IntegerEqQuery", QuerySQLDomain: "eql_v4.query_integer_eq", Producible: false, Reason: "the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF domain; producing it before that release would leave stored terms unmatchable after the upgrade"},
+	{Name: "IntegerEq", GoName: "IntegerEq", Family: "integer", Suffix: "Eq", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_eq", Indexes: []string{"eq"}, Query: "IntegerEqQuery", QuerySQLDomain: "eql_v4.query_integer_eq", Producible: false, Reason: "integer equality is produced once vitaminc 0.6 is released: its one integer domain is the one the engine derives in, and a term derived under vitaminc 0.5's per-width domains would stop matching after the upgrade"},
 	{Name: "IntegerOrdOre", GoName: "IntegerOrdOre", Family: "integer", Suffix: "OrdOre", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord_ore", Indexes: []string{"ore"}, Query: "IntegerOrdOreQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "IntegerOrd", GoName: "IntegerOrd", Family: "integer", Suffix: "Ord", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord", Indexes: []string{"ope"}, Query: "IntegerOrdQuery", QuerySQLDomain: "eql_v4.query_integer_ord", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "IntegerOrdOpe", GoName: "IntegerOrdOpe", Family: "integer", Suffix: "OrdOpe", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord_ope", Indexes: []string{"ope"}, Query: "IntegerOrdOpeQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ope", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
@@ -20,7 +20,7 @@ var Types = []Type{
 	{Name: "SmallintOrd", GoName: "SmallintOrd", Family: "smallint", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord", Indexes: []string{"ope"}, Query: "SmallintOrdQuery", QuerySQLDomain: "eql_v4.query_smallint_ord", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
 	{Name: "SmallintOrdOpe", GoName: "SmallintOrdOpe", Family: "smallint", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord_ope", Indexes: []string{"ope"}, Query: "SmallintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ope", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
 	{Name: "Bigint", GoName: "Bigint", Family: "bigint", Suffix: "", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
-	{Name: "BigintEq", GoName: "BigintEq", Family: "bigint", Suffix: "Eq", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_eq", Indexes: []string{"eq"}, Query: "BigintEqQuery", QuerySQLDomain: "eql_v4.query_bigint_eq", Producible: false, Reason: "the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF domain; producing it before that release would leave stored terms unmatchable after the upgrade"},
+	{Name: "BigintEq", GoName: "BigintEq", Family: "bigint", Suffix: "Eq", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_eq", Indexes: []string{"eq"}, Query: "BigintEqQuery", QuerySQLDomain: "eql_v4.query_bigint_eq", Producible: false, Reason: "integer equality is produced once vitaminc 0.6 is released: its one integer domain is the one the engine derives in, and a term derived under vitaminc 0.5's per-width domains would stop matching after the upgrade"},
 	{Name: "BigintOrdOre", GoName: "BigintOrdOre", Family: "bigint", Suffix: "OrdOre", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord_ore", Indexes: []string{"ore"}, Query: "BigintOrdOreQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "BigintOrd", GoName: "BigintOrd", Family: "bigint", Suffix: "Ord", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord", Indexes: []string{"ope"}, Query: "BigintOrdQuery", QuerySQLDomain: "eql_v4.query_bigint_ord", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "BigintOrdOpe", GoName: "BigintOrdOpe", Family: "bigint", Suffix: "OrdOpe", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord_ope", Indexes: []string{"ope"}, Query: "BigintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ope", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
@@ -49,12 +49,12 @@ var Types = []Type{
 	{Name: "TextSearch", GoName: "TextSearch", Family: "text", Suffix: "Search", Plaintext: "string", SQLDomain: "public.eql_v4_text_search", Indexes: []string{"eq", "ope", "match"}, Query: "TextSearchQuery", QuerySQLDomain: "eql_v4.query_text_search", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "Boolean", GoName: "Boolean", Family: "boolean", Suffix: "", Plaintext: "bool", SQLDomain: "public.eql_v4_boolean", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "Real", GoName: "Real", Family: "real", Suffix: "", Plaintext: "float32", SQLDomain: "public.eql_v4_real", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
-	{Name: "RealEq", GoName: "RealEq", Family: "real", Suffix: "Eq", Plaintext: "float32", SQLDomain: "public.eql_v4_real_eq", Indexes: []string{"eq"}, Query: "RealEqQuery", QuerySQLDomain: "eql_v4.query_real_eq", Producible: false, Reason: "vitaminc 0.5 derives no equality term for a float; the canonical float form arrives in vitaminc 0.6 (ADR-0002)"},
+	{Name: "RealEq", GoName: "RealEq", Family: "real", Suffix: "Eq", Plaintext: "float32", SQLDomain: "public.eql_v4_real_eq", Indexes: []string{"eq"}, Query: "RealEqQuery", QuerySQLDomain: "eql_v4.query_real_eq", Producible: false, Reason: "float equality is produced once vitaminc 0.6, which gives a float its canonical equality form, is released (ADR-0002)"},
 	{Name: "RealOrdOre", GoName: "RealOrdOre", Family: "real", Suffix: "OrdOre", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord_ore", Indexes: []string{"ore"}, Query: "RealOrdOreQuery", QuerySQLDomain: "eql_v4.query_real_ord_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "RealOrd", GoName: "RealOrd", Family: "real", Suffix: "Ord", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord", Indexes: []string{"ope"}, Query: "RealOrdQuery", QuerySQLDomain: "eql_v4.query_real_ord", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "RealOrdOpe", GoName: "RealOrdOpe", Family: "real", Suffix: "OrdOpe", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord_ope", Indexes: []string{"ope"}, Query: "RealOrdOpeQuery", QuerySQLDomain: "eql_v4.query_real_ord_ope", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "Double", GoName: "Double", Family: "double", Suffix: "", Plaintext: "float64", SQLDomain: "public.eql_v4_double", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
-	{Name: "DoubleEq", GoName: "DoubleEq", Family: "double", Suffix: "Eq", Plaintext: "float64", SQLDomain: "public.eql_v4_double_eq", Indexes: []string{"eq"}, Query: "DoubleEqQuery", QuerySQLDomain: "eql_v4.query_double_eq", Producible: false, Reason: "vitaminc 0.5 derives no equality term for a float; the canonical float form arrives in vitaminc 0.6 (ADR-0002)"},
+	{Name: "DoubleEq", GoName: "DoubleEq", Family: "double", Suffix: "Eq", Plaintext: "float64", SQLDomain: "public.eql_v4_double_eq", Indexes: []string{"eq"}, Query: "DoubleEqQuery", QuerySQLDomain: "eql_v4.query_double_eq", Producible: false, Reason: "float equality is produced once vitaminc 0.6, which gives a float its canonical equality form, is released (ADR-0002)"},
 	{Name: "DoubleOrdOre", GoName: "DoubleOrdOre", Family: "double", Suffix: "OrdOre", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ore", Indexes: []string{"ore"}, Query: "DoubleOrdOreQuery", QuerySQLDomain: "eql_v4.query_double_ord_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "DoubleOrd", GoName: "DoubleOrd", Family: "double", Suffix: "Ord", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord", Indexes: []string{"ope"}, Query: "DoubleOrdQuery", QuerySQLDomain: "eql_v4.query_double_ord", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "DoubleOrdOpe", GoName: "DoubleOrdOpe", Family: "double", Suffix: "OrdOpe", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ope", Indexes: []string{"ope"}, Query: "DoubleOrdOpeQuery", QuerySQLDomain: "eql_v4.query_double_ord_ope", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
@@ -87,7 +87,7 @@ func (v *Integer) UnmarshalJSON(b []byte) error {
 }
 
 // IntegerEq is the EQL type stored in public.eql_v4_integer_eq: the integer family with the eq index.
-// The engine cannot produce it yet: the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF domain; producing it before that release would leave stored terms unmatchable after the upgrade.
+// The engine cannot produce it yet: integer equality is produced once vitaminc 0.6 is released: its one integer domain is the one the engine derives in, and a term derived under vitaminc 0.5's per-width domains would stop matching after the upgrade.
 type IntegerEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -511,7 +511,7 @@ func (v *Bigint) UnmarshalJSON(b []byte) error {
 }
 
 // BigintEq is the EQL type stored in public.eql_v4_bigint_eq: the bigint family with the eq index.
-// The engine cannot produce it yet: the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF domain; producing it before that release would leave stored terms unmatchable after the upgrade.
+// The engine cannot produce it yet: integer equality is produced once vitaminc 0.6 is released: its one integer domain is the one the engine derives in, and a term derived under vitaminc 0.5's per-width domains would stop matching after the upgrade.
 type BigintEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1736,7 +1736,7 @@ func (v *Real) UnmarshalJSON(b []byte) error {
 }
 
 // RealEq is the EQL type stored in public.eql_v4_real_eq: the real family with the eq index.
-// The engine cannot produce it yet: vitaminc 0.5 derives no equality term for a float; the canonical float form arrives in vitaminc 0.6 (ADR-0002).
+// The engine cannot produce it yet: float equality is produced once vitaminc 0.6, which gives a float its canonical equality form, is released (ADR-0002).
 type RealEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1948,7 +1948,7 @@ func (v *Double) UnmarshalJSON(b []byte) error {
 }
 
 // DoubleEq is the EQL type stored in public.eql_v4_double_eq: the double family with the eq index.
-// The engine cannot produce it yet: vitaminc 0.5 derives no equality term for a float; the canonical float form arrives in vitaminc 0.6 (ADR-0002).
+// The engine cannot produce it yet: float equality is produced once vitaminc 0.6, which gives a float its canonical equality form, is released (ADR-0002).
 type DoubleEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.

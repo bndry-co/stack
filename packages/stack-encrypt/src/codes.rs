@@ -81,6 +81,11 @@ mod tests {
             TermError::InvalidOptions(_) => TermError::InvalidOptions("k out of range"),
             TermError::EmptyTermText => TermError::EmptyTermText,
             TermError::InvertedRange => TermError::InvertedRange,
+            TermError::NoEqualityTerm => TermError::NoEqualityTerm,
+            TermError::NoOrderTerm => TermError::NoOrderTerm,
+            TermError::Normalize(_) => {
+                TermError::Normalize(vitaminc_normalize::NormalizeError::UnassignedCodePoint)
+            },
             TermError::Bytes(_) => TermError::Bytes(TermBytesError::OddMatchTermsLength(3)),
         ]));
         errors.extend(boxed(variants![
@@ -387,6 +392,14 @@ mod tests {
             ),
             (Box::new(TermError::EmptyTermText), json!({})),
             (Box::new(TermError::InvertedRange), json!({})),
+            (Box::new(TermError::NoEqualityTerm), json!({})),
+            (Box::new(TermError::NoOrderTerm), json!({})),
+            (
+                Box::new(TermError::Normalize(
+                    vitaminc_normalize::NormalizeError::UnassignedCodePoint,
+                )),
+                json!({}),
+            ),
             (
                 Box::new(TermBytesError::MalformedCllwCiphertext(5)),
                 json!({ "len": 5 }),

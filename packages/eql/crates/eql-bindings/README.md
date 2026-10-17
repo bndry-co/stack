@@ -107,8 +107,8 @@ The optional `stack-encrypt` feature enables `EncryptFrom<String>` for
 implements these traits. The derives are emitted by `eql-codegen`.
 
 The other v4 types Stack Encrypt produces take a plaintext from
-`eql_bindings::encryption::plaintext`, because vitaminc 0.5 has no native
-encryption for the scalar types:
+`eql_bindings::encryption::plaintext`, which seal as the primitive they wrap
+and read back only a value of their own width:
 
 | v4 type | Plaintext |
 | --- | --- |
@@ -119,11 +119,12 @@ encryption for the scalar types:
 | `Real` | `Float32` |
 | `Double` | `Float64` |
 
-Each seals as vitaminc's tagged leaf, the bytes the value enum (`FfiValue`)
-seals for the same value, so values written here and by the Go SDK open each
-other. `IntegerEq` and `BigintEq` wait for vitaminc 0.6, whose integer
-equality term uses one PRF domain for every width; terms derived under
-vitaminc 0.5's per-width domains would stop matching after that upgrade.
+Each seals the leaf the value enum (`FfiValue`) seals for the same value, so
+values written here and by the Go SDK open each other. `IntegerEq`,
+`BigintEq`, `RealEq` and `DoubleEq` wait for vitaminc 0.6's release: the
+engine derives integer and float equality in its shared domains, and terms
+derived under vitaminc 0.5's per-width domains would stop matching after the
+upgrade.
 `TextMatch` builds its filter under a configuration pinned in this crate
 (`EqlMatch`: 3-grams of the lower-cased text, `k = 6`, a 2048-bit filter) for
 stored values and queries alike. The configuration is part of the stored
@@ -132,11 +133,10 @@ match a row that does not contain the query, so re-check after decrypting
 where that matters. Write the stored column on the left, `col @@ query`: the
 other order finds nothing until #1171 is fixed. Text too short to make a
 3-gram (empty strings, two-letter codes) cannot be stored in a `TextMatch`
-column yet, and a `TextMatchQuery` for it is refused too: Stack Encrypt 0.2
-refuses text with no tokens, on both sides. Ordering types
-wait for vitaminc 0.6's order encodings, float
-equality for its canonical float form, and `Json` for a decision on sealing a
-document as one leaf.
+column yet, and a `TextMatchQuery` for it is refused too: one filter type
+builds both, and an empty filter as a query would match every row. Ordering
+types wait for vitaminc 0.6's order encodings, and `Json` for a decision on
+sealing a document as one leaf.
 
 The generated API docs include a complete, executable example in the
 `eql_bindings::encryption` module, from cipher setup through decryption. Its

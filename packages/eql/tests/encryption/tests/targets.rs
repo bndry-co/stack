@@ -583,8 +583,8 @@ mod the_table {
                 ("json", "") => "tree of leaves",
                 ("smallint" | "date" | "timestamp" | "numeric", _) => "has no kind",
                 (_, "Ord" | "OrdOre" | "OrdOpe" | "Search" | "SearchOre") => "ordering terms",
-                ("real" | "double", "Eq") => "float",
-                ("integer" | "bigint", "Eq") => "integer-orderable/v1",
+                ("real" | "double", "Eq") => "float equality is produced once vitaminc 0.6",
+                ("integer" | "bigint", "Eq") => "integer equality is produced once vitaminc 0.6",
                 (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };
             assert!(reason.contains(expected), "{}: {reason}", row.name);

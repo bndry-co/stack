@@ -2,8 +2,7 @@
 //!
 //! Everything else in this crate is typed: a target names its source type,
 //! and the operations it composes are reached through bounds — `Encrypt` for
-//! a ciphertext, [`PrfValue`](vitaminc_prf::PrfValue) for an equality term,
-//! `AsRef<str>` for a match term. That is what makes a term a cross-language
+//! a ciphertext or an equality term, `AsRef<str>` for a match term. That is what makes a term a cross-language
 //! contract: `equality_term(34u32)` derives the same bytes wherever it is
 //! called from, because `34u32` is the same value everywhere.
 //!
@@ -13,13 +12,19 @@
 //! the typed operation. This module is that something, written once here
 //! rather than once per language binding.
 //!
-//! The runtime value is [`FfiValue`], a language-neutral value tree and
-//! the type every binding already funnels through.
+//! A term is derived from anything that describes itself to vitaminc
+//! ([`Encrypt`](crate::Encrypt)), walked to its one scalar: a guest
+//! walks the transport frame it was handed in place, with no tree built.
+//! What the engine holds is [`FfiValue`], a language-neutral value tree: a
+//! plan, a record source and a field's plaintext are values a binding
+//! decoded, which the engine reads, splits into fields and clones, and
+//! which outlive the buffer they arrived in.
 //!
 //! # What is here
 //!
 //! * [`context`](context()) — an [`FfiValue`] read as an encryption context.
-//! * [`term`](term()) — one index term for a value, dispatched on its variant.
+//! * [`term`](term()) — one index term for a value, derived at the one
+//!   scalar it is walked to.
 //! * [`record`] — a fields plan spelled as data, *lowered* into the plan
 //!   builder ([`Plan`](crate::Plan)) and run by the engine: the same code a
 //!   Rust chain and the derive run, so a record written from any language
@@ -30,9 +35,8 @@
 //!   that links them, so a plan field may name one as its target and the
 //!   lowering runs that type's own plan in the same request; [`NoTargets`]
 //!   is the build without them.
-//! * [`Value`] — an [`FfiValue`] as a plan field's plaintext, the type of
-//!   every field lowered from data; [`TermBytes`] — the term such a field
-//!   derives, as its frozen bytes.
+//! * [`TermBytes`] — the term a field lowered from data derives, as its
+//!   frozen bytes. Such a field's plaintext is an [`FfiValue`].
 //! * [`Scope`] — which cipher an opening operation decrypts through.
 //!
 //! # What is not here
@@ -55,11 +59,10 @@
 //!
 //! A plan field's `"type"` names (`"int64"`, `"string"`, …) are wire format
 //! in the same way: a binding spells them, and a stored row opens only under
-//! the type it was sealed as. They are not this crate's: a declared type is
-//! vitaminc's [`ValueKind`], re-exported here, whose names vitaminc freezes
-//! beside its tag table. This crate adds only what a kind means to an index
-//! ([`admits`]) and to a query value ([`read`]); it decides nothing about
-//! the bytes ([`record`]). Every field with a term output declares one;
+//! the type it was sealed as. A declared type is a [`ValueKind`], whose
+//! names are frozen. What a kind means to an index ([`admits`]) and to a
+//! query value ([`read`]) is stated over it; the bytes are vitaminc's, from
+//! the tagged leaf a value of the kind seals as ([`record`]). Every field with a term output declares one;
 //! a plan whose indexed field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field).
 //!
@@ -75,7 +78,6 @@ mod kind;
 pub mod record;
 mod target;
 mod term;
-mod value;
 
 use std::fmt;
 
@@ -94,8 +96,7 @@ pub use ffi_value::{
 pub use kind::{admits, read};
 pub use record::{FieldPlan, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
-pub use term::{term, Scalar, TermBytes};
-pub use value::{AsValue, Value};
+pub use term::{term, TermBytes};
 
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
@@ -190,9 +191,9 @@ pub enum Error {
 
     /// A term was asked for a value the scheme defines no such term for: a
     /// container, null or passthrough (which have no term semantics at all),
-    /// or a scalar outside the kind's domain — equality over a float or a
-    /// boolean, match over anything but text. See
-    /// [`IndexSpec::supports`].
+    /// or a scalar outside the kind's domain — equality over a boolean,
+    /// match over anything but text, an order term over a boolean. See
+    /// [`IndexSpec::defines`].
     #[error("no {kind} term is defined for this value{}", in_field_text(field))]
     #[diagnostic(code(stack_encrypt::dynamic_term))]
     Term {
@@ -504,7 +505,7 @@ reasons! {
         /// `"type"` is not a string naming a value type.
         UnknownType => "unknown_type", r#""type" does not name a value type"#;
         /// The field's declared type has no such index: match on an integer,
-        /// equality on a float, any index on a composite.
+        /// equality or an order index on a boolean, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";

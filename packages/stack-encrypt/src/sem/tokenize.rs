@@ -10,6 +10,8 @@
 //! is that empty tokens are dropped (v1 keeps the empty strings its separator
 //! split produces, which only add noise bits to every filter).
 
+use vitaminc_normalize::NormalizeError;
+use vitaminc_protected::Controlled;
 use zeroize::Zeroizing;
 
 /// How text is split into tokens before each token is run through the PRF.
@@ -38,6 +40,28 @@ impl Default for Tokenizer {
     fn default() -> Self {
         Self::Ngram { length: 3 }
     }
+}
+
+/// Split `text` into tokens as a match index does: in Unicode 16 NFC, the
+/// form `vitaminc-normalize` gives text, then [`tokenize`]d. So text written
+/// with a precomposed `é` and with `e` and a combining accent cuts the same
+/// tokens, as it derives one equality term. Text holding a code point
+/// unassigned in Unicode 16 is refused, as equality refuses it: its NFC
+/// form could change when the code point is assigned.
+///
+/// The normalized copy is held in [`Protected`](vitaminc_protected::Protected)
+/// and wiped on drop.
+pub(crate) fn tokens(
+    text: &str,
+    tokenizer: Tokenizer,
+    downcase: bool,
+) -> Result<Vec<String>, NormalizeError> {
+    let normalized = vitaminc_normalize::text(text)?;
+    // `text` returns the UTF-8 of a `str`, so this does not fail; a failure
+    // would be a bug there, refused rather than tokenized.
+    let normalized =
+        std::str::from_utf8(normalized.risky_ref()).map_err(|_| NormalizeError::Invalid)?;
+    Ok(tokenize(normalized, tokenizer, downcase))
 }
 
 /// Split `text` into tokens. `downcase` lower-cases the text first so matches
@@ -107,6 +131,25 @@ fn gram(chars: &[char]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tokens_are_cut_from_the_nfc_form() {
+        let standard = |text| tokens(text, Tokenizer::Standard, false).expect("tokens");
+        assert_eq!(
+            standard("cafe\u{301} au lait"),
+            standard("caf\u{e9} au lait"),
+            "a combining accent and the precomposed letter cut the same tokens"
+        );
+        assert_eq!(standard("caf\u{e9}"), vec!["caf\u{e9}"], "the token is NFC");
+    }
+
+    #[test]
+    fn tokens_refuse_a_code_point_unassigned_in_unicode_16() {
+        assert_eq!(
+            tokens("a\u{378}b", Tokenizer::Standard, true),
+            Err(NormalizeError::UnassignedCodePoint)
+        );
+    }
 
     #[test]
     fn ngram_tokenizes_sliding_windows() {

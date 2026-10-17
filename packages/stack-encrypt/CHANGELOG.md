@@ -146,6 +146,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release of vitaminc ADR 0001, which the entries below build on. A crate
   that names a vitaminc type stack-encrypt takes or returns (`Encrypt`,
   `Decrypt`, `Protected`) moves to 0.6 with it.
+- **Equality terms derive through `vitaminc-normalize`, so `TextEq` compares
+  text in Unicode 16 NFC.** An equality term is the PRF over the value's
+  normalized bytes under vitaminc's domain for its kind: `café` written with
+  a precomposed `é` and with `e` and a combining accent is one term, every
+  integer width of one number is one term (`34u32` and `34i64` match), both
+  float widths of one number are one term, and a date, timestamp, decimal
+  or uuid derives in a domain of its own. `KeysetCipher::equality_term`,
+  `target::equality`, the `Equality` index and `op::Eq` take an `Encrypt`
+  that is one scalar where they took a `PrfValue`. A boolean, a null or a
+  container has no equality term (`TermError::NoEqualityTerm`); a `bool`
+  satisfies the new bound, so equality on one now fails when the term is
+  derived where it used to fail to compile. Text holding a code point
+  unassigned in Unicode 16 (an emoji newer than it, say) is refused
+  (`TermError::Normalize`), when it is written to an equality or match
+  column as well as when it is queried: the whole record's encrypt fails.
+  Match text is tokenized in the same normal form, and refused the same
+  way. Every equality and match term changes
+  bytes (the domains move to `/v2`); ORE and OPE terms do not. No stored
+  term existed to keep; the record fixture is regenerated. ORE and OPE
+  text is still ordered as its raw UTF-8, not normalized, so on a column
+  with both an equality and an order index two forms of `café` are one
+  value to `=` and two to an ordering. This is a known gap, to be closed
+  with block ORE (#1140).
+- **`dynamic::Value` and `dynamic::Scalar` are gone.** A field lowered from
+  data holds an `FfiValue`, which is now `Clone` (a deep copy into fresh
+  `Protected` payloads, as `Value`'s was) and reads as a context label.
+  `dynamic::term` takes any `Encrypt` (an `&FfiValue`, a transport frame
+  walked in place, a Rust value) and derives at the one scalar it holds;
+  `IndexSpec::defines(value)` replaces `IndexSpec::supports(&scalar)`, and
+  `IndexSpec` is an `Index<FfiValue>`.
+- **A boolean has no order term**, on the typed path and through a plan or
+  `dynamic::term`: with two values, an ORE or OPE term would tell anyone
+  holding the column which rows are `true`. An ORE or OPE term of a `bool`
+  (`KeysetCipher::ore_term`, the `Ore` and `Ope` indexes) is refused with
+  the new `TermError::NoOrderTerm`, before any key is minted, where cllw-ore
+  used to order one. `dynamic::admits` now refuses ORE and OPE on `bool`, and
+  admits equality on `float32` and `float64`, which vitaminc gives an
+  equality domain. A 128-bit integer has an equality term and no order
+  term.
+
 - **Values describe themselves with vitaminc's new `Encrypt` and read back
   with `Decrypt` (vitaminc ADR 0001).** `KeysetCipher::encrypt`,
   `StackCipher::decrypt` and every target take the new `Encrypt`, a source

@@ -127,5 +127,9 @@ vitaminc-aead = "0.6.0"
 vitaminc-aead-frame = "0.6.0"
 vitaminc-encrypt = "0.6.0"
 vitaminc-hmac = "0.6.0"
-vitaminc-prf = "0.6.0"
+# Not on crates.io yet: the `[patch.crates-io]` block below supplies it.
+# Normalized equality terms (Unicode 16 NFC text, one integer encoding for
+# every width), which `vitaminc-prf`'s `normalize` feature derives over.
+vitaminc-normalize = "0.6.0"
+vitaminc-prf = { version = "0.6.0", features = ["normalize"] }
 vitaminc-protected = "0.6.0"
