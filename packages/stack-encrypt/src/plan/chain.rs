@@ -1015,10 +1015,10 @@ where
     where
         'a: 'p,
     {
-        let carry = self.inner.index.carry(&self.inner.value);
+        let verifier = self.inner.index.verifier(&self.inner.value);
         self.inner
             .prepare(keyset, scoped)
-            .map(move |term| I::query(carry, term, QueryToken::new()))
+            .map(move |term| I::query(verifier, term, QueryToken::new()))
     }
 }
 

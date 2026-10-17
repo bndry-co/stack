@@ -145,10 +145,10 @@ pub trait Operator: Copy + 'static {}
 
 pub trait Supports<Op: Operator, S>: Index<S> {
     type Query: TermFor<Op>;   // what this index sends for `Op`
-    type Carry;                // what the query keeps of the value
+    type Verifier;             // what the query keeps to check a row
     fn check(&self) -> Result<(), PlanError>;
-    fn carry(&self, value: &S) -> Self::Carry;
-    fn query(carry: Self::Carry, term: Self::Term, token: QueryToken) -> Self::Query;
+    fn verifier(&self, value: &S) -> Self::Verifier;
+    fn query(verifier: Self::Verifier, term: Self::Term, token: QueryToken) -> Self::Query;
 }
 ```
 
@@ -173,9 +173,27 @@ an inexact operator without saying how its answer is checked. The rule binds
 this crate's terms through blanket impls; a term in another crate can opt
 into `TermFor` by hand, so there it is a guide rather than a proof.
 
-`carry` takes what the query term keeps of the value before the value is
-consumed: nothing for an exact term, the query's tokens for a match query,
-which `verify` needs and the filter cannot give back.
+`Verifier` is what the query term keeps of the query's plaintext so it can
+check a decrypted row later, and `verifier` takes it before the plaintext is
+consumed. An exact term checks nothing, so an equality index's verifier is
+`()`. A match index's is the query's tokens (`QueryTokens`), which `verify`
+needs and the filter cannot give back:
+
+```rust
+impl<S: AsRef<str>, O: MatchCase> Supports<Matches<O::Case>, S> for Match<O> {
+    type Query = MatchQuery<O>;
+    type Verifier = QueryTokens;     // "alice" -> ali, lic, ice
+    fn verifier(&self, value: &S) -> QueryTokens { QueryTokens::of::<O>(value.as_ref()) }
+    fn query(tokens: QueryTokens, term: MatchTerms<O>, _: QueryToken) -> MatchQuery<O> {
+        MatchQuery::new(term, tokens)  // filter for the server, tokens for verify
+    }
+    // check elided
+}
+```
+
+A row the server returns for `alice` passes `verify` only if its decrypted
+text holds `ali`, `lic` and `ice`, so a Bloom false positive never reaches
+the caller.
 
 ### 3. The domain type chooses the best index for an operator
 

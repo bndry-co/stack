@@ -22,11 +22,11 @@ impl Index<String> for Shortcut {
 
 impl op::Supports<op::Matches, String> for Shortcut {
     type Query = EqualityTerm;
-    type Carry = ();
+    type Verifier = ();
     fn check(&self) -> Result<(), stack_encrypt::PlanError> {
         Ok(())
     }
-    fn carry(&self, _: &String) {}
+    fn verifier(&self, _: &String) {}
     fn query((): (), term: EqualityTerm, _: op::QueryToken) -> EqualityTerm {
         term
     }

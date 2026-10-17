@@ -743,9 +743,9 @@ impl<O> PartialEq for MatchQuery<O> {
 impl<O> Eq for MatchQuery<O> {}
 
 /// The query's tokens, as a match index cuts them from the query's value:
-/// what a [`MatchQuery`] keeps to verify a row. Plaintext, so it is
+/// a match query's verifier, which a [`MatchQuery`] keeps to verify a row. Plaintext, so it is
 /// zeroized on drop and has no `Debug`.
-/// [`Supports::carry`](crate::op::Supports::carry) makes one; only a query
+/// [`Supports::verifier`](crate::op::Supports::verifier) makes one; only a query
 /// chain can join it to a filter
 /// ([`Supports::query`](crate::op::Supports::query) takes a token no caller
 /// can make), so one query's tokens never verify rows for another value's

@@ -49,7 +49,7 @@ impl Default for Tokenizer {
 /// [`match_terms`]: crate::StackCipher::match_terms
 ///
 /// An n-gram length of zero yields no tokens rather than panicking, so a
-/// caller that tokenizes before validating the options (a query's carry)
+/// caller that tokenizes before validating the options (a query's verifier)
 /// still reaches [`MatchOptions::validate`]'s refusal.
 ///
 /// The text is plaintext, so the copies made on the way are zeroized when

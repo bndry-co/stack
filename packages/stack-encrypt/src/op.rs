@@ -252,11 +252,12 @@ impl<C: Case, T: Probabilistic> TermFor<Matches<C>> for T {}
 /// query term it sends for it.
 ///
 /// [`Index::Term`] is what the index derives; [`query`](Self::query) makes
-/// the query term from it and from what [`carry`](Self::carry) kept of the
-/// query's value. For an equality index the two are the same HMAC and
-/// nothing is kept. For a match index they are not: the query is a filter
-/// over the query's value, and it keeps that value's tokens so it can
-/// [`verify`](Probabilistic::verify) a row.
+/// the query term from it and from the query's [`Verifier`](Self::Verifier).
+/// For an equality index the two are the same HMAC and there is nothing to
+/// verify. For a match index they are not: the query is a filter over the
+/// query's value, which matches some rows that do not hold the value, so
+/// the query keeps that value's tokens to
+/// [`verify`](Probabilistic::verify) each decrypted row.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not answer `{Op}` over `{S}`",
     label = "this index cannot answer the operator",
@@ -265,19 +266,26 @@ impl<C: Case, T: Probabilistic> TermFor<Matches<C>> for T {}
 pub trait Supports<Op: Operator, S>: Index<S> {
     /// What this index sends for `Op`.
     type Query: TermFor<Op>;
-    /// What the query term keeps of the query's value, taken before the
-    /// value is consumed: `()` for an exact term.
-    type Carry: MaybeSend + 'static;
+    /// What the query term keeps of the query's plaintext so that it can
+    /// later check a decrypted row, taken before the plaintext is consumed.
+    ///
+    /// An exact term checks nothing, so its verifier is `()`. A match
+    /// query's is [`crate::sem::QueryTokens`]: `Supports<Matches,
+    /// String> for Match` cuts `"alice"` into `ali`, `lic`, `ice`, and
+    /// [`MatchQuery::verify`](Probabilistic::verify) passes a row only if
+    /// its own text holds all three. The filter cannot give the tokens back,
+    /// so without the verifier a Bloom false positive would reach the caller.
+    type Verifier: MaybeSend + 'static;
     /// Why this index cannot answer `Op` as configured, if it cannot: a
     /// match index whose [`MatchCase`] disagrees with its options.
     fn check(&self) -> Result<(), PlanError>;
-    /// Take what the query term keeps of `value`.
-    fn carry(&self, value: &S) -> Self::Carry;
-    /// The query term, from what was kept and the term the index derived
-    /// for the query's value. Only a query chain calls this: `QueryToken`
+    /// The verifier of the query's plaintext `value`.
+    fn verifier(&self, value: &S) -> Self::Verifier;
+    /// The query term, from the verifier and the term the index derived for
+    /// the query's value. Only a query chain calls this: `QueryToken`
     /// cannot be made outside this crate, so no caller can pair one query's tokens
     /// with another value's filter, or pass a stored term off as a query.
-    fn query(carry: Self::Carry, term: Self::Term, token: QueryToken) -> Self::Query;
+    fn query(verifier: Self::Verifier, term: Self::Term, token: QueryToken) -> Self::Query;
 }
 
 /// Proof that [`Supports::query`] is called by a query chain. Only this
@@ -294,11 +302,11 @@ impl QueryToken {
 
 impl<S: vitaminc_prf::PrfValue> Supports<Eq, S> for Equality {
     type Query = EqualityTerm;
-    type Carry = ();
+    type Verifier = ();
     fn check(&self) -> Result<(), PlanError> {
         Ok(())
     }
-    fn carry(&self, _: &S) {}
+    fn verifier(&self, _: &S) {}
     fn query((): (), term: EqualityTerm, _: QueryToken) -> EqualityTerm {
         term
     }
@@ -310,7 +318,7 @@ where
     O: MatchCase,
 {
     type Query = MatchQuery<O>;
-    type Carry = QueryTokens;
+    type Verifier = QueryTokens;
     fn check(&self) -> Result<(), PlanError> {
         let folds = O::options().downcase;
         if folds == O::Case::FOLDS {
@@ -322,7 +330,7 @@ where
             })
         }
     }
-    fn carry(&self, value: &S) -> QueryTokens {
+    fn verifier(&self, value: &S) -> QueryTokens {
         QueryTokens::of::<O>(value.as_ref())
     }
     fn query(tokens: QueryTokens, term: MatchTerms<O>, _: QueryToken) -> MatchQuery<O> {
