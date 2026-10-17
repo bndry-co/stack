@@ -2205,6 +2205,7 @@ mod tests {
         for refused in [
             br#"{"bf":[]}"#.as_slice(),
             br#"{"bf":[5,1]}"#,
+            br#"{"bf":[5,5]}"#,
             br#"{"bf":[1,2048]}"#,
             br#"{"bf":[-1]}"#,
             br#"{"hm":"00"}"#,
