@@ -2,7 +2,7 @@
 //
 // A program never imports this package: it calls the functions the generated
 // file writes into its own package (users.Encrypt, users.Decrypt,
-// users.Fields). The generated file names [GeneratedVersion1], builds a
+// users.Fields). The generated file names [GeneratedVersion2], builds a
 // [Declaration] from the struct's tags, hands the library its conversions in
 // a [Generated] value, and prints through [Redacted] and [RedactedLog]. The
 // library lowers the declaration to the data plan the engine reads, sends a
@@ -25,9 +25,15 @@ import (
 // file names, so a file from another version does not compile.
 type generatedVersion uint8
 
-// GeneratedVersion1 is the layout of files that stashgen writes today. Every
-// generated file holds `const _ = gensupport.GeneratedVersion1`.
-const GeneratedVersion1 generatedVersion = 1
+// GeneratedVersion2 is the layout of files that stashgen writes today. Every
+// generated file holds `const _ = gensupport.GeneratedVersion2`.
+//
+// Version 2 is the layout with one query method per operator the engine
+// answers (Field.Term, Field.Range, Matches, EQLMatches). Version 1, whose
+// files call Field.Equality, Match, Ore, Ope, Query and JSON, is no longer
+// declared, so such a file stops at its version constant instead of deep
+// inside it. Run stashgen again to write version 2.
+const GeneratedVersion2 generatedVersion = 2
 
 // sealed is what a hidden field prints as.
 const sealed = "[sealed]"

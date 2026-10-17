@@ -127,6 +127,9 @@ func TestQueriesRunAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Rows hold the connection until they are closed, and the cleanup closes
+	// the connection: without this a failure mid-loop would block there.
+	defer result.Close()
 	var ids []int64
 	var fetched []testusers.EncryptedQueryProfile
 	for result.Next() {

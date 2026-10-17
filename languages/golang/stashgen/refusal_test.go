@@ -63,6 +63,7 @@ func TestRefusals(t *testing.T) {
 		want  string
 	}{
 		{"an exported field with no stash tag", user(ctx + "\tEmail string"), stashgen.Request{Type: "User"}, "Email", "no stash tag"},
+		{"a match query on an index-only field", user(ctx + "\tName string `stash:\"name,index=match\"`"), stashgen.Request{Type: "User"}, "Name", "an index-only field stores no ciphertext to decrypt"},
 		{"a tag that does not parse", user(ctx + "\tEmail string `stash:\"email,shred\"`"), stashgen.Request{Type: "User"}, "Email", `unknown part "shred"`},
 		{"two fields with one name", user(ctx + "\tEmail string `stash:\"email,encrypt\"`\n\tAlt string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "Alt", `two fields write the name "email"`},
 		{"an omitted field whose name a column takes", user(ctx + "\tEmail string `stash:\"-\"`\n\tAddr string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "Addr", `two fields write the name "email"`},
@@ -295,6 +296,7 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"a declaration the engine runs", "\tAge uint32 `stash:\"age,encrypt,index=equality;ore\"`\n\tName string `stash:\"name,encrypt,index=match\"`"},
 		{"every index on an integer", "\tScore int64 `stash:\"score,encrypt,index=equality;ore;ope\"`\n\tRank int32 `stash:\"rank,index=ope\"`"},
 		{"orders on text, bytes and a float", "\tName string `stash:\"name,encrypt,index=ore;ope;match\"`\n\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`"},
+		{"a match query on an index-only field", "\tName string `stash:\"name,index=match\"`"},
 	} {
 		dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})
 		realFile, real := stashgen.FromTags(context.Background(), engine, stashgen.Request{Dir: dir, Type: "User"})
@@ -325,13 +327,40 @@ func TestTheWholeDeclarationIsCheckedAgainstTheEmbeddedEngine(t *testing.T) {
 		{Name: "medicare_number", GoName: "MedicareNo", GoType: stashgen.GoType{Name: "string", Kind: stashgen.KindString, Basic: "string"}, Verb: stashgen.VerbEncrypt, Identity: "id"},
 		{Name: "legacy_number", GoName: "LegacyNo", GoType: stashgen.GoType{Name: "string", Kind: stashgen.KindString, Basic: "string"}, Verb: stashgen.VerbEncrypt, Identity: "id"},
 	}}
-	err = engine.Check(context.Background(), decl)
+	_, err = engine.Check(context.Background(), decl)
 	var fe *stashgen.FieldError
 	if !errors.As(err, &fe) || fe.Field != "" || !strings.Contains(err.Error(), "as a whole") {
 		t.Fatalf("err = %v, want the whole-declaration refusal naming no field", err)
 	}
 	decl.Fields[1].Identity = ""
-	if err := engine.Check(context.Background(), decl); err != nil {
+	if _, err := engine.Check(context.Background(), decl); err != nil {
 		t.Fatalf("distinct identities: %v", err)
+	}
+}
+
+// An index no generated method queries is stored, and the generator says
+// so, on stderr and in the file: an order index on text, bytes or a float,
+// and the second of two order indexes on an integer.
+func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
+	src := user(ctx + "\tName string `stash:\"name,encrypt,index=match;ope\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`\n\tAge int64 `stash:\"age,encrypt,index=ore;ope\"`\n\tRank int32 `stash:\"rank,encrypt,index=ope\"`")
+	file, err := generate(t, src, stashgen.Request{Type: "User"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notices := strings.Join(file.Notices, "\n")
+	for _, want := range []string{
+		"stashgen: User.Name: stores ope terms that no generated method queries",
+		"stashgen: User.Score: stores ore terms that no generated method queries",
+		"stashgen: User.Age: stores ope terms that no generated method queries: the engine answers no query through the ope index on this field (int64): the ore index already answers",
+	} {
+		if !strings.Contains(notices, want) {
+			t.Errorf("notices lack %q:\n%s", want, notices)
+		}
+	}
+	if strings.Contains(notices, "User.Rank") {
+		t.Errorf("an ope index that answers the orderings got a notice:\n%s", notices)
+	}
+	if !strings.Contains(string(file.Content), "// Name: stores ope terms that no generated method queries") {
+		t.Errorf("the file does not carry the notice:\n%s", file.Content)
 	}
 }

@@ -11,10 +11,45 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion1
+const _ = gensupport.GeneratedVersion2
 
 // Probe prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
+
+// U32: stores ope terms that no generated method queries: the engine answers no
+// query through the ope index on this field (uint32): the ore index already
+// answers lt and the other orderings. Drop the index unless your own code
+// compares the stored terms.
+
+// U64: stores ope terms that no generated method queries: the engine answers no
+// query through the ope index on this field (uint64): the ore index already
+// answers lt and the other orderings. Drop the index unless your own code
+// compares the stored terms.
+
+// I64: stores ope terms that no generated method queries: the engine answers no
+// query through the ope index on this field (int64): the ore index already
+// answers lt and the other orderings. Drop the index unless your own code
+// compares the stored terms.
+
+// S: stores ore terms that no generated method queries: the engine answers no
+// query through the ore index on this field (string): the orderings are
+// answered over integers only. Drop the index unless your own code compares the
+// stored terms.
+
+// S: stores ope terms that no generated method queries: the engine answers no
+// query through the ope index on this field (string): the orderings are
+// answered over integers only. Drop the index unless your own code compares the
+// stored terms.
+
+// B: stores ore terms that no generated method queries: the engine answers no
+// query through the ore index on this field ([]byte): the orderings are
+// answered over integers only. Drop the index unless your own code compares the
+// stored terms.
+
+// B: stores ope terms that no generated method queries: the engine answers no
+// query through the ope index on this field ([]byte): the orderings are
+// answered over integers only. Drop the index unless your own code compares the
+// stored terms.
 
 type EncryptedProbe struct {
 	U32 EncryptedProbeU32

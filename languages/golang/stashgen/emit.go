@@ -64,7 +64,7 @@ func (w *writer) header(f *genFile) {
 	w.b.WriteString(f.imports.block())
 	w.nl()
 	w.p("// Stops compiling when the library does not accept this version of generated file.")
-	w.p("const _ = gensupport.GeneratedVersion1")
+	w.p("const _ = gensupport.GeneratedVersion2")
 	for _, n := range f.notices {
 		w.nl()
 		w.b.WriteString(wrapComment(n, 80))
@@ -589,8 +589,64 @@ func planQueries(f *genFile) error {
 			}
 			g.queries = append(g.queries, q)
 		}
+		unqueried, err := indexesAnswer(g)
+		if err != nil {
+			return fieldErr(f.typeName, g.GoName, "%v", err)
+		}
+		for _, n := range unqueried {
+			f.notices = append(f.notices, g.GoName+": "+n)
+			f.unqueried = append(f.unqueried, fmt.Sprintf("stashgen: %s.%s: %s", f.typeName, g.GoName, n))
+		}
 	}
 	return nil
+}
+
+// indexesAnswer checks a field's indexes against the operators the engine
+// answers on it.
+//
+// It refuses a probabilistic query on an index-only field: the query's rows
+// are checked by decrypting them with Verify, and an index-only field
+// stores no ciphertext, so Verify could never pass and every real match
+// would be thrown away.
+//
+// It returns a notice for each index the engine answers no operator
+// through on the field: the index stores a term no generated method can
+// query. That is an ore or ope index on text, bytes or a float (the engine
+// stores it and answers the orderings over integers only), or a second
+// order index beside the one the engine already answers the orderings
+// with. Storing it is allowed, since a program may compare the stored terms
+// itself, but an order term tells anyone who reads the column how its
+// values order, so the generator says so.
+func indexesAnswer(g *genField) ([]string, error) {
+	if g.Verb != VerbEncryptIndex && g.Verb != VerbIndex {
+		return nil, nil
+	}
+	answers := map[IndexName]string{}
+	for _, op := range g.operators {
+		if op.Probabilistic && g.Verb == VerbIndex {
+			return nil, fmt.Errorf("the %s index answers %s, whose rows are checked by decrypting them with Verify, and an index-only field stores no ciphertext to decrypt; seal it as well (encrypt,index=%s)", op.Index, op.Name, op.Index)
+		}
+		if _, ok := answers[op.Index]; !ok {
+			answers[op.Index] = op.Name
+		}
+	}
+	var notices []string
+	for _, ix := range g.Indexes {
+		if _, ok := answers[ix.Name]; ok {
+			continue
+		}
+		why := ""
+		if ix.Name == IndexOre || ix.Name == IndexOpe {
+			why = ": the orderings are answered over integers only"
+			for _, other := range []IndexName{IndexOre, IndexOpe} {
+				if op, ok := answers[other]; ok && other != ix.Name {
+					why = fmt.Sprintf(": the %s index already answers %s and the other orderings", other, op)
+				}
+			}
+		}
+		notices = append(notices, fmt.Sprintf("stores %s terms that no generated method queries: the engine answers no query through the %s index on this field (%s)%s. Drop the index unless your own code compares the stored terms.", ix.Name, ix.Name, g.typeExpr, why))
+	}
+	return notices, nil
 }
 
 func queryFor(g *genField, op Operator) (queryMethod, error) {

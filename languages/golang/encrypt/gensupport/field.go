@@ -96,7 +96,7 @@ func (f Field[T]) query(ctx context.Context, c *encrypt.Cipher, operator string,
 		return nil, f.err
 	}
 	if c == nil {
-		return nil, fmt.Errorf("gensupport: %s: a query needs a cipher", f.name)
+		return nil, fmt.Errorf("%w: gensupport: %s: a query needs a cipher", encrypt.ErrEncoding, f.name)
 	}
 	term, err := c.QueryTerm(ctx, f.plan, f.name, operator, input)
 	if err != nil {
@@ -110,13 +110,11 @@ func (f Field[T]) query(ctx context.Context, c *encrypt.Cipher, operator string,
 
 // Matches derives the matches query for one value of a field declared with
 // a match index: the term, and what Verify and TargetLimit need. A function,
-// not a method, because only a string field answers matches.
+// not a method, because only a string field answers matches. A nil cipher
+// is refused by [encrypt.NewMatchQuery], with [encrypt.ErrEncoding].
 func Matches[T ~string](ctx context.Context, f Field[T], c *encrypt.Cipher, v T) (encrypt.MatchQuery[T], error) {
 	if f.err != nil {
 		return encrypt.MatchQuery[T]{}, f.err
-	}
-	if c == nil {
-		return encrypt.MatchQuery[T]{}, fmt.Errorf("gensupport: %s: a query needs a cipher", f.name)
 	}
 	return encrypt.NewMatchQuery(ctx, c, f.plan, f.name, v)
 }
@@ -127,9 +125,6 @@ func Matches[T ~string](ctx context.Context, f Field[T], c *encrypt.Cipher, v T)
 func EQLMatches[Q ~[]byte, T ~string](ctx context.Context, f Field[T], c *encrypt.Cipher, v T) (encrypt.EQLMatchQuery[Q, T], error) {
 	if f.err != nil {
 		return encrypt.EQLMatchQuery[Q, T]{}, f.err
-	}
-	if c == nil {
-		return encrypt.EQLMatchQuery[Q, T]{}, fmt.Errorf("gensupport: %s: a query needs a cipher", f.name)
 	}
 	return encrypt.NewEQLMatchQuery[Q](ctx, c, f.plan, f.name, v)
 }

@@ -51,6 +51,7 @@ type genFile struct {
 	notices         []string
 	printsPlaintext bool
 	unexported      []string
+	unqueried       []string // stderr notices: indexes no generated method queries
 	redact          bool
 	redactRecv      string
 

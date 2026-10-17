@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -182,14 +183,16 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 			t.Errorf("%q in %q: %v, want %v", needle, profiles[0].Name, got, contained)
 		}
 		// Verify decides on the decrypted text, under TextMatch's own
-		// tokenizer, whatever the filter says.
-		names := []string{profiles[0].Name, profiles[1].Name}
+		// tokenizer, whatever the filter says. Verify takes any decrypted
+		// values, so the page also holds the case the tokenizer folds and
+		// text holding every 3-gram of the needle out of order.
+		names := []string{profiles[0].Name, profiles[1].Name, strings.ToUpper(needle), scrambled(needle)}
 		verified, err := q.Verify(ctx, names)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for i, name := range names {
-			if want := strings.Contains(name, strings.ToLower(needle)); verified[i] != want {
+			if want := holdsTrigrams(name, needle); verified[i] != want {
 				t.Errorf("Verify(%q) over %q = %v, want %v", needle, name, verified[i], want)
 			}
 		}
@@ -376,4 +379,38 @@ func withoutCiphertexts(t *testing.T, f rowsFixture) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// holdsTrigrams is TextMatch's verify as a test oracle: the value holds
+// every 3-gram of the query, both lower-cased (EqlMatch's options are 3-grams
+// with downcasing), and the query cuts at least one.
+func holdsTrigrams(value, query string) bool {
+	have := map[string]bool{}
+	for _, g := range trigrams(strings.ToLower(value)) {
+		have[g] = true
+	}
+	want := trigrams(strings.ToLower(query))
+	for _, g := range want {
+		if !have[g] {
+			return false
+		}
+	}
+	return len(want) > 0
+}
+
+func trigrams(s string) []string {
+	r := []rune(s)
+	var out []string
+	for i := 0; i+3 <= len(r); i++ {
+		out = append(out, string(r[i:i+3]))
+	}
+	return out
+}
+
+// scrambled holds every 3-gram of s, last first, with a space between them:
+// no substring of it is s, and a token test still passes it.
+func scrambled(s string) string {
+	g := trigrams(s)
+	slices.Reverse(g)
+	return strings.Join(g, " ")
 }

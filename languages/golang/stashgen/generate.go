@@ -95,12 +95,11 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := engine.Check(ctx, gf.decl); err != nil {
+	operators, err := engine.Check(ctx, gf.decl)
+	if err != nil {
 		return nil, err
 	}
-	if err := gf.askOperators(ctx, engine); err != nil {
-		return nil, err
-	}
+	gf.setOperators(operators)
 	src, err := emit(gf)
 	if err != nil {
 		return nil, err
@@ -111,19 +110,14 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 	return &File{Path: outPath, Content: src, Notices: gf.stderrNotices()}, nil
 }
 
-// askOperators asks the engine which operators each sealed field answers,
-// for the field's query methods.
-func (f *genFile) askOperators(ctx context.Context, engine Engine) error {
-	operators, err := engine.Operators(ctx, f.decl)
-	if err != nil {
-		return err
-	}
+// setOperators gives each sealed field the operators the engine answers on
+// it, for the field's query methods.
+func (f *genFile) setOperators(operators map[string][]Operator) {
 	for i := range f.fields {
 		if f.fields[i].Sealed() {
 			f.fields[i].operators = operators[f.fields[i].Name]
 		}
 	}
-	return nil
 }
 
 // checkNamesFree refuses a file that declares a package-level name the
@@ -176,5 +170,5 @@ func (f *genFile) stderrNotices() []string {
 	if f.printsPlaintext {
 		out = append(out, fmt.Sprintf("stashgen: %s prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.", f.typeName))
 	}
-	return out
+	return append(out, f.unqueried...)
 }

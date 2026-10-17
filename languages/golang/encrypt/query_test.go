@@ -553,6 +553,27 @@ func TestAMatchesQueryVerifiesAndSizesAsTheRustFixtures(t *testing.T) {
 		}
 	}
 	var zero encrypt.MatchQuery[string]
+	if _, err := zero.Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("the zero MatchQuery binds: %v", err)
+	}
+	var zeroEQL encrypt.EQLMatchQuery[[]byte, string]
+	if _, err := zeroEQL.Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("the zero EQLMatchQuery binds: %v", err)
+	}
+	if _, err := zeroEQL.Verify(ctx, page); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("the zero EQLMatchQuery verifies: %v", err)
+	}
+	if zero.String() != "encrypt.MatchQuery{}" || zeroEQL.String() != "encrypt.EQLMatchQuery{}" {
+		t.Fatalf("the zero queries print as %q and %q", zero.String(), zeroEQL.String())
+	}
+	// A query with no cipher is an encoding error, from generated code as
+	// from the library.
+	if _, err := testusers.QueryProfileFields.Name.Matches(ctx, nil, "alice"); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("Matches with no cipher: %v", err)
+	}
+	if _, err := testusers.QueryProfileFields.Email.Eq(ctx, nil, "bob@example.com"); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("Eq with no cipher: %v", err)
+	}
 	if _, err := zero.Verify(ctx, page); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("the zero MatchQuery verifies: %v", err)
 	}
@@ -573,8 +594,13 @@ func TestAMatchesQueryNeverPrintsItsText(t *testing.T) {
 	}
 	var out bytes.Buffer
 	fmt.Fprintf(&out, "%v %+v %#v %s %q %x %d", q, q, q, q, q, q, q)
-	slog.New(slog.NewTextHandler(&out, nil)).Info("query", "q", q)
-	slog.New(slog.NewJSONHandler(&out, nil)).Info("query", "q", q)
+	// A verb fmt reports as wrong skips Format and prints by reflection, as
+	// it does a MatchQuery in an unexported struct field.
+	type search struct{ q encrypt.MatchQuery[string] }
+	held := search{q: q}
+	fmt.Fprintf(&out, " %p %+v %v %#v", q, held, held, held)
+	slog.New(slog.NewTextHandler(&out, nil)).Info("query", "q", q, "held", held)
+	slog.New(slog.NewJSONHandler(&out, nil)).Info("query", "q", q, "held", held)
 	if strings.Contains(out.String(), text) || strings.Contains(out.String(), hex.EncodeToString([]byte(text))) {
 		t.Fatalf("the text was printed: %s", out.String())
 	}

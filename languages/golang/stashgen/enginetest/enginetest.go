@@ -61,8 +61,16 @@ func sealsAs(t stashgen.GoType) string {
 	return ""
 }
 
-// Check applies the engine's rules as they stand today.
-func (e Static) Check(ctx context.Context, d stashgen.Declaration) error {
+// Check applies the engine's rules as they stand today, then its table of
+// the operators each sealed field answers.
+func (e Static) Check(ctx context.Context, d stashgen.Declaration) (map[string][]stashgen.Operator, error) {
+	if err := e.check(ctx, d); err != nil {
+		return nil, err
+	}
+	return e.operators(ctx, d)
+}
+
+func (e Static) check(ctx context.Context, d stashgen.Declaration) error {
 	for _, f := range d.Fields {
 		if f.Verb == stashgen.VerbOmit {
 			continue
@@ -107,10 +115,10 @@ func (e Static) Check(ctx context.Context, d stashgen.Declaration) error {
 // operatorNames are the operators, in the engine's order (OpSpec::ALL).
 var operatorNames = []string{"eq", "lt", "lte", "gt", "gte", "between", "matches"}
 
-// Operators applies the engine's table as it stands today: OpSpec::answered_by
+// operators applies the engine's table as it stands today: OpSpec::answered_by
 // for a field with indexes, and for an EQL type the operators of one value
 // its indexes answer (matches included).
-func (e Static) Operators(ctx context.Context, d stashgen.Declaration) (map[string][]stashgen.Operator, error) {
+func (e Static) operators(ctx context.Context, d stashgen.Declaration) (map[string][]stashgen.Operator, error) {
 	out := map[string][]stashgen.Operator{}
 	if d.Opaque {
 		return out, nil

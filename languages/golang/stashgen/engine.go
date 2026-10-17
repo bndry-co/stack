@@ -24,12 +24,11 @@ type Engine interface {
 	// Check refuses a declaration the engine cannot run: an index or an EQL
 	// type that does not apply to a field's Go type, a field type it cannot
 	// seal, an EQL type it cannot produce, or an index option it cannot
-	// carry. The error names the field.
-	Check(ctx context.Context, d Declaration) error
-	// Operators lists the operators the engine answers on each sealed field
-	// of a declaration it accepts, by the field's declared name, in the
-	// engine's order: the generator writes one query method for each.
-	Operators(ctx context.Context, d Declaration) (map[string][]Operator, error)
+	// carry. The error names the field. For a declaration it accepts, it
+	// lists the operators the engine answers on each sealed field, by the
+	// field's declared name, in the engine's order: the generator writes one
+	// query method for each.
+	Check(ctx context.Context, d Declaration) (map[string][]Operator, error)
 }
 
 // Operator is one operator the engine answers on a field, such as eq or
@@ -86,14 +85,20 @@ func GuestEngine(ctx context.Context) (Engine, error) {
 
 type guestEngine struct {
 	checker *encrypt.Checker
+	// eqlTypes is the guest's answer to se_targets, asked once: it is fixed
+	// for the guest's build.
+	eqlTypes []EQLType
 }
 
 // Close releases the guest. The Engine interface does not name it, so a
 // caller that holds the engine as an Engine asserts to io.Closer.
 func (e *guestEngine) Close() error { return e.checker.Close() }
 
-// EQLTypes asks the guest which EQL types it produces.
+// EQLTypes asks the guest which EQL types it produces, once.
 func (e *guestEngine) EQLTypes(ctx context.Context) ([]EQLType, error) {
+	if e.eqlTypes != nil {
+		return e.eqlTypes, nil
+	}
 	targets, err := e.checker.Targets(ctx)
 	if err != nil {
 		return nil, err
@@ -108,60 +113,48 @@ func (e *guestEngine) EQLTypes(ctx context.Context) ([]EQLType, error) {
 		}
 		out = append(out, eqlType)
 	}
+	e.eqlTypes = out
 	return out, nil
 }
 
-// Check asks the guest about the declaration one field at a time, so the
-// error names the field, then about the whole: the engine's rules across
-// fields (two fields under one identity) show only there.
-func (e *guestEngine) Check(ctx context.Context, d Declaration) error {
+// Check lowers the declaration once and asks the guest about it one field
+// at a time, so the error names the field, then about the whole: the
+// engine's rules across fields (two fields under one identity) show only
+// there. Then it asks, field by field, which operators the engine answers
+// (se_operators), on the same plan.
+func (e *guestEngine) Check(ctx context.Context, d Declaration) (map[string][]Operator, error) {
 	eqlTypes, err := e.EQLTypes(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	plan, err := lowerDeclaration(d, eqlTypes)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(plan.Fields) == 0 {
 		// Nothing crosses the binding: an all-passthrough struct, which the
 		// generator refuses before it gets here.
-		return nil
+		return map[string][]Operator{}, nil
 	}
 	for _, f := range plan.Fields {
 		one := &record.Plan{Context: plan.Context, ContextField: plan.ContextField, Fields: []record.Field{f}}
 		if err := e.checker.Check(ctx, one); err != nil {
 			field := d.field(f.Name)
-			return &FieldError{Type: d.Type, Field: field.GoName, Reason: fmt.Sprintf(
+			return nil, &FieldError{Type: d.Type, Field: field.GoName, Reason: fmt.Sprintf(
 				"the engine refuses the declaration: %s over a %s value under %q (%v)",
 				describeField(f), kindWord(f.Kind), plan.Descriptor(f), err)}
 		}
 	}
 	if err := e.checker.Check(ctx, plan); err != nil {
-		return &FieldError{Type: d.Type, Reason: fmt.Sprintf("the engine refuses the declaration as a whole: %v", err)}
-	}
-	return nil
-}
-
-// Operators asks the guest, one sealed field at a time, which operators the
-// engine answers on it (se_operators).
-func (e *guestEngine) Operators(ctx context.Context, d Declaration) (map[string][]Operator, error) {
-	if d.Opaque {
-		// An opaque struct is one ciphertext with no index: no query.
-		return map[string][]Operator{}, nil
-	}
-	eqlTypes, err := e.EQLTypes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	plan, err := lowerDeclaration(d, eqlTypes)
-	if err != nil {
-		return nil, err
+		return nil, &FieldError{Type: d.Type, Reason: fmt.Sprintf("the engine refuses the declaration as a whole: %v", err)}
 	}
 	out := make(map[string][]Operator, len(plan.Fields))
+	if d.Opaque {
+		// An opaque struct is one ciphertext with no index: no query.
+		return out, nil
+	}
 	for _, f := range plan.Fields {
-		one := &record.Plan{Context: plan.Context, ContextField: plan.ContextField, Fields: []record.Field{f}}
-		answered, err := e.checker.Operators(ctx, one, f.Name)
+		answered, err := e.checker.Operators(ctx, plan, f.Name)
 		if err != nil {
 			return nil, &FieldError{Type: d.Type, Field: d.field(f.Name).GoName, Reason: fmt.Sprintf("the engine's operators: %v", err)}
 		}
