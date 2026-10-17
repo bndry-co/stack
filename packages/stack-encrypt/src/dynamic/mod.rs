@@ -13,8 +13,8 @@
 //! the typed operation. This module is that something, written once here
 //! rather than once per language binding.
 //!
-//! The runtime value is [`FfiValue`], vitaminc's language-neutral value tree
-//! and the type every binding already funnels through.
+//! The runtime value is [`FfiValue`], a language-neutral value tree and
+//! the type every binding already funnels through.
 //!
 //! # What is here
 //!
@@ -70,6 +70,7 @@
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
+mod ffi_value;
 mod kind;
 pub mod record;
 mod target;
@@ -79,20 +80,22 @@ mod value;
 use std::fmt;
 
 pub use context::{borrowed, context};
+/// The language-neutral value tree — the runtime value every binding
+/// funnels through — and the value kinds, the type a plan field declares
+/// in its `"type"` key. A kind's names are frozen wire format; see
+/// [`admits`] and [`read`] for what a kind means to this engine. A value
+/// crosses a binding's boundary as a transport frame
+/// ([`FfiValue::to_frame`], [`FfiValue::from_frame`]); everything else here
+/// takes and returns values, never encoded bytes.
+pub use ffi_value::{
+    Element, Entry, FfiValue, FromFrameError, ParseValueKindError, Put, Root, Utf8String,
+    ValueKind, ValueMap, ValueSeq, ValueSink,
+};
 pub use kind::{admits, read};
 pub use record::{FieldPlan, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
 pub use term::{term, Scalar, TermBytes};
-pub use value::Value;
-/// vitaminc's language-neutral value tree — the runtime value every binding
-/// funnels through. Its transport codec is `vitaminc_aead_value::transport`,
-/// which stays the binding's: this crate takes and returns values, never
-/// encoded bytes.
-pub use vitaminc_aead_value::FfiValue;
-/// vitaminc's value kinds: the type a plan field declares in its `"type"`
-/// key. Its names are frozen wire format; see [`admits`] and [`read`] for
-/// what a kind means to this engine.
-pub use vitaminc_aead_value::ValueKind;
+pub use value::{AsValue, Value};
 
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
@@ -137,7 +140,7 @@ impl<K> fmt::Debug for Scope<'_, K> {
 
 /// The UTF-8 inside a string leaf. Valid by `Utf8String`'s construction
 /// invariant; checked rather than assumed because this is boundary code.
-fn utf8(s: &vitaminc_aead_value::Utf8String) -> Option<&str> {
+fn utf8(s: &Utf8String) -> Option<&str> {
     std::str::from_utf8(s.risky_ref()).ok()
 }
 
@@ -526,6 +529,9 @@ reasons! {
         FieldType => "field_type", "a value is not of the type its field declares";
         /// A passthrough sits where a sealed value, or a ciphertext, must be.
         Passthrough => "passthrough", "a passthrough where a sealed value must be";
+        /// A passthrough value cannot be stored as a frame: it nests deeper,
+        /// or holds text, bytes or a key longer, than a frame carries.
+        Unframeable => "unframeable", "a passthrough value nests deeper, or holds a longer value, than a frame carries";
         /// A stored field is not a map of outputs.
         OutputsNotMap => "outputs_not_map", "a stored field is not a map of outputs";
         /// A stored sealed field has no `"c"` node.

@@ -960,7 +960,7 @@ struct One<F> {
 /// other plan.
 async fn same_field_bytes<F, Terms, X>(value: F, indexes: X)
 where
-    F: Encrypt + Decrypt<'static> + Clone + Send + Sync + PartialEq + Debug + 'static,
+    F: Encrypt + Decrypt + Clone + Send + Sync + PartialEq + Debug + 'static,
     Terms: TermSet<F> + PartialEq + Debug + Send,
     X: Indexes<F, Terms = Terms> + Clone + Send + Sync + 'static,
 {

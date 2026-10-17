@@ -660,7 +660,7 @@ macro_rules! indexed_opens {
     ($([$($generics:tt)*] $record:ty;)+) => {$(
         impl<S, X, K, $($generics)*> Opens<$record, K> for ValuePlan<S, Indexed<X>>
         where
-            S: crate::Decrypt<'static> + 'static,
+            S: crate::Decrypt + Send + 'static,
             K: 'static,
         {
             type Output = S;
@@ -678,7 +678,7 @@ macro_rules! indexed_opens {
         }
         impl<S, X, K, $($generics)*> Opens<Vec<$record>, K> for ValuePlan<S, Indexed<X>>
         where
-            S: crate::Decrypt<'static> + 'static,
+            S: crate::Decrypt + Send + 'static,
             K: 'static,
         {
             type Output = Vec<S>;

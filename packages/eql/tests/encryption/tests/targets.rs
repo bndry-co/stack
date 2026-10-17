@@ -9,8 +9,8 @@ use eql_bindings::encryption::targets::{self as targets, Opener, Target, TargetE
 use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use eql_bindings::{v4, Identifier};
 use eql_domains::{Shape, Term, CATALOG};
+use stack_encrypt::dynamic::{FfiValue, ValueKind};
 use stack_encrypt::Label;
-use vitaminc_aead_value::{FfiValue, ValueKind};
 
 fn email() -> Label {
     Label::new(["users", "email"]).unwrap()

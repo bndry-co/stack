@@ -208,9 +208,10 @@ func (w *writer) shapeStruct(name string, fields []shapeField) {
 }
 
 // kindExpr is the gensupport kind of a Go type: the wire type the field
-// seals as. The mapping is vcffi's: int8, int16 and int32 travel as int32,
-// int and int64 as int64, the unsigned ones likewise, []byte as bytes. A
-// composite is untyped and seals as one self-describing value.
+// seals as. int8, int16 and int32 seal as int32, int and int64 as int64, the
+// unsigned ones likewise, []byte as bytes: vcffi sends a narrower integer at
+// its own width, and the engine reads it as the 32-bit integer of its sign.
+// A composite is untyped and seals as one self-describing value.
 func kindExpr(t GoType) string {
 	switch t.Kind {
 	case KindString:

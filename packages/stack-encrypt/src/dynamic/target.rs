@@ -27,7 +27,7 @@
 
 use std::fmt;
 
-use vitaminc_aead_value::{FfiValue, ValueKind};
+use super::{FfiValue, ValueKind};
 
 use crate::{KeysetCipher, Label, Pending, StackCipher};
 

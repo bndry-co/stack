@@ -8,8 +8,9 @@ derivation of searchable index terms from the same values. Covers
 ## Language
 
 **Cipher-directed**:
-Encryption driven by the value's shape: the value's `Encrypt` implementation
-walks the cipher and the caller decides the context, which may be absent.
+Encryption driven by the value's shape: the value describes itself once
+(vitaminc's `Encrypt`), vitaminc walks it into sealed leaves, and the
+caller decides the context, which may be absent.
 Nothing declares an index and no output type is involved. One of the two
 preferred entry points for a native Rust caller. A language SDK may leave it
 out: the Go SDK seals a whole value through a plan, so that every sealed

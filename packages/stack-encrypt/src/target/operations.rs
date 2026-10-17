@@ -647,7 +647,7 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
 }
 /// The canonical opening operation: retrieve the tree's keys and decode `P`
 /// through its own Vitamin C `Decrypt` implementation, under `context`.
-pub fn open<P: crate::Decrypt<'static> + 'static, K: 'static>(
+pub fn open<P: crate::Decrypt + Send + 'static, K: 'static>(
     tree: StackCipherText,
     context: impl Into<AeadContext>,
 ) -> Decryption<P, K> {
@@ -887,7 +887,7 @@ impl<S: crate::Encrypt + Clone> EncryptFrom<S> for StackCipherText {
         ciphertext()
     }
 }
-impl<P: crate::Decrypt<'static> + 'static> DecryptInto<P> for StackCipherText {
+impl<P: crate::Decrypt + Send + 'static> DecryptInto<P> for StackCipherText {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
         open(self, context)

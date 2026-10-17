@@ -17,9 +17,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use std::future::IntoFuture;
 
+use stack_encrypt::dynamic::FfiValue;
 use stack_encrypt::dynamic::Scope;
 use stack_encrypt::sem::DefaultMatch;
-use stack_encrypt::{nonempty, CipherText, Encrypt, Label, SealedValue, StackCipher};
+use stack_encrypt::{
+    nonempty, CipherText, Label, Node, PassthroughFrame, PendingStackCipherText, SealedValue,
+    StackCipher,
+};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
 use stack_encrypt_guest::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET,
@@ -29,7 +33,7 @@ use stack_kms::{
     RetrieveKeyPayload,
 };
 use uuid::Uuid;
-use vitaminc_aead_value::{transport as codec, FfiValue};
+use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext};
 use vitaminc_protected::{Controlled, Protected};
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
@@ -93,19 +97,29 @@ fn cipher() -> StackCipher<Counting> {
 }
 
 fn encode(value: FfiValue) -> Vec<u8> {
-    let mut out = Vec::new();
-    codec::encode_value(value, &mut out).expect("encode value");
-    out
+    value.to_frame().expect("encode value").risky_unwrap()
 }
 
 fn decode(bytes: &[u8]) -> FfiValue {
-    codec::decode_value(&mut codec::Reader::new(bytes)).expect("decode value")
+    FfiValue::from_frame(bytes).expect("decode value")
 }
 
-/// Decode a guest ciphertext buffer with the passthrough payload kept as a
-/// plain [`FfiValue`], so tests can inspect term nodes directly.
-fn decode_tree(bytes: &[u8]) -> CipherText<Vec<u8>, FfiValue> {
-    codec::decode_ciphertext(&mut codec::Reader::new(bytes)).expect("decode ciphertext tree")
+/// Decode a guest ciphertext buffer with its leaves as bytes, so tests can
+/// inspect the nodes directly.
+fn decode_tree(bytes: &[u8]) -> Node<Vec<u8>> {
+    decode_ciphertext(bytes).expect("decode ciphertext tree")
+}
+
+/// Encode a ciphertext tree as the guest reads it.
+fn encode_tree(tree: &Node<Vec<u8>>) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_ciphertext(tree, &mut out).expect("encode ciphertext tree");
+    out
+}
+
+/// A value as a passthrough node: its frame, in the clear.
+fn clear(value: FfiValue) -> Node<Vec<u8>> {
+    CipherText::Passthrough(PassthroughFrame(encode(value)))
 }
 
 fn text(value: &FfiValue) -> &str {
@@ -194,8 +208,11 @@ fn single_field_plan(field: &str, context: FfiValue) -> Vec<u8> {
 }
 
 /// The bytes of a term node in a decoded record tree.
-fn term_bytes(node: &CipherText<Vec<u8>, FfiValue>) -> Vec<u8> {
-    let CipherText::Passthrough(FfiValue::Bytes(b)) = node else {
+fn term_bytes(node: &Node<Vec<u8>>) -> Vec<u8> {
+    let CipherText::Passthrough(frame) = node else {
+        panic!("expected a passthrough term node");
+    };
+    let FfiValue::Bytes(b) = decode(&frame.0) else {
         panic!("expected a passthrough bytes term node");
     };
     b.risky_ref().to_vec()
@@ -456,12 +473,11 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
         };
         for (key, slot) in outputs.iter_mut() {
             if key == "c" {
-                *slot = CipherText::Passthrough(FfiValue::UInt32(99));
+                *slot = clear(FfiValue::UInt32(99));
             }
         }
     }
-    let mut forged = Vec::new();
-    codec::encode_ciphertext(&CipherText::Map(fields), &mut forged).expect("re-encode");
+    let forged = encode_tree(&CipherText::Map(fields));
 
     assert_eq!(
         block_on(ops::decrypt_record(
@@ -666,9 +682,8 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     let keyset = cipher.default_keyset();
     let native = nonempty!("users").with("age").with(7u64);
     let sealed = block_on(
-        FfiValue::UInt32(34)
-            .encrypt_with_aad(&keyset, native)
-            .expect("encrypt")
+        PendingStackCipherText::plan(FfiValue::UInt32(34), native)
+            .expect("plan")
             .seal(&keyset, native),
     )
     .expect("seal");
@@ -677,12 +692,11 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     };
 
     // Shape the tree the way `encrypt_record` writes it: field → { c: leaf }.
-    let tree: CipherText<Vec<u8>, FfiValue> = CipherText::Map(vec![(
+    let tree: Node<Vec<u8>> = CipherText::Map(vec![(
         "age".to_string(),
         CipherText::Map(vec![("c".to_string(), CipherText::Single(leaf.to_bytes()))]),
     )]);
-    let mut record = Vec::new();
-    codec::encode_ciphertext(&tree, &mut record).expect("encode tree");
+    let record = encode_tree(&tree);
 
     let plan_with = |context: FfiValue| single_field_plan("age", context);
 
@@ -954,21 +968,15 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
     ))
     .expect("encrypt globex row");
     let batch = {
-        let (CipherText::Map(a), CipherText::Map(g)) = (
-            codec::decode_ciphertext_boxed::<Vec<u8>>(&mut codec::Reader::new(&acme_rows))
-                .expect("decode"),
-            codec::decode_ciphertext_boxed::<Vec<u8>>(&mut codec::Reader::new(&globex_rows))
-                .expect("decode"),
-        ) else {
+        let (CipherText::Map(a), CipherText::Map(g)) =
+            (decode_tree(&acme_rows), decode_tree(&globex_rows))
+        else {
             panic!("a single record is a map");
         };
-        let mut out = Vec::new();
-        codec::encode_ciphertext_boxed(
-            CipherText::Sequence(vec![CipherText::Map(a), CipherText::Map(g)]),
-            &mut out,
-        )
-        .expect("encode batch");
-        out
+        encode_tree(&CipherText::Sequence(vec![
+            CipherText::Map(a),
+            CipherText::Map(g),
+        ]))
     };
 
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
@@ -1198,7 +1206,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
     .expect("encrypt record");
     assert_eq!(ops::validate::record_tree(&record, &plan, None), Ok(()));
 
-    type Node = CipherText<Vec<u8>, FfiValue>;
+    type Node = stack_encrypt::Node<Vec<u8>>;
     // The tree is not `Clone`; every variant decodes the record afresh.
     let fields = || {
         let CipherText::Map(fields) = decode_tree(&record) else {
@@ -1206,11 +1214,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         };
         fields
     };
-    let re_encode = |tree: Node| {
-        let mut out = Vec::new();
-        codec::encode_ciphertext(&tree, &mut out).expect("re-encode");
-        out
-    };
+    let re_encode = |tree: Node| encode_tree(&tree);
     let with_age = |edit: &dyn Fn(&mut Node)| {
         let mut fields = fields();
         for (field, node) in &mut fields {
@@ -1227,7 +1231,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         };
         for (key, slot) in outputs.iter_mut() {
             if key == "c" {
-                *slot = CipherText::Passthrough(FfiValue::UInt32(99));
+                *slot = clear(FfiValue::UInt32(99));
             }
         }
     });
@@ -1237,16 +1241,14 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         };
         outputs.retain(|(key, _)| key != "c");
     });
-    let not_a_map = with_age(&|node| *node = CipherText::Passthrough(FfiValue::Null));
+    let not_a_map = with_age(&|node| *node = clear(FfiValue::Null));
     let missing_field = {
         let mut fields = fields();
         fields.retain(|(field, _)| field != "age");
         CipherText::Map(fields)
     };
-    let batch_of_non_records = CipherText::Sequence(vec![
-        CipherText::Map(fields()),
-        CipherText::Passthrough(FfiValue::Null),
-    ]);
+    let batch_of_non_records =
+        CipherText::Sequence(vec![CipherText::Map(fields()), clear(FfiValue::Null)]);
 
     for (label, tree) in [
         ("a forged passthrough under c", forged_c),
@@ -1436,7 +1438,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
     let CipherText::Sequence(rows) = decode_tree(&record) else {
         panic!("a batch is a sequence");
     };
-    let eq_of = |row: &CipherText<Vec<u8>, FfiValue>| {
+    let eq_of = |row: &Node<Vec<u8>>| {
         let CipherText::Map(fields) = row else {
             panic!("a row is a map");
         };

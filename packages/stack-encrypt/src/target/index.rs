@@ -493,7 +493,7 @@ pub struct Encrypted<Terms> {
     pub terms: Terms,
 }
 
-impl<P: crate::Decrypt<'static> + 'static, Terms> DecryptInto<P> for Encrypted<Terms> {
+impl<P: crate::Decrypt + Send + 'static, Terms> DecryptInto<P> for Encrypted<Terms> {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
         open(self.ciphertext, context)

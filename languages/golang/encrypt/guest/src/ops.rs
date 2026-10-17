@@ -4,9 +4,10 @@
 //! module wires them to the session table and the packed ABI; nothing in
 //! here knows about linear memory.
 //!
-//! Values and ciphertext trees cross the boundary in the vitaminc FFI codec
-//! (`vitaminc_aead_value::transport`) — the same codec the vitaminc guest
-//! uses, so the Go side carries exactly one codec. A ciphertext tree's
+//! Values cross the boundary as vitaminc transport frames, and ciphertext
+//! trees in vitaminc's ciphertext codec (`vitaminc_aead_frame`) — the same
+//! encodings the vitaminc guest uses, so the Go side carries exactly one
+//! codec. A ciphertext tree's
 //! leaves are re-encoded through [`SealedValue::to_bytes`] /
 //! [`SealedValue::from_bytes`]: the codec sees an opaque byte-string leaf,
 //! and the bytes inside it are the frozen storage encoding a database column
@@ -35,16 +36,15 @@
 //! ABI's numeric term kinds, and the mapping from a library error to a
 //! status code.
 
-use stack_encrypt::dynamic::{self, Scalar, Scope};
+use stack_encrypt::dynamic::{self, FfiValue, Scalar, Scope};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::ErrorPayload;
-use stack_encrypt::{
-    BoxedPassthrough, CipherText, KeysetCipher, Label, SealedValue, StackCipherText,
-};
+use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, Node, SealedValue, StackCipherText};
 use stack_kms::DataKeySource;
-use vitaminc_aead_value::{transport as codec, FfiValue};
+use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext, FrameWriter};
 use vitaminc_protected::Controlled;
+use zeroize::Zeroizing;
 
 use stack_guest_abi::last_error;
 
@@ -63,7 +63,7 @@ pub const TERM_OPE: u32 = 4;
 
 /// A ciphertext tree whose leaves are the frozen [`SealedValue`] byte
 /// encoding — the shape that crosses the FFI codec.
-type BytesTree = CipherText<Vec<u8>, BoxedPassthrough>;
+type BytesTree = Node<Vec<u8>>;
 
 // =============================================================================
 // Terms
@@ -78,7 +78,7 @@ type BytesTree = CipherText<Vec<u8>, BoxedPassthrough>;
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
 /// — or an array of parts, nested as deep as the transport codec allows
-/// ([`codec::MAX_DEPTH`] levels from the root of the encoded value; deeper
+/// ([`MAX_DEPTH`](vitaminc_aead_frame::MAX_DEPTH) levels from the root of the encoded value; deeper
 /// is [`STATUS_ENCODING`] before the context is parsed), exactly as a plan
 /// field's; [`dynamic::context`] is the one home of that grammar. Shape is identity:
 /// `[x]` is a PAE-framed list and `x` is not, so a probe takes the context
@@ -374,31 +374,34 @@ pub mod validate {
 // =============================================================================
 
 fn decode_value(bytes: &[u8]) -> Result<FfiValue, u32> {
-    codec::decode_value(&mut codec::Reader::new(bytes))
-        .map_err(|_| last_error::malformed("an input is not a value in the transport codec"))
+    FfiValue::from_frame(bytes)
+        .map_err(|_| last_error::malformed("an input is not a value in the transport frame"))
 }
 
-/// Encode a value tree into a buffer sized **before** the first byte is
-/// written.
+/// Encode a value tree into a buffer whose capacity is exactly its length.
 ///
-/// This buffer is plaintext on the decrypt path, and a `Vec` grown by the
-/// codec's pushes would leave partial plaintext in every abandoned
-/// allocation a reallocation could not extend in place — memory nothing
-/// wipes, undercutting the guarantee the registry makes about the buffer it
-/// eventually hands the host. Reserving the exact encoded length up front
-/// means the encoder never reallocates, and `register`'s `into_boxed_slice`
-/// (capacity == length) does not copy either.
+/// This buffer is plaintext on the decrypt path, and the registry wipes only
+/// the buffer it holds: `register`'s `into_boxed_slice` reallocates a `Vec`
+/// whose capacity exceeds its length, leaving the old allocation unwiped.
+/// The frame writer reserves an upper bound per leaf (a six-byte string
+/// reserves 14 for 11), so writing straight into the exactly sized buffer
+/// can still grow it. It writes into a `Zeroizing` staging buffer instead
+/// (the writer wipes any allocation it replaces), which is copied into an
+/// exactly sized output and then wiped.
 fn encode_value(value: FfiValue) -> Result<Vec<u8>, u32> {
-    let mut out = exact_buffer(value_encoded_len(&value))?;
-    codec::encode_value(value, &mut out).map_err(|_| STATUS_ENCODING)?;
+    let mut staging = Zeroizing::new(exact_buffer(value_encoded_len(&value))?);
+    (&value)
+        .visit(FrameWriter::new(&mut staging))
+        .map_err(|_| STATUS_ENCODING)?;
+    let mut out = exact_buffer(Some(staging.len()))?;
+    out.extend_from_slice(&staging);
     Ok(out)
 }
 
 fn decode_tree(bytes: &[u8]) -> Result<StackCipherText, u32> {
-    let tree: BytesTree =
-        codec::decode_ciphertext_boxed(&mut codec::Reader::new(bytes)).map_err(|_| {
-            last_error::malformed("the record is not a ciphertext tree in the transport codec")
-        })?;
+    let tree: BytesTree = decode_ciphertext(bytes).map_err(|_| {
+        last_error::malformed("the record is not a ciphertext tree in the transport codec")
+    })?;
     // Structural only — a decoded leaf proves nothing until its AEAD opens
     // (see the `SealedValue` docs).
     map_leaves(tree, &mut |l: Vec<u8>| {
@@ -413,20 +416,19 @@ fn decode_tree(bytes: &[u8]) -> Result<StackCipherText, u32> {
 fn encode_tree(tree: StackCipherText) -> Result<Vec<u8>, u32> {
     let tree = map_leaves(tree, &mut |l: SealedValue| Ok::<_, u32>(l.to_bytes()))?;
     let mut out = exact_buffer(tree_encoded_len(&tree))?;
-    codec::encode_ciphertext_boxed(tree, &mut out).map_err(|_| STATUS_ENCODING)?;
+    encode_ciphertext(&tree, &mut out).map_err(|_| STATUS_ENCODING)?;
     Ok(out)
 }
 
 /// Rebuild a ciphertext tree with every leaf run through `leaf`, keeping the
-/// structure (and the passthrough payloads) untouched. One definition for
+/// structure (and the passthrough frames) untouched. One definition for
 /// both directions of the frozen [`SealedValue`] leaf encoding.
 fn map_leaves<A, B, E>(
-    tree: CipherText<A, BoxedPassthrough>,
+    tree: Node<A>,
     leaf: &mut impl FnMut(A) -> Result<B, E>,
-) -> Result<CipherText<B, BoxedPassthrough>, E> {
+) -> Result<Node<B>, E> {
     Ok(match tree {
         CipherText::Single(l) => CipherText::Single(leaf(l)?),
-        CipherText::None(l) => CipherText::None(leaf(l)?),
         CipherText::EmptySequence(l) => CipherText::EmptySequence(leaf(l)?),
         CipherText::EmptyMap(l) => CipherText::EmptyMap(leaf(l)?),
         CipherText::Sequence(items) => CipherText::Sequence(
@@ -460,9 +462,9 @@ fn exact_buffer(len: Option<usize>) -> Result<Vec<u8>, u32> {
     Ok(out)
 }
 
-/// Exact byte length of the codec's encoding of `value`. `None` on overflow
-/// or on a length the codec's `u32` frames cannot express — the encode would
-/// fail on those anyway, so the caller reports an encoding error.
+/// Exact byte length of the frame of `value`. `None` on overflow or on a
+/// length the frame's `u32` lengths cannot express — the encode would fail
+/// on those anyway, so the caller reports an encoding error.
 fn value_encoded_len(value: &FfiValue) -> Option<usize> {
     // tag byte + fixed payload, or tag + u32 length prefix + payload.
     let framed = |len: usize| u32::try_from(len).ok().and_then(|_| len.checked_add(5));
@@ -483,18 +485,14 @@ fn value_encoded_len(value: &FfiValue) -> Option<usize> {
     }
 }
 
-/// Exact byte length of the codec's encoding of a ciphertext tree. The
-/// passthrough payloads are read (not consumed) through `Any::downcast_ref`,
-/// matching what `encode_ciphertext_boxed` will re-home them to; a payload
-/// that is not an [`FfiValue`] is `None`, which is the same rejection the
-/// encoder would make.
+/// Exact byte length of the codec's encoding of a ciphertext tree. A
+/// passthrough is its node byte and its frame, written as it is.
 fn tree_encoded_len(tree: &BytesTree) -> Option<usize> {
     let framed = |len: usize| u32::try_from(len).ok().and_then(|_| len.checked_add(5));
     match tree {
-        CipherText::Single(l)
-        | CipherText::None(l)
-        | CipherText::EmptySequence(l)
-        | CipherText::EmptyMap(l) => framed(l.len()),
+        CipherText::Single(l) | CipherText::EmptySequence(l) | CipherText::EmptyMap(l) => {
+            framed(l.len())
+        }
         CipherText::Sequence(items) => items
             .iter()
             .try_fold(5usize, |acc, item| acc.checked_add(tree_encoded_len(item)?)),
@@ -502,9 +500,7 @@ fn tree_encoded_len(tree: &BytesTree) -> Option<usize> {
             acc.checked_add(framed(key.len())?.checked_sub(1)?)?
                 .checked_add(tree_encoded_len(value)?)
         }),
-        CipherText::Passthrough(p) => {
-            value_encoded_len((**p).downcast_ref::<FfiValue>()?)?.checked_add(1)
-        }
+        CipherText::Passthrough(p) => p.0.len().checked_add(1),
     }
 }
 
@@ -513,8 +509,8 @@ mod tests {
     use super::*;
     use vitaminc_protected::Protected;
 
-    // `value_encoded_len` / `tree_encoded_len` re-derive the codec's framing
-    // arithmetic; the codec exports no `encoded_len` of its own, so these
+    // `value_encoded_len` / `tree_encoded_len` re-derive the frame's and the
+    // codec's arithmetic; neither exports an `encoded_len` of its own, so these
     // pins are the only thing that fails if the two drift. Drift is not a
     // cosmetic bug: an undersized reservation makes `encode_value`
     // reallocate mid-encode, leaving unwiped partial plaintext in the
@@ -552,13 +548,24 @@ mod tests {
         ]
     }
 
+    /// The registry wipes the buffer it is handed, and `into_boxed_slice`
+    /// reallocates one whose capacity exceeds its length, leaving the old
+    /// allocation unwiped. So every encoded output's capacity is its length,
+    /// not only its length the frame's.
+    #[test]
+    fn an_encoded_value_has_no_spare_capacity() {
+        for (i, value) in every_value_shape().into_iter().enumerate() {
+            let out = encode_value(value).expect("encodes");
+            assert_eq!(out.capacity(), out.len(), "shape {i}");
+        }
+    }
+
     #[test]
     fn value_encoded_len_matches_the_codec_exactly() {
         for (i, value) in every_value_shape().into_iter().enumerate() {
             let expected = value_encoded_len(&value).expect("encodable shape");
-            let mut out = Vec::new();
-            codec::encode_value(value, &mut out).expect("codec encode");
-            assert_eq!(out.len(), expected, "shape {i}");
+            let out = value.to_frame().expect("frame encode");
+            assert_eq!(out.risky_ref().len(), expected, "shape {i}");
         }
     }
 
@@ -568,10 +575,9 @@ mod tests {
         let trees: Vec<BytesTree> = vec![
             leaf(b""),
             leaf(&[7u8; 40]),
-            CipherText::None(vec![1, 2]),
             CipherText::EmptySequence(vec![3]),
             CipherText::EmptyMap(Vec::new()),
-            CipherText::Sequence(vec![leaf(b"a"), CipherText::None(vec![9])]),
+            CipherText::Sequence(vec![leaf(b"a"), CipherText::EmptyMap(vec![9])]),
             CipherText::Map(vec![
                 ("name".to_string(), leaf(b"ct")),
                 (
@@ -579,14 +585,17 @@ mod tests {
                     CipherText::Map(vec![("x".to_string(), leaf(b"y"))]),
                 ),
             ]),
-            CipherText::Passthrough(
-                Box::new(FfiValue::Bytes(Protected::new(vec![1, 2, 3]))) as BoxedPassthrough
-            ),
+            CipherText::Passthrough(stack_encrypt::PassthroughFrame(
+                FfiValue::Bytes(Protected::new(vec![1, 2, 3]))
+                    .to_frame()
+                    .expect("a frame")
+                    .risky_unwrap(),
+            )),
         ];
         for (i, tree) in trees.into_iter().enumerate() {
             let expected = tree_encoded_len(&tree).expect("encodable shape");
             let mut out = Vec::new();
-            codec::encode_ciphertext_boxed(tree, &mut out).expect("codec encode");
+            encode_ciphertext(&tree, &mut out).expect("codec encode");
             assert_eq!(out.len(), expected, "tree {i}");
         }
     }
@@ -594,9 +603,7 @@ mod tests {
     // ---- the EQL target path, native, over FakeDataKeySource -----------------
 
     fn encoded(value: FfiValue) -> Vec<u8> {
-        let mut out = Vec::new();
-        codec::encode_value(value, &mut out).expect("encode");
-        out
+        value.to_frame().expect("encode").risky_unwrap()
     }
 
     fn text(value: &str) -> FfiValue {
@@ -749,7 +756,7 @@ mod tests {
         let CipherText::Passthrough(payload) = &outputs[0].1 else {
             panic!("a passthrough")
         };
-        let FfiValue::Bytes(bytes) = payload.downcast_ref::<FfiValue>().expect("a value") else {
+        let FfiValue::Bytes(bytes) = FfiValue::from_frame(&payload.0).expect("a value") else {
             panic!("bytes")
         };
         let eql: serde_json::Value = serde_json::from_slice(bytes.risky_ref()).expect("JSON");

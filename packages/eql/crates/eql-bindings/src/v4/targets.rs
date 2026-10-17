@@ -9,8 +9,8 @@ use crate::encryption::targets::{
     open_target, refuse, refuse_query, run_target, Opener, Target, TargetError,
 };
 use crate::Identifier;
+use stack_encrypt::dynamic::FfiValue;
 use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
-use vitaminc_aead_value::FfiValue;
 /// Every EQL type a plan may name as a target, in
 /// `eql-domains::CATALOG` order: one per stored domain (every flat
 /// scalar domain plus the SteVec document). Query twins are not

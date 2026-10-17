@@ -79,12 +79,12 @@
 use std::fmt;
 
 use serde::{de::DeserializeOwned, Serialize};
+use stack_encrypt::dynamic::{FfiValue, ValueKind};
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::target::ExpectedContext;
 use stack_encrypt::{
     DecryptInto, EncryptFrom, Error, KeysetCipher, Label, NonEmpty, Pending, StackCipher,
 };
-use vitaminc_aead_value::{FfiValue, ValueKind};
 
 use super::plaintext;
 use crate::v4::targets::{decrypt_named, encrypt_named, query_named, TARGETS};

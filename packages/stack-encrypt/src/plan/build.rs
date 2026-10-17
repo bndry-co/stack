@@ -603,7 +603,7 @@ fn stored<T: 'static>(field: &str, slot: Slot) -> Result<T, PlanError> {
 /// Open a sealed field's ciphertext as an `F`.
 fn open_sealed<F, K>(ciphertext: StackCipherText, context: CallerContext) -> Decryption<Slot, K>
 where
-    F: crate::Decrypt<'static> + Send + 'static,
+    F: crate::Decrypt + Send + 'static,
     K: 'static,
 {
     open::<F, K>(ciphertext, AeadContext::from(context)).map(Slot::new)
@@ -727,7 +727,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// `<context>/<identity>`. Lowers to [`ciphertext`]`().under(label)`.
     pub fn encrypt<F>(self, field: impl FieldRef<S, F>) -> Self
     where
-        F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
     {
         let (name, access) = resolve(field);
         let read = Arc::clone(&access.read);
@@ -764,14 +764,14 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
         indexes: impl Indexes<F, Terms: Send> + Clone + Send + Sync + 'static,
     ) -> Self
     where
-        F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
     {
         self.encrypt_index_of(field, indexes)
     }
 
     fn encrypt_index_of<F, X>(self, field: impl FieldRef<S, F>, indexes: X) -> Self
     where
-        F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
         X: Indexes<F> + Clone + Send + Sync + 'static,
         X::Terms: Send,
     {

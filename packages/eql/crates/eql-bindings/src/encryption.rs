@@ -199,7 +199,7 @@ impl Visitor for NativeCiphertextVisitor {
         Ok(CipherText::Single(leaf))
     }
 }
-impl<P: Decrypt<'static> + 'static> DecryptInto<P> for Ciphertext {
+impl<P: Decrypt + Send + 'static> DecryptInto<P> for Ciphertext {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
         match self.read(NativeCiphertextVisitor) {

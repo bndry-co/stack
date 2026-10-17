@@ -273,15 +273,10 @@
 //! sources only the call has no data form: a binding names the context in
 //! the declaration it sends, or in the record.
 //!
-//! The engine is shared; the stored leaf is not. A data plan seals every
-//! field as the tagged `dynamic::Value` leaf, whatever its type, so a Rust
-//! record whose rows a binding also reads must declare those fields as
-//! `dynamic::Value`. A bare `String` or `u32` field derives the same terms
-//! but encrypts a different leaf. A bare `String` reader accepts a
-//! binding's leaf and returns its type tag as a leading line feed
-//! (`"\nalice"`), with no error. One leaf encoding for both, or the
-//! encoding bound into the leaf's context so the wrong reader fails, is
-//! tracked in #1118.
+//! The engine is shared, and so is the stored leaf: every leaf is tagged
+//! with its type (vitaminc ADR 0001), so a data plan's `uint32` field and a
+//! Rust `u32` field seal the same leaf under the same context, and a reader
+//! of another type refuses it rather than misreading it.
 //!
 //! # How a chain lowers
 //!

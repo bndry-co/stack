@@ -483,7 +483,7 @@ impl<'a, S: 'static, K: 'static> EncryptFields<'a, S, K> {
     /// [`FieldsBuilder::encrypt`].
     pub fn encrypt<F>(mut self, field: impl FieldRef<S, F>) -> Self
     where
-        F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
     {
         self.plan = self.plan.encrypt::<F>(field);
         self
@@ -495,7 +495,7 @@ impl<'a, S: 'static, K: 'static> EncryptFields<'a, S, K> {
         indexes: impl Indexes<F, Terms: Send> + Clone + Send + Sync + 'static,
     ) -> Self
     where
-        F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
     {
         self.plan = self.plan.encrypt_index::<F>(field, indexes);
         self
