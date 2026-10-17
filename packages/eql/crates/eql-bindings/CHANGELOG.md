@@ -22,6 +22,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `eql_v4.query_<family>_range_<ore|ope>` domains in the v4 SQL bundle. No
   range type derives Stack Encrypt's traits yet, because the ordered types
   they range over are not producible. There are no v3 range types.
+- **Rust queries an EQL v4 field through Stack Encrypt's typed query chain**
+  (`stack-encrypt` feature, #1238). `cipher.query(op::Eq, v).on(&plan)` on a
+  plan for `TextEq`, `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`,
+  `DoubleEq`, `DateEq`, `TimestampEq` or `NumericEq`
+  (`Plan::value::<S>().context("table/column").encrypt_into::<T>()`)
+  returns the type's query twin (`TextEqQuery`, …), and
+  `cipher.query(op::Matches, text).on(&plan)` on a plan for `TextMatch`
+  returns a `MatchTwin<TextMatchQuery>`: the twin, which it serializes as,
+  with `verify` and `target_limit` under `EqlMatch`. The query is the bytes
+  the data path (`stack_encrypt::dynamic::query_term`) derives for the same
+  field, and `verify` and `target_limit` answer as the data path's do.
+  eql-codegen writes the `op::Answers` impls into `v4::answers`, which needs
+  no `dynamic` layer and so not the `targets` feature, from each type's
+  indexes, by the rule the data path answers an EQL type's operators
+  with. A producible type whose twin carries an order term (`IntegerOrd`,
+  `TextOrd`, …) answers nothing in the typed chain yet: the chain sends one
+  index's term as the twin, and those twins need an order term, or several
+  terms at once. The encryption tests hold that gap to exactly the ordered
+  types, so query them through the data path for now. An operator a type
+  does not answer, or another index named with `.via(..)`, does not
+  compile. Each answering type is an
+  `op::LabelledTarget`. The label must name the column, table then column,
+  and the query must not be extended, or the awaited query is refused
+  before any keyset is resolved, with a `QueryLabelError` in
+  `Error::Other`. `eql_bindings::encryption::query` holds `TwinIndex`
+  (Stack Encrypt's index, its query sent as the twin, for the twin's own
+  plaintext only), `MatchTwin`, `QueryTwin` and `QueryLabelError`.
+  `Hmac256` and `BloomFilter` now declare their indexes (`EncryptFrom::indexes`),
+  so a type holding one declares the equality or match index, and `EqlMatch`
+  implements `op::MatchCase` (case-insensitive).
 - **`eql_bindings::v4` needs the `stack-encrypt` feature.** Only Stack
   Encrypt produces an EQL v4 value (ADR-0002), so the module is compiled with
   that feature alone, and its producible types derive `EncryptFrom` and

@@ -26,6 +26,11 @@
 //! in `v3::terms` changes v4 too. What separates the two on the wire is the
 //! envelope's [`SchemaVersion`], which refuses the other generation's `v`.
 
+/// Generated: the `op::Answers` impls through which Stack Encrypt's typed
+/// query chain queries a producible type, each type's
+/// `op::LabelledTarget` impl and its query twin's assembly
+/// ([`crate::encryption::query`]). Needs only the `stack-encrypt` feature.
+pub mod answers;
 pub mod bigint;
 pub mod boolean;
 pub mod date;

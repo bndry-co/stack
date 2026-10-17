@@ -1204,7 +1204,8 @@ fn render_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
 /// mixed family's scalar domains under its own name, since v4 has no
 /// hand-written SteVec module to sit beside), and the Stack Encrypt target
 /// table and dispatch (`targets.rs`, declared under the `targets` feature in
-/// the hand-written `v4/mod.rs`). Stack Encrypt produces v4 only, so the
+/// the hand-written `v4/mod.rs`), and the typed query chain's impls
+/// (`answers.rs`, `stack-encrypt` alone). Stack Encrypt produces v4 only, so the
 /// target table lives here.
 fn render_v4_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
     let mut rendered: Vec<(PathBuf, String)> = eql_domains::families_with_scalar_domains()
@@ -1218,6 +1219,7 @@ fn render_v4_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
         })
         .collect();
     rendered.push((dir.join("targets.rs"), crate::targets::render_targets_rs()));
+    rendered.push((dir.join("answers.rs"), crate::targets::render_answers_rs()));
     rendered.push((dir.join("inventory.rs"), render_v4_inventory_rs()));
     rendered
 }
@@ -1507,7 +1509,7 @@ mod tests {
         // inventory.
         let families = eql_domains::scalar_families().count();
         let v4_families = eql_domains::families_with_scalar_domains().count();
-        assert_eq!(written.len(), (families + 4) + (v4_families + 2));
+        assert_eq!(written.len(), (families + 4) + (v4_families + 3));
         assert!(dir.join("integer.rs").is_file());
         assert!(dir.join("text.rs").is_file());
         assert!(dir.join("json_storage.rs").is_file());
@@ -1520,6 +1522,7 @@ mod tests {
         assert!(v4.join("text.rs").is_file());
         assert!(v4.join("json.rs").is_file());
         assert!(v4.join("targets.rs").is_file());
+        assert!(v4.join("answers.rs").is_file());
         assert!(v4.join("inventory.rs").is_file());
         for d in [&dir, &v4] {
             assert!(

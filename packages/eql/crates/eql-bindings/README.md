@@ -229,6 +229,71 @@ descriptor is `<table>/<column>`, two parts, the same context and descriptor as
 a two-segment `stack_encrypt::Label`. A table or column containing `/` is
 escaped in the descriptor rather than read as two names.
 
+### Querying an EQL v4 field from Rust
+
+A query names an operator, and a plan for the column's EQL type finds the
+index that answers it (Stack Encrypt's ADR-0009). The term that comes back
+is the type's query twin, the value the `eql_v4.query_*` domain takes:
+
+```rust,ignore
+use eql_bindings::v4::text::{TextEq, TextMatch};
+use stack_encrypt::op::{self, Probabilistic, Stats};
+use stack_encrypt::Plan;
+
+// A plan for the column's type, under the label that names the column:
+// "users/email" is Identifier::for_column("users", "email").
+let email_plan = Plan::value::<String>().context("users/email").encrypt_into::<TextEq>().build()?;
+let query = cipher.query(op::Eq, "alice@example.com").on(&email_plan).await?; // a TextEqQuery
+// WHERE email = $1::eql_v4.query_text_eq, binding sqlx::types::Json(&query)
+
+let name_plan = Plan::value::<String>().context("users/name").encrypt_into::<TextMatch>().build()?;
+let query = cipher.query(op::Matches, "ali").on(&name_plan).await?; // a MatchTwin<TextMatchQuery>
+let fetch = query.target_limit(10, &Stats::declared(1_000_000)).fetch_or(50);
+// WHERE name @@ $1::eql_v4.query_text_match LIMIT $2, then keep the
+// decrypted rows for which query.verify(&name) is true.
+```
+
+| v4 type | Operator | Query term |
+| --- | --- | --- |
+| `TextEq` | `op::Eq` | `TextEqQuery` |
+| `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`, `DoubleEq` | `op::Eq` | `SmallintEqQuery`, `IntegerEqQuery`, `BigintEqQuery`, `RealEqQuery`, `DoubleEqQuery` |
+| `DateEq`, `TimestampEq`, `NumericEq` | `op::Eq` | `DateEqQuery`, `TimestampEqQuery`, `NumericEqQuery` (from `v4::plaintext::Date`, `Timestamp`, `Decimal`) |
+| `TextMatch` | `op::Matches` | `MatchTwin<TextMatchQuery>` |
+
+`MatchTwin` serializes as the twin and adds `verify` and `target_limit`
+under `EqlMatch`: a filter can match a row that does not hold the query's
+text, so keep only the decrypted rows that verify. An exact query has no
+`verify`. An operator a type does not answer does not compile: `op::Lt` on
+`TextEq`, or `op::Matches` on `IntegerEq`. Nor does naming another index
+with `.via(..)`, such as the bare `Equality`, whose term the type's SQL does
+not take. The ordered types (`IntegerOrd`, `TextOrd`, …) answer nothing in
+the typed chain yet: their twins need an order term, or several terms at
+once, and the chain sends one index's term. Query them through the data
+path (`stack_encrypt::dynamic::query_term`) for now.
+
+The label must name the column the value was written under, as two
+segments, table then column. A label of any other length, and a query
+extended with `.extend(..)` (whose terms would be derived under more than
+the column the twin stores), are refused when the query is awaited, before
+any keyset is resolved, with an `encryption::query::QueryLabelError` in
+`Error::Other`. A label's segments are plain, so a table or column name
+that is not a plain label segment cannot be named on a plan, and such a
+column, which `Identifier::for_column` accepts, cannot be queried this way:
+for instance a name that starts with a digit, `-` or `b64:`, or one holding
+`/`, `(`, `)`, or a control or invisible format character.
+The plan is for queries: write with
+`keyset.encrypt_as(&value, column)` and open with `cipher.decrypt_as`, since
+an EQL type is sealed under its column rather than the plan's label. The
+query is the same bytes the data path derives for a field that names the
+type (`stack_encrypt::dynamic::query_term`), which is what the Go SDK sends,
+and `tests/encryption/tests/typed_queries.rs` checks that for every type and
+operator. The `op::Answers` impls are generated into `src/v4/answers.rs`
+from the catalog by the rule the data path uses, and need only the
+`stack-encrypt` feature, not `targets`; the supporting types are in
+`eql_bindings::encryption::query`, whose
+[executable example](src/encryption/query_example.rs) runs with
+`cargo test -p eql-encryption-tests --test query_example`.
+
 ### Interoperability matrix
 
 The plan asked for the three producer/reader pairings to be proven rather than
