@@ -275,12 +275,16 @@ on a term, because Rust says it with a trait. A generator asks before the
 program runs, so it needs the answer as data, and the code it generates
 carries `Verify` only where the answer is `probabilistic`, which rebuilds
 decision 4 of ADR-0009 in a language without traits. Today `TextEq` answers
-`eq` and no other produced type answers anything: `TextMatch` is produced and
-has a query twin, but answers no operator, and the storage-only types have no
-twin. A type answers no probabilistic operator and no `between` yet: the
-catalog names a type's match index but not its options, which `verify` must
-cut tokens by, and a twin is one value, not a range. Both wait for that
-catalog work, not for the types themselves.
+`eq`, `TextMatch` answers `matches`, and the storage-only types have no twin,
+so answer nothing. A type answers `matches` through its twin only when the
+engine knows the options its match index is built under, since `verify`
+must cut the query's tokens as the stored filter was cut: `eql-bindings`
+gives them for each type with a match index (`Target::match_options`, EQL's
+one match configuration), and the guest hands them to the engine with the
+type's descriptor. They are not on the wire, because a host has no use for
+them. `verify` and `target_limit` then run under those options, reading the
+twin's `bf`. No type answers `between` yet: a twin is one value, not a
+range.
 
 What does not change: a binding still reaches the engine through a plan, and
 nothing here derives a term outside the engine's own derivation, so a query

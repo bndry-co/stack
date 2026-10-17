@@ -136,6 +136,19 @@ impl Target {
     pub fn plaintext_kind(&self) -> Option<ValueKind> {
         self.plaintext.and_then(|name| name.parse().ok())
     }
+
+    /// The options this type's match index is built under, for a type that
+    /// carries one (`TextMatch`): [`EqlMatch`](super::EqlMatch)'s, the one
+    /// match configuration every EQL type's filter is built under. `None`
+    /// for a type with no match index. Stack Encrypt answers `matches`
+    /// through the type with them, cutting the query's tokens for `verify`
+    /// as the stored filter was cut.
+    pub fn match_options(&self) -> Option<stack_encrypt::sem::MatchOptions> {
+        use stack_encrypt::sem::MatchConfig;
+        self.indexes
+            .contains(&"match")
+            .then(super::EqlMatch::options)
+    }
 }
 
 /// Every EQL type a plan may name as a target, in catalog order — the
