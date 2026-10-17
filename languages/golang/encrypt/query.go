@@ -147,7 +147,8 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 
 // parseQueryTerm reads se_query_term's object: exactly the keys operator,
 // fidelity, index, domain (a string or null) and term (bytes, or a list of
-// two for between).
+// two for between). The operator, fidelity and index take only the values
+// the engine writes, as the catalog reader's do.
 func parseQueryTerm(decoded any) (QueryTerm, error) {
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok {
@@ -163,18 +164,20 @@ func parseQueryTerm(decoded any) (QueryTerm, error) {
 		var err error
 		switch f.Key {
 		case "operator":
-			t.Operator, err = targetString(f)
+			var s string
+			if s, err = targetString(f); err == nil {
+				t.Operator, err = parseOperatorName(s)
+			}
 		case "fidelity":
 			var s string
-			s, err = targetString(f)
-			t.Fidelity = record.Fidelity(s)
-			if err == nil && t.Fidelity != record.Exact && t.Fidelity != record.Probabilistic {
-				err = fmt.Errorf("unknown fidelity %q", s)
+			if s, err = targetString(f); err == nil {
+				t.Fidelity, err = parseFidelity(s)
 			}
 		case "index":
 			var s string
-			s, err = targetString(f)
-			t.Index = record.Output(s)
+			if s, err = targetString(f); err == nil {
+				t.Index, err = parseOperatorIndex(s)
+			}
 		case "domain":
 			t.Domain, err = targetOptionalString(f)
 		case "term":

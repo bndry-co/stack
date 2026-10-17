@@ -75,6 +75,8 @@ func TestParseTargetsReadsEachEntry(t *testing.T) {
 		"unknown arity":       withOperators([]any{operator("eq", "exact", "three", "eq")}),
 		"unknown op index":    withOperators([]any{operator("eq", "exact", "one", "json")}),
 		"no op name":          withOperators([]any{operator("", "exact", "one", "eq")}),
+		"unknown operator":    withOperators([]any{operator("like", "exact", "one", "eq")}),
+		"operator case":       withOperators([]any{operator("Eq", "exact", "one", "eq")}),
 		"op key missing":      withOperators([]any{vcvalue.Object{{Key: "operator", Value: "eq"}}}),
 		"op unknown key":      withOperators([]any{append(operator("eq", "exact", "one", "eq"), vcvalue.Field{Key: "case", Value: "insensitive"})}),
 		"op key twice":        withOperators([]any{append(operator("eq", "exact", "one", "eq"), vcvalue.Field{Key: "index", Value: "eq"})}),
@@ -96,4 +98,36 @@ func withOperators(value any) vcvalue.Object {
 	return vcvalue.Object{{Key: "targets", Value: []any{vcvalue.Object{
 		{Key: "name", Value: "TextEq"}, {Key: "indexes", Value: []any{}}, {Key: "producible", Value: true}, {Key: "operators", Value: value},
 	}}}}
+}
+
+// se_query_term's object is read with the catalog's own parsers: an
+// operator, fidelity or index the catalog would refuse is refused here too,
+// and every name the engine writes is read by both.
+func TestParseQueryTermTakesOnlyWhatTheEngineWrites(t *testing.T) {
+	term := func(operator, fidelity, index string) vcvalue.Object {
+		return vcvalue.Object{
+			{Key: "operator", Value: operator}, {Key: "fidelity", Value: fidelity}, {Key: "index", Value: index},
+			{Key: "domain", Value: nil}, {Key: "term", Value: []byte{1, 2}},
+		}
+	}
+	for _, name := range []string{"eq", "lt", "lte", "gt", "gte", "between", "matches"} {
+		got, err := parseQueryTerm(term(name, "exact", "ore"))
+		if err != nil || got.Operator != name || got.Fidelity != record.Exact || got.Index != record.Ore {
+			t.Errorf("%s: %+v, %v", name, got, err)
+		}
+		if _, err := parseTargets(withOperators([]any{operator(name, "exact", "one", "ore")})); err != nil {
+			t.Errorf("catalog %s: %v", name, err)
+		}
+	}
+	for name, bad := range map[string]vcvalue.Object{
+		"unknown operator": term("like", "exact", "eq"),
+		"operator case":    term("Eq", "exact", "eq"),
+		"unknown fidelity": term("eq", "approximate", "eq"),
+		"unknown index":    term("eq", "exact", "json"),
+		"misspelled index": term("eq", "exact", "equality"),
+	} {
+		if _, err := parseQueryTerm(bad); err == nil {
+			t.Errorf("%s: read, want refused", name)
+		}
+	}
 }

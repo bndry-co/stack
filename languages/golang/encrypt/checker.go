@@ -212,12 +212,9 @@ func targetOperators(value any) ([]record.TargetOperator, error) {
 			}
 			switch f.Key {
 			case "operator":
-				op.Name = s
+				op.Name, err = parseOperatorName(s)
 			case "fidelity":
-				op.Fidelity = record.Fidelity(s)
-				if op.Fidelity != record.Exact && op.Fidelity != record.Probabilistic {
-					return nil, fmt.Errorf("operator %d: unknown fidelity %q", i, s)
-				}
+				op.Fidelity, err = parseFidelity(s)
 			case "arity":
 				switch s {
 				case "one":
@@ -227,14 +224,12 @@ func targetOperators(value any) ([]record.TargetOperator, error) {
 					return nil, fmt.Errorf("operator %d: unknown arity %q", i, s)
 				}
 			case "index":
-				switch o := record.Output(s); o {
-				case record.Equality, record.Match, record.Ore, record.Ope:
-					op.Index = o
-				default:
-					return nil, fmt.Errorf("operator %d: unknown index %q", i, s)
-				}
+				op.Index, err = parseOperatorIndex(s)
 			default:
 				return nil, fmt.Errorf("operator %d: unknown key %q", i, f.Key)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("operator %d: %v", i, err)
 			}
 		}
 		if len(seen) != 4 || op.Name == "" {
@@ -243,6 +238,38 @@ func targetOperators(value any) ([]record.TargetOperator, error) {
 		operators = append(operators, op)
 	}
 	return operators, nil
+}
+
+// parseOperatorName reads an operator's name as the engine writes it: one
+// of eq, lt, lte, gt, gte, between and matches, the names the engine's
+// OpSpec::parse accepts. The catalog (se_targets) and se_query_term are
+// read through this, parseFidelity and parseOperatorIndex, so the two
+// readers refuse the same values.
+func parseOperatorName(s string) (string, error) {
+	switch s {
+	case "eq", "lt", "lte", "gt", "gte", "between", "matches":
+		return s, nil
+	}
+	return "", fmt.Errorf("unknown operator %q", s)
+}
+
+// parseFidelity reads an operator's fidelity: exact or probabilistic.
+func parseFidelity(s string) (record.Fidelity, error) {
+	switch f := record.Fidelity(s); f {
+	case record.Exact, record.Probabilistic:
+		return f, nil
+	}
+	return "", fmt.Errorf("unknown fidelity %q", s)
+}
+
+// parseOperatorIndex reads the index that answers an operator: eq, match,
+// ore or ope.
+func parseOperatorIndex(s string) (record.Output, error) {
+	switch o := record.Output(s); o {
+	case record.Equality, record.Match, record.Ore, record.Ope:
+		return o, nil
+	}
+	return "", fmt.Errorf("unknown index %q", s)
 }
 
 func targetString(f vcvalue.Field) (string, error) {

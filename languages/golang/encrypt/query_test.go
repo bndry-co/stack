@@ -7,10 +7,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
+	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // The query fixture holds the guest's query exports to the Rust results:
@@ -25,6 +27,7 @@ type queryFixture struct {
 	KeySource struct {
 		Seed string `json:"seed"`
 	} `json:"key_source"`
+	Plan    json.RawMessage `json:"plan"`
 	Queries []struct {
 		Field    string          `json:"field"`
 		Operator string          `json:"operator"`
@@ -68,7 +71,36 @@ func readQueryFixture(t *testing.T) queryFixture {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatal(err)
 	}
+	// The terms are derived under queryPlan: a fixture recorded under any
+	// other plan fails here, by name, rather than as mismatched bytes.
+	var recorded any
+	if err := json.Unmarshal(f.Plan, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if want := wireJSON(queryPlan.Wire()); !reflect.DeepEqual(recorded, want) {
+		t.Fatalf("the fixture's plan is not queryPlan; update queryPlan to match it:\nfixture:   %v\nqueryPlan: %v", recorded, want)
+	}
 	return f
+}
+
+// wireJSON is a plan's wire form as encoding/json decodes the same JSON:
+// objects as maps, lists as []any.
+func wireJSON(v any) any {
+	switch v := v.(type) {
+	case vcvalue.Object:
+		out := make(map[string]any, len(v))
+		for _, f := range v {
+			out[f.Key] = wireJSON(f.Value)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = wireJSON(item)
+		}
+		return out
+	}
+	return v
 }
 
 // queryPlan is the fixture's declaration: an email with equality, an age

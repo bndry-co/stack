@@ -16,7 +16,7 @@ error[E0277]: `Contains` has no default index given `std::string::String`
              `stack_encrypt::op::Matches<<DefaultMatch as stack_encrypt::op::MatchCase>::Case>` implements `DefaultIndex<S>`
    = note: required for `ValuePlan<std::string::String, Indexed<stack_encrypt::Equality>>` to implement `Chooses<Contains, std::string::String, Whole>`
 
-error[E0277]: `(&str, &str)` is not what a query of arity `Pathed<One>` takes
+error[E0277]: `(&str, &str)` is not what a query of arity `Pathed<stack_encrypt::op::One>` takes
   --> tests/ui/op_json_not_answered.rs:15:36
    |
 15 |         .query(op::AtPath(op::Eq), &("$.address.city", "Sydney"))
@@ -25,13 +25,13 @@ error[E0277]: `(&str, &str)` is not what a query of arity `Pathed<One>` takes
    |          required by a bound introduced by this call
    |
    = note: an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes no input yet: it arrives with the JSON index
-help: the trait `Input<Pathed<One>>` is not implemented for `(&str, &str)`
+help: the trait `Input<Pathed<stack_encrypt::op::One>>` is not implemented for `(&str, &str)`
       but trait `Input<Pair>` is implemented for it
   --> src/op/mod.rs
    |
    | impl<S: 'static> Input<Pair> for (S, S) {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: for that trait implementation, expected `Pair`, found `Pathed<One>`
+   = help: for that trait implementation, expected `Pair`, found `Pathed<stack_encrypt::op::One>`
 note: required by a bound in `plan::chain::<impl StackCipher<K>>::query`
   --> src/plan/chain.rs
    |
@@ -51,4 +51,4 @@ error[E0599]: the method `on` exists for struct `QueryBuilder<'_, AtPath<stack_e
    | |_________-^^
    |
    = note: the following trait bounds were not satisfied:
-           `(&str, &str): Input<Pathed<One>>`
+           `(&str, &str): Input<Pathed<stack_encrypt::op::One>>`
