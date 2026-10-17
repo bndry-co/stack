@@ -144,9 +144,11 @@ query against a case-folding index is a type error, not an empty result.
 pub trait Operator: Copy + 'static {}
 
 pub trait Supports<Op: Operator, S>: Index<S> {
-    type Query: QueryTerm;   // what this index sends for this operator
+    type Query: TermFor<Op>;   // what this index sends for `Op`
+    type Verifier;             // what the query keeps to check a row
     fn check(&self) -> Result<(), PlanError>;
-    fn query(term: Self::Term, token: QueryToken) -> Self::Query;
+    fn verifier(&self, value: &S) -> Self::Verifier;
+    fn query(verifier: Self::Verifier, term: Self::Term, token: QueryToken) -> Self::Query;
 }
 ```
 
@@ -164,10 +166,34 @@ ciphertext; its `Term` is left and right. A Bloom index's
 `Supports<Matches, S>::Query` is a filter over the needle (`MatchQuery`); its
 `Term` is a filter over the value (`MatchTerms`).
 
-The bound tightens per operator. `Supports<Matches, S>` requires
-`Query: Probabilistic`; `Supports<Nearest, S>` requires `Query: Ranked`. An
-index cannot claim an inexact operator without saying how its answer is
-checked.
+The bound tightens per operator, through `TermFor<Op>`: any `QueryTerm`
+answers `Eq`, but only a `Probabilistic` one answers `Matches`, and only a
+`Ranked` one will answer `Nearest`. None of this crate's indexes can claim
+an inexact operator without saying how its answer is checked. The rule binds
+this crate's terms through blanket impls; a term in another crate can opt
+into `TermFor` by hand, so there it is a guide rather than a proof.
+
+`Verifier` is what the query term keeps of the query's plaintext so it can
+check a decrypted row later, and `verifier` takes it before the plaintext is
+consumed. An exact term checks nothing, so an equality index's verifier is
+`()`. A match index's is the query's tokens (`QueryTokens`), which `verify`
+needs and the filter cannot give back:
+
+```rust
+impl<S: AsRef<str>, O: MatchCase> Supports<Matches<O::Case>, S> for Match<O> {
+    type Query = MatchQuery<O>;
+    type Verifier = QueryTokens;     // "alice" -> ali, lic, ice
+    fn verifier(&self, value: &S) -> QueryTokens { QueryTokens::of::<O>(value.as_ref()) }
+    fn query(tokens: QueryTokens, term: MatchTerms<O>, _: QueryToken) -> MatchQuery<O> {
+        MatchQuery::new(term, tokens)  // filter for the server, tokens for verify
+    }
+    // check elided
+}
+```
+
+A row the server returns for `alice` passes `verify` only if its decrypted
+text holds `ali`, `lic` and `ice`, so a Bloom false positive never reaches
+the caller.
 
 ### 3. The domain type chooses the best index for an operator
 
@@ -209,7 +235,8 @@ pub trait QueryTerm {}
 pub trait Probabilistic: QueryTerm {
     type Plaintext;
     fn verify(&self, value: &Self::Plaintext) -> bool;
-    fn target_limit(&self, want: u64, stats: &Stats) -> Limit;
+    // `target_limit(&self, want, &Stats) -> Limit` joins it with decision 5
+    // (#1184).
 }
 
 pub trait Ranked: QueryTerm {

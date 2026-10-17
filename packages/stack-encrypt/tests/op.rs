@@ -6,7 +6,7 @@ mod common;
 
 use common::{loads_counting_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::op::{self, MatchCase};
+use stack_encrypt::op::{self, MatchCase, Probabilistic};
 use stack_encrypt::plan::{Field, FieldSchema, Fields, PlanError};
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms};
 use stack_encrypt::target::{Encrypted, IndexSpec};
@@ -135,7 +135,7 @@ async fn a_matches_query_is_a_filter_over_the_query_value_that_the_stored_filter
 }
 
 #[tokio::test]
-async fn a_match_index_with_its_own_configuration_is_named_with_op_via() {
+async fn a_match_index_with_its_own_configuration_is_named_with_via() {
     let cipher = stack_cipher().await;
     let plan = people_plan();
     let mut row = cipher.encrypt(&person()).using(&plan).await.unwrap();
@@ -269,7 +269,7 @@ async fn a_target_answers_an_operator_through_the_index_it_names() {
 }
 
 #[tokio::test]
-async fn a_target_with_several_terms_names_the_index_with_op_via() {
+async fn a_target_with_several_terms_names_the_index_with_via() {
     let cipher = stack_cipher().await;
     let plan = Plan::value::<String>()
         .context("users/email")
@@ -467,6 +467,44 @@ async fn a_query_names_its_context_before_or_after_the_index() {
     assert_eq!(before, after);
 }
 
+/// A configuration with an n-gram length of zero, which `MatchOptions`
+/// refuses when a term is derived.
+struct ZeroGram;
+impl MatchConfig for ZeroGram {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            tokenizer: stack_encrypt::sem::Tokenizer::Ngram { length: 0 },
+            ..Default::default()
+        }
+    }
+}
+impl MatchCase for ZeroGram {
+    type Case = op::CaseInsensitive;
+}
+
+#[tokio::test]
+async fn a_match_query_under_invalid_options_is_refused_not_a_panic() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/name")
+        .with::<String, _>(Match::<ZeroGram>::new())
+        .build()
+        .unwrap();
+    let refused = cipher
+        .query(op::Matches, "Bob")
+        .via(Match::<ZeroGram>::new())
+        .on(&plan)
+        .await;
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Term(stack_encrypt::sem::TermError::InvalidOptions(
+                _
+            )))
+        ),
+        "{refused:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_refused_operator_query_loads_no_keyset() {
     let (cipher, loads) = loads_counting_cipher().await;
@@ -496,21 +534,6 @@ async fn a_refused_operator_query_loads_no_keyset() {
 }
 
 #[tokio::test]
-async fn a_match_query_debugs_as_its_positions() {
-    let cipher = stack_cipher().await;
-    let plan = people_plan();
-    let query = cipher
-        .query(op::Matches, "bob")
-        .on(&plan.field("email").unwrap())
-        .await
-        .unwrap();
-    assert_eq!(
-        format!("{query:?}"),
-        format!("MatchQuery {{ positions: {:?} }}", query.positions())
-    );
-}
-
-#[tokio::test]
 async fn an_operator_query_runs_under_the_keyset_it_names() {
     let cipher = stack_cipher().await;
     let plan = Plan::context("users/email")
@@ -536,4 +559,165 @@ async fn an_operator_query_runs_under_the_keyset_it_names() {
         .await
         .unwrap();
     assert_ne!(under_default, stored.terms, "another keyset, another key");
+}
+
+/// A match configuration with the smallest filter allowed, so a long value
+/// sets nearly every bit and false positives are easy to find.
+struct Tiny;
+impl MatchConfig for Tiny {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            m: 32,
+            ..Default::default()
+        }
+    }
+}
+impl MatchCase for Tiny {
+    type Case = op::CaseInsensitive;
+}
+
+#[tokio::test]
+async fn verify_keeps_every_real_match_and_folds_case_as_the_index_does() {
+    let cipher = stack_cipher().await;
+    let plan = people_plan();
+    let email_plan = plan.field("email").unwrap();
+    let name_plan = plan.field("name").unwrap();
+
+    let query = cipher
+        .query(op::Matches, "BOB@Example")
+        .on(&email_plan)
+        .await
+        .unwrap();
+    assert!(query.verify("bob@example.com"));
+    assert!(query.verify(&String::from("say hi to Bob@example.org")));
+    assert!(!query.verify("alice@example.com"));
+    assert!(query.clone().verify("bob@example.com"));
+
+    let exact = cipher
+        .query(op::Matches.case_sensitive(), "Nguyen")
+        .via(Match::<Exact>::new())
+        .on(&name_plan)
+        .await
+        .unwrap();
+    assert!(exact.verify("Alice Nguyen"));
+    assert!(
+        !exact.verify("alice nguyen"),
+        "a case-sensitive index keeps case"
+    );
+}
+
+#[tokio::test]
+async fn verify_drops_a_row_the_filter_matched_by_chance() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("notes/body")
+        .with::<String, _>(Match::<Tiny>::new())
+        .build()
+        .unwrap();
+    let value = "the quick brown fox jumps over the lazy dog and keeps running";
+    let stored: Encrypted<MatchTerms<Tiny>> = cipher
+        .encrypt(&value.to_owned())
+        .using(&plan)
+        .await
+        .unwrap();
+
+    let real = cipher
+        .query(op::Matches, "lazy dog")
+        .via(Match::<Tiny>::new())
+        .on(&plan)
+        .await
+        .unwrap();
+    assert!(stored.terms.matches(&real) && real.verify(value));
+
+    // The value holds no digit, so no query with one is in it; a 32-bit
+    // filter this full holds some of their filters anyway.
+    let mut false_positive = None;
+    for i in 0..1000 {
+        let digits = format!("{i:04}");
+        let query = cipher
+            .query(op::Matches, &digits)
+            .via(Match::<Tiny>::new())
+            .on(&plan)
+            .await
+            .unwrap();
+        if stored.terms.matches(&query) {
+            false_positive = Some(query);
+            break;
+        }
+    }
+    let query = false_positive.expect("a 32-bit filter this full matches some query by chance");
+    assert!(
+        !query.verify(value),
+        "the server would return this row; verify does not keep it"
+    );
+}
+
+#[tokio::test]
+async fn a_match_query_debugs_without_its_tokens() {
+    let cipher = stack_cipher().await;
+    let plan = people_plan();
+    let query = cipher
+        .query(op::Matches, "needle")
+        .on(&plan.field("email").unwrap())
+        .await
+        .unwrap();
+    let shown = format!("{query:?}");
+    assert_eq!(
+        shown,
+        format!("MatchQuery {{ positions: {:?}, .. }}", query.positions())
+    );
+    for token in ["nee", "eed", "edl", "dle", "needle"] {
+        assert!(!shown.contains(token), "{shown}");
+    }
+}
+
+/// Whole words, as the v1 match indexer's standard tokenizer splits them.
+struct Words;
+impl MatchConfig for Words {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            tokenizer: stack_encrypt::sem::Tokenizer::Standard,
+            ..Default::default()
+        }
+    }
+}
+impl MatchCase for Words {
+    type Case = op::CaseInsensitive;
+}
+
+/// A Bloom match asks for the query's tokens, in any order and anywhere;
+/// it is not a substring test, and `verify` must not become one, or it
+/// would drop rows the index rightly returned.
+#[tokio::test]
+async fn verify_is_a_token_test_not_a_substring_test() {
+    let cipher = stack_cipher().await;
+    let plan = people_plan();
+    let query = cipher
+        .query(op::Matches, "abcd")
+        .on(&plan.field("email").unwrap())
+        .await
+        .unwrap();
+    assert!(query.verify("abc bcd"), "both 3-grams, never adjacent");
+    assert!(!query.verify("abc"), "one 3-gram of two");
+
+    let words = Plan::context("notes/body")
+        .with::<String, _>(Match::<Words>::new())
+        .build()
+        .unwrap();
+    let stored: Encrypted<MatchTerms<Words>> = cipher
+        .encrypt(&"Hello, big World!".to_owned())
+        .using(&words)
+        .await
+        .unwrap();
+    let query = cipher
+        .query(op::Matches, "world hello")
+        .via(Match::<Words>::new())
+        .on(&words)
+        .await
+        .unwrap();
+    assert!(stored.terms.matches(&query));
+    assert!(query.verify("Hello, big World!"));
+    assert!(
+        !query.verify("worldly hello"),
+        "a word is a token, not a prefix"
+    );
 }

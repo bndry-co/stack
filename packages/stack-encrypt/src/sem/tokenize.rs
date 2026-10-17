@@ -10,6 +10,8 @@
 //! is that empty tokens are dropped (v1 keeps the empty strings its separator
 //! split produces, which only add noise bits to every filter).
 
+use zeroize::Zeroizing;
+
 /// How text is split into tokens before each token is run through the PRF.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tokenizer {
@@ -45,12 +47,26 @@ impl Default for Tokenizer {
 /// term can never reach a query.
 ///
 /// [`match_terms`]: crate::StackCipher::match_terms
+///
+/// An n-gram length of zero yields no tokens rather than panicking, so a
+/// caller that tokenizes before validating the options (a query's verifier)
+/// still reaches [`MatchOptions::validate`]'s refusal.
+///
+/// The text is plaintext, so the copies made on the way are zeroized when
+/// they are dropped: the folded text, its characters, which are collected
+/// into a buffer sized up front, and each n-gram, which is built at its
+/// final size. Neither reallocates, so no freed buffer holds plaintext. The
+/// one exception is inside `str::to_lowercase`, which grows its output when
+/// folding lengthens the text (as `İ` does). The tokens returned are the
+/// caller's to zeroize.
+///
+/// [`MatchOptions::validate`]: super::MatchOptions
 pub(crate) fn tokenize(text: &str, tokenizer: Tokenizer, downcase: bool) -> Vec<String> {
-    let text = if downcase {
+    let text = Zeroizing::new(if downcase {
         text.to_lowercase()
     } else {
         text.to_string()
-    };
+    });
 
     match tokenizer {
         Tokenizer::Standard => text
@@ -59,17 +75,30 @@ pub(crate) fn tokenize(text: &str, tokenizer: Tokenizer, downcase: bool) -> Vec<
             .map(str::to_string)
             .collect(),
         Tokenizer::Ngram { length } => {
-            let chars: Vec<char> = text.chars().collect();
+            // `collect` would size the buffer from `Chars::size_hint`, about
+            // a quarter of the text, and grow it, leaving plaintext in each
+            // buffer it frees.
+            let mut chars: Zeroizing<Vec<char>> =
+                Zeroizing::new(Vec::with_capacity(text.chars().count()));
+            chars.extend(text.chars());
             // As in the v1 indexer's `process_ngram`: shorter than one gram
             // means no tokens (never a partial or whole-text token, which
             // could not match any stored gram).
-            if chars.len() < length {
+            if length == 0 || chars.len() < length {
                 Vec::new()
             } else {
-                chars.windows(length).map(|w| w.iter().collect()).collect()
+                chars.windows(length).map(gram).collect()
             }
         }
     }
+}
+
+/// One n-gram as a `String` allocated at its final size, so building it
+/// leaves no reallocated copy behind.
+fn gram(chars: &[char]) -> String {
+    let mut gram = String::with_capacity(chars.iter().map(|c| c.len_utf8()).sum());
+    gram.extend(chars);
+    gram
 }
 
 #[cfg(test)]
@@ -82,6 +111,11 @@ mod tests {
             tokenize("hello", Tokenizer::Ngram { length: 3 }, true),
             vec!["hel", "ell", "llo"]
         );
+    }
+
+    #[test]
+    fn a_zero_ngram_length_yields_no_tokens_rather_than_panicking() {
+        assert!(tokenize("hello", Tokenizer::Ngram { length: 0 }, true).is_empty());
     }
 
     #[test]

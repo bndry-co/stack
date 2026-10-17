@@ -128,6 +128,7 @@ mod tokenize;
 
 pub use tokenize::Tokenizer;
 
+use std::collections::HashSet;
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -142,7 +143,7 @@ use vitaminc_prf::{
     PrfVisitorError, SeqAccess,
 };
 use vitaminc_protected::NonEmpty;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use stack_kms::MaybeSend;
 
@@ -653,14 +654,24 @@ impl<O> Eq for MatchTerms<O> {}
 /// stored filter is never sent as a query. ADR-0009 records why. A
 /// `MatchQuery` comes from a query chain ([`op::Matches`](struct@crate::op::Matches)),
 /// never from a target.
+///
+/// A Bloom filter can hold every bit of the query without the value holding
+/// the query's text, so a match query is
+/// [`Probabilistic`](crate::op::Probabilistic): it keeps the query's tokens,
+/// as the index cut them, and [`verify`](crate::op::Probabilistic::verify)
+/// checks a decrypted value against them. The tokens are plaintext: they
+/// never leave the process, never appear in `Debug`, and are zeroized when
+/// the query is dropped.
 pub struct MatchQuery<O = DefaultMatch> {
     terms: MatchTerms<O>,
+    tokens: QueryTokens,
 }
 
 impl<O> MatchQuery<O> {
-    /// The query term of the filter `terms`, derived over the query's value.
-    pub(crate) fn from_terms(terms: MatchTerms<O>) -> Self {
-        Self { terms }
+    /// The query term of the filter `terms`, derived over the value whose
+    /// tokens are `tokens`.
+    pub(crate) fn new(terms: MatchTerms<O>, tokens: QueryTokens) -> Self {
+        Self { terms, tokens }
     }
 
     /// The set positions of the query's filter, sorted ascending, no
@@ -680,11 +691,32 @@ impl<O> MatchQuery<O> {
     }
 }
 
+/// A row is a real match when every token of the query is a token of the
+/// value, cut by the index's own tokenizer and case folding. That is the
+/// meaning a Bloom match approximates, so `verify` keeps every row the
+/// filter would have kept had it no false positives: order and repetition
+/// do not count, and a match is not a substring test.
+impl<O: MatchConfig> crate::op::Probabilistic for MatchQuery<O> {
+    type Plaintext = str;
+
+    fn verify(&self, value: &str) -> bool {
+        let options = O::options();
+        let tokens = Zeroizing::new(tokenize::tokenize(
+            value,
+            options.tokenizer,
+            options.downcase,
+        ));
+        let have: HashSet<&str> = tokens.iter().map(String::as_str).collect();
+        !self.tokens.0.is_empty() && self.tokens.0.iter().all(|t| have.contains(t.as_str()))
+    }
+}
+
+/// Positions only: the tokens are plaintext.
 impl<O> fmt::Debug for MatchQuery<O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MatchQuery")
             .field("positions", &self.terms.positions)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -692,10 +724,16 @@ impl<O> Clone for MatchQuery<O> {
     fn clone(&self) -> Self {
         Self {
             terms: self.terms.clone(),
+            tokens: self.tokens.clone(),
         }
     }
 }
 
+/// Two queries are equal when they send the same filter. This compares no
+/// plaintext. Two query values can share a filter by chance, as a short
+/// value under a small filter does, and those queries are equal here yet
+/// verify differently: equal queries select the same rows, not the same
+/// matches.
 impl<O> PartialEq for MatchQuery<O> {
     fn eq(&self, other: &Self) -> bool {
         self.terms == other.terms
@@ -703,6 +741,29 @@ impl<O> PartialEq for MatchQuery<O> {
 }
 
 impl<O> Eq for MatchQuery<O> {}
+
+/// The query's tokens, as a match index cuts them from the query's value:
+/// a match query's verifier, which a [`MatchQuery`] keeps to verify a row. Plaintext, so it is
+/// zeroized on drop and has no `Debug`.
+/// [`Supports::verifier`](crate::op::Supports::verifier) makes one; only a query
+/// chain can join it to a filter
+/// ([`Supports::query`](crate::op::Supports::query) takes a token no caller
+/// can make), so one query's tokens never verify rows for another value's
+/// filter.
+#[derive(Clone)]
+pub struct QueryTokens(Zeroizing<Vec<String>>);
+
+impl QueryTokens {
+    /// The tokens of `text` under `O`'s tokenizer and case folding.
+    pub(crate) fn of<O: MatchConfig>(text: &str) -> Self {
+        let options = O::options();
+        Self(Zeroizing::new(tokenize::tokenize(
+            text,
+            options.tokenizer,
+            options.downcase,
+        )))
+    }
+}
 
 /// A [`PrfVisitor`] that folds a sequence of per-token PRF blocks into
 /// Bloom-filter bit positions: `k` little-endian 2-byte slices of each block,
@@ -765,6 +826,10 @@ fn match_term<O>(
         return Err(TermError::EmptyTermText);
     }
     let context = Context::pae(&[MATCH_DOMAIN, context.as_bytes()]);
+
+    // The PRF takes the tokens by value and moves each `String`'s buffer
+    // into a `Protected`, which zeroizes it on drop: the tokens are wiped
+    // there, not here. The `Vec` itself holds only their pointers.
 
     let positions = tokens
         .prf_visit_with_context(prf, context, BloomVisitor { k: options.k, mask })
@@ -1277,6 +1342,19 @@ mod tests {
     use vitaminc_protected::Protected;
 
     use super::*;
+
+    #[test]
+    fn a_match_query_with_no_tokens_verifies_nothing() {
+        // A query chain refuses token-less text before a term exists, so
+        // this cannot reach a `MatchQuery` through the API; the guard is for
+        // one built any other way, which must never match every row.
+        let query = MatchQuery::<DefaultMatch>::new(
+            MatchTerms::normalised(vec![1, 2, 3]),
+            QueryTokens(Zeroizing::new(Vec::new())),
+        );
+        assert!(!crate::op::Probabilistic::verify(&query, "anything at all"));
+        assert!(!crate::op::Probabilistic::verify(&query, ""));
+    }
 
     /// The Bloom fold reads a token *stream*: handed a map-shaped PRF input
     /// it refuses, rather than folding the entries' blocks as if they were

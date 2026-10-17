@@ -1015,9 +1015,10 @@ where
     where
         'a: 'p,
     {
+        let verifier = self.inner.index.verifier(&self.inner.value);
         self.inner
             .prepare(keyset, scoped)
-            .map(|term| I::query(term, QueryToken::new()))
+            .map(move |term| I::query(verifier, term, QueryToken::new()))
     }
 }
 
