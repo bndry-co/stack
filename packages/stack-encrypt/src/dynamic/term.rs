@@ -438,6 +438,11 @@ where
 /// their value by `'static` ownership (the visitor carries it), so a bare
 /// `String` or `Vec<u8>` would be freed with the plaintext still in it, in
 /// a guest's linear memory, where the host can read it.
+///
+/// Text is ordered as its raw UTF-8, not in the Unicode 16 NFC that
+/// equality and match terms use: `café` written precomposed and with a
+/// combining accent is one value to `=` and two to an ordering. A known
+/// gap, to close with block ORE (#1140).
 fn ore_of<'a, 'c, K: 'static, D>(
     cipher: &'a KeysetCipher<'_, K>,
     value: Physical<'_>,

@@ -164,7 +164,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Match text is tokenized in the same normal form, and refused the same
   way. Every equality and match term changes
   bytes (the domains move to `/v2`); ORE and OPE terms do not. No stored
-  term existed to keep; the record fixture is regenerated.
+  term existed to keep; the record fixture is regenerated. ORE and OPE
+  text is still ordered as its raw UTF-8, not normalized, so on a column
+  with both an equality and an order index two forms of `café` are one
+  value to `=` and two to an ordering. This is a known gap, to be closed
+  with block ORE (#1140).
 - **`dynamic::Value` and `dynamic::Scalar` are gone.** A field lowered from
   data holds an `FfiValue`, which is now `Clone` (a deep copy into fresh
   `Protected` payloads, as `Value`'s was) and reads as a context label.
