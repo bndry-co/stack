@@ -414,7 +414,9 @@ pub fn encryption_gap(
 
 /// Keep attributes in the generator so regeneration preserves the opt-in
 /// derives without enabling other domains before their operations and
-/// plaintext contracts are supported ([`ENCRYPTION_DOMAINS`]).
+/// plaintext contracts are supported ([`ENCRYPTION_DOMAINS`]). Only a v4
+/// struct gets them, and the v4 module exists only with the `stack-encrypt`
+/// feature (`eql_bindings::v4`), so the attributes are not gated again.
 fn encryption_attrs(
     version: EqlVersion,
     family: &DomainFamily,
@@ -424,16 +426,10 @@ fn encryption_attrs(
     if encryption_gap(version, family, domain).is_some() {
         return Default::default();
     }
-    let decrypt = (!query).then(
-        || quote!(#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]),
-    );
+    let decrypt = (!query).then(|| quote!(#[derive(stack_encrypt::DecryptInto)]));
     let (_, rust) = plaintext_of(family.name).expect("a derived family names its plaintext");
     let plaintext_ty: syn::Type = syn::parse_str(rust).expect("plaintext is a type path");
     let shown = rust.rsplit("::").next().unwrap_or(rust);
-    // The plaintext line shows with or without the feature: it says what the
-    // type is built from, and the sentence itself names the feature. Only the
-    // link is feature-gated, since a plaintext from `crate::encryption` does
-    // not exist without it and the link would not resolve.
     let plaintext_doc = |named: &str| {
         if query {
             let terms = if domain.terms.contains(&Term::Bloom) {
@@ -442,33 +438,29 @@ fn encryption_attrs(
                 "equality"
             };
             format!(
-                " Plaintext input: {named}. With the `stack-encrypt` feature, \
-                 implements `EncryptFrom<{shown}>` to build {terms} query terms. Query operands \
-                 do not decrypt."
+                " Plaintext input: {named}. Implements `EncryptFrom<{shown}>` to build {terms} \
+                 query terms. Query operands do not decrypt."
             )
         } else {
             format!(
-                " Plaintext input and decrypted output: {named}. With the \
-                 `stack-encrypt` feature, implements `EncryptFrom<{shown}>` and \
-                 `DecryptInto<{shown}>`."
+                " Plaintext input and decrypted output: {named}. Implements \
+                 `EncryptFrom<{shown}>` and `DecryptInto<{shown}>`."
             )
         }
     };
     let plaintext = plaintext_doc(&format!("[`{shown}`]({rust})"));
-    let plaintext_unlinked = plaintext_doc(&format!("`{shown}`"));
     (
         quote! {
-            #[cfg_attr(doc, doc = "")]
-            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = #plaintext)]
-            #[cfg_attr(all(doc, not(feature = "stack-encrypt")), doc = #plaintext_unlinked)]
-            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.")]
-            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " See the [complete encryption example](crate::encryption#example).")]
-            #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
+            #[doc = ""]
+            #[doc = #plaintext]
+            #[doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."]
+            #[doc = " See the [complete encryption example](crate::encryption#example)."]
+            #[derive(stack_encrypt::EncryptFrom)]
             #decrypt
-            #[cfg_attr(feature = "stack-encrypt", stash(plaintext = #plaintext_ty))]
+            #[stash(plaintext = #plaintext_ty)]
         },
-        quote!(#[cfg_attr(feature = "stack-encrypt", stash(default))]),
-        quote!(#[cfg_attr(feature = "stack-encrypt", stash(context_field))]),
+        quote!(#[stash(default)]),
+        quote!(#[stash(context_field)]),
     )
 }
 
@@ -1059,7 +1051,7 @@ fn render_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
 /// Render the v4 bindings: one module per family with a scalar domain (a
 /// mixed family's scalar domains under its own name, since v4 has no
 /// hand-written SteVec module to sit beside), and the Stack Encrypt target
-/// table and dispatch (`targets.rs`, gated to the `stack-encrypt` feature by
+/// table and dispatch (`targets.rs`, under the `stack-encrypt` feature with
 /// the hand-written `v4/mod.rs`). Stack Encrypt produces v4 only, so the
 /// target table lives here.
 fn render_v4_bindings(dir: &Path) -> Vec<(PathBuf, String)> {

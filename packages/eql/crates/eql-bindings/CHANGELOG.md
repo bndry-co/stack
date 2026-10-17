@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`eql_bindings::v4` needs the `stack-encrypt` feature.** Only Stack
+  Encrypt produces an EQL v4 value (ADR-0002), so the module is compiled with
+  that feature alone, and its producible types derive `EncryptFrom` and
+  `DecryptInto` with no attribute of their own gated on it.
 - **`IntegerEq`, `BigintEq`, `RealEq` and `DoubleEq` are producible**
   (`stack-encrypt` feature), from the `Int32`, `Int64`, `Float32` and
   `Float64` plaintexts. Their equality term follows ADR-0002's semantic

@@ -3,7 +3,7 @@
 //! types a Stack Encrypt data plan may name as a field target, and the
 //! by-name dispatch that runs a named type's own Rust plan. Generated beside
 //! the v4 family modules by the same mechanism ([`crate::bindings`]), and
-//! gated to the `stack-encrypt` feature by the hand-written `v4/mod.rs`.
+//! under the `stack-encrypt` feature with the rest of `v4`.
 //! Stack Encrypt produces EQL v4 only (ADR-0002), so every target is an
 //! `eql_v4_*` domain.
 //!
