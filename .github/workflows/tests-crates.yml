@@ -153,8 +153,30 @@ jobs:
       # `--allow-dirty` tolerates files earlier steps leave in the tree. Once a
       # version is on crates.io, cargo warns rather than fails on a dry run of
       # it.
+      #
+      # A crate these build against from GIT (a `[patch.crates-io]` pin on an
+      # unreleased dependency, as vitaminc is while `next` waits on its
+      # release) cannot be verified here: `cargo package` drops `[patch]`, so
+      # the verify compiles against the registry's version of that crate, a
+      # build that tests a dependency the tree does not use and fails on API
+      # the release has not shipped. While such a pin is in the graph the step
+      # packages without verifying, which still checks the metadata and that
+      # every path dependency names a version, and warns, naming the pins. It
+      # is not a hole in the release: `cargo publish` in release-crates
+      # verifies the same way and refuses these crates until the pin is a
+      # registry version.
       - name: Verify the stack-* crates package cleanly for crates.io
-        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt
+        run: |
+          set -euo pipefail
+          crates=(-p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt)
+          tree="$(cargo tree --locked -e normal,build --prefix none "${crates[@]}")"
+          pins="$(grep -E '\((https?|ssh)://' <<<"$tree" | sed -E 's/ \(\*\)$//' | sort -u || true)"
+          if [ -z "$pins" ]; then
+            exec cargo publish --locked --dry-run --allow-dirty "${crates[@]}"
+          fi
+          printf 'Built against git, so not verifiable against the registry:\n%s\n' "$pins"
+          echo "::warning title=stack-* crates not verified against the registry::They build against $(wc -l <<<"$pins" | tr -d ' ') crate(s) pinned to git ([patch.crates-io]), which cargo package ignores, so the registry build was skipped and only the packaging was checked. release-crates refuses to publish them until the pins are registry versions."
+          cargo package --locked --no-verify --allow-dirty "${crates[@]}"
 
   node-bindings:
     name: node bindings, napi typings, stack-auth-wasm
