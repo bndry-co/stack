@@ -35,6 +35,20 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   implemented outside this module (a wrapper, or a fake in a generator's
   tests) changes its `Check` to return them; `enginetest.Static` shows the
   table.
+- **An `int8`, `uint8` or `byte` field takes no `ore` or `ope` index; drop
+  the index and run stashgen again.** With 256 values, an order term ranks
+  every row among 256, which a few known rows resolve to the values, the
+  leak a `bool`'s order term is already refused for. The engine refuses the
+  declaration as it refuses one on a `bool`, so stashgen stops at it. The
+  field keeps `equality` and `Eq`; a value that must order declares a wider
+  type.
+- **Every ORE and OPE term changes bytes; encrypt indexed rows again.**
+  Order terms now encrypt through cllw-ore's vitaminc schemes, for every
+  type: integers of every width, floats, text and bytes. A term v0.1.0-alpha.1
+  stored does not compare with one this release derives, and nothing
+  refuses it: `Lt`, `Between` or an `ORDER BY` over a column holding the
+  alpha's terms silently misses or misplaces rows. Re-derive a column's
+  order terms (encrypt its rows again) before querying it.
 
 ### Added
 
@@ -47,8 +61,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `Decimal` are vitaminc's `vcvalue` types, with `encrypt.DateOf`,
   `ParseInt128`, `ParseUint128` and `ParseDecimal` (which refuses NaN and
   the infinities with `ErrNonFiniteDecimal`). Equality applies to all of
-  them, ORE and OPE to every integer width. stashgen refuses an order index
-  on a decimal, date or timestamp, naming #1236. The value-kinds fixture
+  them, ORE and OPE to every integer width but 8 bits. stashgen refuses an
+  order index on a decimal, date or timestamp, naming #1236. The value-kinds fixture
   test opens a record the Rust lowering sealed and derives the same terms.
 - **Any built-in Go integer field takes an integer EQL type** (ADR-0002):
   an `int16` or a `uint16` into `Integer`, an `int` into `Bigint`. The
@@ -74,9 +88,13 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   type, range checked as for `Integer`) tagged `encrypt_into=` one of them
   seals at 16 bits; `SmallintEq` gets `Eq`, with the same equality term as
   an integer of the same value under the same column.
+- **Ordering methods on text.** A string field with `index=ore` or
+  `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`. Text orders by its
+  folded form (ADR-0002: case and accents folded, under Unicode 16), so
+  `Café` and `cafe` tie and `alice` orders before `Zoe`.
 - **stashgen notices an index no generated method queries**: an `ore` or
-  `ope` index on text, bytes or a float (the engine answers the orderings
-  over integers only), or the second of two order indexes on an integer.
+  `ope` index on bytes or a float (the engine answers the orderings over
+  integers and text only), or the second of two order indexes on a field.
   The index is still stored; the notice is on stderr and in the file.
 
 ### Changed

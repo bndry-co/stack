@@ -35,13 +35,15 @@
 //! A field with indexes answers what [`OpSpec::answered_by`] says for its
 //! declared kind: `eq` through an equality index, `matches` through a match
 //! index over text, and the orderings (`lt`, `lte`, `gt`, `gte`,
-//! `between`) through an ORE index over an integer, or an OPE index when
-//! the field declares no ORE. The typed path's default for an ordering is
-//! ORE, and OPE is the typed path's `.via(Ope)`; here a field that declares
-//! only OPE is answered through it. An ordering over text, bytes or a float
-//! is not answered, as `op::Ordered` covers the integers only (of every
-//! width, `int8` to `uint128`). Nor is one over a decimal, date or
-//! timestamp: a plan cannot declare an order index on one until #1236.
+//! `between`) through an ORE index over an integer or text, or an OPE index
+//! when the field declares no ORE. The typed path's default for an ordering
+//! is ORE, and OPE is the typed path's `.via(Ope)`; here a field that
+//! declares only OPE is answered through it. Text orders by its folded
+//! order key (ADR-0002). An ordering over bytes or a float is not answered,
+//! as `op::Ordered` covers the integers of 16 bits and wider (`int16` to
+//! `uint128`) and text only. Nor is one over an 8-bit integer, which has
+//! no order term, or a decimal, date or timestamp:
+//! a plan cannot declare an order index on one yet.
 //!
 //! A field that names an EQL type answers what its
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
@@ -171,7 +173,8 @@ impl OpSpec {
     ///
     /// let both = [IndexSpec::Ope, IndexSpec::Ore];
     /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::UInt32, &both), Some(&IndexSpec::Ore));
-    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::String, &both), None);
+    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::String, &both), Some(&IndexSpec::Ore));
+    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::Bytes, &both), None);
     /// assert_eq!(OpSpec::Eq.answered_by(ValueKind::UInt32, &both), None);
     /// ```
     pub fn answered_by(self, kind: ValueKind, indexes: &[IndexSpec]) -> Option<&IndexSpec> {
@@ -198,22 +201,23 @@ impl fmt::Display for OpSpec {
     }
 }
 
-/// The kinds the ordering operators are answered over: the integers of
-/// every width, `int8` to `uint128`, as [`op::Ordered`](crate::op::Ordered)
-/// covers them in the typed path.
+/// The kinds the ordering operators are answered over: the integers of 16
+/// bits and wider, `int16` to `uint128`, and text, as
+/// [`op::Ordered`](crate::op::Ordered) covers them in the typed path. Not
+/// `int8` or `uint8`, which have no order term. Text orders by its order
+/// key (ADR-0002's fold).
 fn ordered(kind: ValueKind) -> bool {
     matches!(
         kind,
-        ValueKind::Int8
-            | ValueKind::Int16
+        ValueKind::Int16
             | ValueKind::Int32
             | ValueKind::Int64
             | ValueKind::Int128
-            | ValueKind::UInt8
             | ValueKind::UInt16
             | ValueKind::UInt32
             | ValueKind::UInt64
             | ValueKind::UInt128
+            | ValueKind::String
     )
 }
 
@@ -593,6 +597,16 @@ fn not_a_range(field: &str) -> Error {
 fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
     let refused = |error: TermError| Error::Cipher(error.into());
     match (index, input) {
+        // Order text the fold cannot take (a code point unassigned in
+        // Unicode 16) is refused here, before a term or a keyset, as
+        // derivation would refuse it after one.
+        (IndexSpec::Ore | IndexSpec::Ope, Input::One(value)) => {
+            order_text(value).map_err(refused)?;
+        }
+        (IndexSpec::Ore | IndexSpec::Ope, Input::Pair(lo, hi)) => {
+            order_text(lo).map_err(refused)?;
+            order_text(hi).map_err(refused)?;
+        }
         (IndexSpec::Match(options), Input::One(value)) => {
             query_tokens(value, options).map(drop)?;
         }
@@ -605,6 +619,23 @@ fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
         _ => {}
     }
     Ok(())
+}
+
+/// Whether `value`, if it is order text, has a fold: `vitaminc-ore`'s
+/// `Text` encoding, the one an order index encrypts, refuses a code point
+/// Unicode 16 does not assign. Anything but text has nothing to refuse.
+fn order_text(value: &ValueFrame) -> Result<(), TermError> {
+    value
+        .visit(OneScalar::new(
+            |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                (None, Physical::Text(text)) => Ok(vitaminc_ore::text(text)
+                    .map(drop)
+                    .map_err(TermError::Normalize)),
+                _ => Err(None),
+            },
+        ))
+        // Not one text scalar: nothing to refuse here.
+        .unwrap_or(Ok(()))
 }
 
 /// The tokens a match query of `value` keeps, under the index's options.
@@ -1055,7 +1086,7 @@ mod tests {
         keyset: &KeysetCipher<'_, FakeDataKeySource>,
         name: &str,
         operator: OpSpec,
-        input: Tree,
+        input: impl Encrypt,
     ) -> Result<QueryTerm, Error> {
         query_term(keyset, &users(), name, operator, input, &NoTargets)?
             .await
@@ -1135,17 +1166,23 @@ mod tests {
             OpSpec::Gte,
             OpSpec::Between,
         ] {
+            for kind in [ValueKind::Int8, ValueKind::UInt8, ValueKind::Bool] {
+                assert_eq!(
+                    answered(op, kind, &all),
+                    None,
+                    "{op} {kind}: an 8-bit integer has no order term, as a boolean has none"
+                );
+            }
             for kind in [
-                ValueKind::Int8,
                 ValueKind::Int16,
                 ValueKind::Int32,
                 ValueKind::Int64,
                 ValueKind::Int128,
-                ValueKind::UInt8,
                 ValueKind::UInt16,
                 ValueKind::UInt32,
                 ValueKind::UInt64,
                 ValueKind::UInt128,
+                ValueKind::String,
             ] {
                 assert_eq!(
                     answered(op, kind, &all),
@@ -1164,7 +1201,6 @@ mod tests {
                 );
             }
             for kind in [
-                ValueKind::String,
                 ValueKind::Bytes,
                 ValueKind::Float64,
                 ValueKind::Bool,
@@ -1175,7 +1211,7 @@ mod tests {
                 assert_eq!(
                     answered(op, kind, &all),
                     None,
-                    "{op} is answered over integers only: {kind}"
+                    "{op} is answered over integers and text only: {kind}"
                 );
             }
         }
@@ -1334,7 +1370,7 @@ mod tests {
             ),
             (
                 "nickname",
-                OpSpec::Lt,
+                OpSpec::Eq,
                 text("bob"),
                 Reason::OperatorNotAnswered,
             ),
@@ -1386,24 +1422,47 @@ mod tests {
     async fn the_typed_paths_query_refusals_are_made_before_any_term() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
+        let one = |text: &str| ValueFrame::of(text).expect("a value");
+        let two = |lo: &str, hi: &str| ValueFrame::of(vec![lo, hi]).expect("a value");
         let cases = [
-            ("name", OpSpec::Matches, text("al"), "empty"),
-            ("name", OpSpec::Matches, text("\u{0378}abc"), "normalize"),
-            ("email", OpSpec::Eq, text("a\u{0378}bc"), "normalize"),
+            ("nickname", OpSpec::Lt, one("a\u{0378}"), "normalize"),
+            (
+                "nickname",
+                OpSpec::Between,
+                two("a", "b\u{0378}"),
+                "normalize",
+            ),
+            (
+                "nickname",
+                OpSpec::Between,
+                two("a\u{0378}", "b"),
+                "normalize",
+            ),
+            ("name", OpSpec::Matches, one("al"), "empty"),
+            ("name", OpSpec::Matches, one("\u{0378}abc"), "normalize"),
+            ("email", OpSpec::Eq, one("a\u{0378}bc"), "normalize"),
         ];
         for (name, op, input, what) in cases {
             for error in [
-                query(&keyset, name, op, input.clone()).await.unwrap_err(),
-                check_query(&users(), name, op, input, &NoTargets).unwrap_err(),
+                query(&keyset, name, op, &input).await.unwrap_err(),
+                check_query(&users(), name, op, &input, &NoTargets).unwrap_err(),
             ] {
                 let term = term_error(&error);
                 let expected = match what {
                     "empty" => matches!(term, Some(TermError::EmptyTermText)),
                     _ => matches!(term, Some(TermError::Normalize(_))),
                 };
-                assert!(expected, "{what}: {error:?}");
+                assert!(expected, "{name} {what}: {error:?}");
             }
         }
+        // The terms of folded equivalents are one term.
+        let cafe = query(&keyset, "nickname", OpSpec::Lt, "cafe")
+            .await
+            .unwrap();
+        let folded = query(&keyset, "nickname", OpSpec::Lt, "CAF\u{c9}")
+            .await
+            .unwrap();
+        assert_eq!(folded.operand, cafe.operand);
     }
 
     /// A plan whose context is a field of each record has no context a
@@ -1809,7 +1868,7 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = record::plan(&frame_of(&Tree::Object(vec![
-            field("tiny", "int8", vec![text("c"), text("ore")]),
+            field("tiny", "int16", vec![text("c"), text("ore")]),
             field("huge", "int128", vec![text("c"), text("ope")]),
             field("day", "date", vec![text("c"), text("eq")]),
             field("at", "timestamp", vec![text("c"), text("eq")]),
@@ -1831,10 +1890,10 @@ mod tests {
         };
 
         let tiny = crate::Plan::context("users/tiny")
-            .with::<i8, _>(Ore)
+            .with::<i16, _>(Ore)
             .build()
             .unwrap();
-        let typed = cipher.query(op::Lt, &-8i8).on(&tiny).await.unwrap();
+        let typed = cipher.query(op::Lt, &-8i16).on(&tiny).await.unwrap();
         for input in [
             int(Int::I8(-8)),
             vf(&Tree::Int64(-8)),
@@ -1843,10 +1902,10 @@ mod tests {
             let term = ask("tiny", OpSpec::Lt, input).await.unwrap();
             assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
         }
-        let refused = ask("tiny", OpSpec::Lt, vf(&Tree::Int64(300))).await;
+        let refused = ask("tiny", OpSpec::Lt, vf(&Tree::Int64(70_000))).await;
         assert!(
             matches!(&refused, Err(error) if reason_of(error) == (Some("tiny"), Some(Reason::FieldType))),
-            "300 is no int8: {refused:?}"
+            "70000 is no int16: {refused:?}"
         );
 
         let huge = crate::Plan::context("users/huge")
@@ -2178,7 +2237,17 @@ mod tests {
                     (OpSpec::Between, IndexSpec::Ore),
                 ],
             ),
-            ("nickname", "string", vec![]),
+            (
+                "nickname",
+                "string",
+                vec![
+                    (OpSpec::Lt, IndexSpec::Ore),
+                    (OpSpec::Lte, IndexSpec::Ore),
+                    (OpSpec::Gt, IndexSpec::Ore),
+                    (OpSpec::Gte, IndexSpec::Ore),
+                    (OpSpec::Between, IndexSpec::Ore),
+                ],
+            ),
         ] {
             let listed = field_operators(&users(), name, &NoTargets).unwrap();
             assert_eq!(listed, want, "{name}");

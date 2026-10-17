@@ -81,7 +81,10 @@ stack-profile = { path = "./packages/stack-profile", version = "0.43.0" }
 cts-common = { version = "0.43.0", default-features = false }
 zerokms-protocol = "0.12.31"
 recipher = "=0.3.1"
-cllw-ore = { version = "=0.5.0", default-features = false }
+# cllw-ore's `vitaminc` feature implements vitaminc-ore's `OrderScheme`,
+# which Stack Encrypt's order terms are encrypted through. It first ships
+# in a pre-release, and Cargo resolves a pre-release only when named.
+cllw-ore = { version = "=0.5.2-rc.1", default-features = false, features = ["vitaminc"] }
 
 # External dependencies, with the suite's feature lists.
 base64 = "0.22.0"
@@ -130,5 +133,8 @@ vitaminc-hmac = "0.6.1"
 # Normalized equality terms (Unicode 16 NFC text, one integer encoding for
 # every width), which `vitaminc-prf`'s `normalize` feature derives over.
 vitaminc-normalize = "0.6.1"
+# The text order key: the system ADR-0002's fold, pinned to Unicode 16,
+# which text ORE and OPE terms are derived over (ADR-0009).
+vitaminc-ore = "0.6.1"
 vitaminc-prf = { version = "0.6.1", features = ["normalize"] }
 vitaminc-protected = "0.6.1"

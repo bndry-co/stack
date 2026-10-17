@@ -109,7 +109,7 @@ pub trait Visitor: Sized {
     /// # Errors
     ///
     /// Refuses with [`Error::UnsupportedShape`] unless overridden.
-    fn ore<T: cllw_ore::CllwOreEncrypt>(self, _: OreTerm<T>) -> Result<Self::Value, Error> {
+    fn ore<T: crate::sem::Orderable>(self, _: OreTerm<T>) -> Result<Self::Value, Error> {
         Err(Error::UnsupportedShape)
     }
     /// An order-preserving term. One-way, and not authenticated.
@@ -117,7 +117,7 @@ pub trait Visitor: Sized {
     /// # Errors
     ///
     /// Refuses with [`Error::UnsupportedShape`] unless overridden.
-    fn ope<T: cllw_ore::CllwOpeEncrypt>(self, _: OpeTerm<T>) -> Result<Self::Value, Error> {
+    fn ope<T: crate::sem::Orderable>(self, _: OpeTerm<T>) -> Result<Self::Value, Error> {
         Err(Error::UnsupportedShape)
     }
 }
@@ -193,12 +193,12 @@ impl<O: MatchConfig> Reader for MatchTerms<O> {
         visitor.matching(self)
     }
 }
-impl<T: cllw_ore::CllwOreEncrypt> Reader for OreTerm<T> {
+impl<T: crate::sem::Orderable> Reader for OreTerm<T> {
     fn read<V: Visitor>(self, visitor: V) -> Result<V::Value, Error> {
         visitor.ore(self)
     }
 }
-impl<T: cllw_ore::CllwOpeEncrypt> Reader for OpeTerm<T> {
+impl<T: crate::sem::Orderable> Reader for OpeTerm<T> {
     fn read<V: Visitor>(self, visitor: V) -> Result<V::Value, Error> {
         visitor.ope(self)
     }

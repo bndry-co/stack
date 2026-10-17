@@ -375,11 +375,11 @@ async fn string_ore_terms_preserve_lexicographic_order() {
     let cipher = generator().await;
     let gen = cipher.default_keyset();
     let apple = gen
-        .ore_term("apple", nonempty!("users/name"))
+        .ore_term("apple".to_string(), nonempty!("users/name"))
         .await
         .unwrap();
     let banana = gen
-        .ore_term("banana", nonempty!("users/name"))
+        .ore_term("banana".to_string(), nonempty!("users/name"))
         .await
         .unwrap();
     assert_eq!(apple.cmp(&banana), Ordering::Less);
@@ -406,29 +406,4 @@ async fn ore_and_ope_keys_are_domain_separated() {
     let ore = gen.ore_term(42u64, nonempty!("users/age")).await.unwrap();
     let ope = gen.ope_term(42u64, nonempty!("users/age")).await.unwrap();
     assert_ne!(ore.as_ref(), ope.as_ref());
-}
-
-#[tokio::test]
-async fn owned_and_borrowed_text_yield_identical_ore_and_ope_terms() {
-    let cipher = generator().await;
-    let gen = cipher.default_keyset();
-    let borrowed = gen
-        .ore_term("apple", nonempty!("users/name"))
-        .await
-        .unwrap();
-    let owned = gen
-        .ore_term(String::from("apple"), nonempty!("users/name"))
-        .await
-        .unwrap();
-    assert_eq!(borrowed.as_ref(), owned.as_ref());
-
-    let borrowed = gen
-        .ope_term("apple", nonempty!("users/name"))
-        .await
-        .unwrap();
-    let owned = gen
-        .ope_term(String::from("apple"), nonempty!("users/name"))
-        .await
-        .unwrap();
-    assert_eq!(borrowed.as_ref(), owned.as_ref());
 }

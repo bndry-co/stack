@@ -500,10 +500,10 @@ key tie; that is what the column declared, and an earlier draft of this ADR
 was wrong to call it a false positive and put the term under `Probabilistic`.
 Its use is ordering and cursor paging on names (`ORDER BY name`, "the page
 after Nguyen"), and EQL v4 carries `query_text_ord` and `query_text_ord_ore`
-for it. Stack Encrypt produces the term: the order key is vitaminc-ore's
-text order encoding, the system ADR-0002's fold pinned to Unicode 16, which
-vitaminc 0.6 ships, and the ORE and OPE indexes answer the orderings on text
-over it. `TextOrdOre` and `TextSearchOre` also need the block ORE scheme EQL
+for it. Stack Encrypt produces the term: it hands the text to cllw-ore's
+vitaminc schemes as the `Text` target, whose order key is vitaminc-ore's
+text order encoding, the system ADR-0002's fold pinned to Unicode 16, and
+the ORE and OPE indexes answer the orderings on text over it. `TextOrdOre` and `TextSearchOre` also need the block ORE scheme EQL
 stores (#1132).
 
 A `Ranked` term's `target_limit` applies the index's configured recall

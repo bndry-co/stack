@@ -229,20 +229,21 @@ or a type defined over one (`type Email string`):
 
 | Go field | Seals as | Indexes it can store | Query methods |
 |---|---|---|---|
-| `string` | text | `equality`, `match`, `ore`, `ope` | `Eq`, `Matches` |
+| `string` | text | `equality`, `match`, `ore`, `ope` | `Eq`, `Matches`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
 | `[]byte` | bytes | `equality`, `ore`, `ope` | `Eq` |
 | `bool` | a boolean | none | none |
-| `int8`, `int16`, `int32`, `int64`, `int` | an integer of the field's own width (`int` is 64-bit) | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
-| `uint8` (`byte`), `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` | the same |
+| `int16`, `int32`, `int64`, `int` | an integer of the field's own width (`int` is 64-bit) | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
+| `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` | the same |
+| `int8`, `uint8` (`byte`) | an 8-bit integer | `equality` | `Eq` |
 | `encrypt.Int128`, `encrypt.Uint128` | a 128-bit integer | `equality`, `ore`, `ope` | the same |
 | `float32`, `float64` | a float of its width | `equality`, `ore`, `ope` | `Eq` |
 | `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` | `Eq` |
 | `encrypt.Date` | a calendar date | `equality` | `Eq` |
 | `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
 
-Each query method needs its index declared. An `ore` or `ope` index on text,
-bytes or a float stores its term, but the engine answers no ordering through
-it yet, so such a field has no `Lt` (see [Queries](#queries)).
+Each query method needs its index declared. An `ore` or `ope` index on bytes
+or a float stores its term, but the engine answers no ordering through it
+yet, so such a field has no `Lt` (see [Queries](#queries)).
 
 `encrypt.Date`, `Int128`, `Uint128` and `Decimal` are vitaminc's `vcvalue`
 types; build them with `encrypt.DateOf`, `ParseInt128`, `ParseUint128` and
@@ -253,8 +254,11 @@ sealed with, but a zero has no sign: `-0.00` opens as `0.00`. The zero
 `ErrEncoding`, naming the field; so is a decimal or a `time.Time` outside
 vitaminc's range. A sealed field cannot be a pointer, so an optional date has
 no sealed form yet: keep it in an opaque struct, or use a sentinel date. Each integer type seals at its own
-width, and each width is passed to the order scheme as itself, so an `int8`
-field's terms are an `int8`'s. Equality follows vitaminc's normalisation: an
+width, and each width is passed to the order scheme as itself, so an `int16`
+field's terms are an `int16`'s. An `int8` or `uint8` field has no order
+index: with 256 values, an order term would rank every row among 256, which
+a few known rows resolve to the values, as a `bool`'s would say which rows
+are true. Equality follows vitaminc's normalisation: an
 integer equals itself at every width, decimals compare at any scale
 (`1.50 = 1.5`), and a timestamp compares to the microsecond. An order index on
 a decimal, date or timestamp is refused for now: those order terms wait for
@@ -298,17 +302,27 @@ rules.
 | The field declares | Methods | Each returns |
 |---|---|---|
 | `index=equality` | `Eq` | `encrypt.EqualityTerm` |
-| `index=ore` or `index=ope`, on an integer of any width | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
+| `index=ore` or `index=ope`, on an integer of 16 bits or wider or a string | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
 | the same | `Between(ctx, cipher, lo, hi)` | `encrypt.Range[encrypt.OreTerm]` or `encrypt.Range[encrypt.OpeTerm]`, the two bounds' terms |
 | `index=match`, on a string | `Matches` | `encrypt.MatchQuery[T]` |
 | `encrypt_into=TextEq` | `Eq` | `eql.TextEqQuery` |
 | `encrypt_into=TextMatch` | `Matches` | `encrypt.EQLMatchQuery[eql.TextMatchQuery, T]` |
 
 A method takes the field's own Go type, so `Fields.Age.Lt` on a `uint32`
-field takes a `uint32`. An order index on text, bytes or a float stores its
-term but answers no ordering operator yet, so such a field has no `Lt`; nor
-does the `ope` index of a field that declares `ore` too, since `ore` answers
-the orderings. stashgen prints a notice for each such index, on stderr and in
+field takes a `uint32`.
+
+Text orders by its folded form (ADR-0002): case and accents are folded and
+`ß` becomes `ss`, under Unicode 16. So `Café`, `cafe` and `CAFÉ` are one
+value and tie, `alice` orders before `Zoe`, and `é` orders with `e`, not
+after `z`. `Between` is inclusive at both ends and, as SQL's `BETWEEN`,
+does not refuse a range whose low bound is above its high bound: such a
+range matches nothing. So `Between("b", "A")` matches nothing, since `A`
+folds to `a`, below `b`. Text holding a code point Unicode 16 does not assign has no
+fold, and its query or write is refused with `encrypt.ErrTerm`.
+
+An order index on bytes or a float stores its term but answers no ordering
+operator, so such a field has no `Lt`; nor does the `ope` index of a field
+that declares `ore` too, since `ore` answers the orderings. stashgen prints a notice for each such index, on stderr and in
 the generated file: the terms are stored, and only your own code can compare
 them. A match index on an index-only field (`index=match` with no `encrypt`)
 is refused, because `Verify` checks a match query's rows by decrypting them.

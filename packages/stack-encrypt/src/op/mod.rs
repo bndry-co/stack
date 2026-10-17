@@ -55,7 +55,7 @@
 //! does.
 //!
 //! What the types can see is checked at compile time: a match query on an
-//! integer, an ordering on text, an operator a target type does not answer,
+//! integer, an ordering on bytes, an operator a target type does not answer,
 //! and, on a one-value plan, an index the plan does not hold or a
 //! case-sensitive match against a case-folding index. A field of a fields
 //! plan is data, so there an index the field does not declare, or declares
@@ -86,8 +86,8 @@ pub(crate) mod stats;
 pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE, MAX_ROWS};
 
 use crate::sem::{
-    CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, EqualityTerm, MatchConfig, MatchQuery,
-    MatchTerms, OpeTerm, OreTerm, QueryTokens, RangeQuery,
+    DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, OpeTerm, Orderable, OreTerm,
+    QueryTokens, RangeQuery,
 };
 use crate::target::{DeclaredContext, Equality, Index, Match, Ope, Ore, Owned, Pending};
 use crate::{Error, KeysetCipher, Label, NonEmpty, PlanError};
@@ -340,10 +340,13 @@ impl<S: 'static> Input<Pair> for (S, S) {
 }
 
 /// A plaintext the ordering operators ([`Lt`], [`Lte`], [`Gt`], [`Gte`],
-/// [`Between`]) are answered over: the integer types, whose ORE and OPE
-/// terms order as the values do and whose order key is the value itself.
-/// Text is not one: its order term is a catalog question (ADR-0009, ADR-0002),
-/// and an ordering on a text plan does not compile.
+/// [`Between`]) are answered over: the integers of 16 bits and wider, and
+/// text (`String`). Not `u8` or `i8`, which have no order term
+/// ([`Orderable`] says why), as `bool` has none.
+/// Each is encoded as its [`Orderable`] target and its terms order as
+/// cllw-ore orders that encoding: integers as numbers, text by the system
+/// ADR-0002's fold, Unicode 16 NFC with case and accents folded, so `Café`,
+/// `cafe` and `CAFÉ` tie and `alice` orders before `Zoe` (ADR-0009).
 ///
 /// Sealed: a type joins only when the order its terms compare in is the
 /// one its operators promise, so a type whose terms could order otherwise
@@ -351,46 +354,28 @@ impl<S: 'static> Input<Pair> for (S, S) {
 /// meets every other bound is still refused:
 ///
 /// ```compile_fail
-/// # use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt, Error, Key};
 /// use stack_encrypt::op::Ordered;
 ///
 /// struct Folded(u32);
-/// # impl CllwOreEncrypt for Folded {
-/// #     type Output = <u32 as CllwOreEncrypt>::Output;
-/// #     fn encrypt_with_salt(self, key: &Key, salt: Option<&[u8]>) -> Result<Self::Output, Error> {
-/// #         self.0.encrypt_with_salt(key, salt)
-/// #     }
-/// # }
-/// # impl CllwOpeEncrypt for Folded {
-/// #     type Output = <u32 as CllwOpeEncrypt>::Output;
-/// #     fn encrypt_ope_with_salt(self, key: &Key, salt: Option<&[u8]>) -> Result<Self::Output, Error> {
-/// #         self.0.encrypt_ope_with_salt(key, salt)
-/// #     }
-/// # }
 ///
 /// impl Ordered for Folded {} // `Ordered` is sealed
 /// ```
+///
+/// [`Orderable`]: crate::sem::Orderable
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not ordered: the ordering operators are answered over the integer types only",
+    message = "`{Self}` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, and text",
     label = "no ordering operator over this type",
-    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128` or `i8` to `i128`; the order of text is not settled (ADR-0009), so an ordering over text does not compile"
+    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, or a `String`; a `u8`, an `i8` and a `bool` have no order term"
 )]
-pub trait Ordered:
-    sealed::Sealed
-    + CllwOreEncrypt<Output: Send + 'static>
-    + CllwOpeEncrypt<Output: Send + 'static>
-    + Send
-    + 'static
-{
-}
+pub trait Ordered: sealed::Sealed + Orderable {}
 
 macro_rules! ordered {
-    ($($int:ty),+ $(,)?) => {$(
-        impl sealed::Sealed for $int {}
-        impl Ordered for $int {}
+    ($($ty:ty),+ $(,)?) => {$(
+        impl sealed::Sealed for $ty {}
+        impl Ordered for $ty {}
     )+};
 }
-ordered!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+ordered!(u16, u32, u64, u128, i16, i32, i64, i128, String);
 
 /// Text search: rows whose text contains the query's tokens, under the
 /// match index's tokenizer. Not containment: a Bloom match is order- and
@@ -526,8 +511,8 @@ pub trait QueryTerm {}
 
 impl QueryTerm for EqualityTerm {}
 impl<O> QueryTerm for MatchQuery<O> {}
-impl<S: CllwOreEncrypt> QueryTerm for OreTerm<S> {}
-impl<S: CllwOpeEncrypt> QueryTerm for OpeTerm<S> {}
+impl<S: Orderable> QueryTerm for OreTerm<S> {}
+impl<S: Orderable> QueryTerm for OpeTerm<S> {}
 impl<T: QueryTerm> QueryTerm for RangeQuery<T> {}
 
 /// A query term whose answer can hold **false positives and no false
@@ -940,7 +925,7 @@ mod tests {
         assert!(ok((2, 2)));
         assert!(ok((3, 2)));
         assert!(Supports::<Between, (i64, i64)>::check(&Ope, &(1, -1)).is_ok());
-        assert!(Supports::<Lt, u8>::check(&Ore, &7).is_ok());
+        assert!(Supports::<Lt, u16>::check(&Ore, &7).is_ok());
         assert!(Supports::<Gte, i128>::check(&Ope, &-7).is_ok());
     }
 }

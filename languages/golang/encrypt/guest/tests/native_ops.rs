@@ -330,7 +330,8 @@ fn guest_terms_match_the_native_sem_derivations() {
     .expect("native");
     assert_eq!(eq_bytes, native_bytes.as_bytes());
 
-    // Variable-width CLLW output for strings.
+    // Variable-width CLLW output for strings: the text behind cllw-ore's
+    // one marker byte, eight bytes a plaintext byte.
     let ore_s = block_on(ops::term(
         &cipher.default_keyset(),
         &encode(s("alice")),
@@ -338,7 +339,7 @@ fn guest_terms_match_the_native_sem_derivations() {
         TERM_ORE,
     ))
     .expect("string ore");
-    assert_eq!(ore_s.len(), 5 * 8);
+    assert_eq!(ore_s.len(), 6 * 8);
 
     // No ZeroKMS traffic for any of it.
     assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 0);

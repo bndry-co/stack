@@ -14,7 +14,7 @@
 //! the canonical encoding of a context (typed leaves, one encoding for the
 //! AEAD and the PRF), so the bytes under every label changed while the
 //! labels and framing here did not. That was a prerelease wire break, taken
-//! deliberately (CIP-4036); the `/v1` suffixes stayed because nothing of
+//! deliberately; the `/v1` suffixes stayed because nothing of
 //! this crate's own moved.
 //!
 //! The equality and match pins moved again with the labels, to `/v2`, when
@@ -22,6 +22,14 @@
 //! PRF over the value's normalized bytes under vitaminc's domain for its
 //! kind, and match text is tokenized in Unicode 16 NFC. No stored term
 //! existed to keep. The ORE and OPE derivations did not move.
+//!
+//! The ORE and OPE pins moved with their key labels, to `/v2`, when order
+//! terms began encrypting through cllw-ore's vitaminc schemes: every value
+//! is encoded by `vitaminc-ore` at its type's order target (integers at
+//! their width, text by the system ADR-0002's fold, behind cllw-ore's
+//! marker byte) and encrypted under a column salt that binds the scheme
+//! and the target. Terms written by 0.1.0 and 0.2.0 do not compare with
+//! these (the CHANGELOG says so).
 
 use stack_encrypt::nonempty;
 use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions};
@@ -114,7 +122,7 @@ async fn ore_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_ref()),
-        "1ae5f8558dc2d7dddd6c5b714e9d285586a1b8390d9140421e78906cba1bd651"
+        "b8291f846d8028ad4e3a67ef95e541ca3c6d1a2b145f49af3135876ae75c5d7b"
     );
 }
 
@@ -132,7 +140,7 @@ async fn ope_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_ref()),
-        "00837615a1ea2fdcbebf7efe34cf4d2ee432c7eeff84fbd72e1bf05efa2338033c"
+        "00d7a25b801c909f3cb9d177315ba4da7802b9e62eba8c07aab2ad9d64e1a0cfa7"
     );
 }
 
@@ -168,4 +176,80 @@ async fn match_term_positions_are_pinned_for_a_wide_filter() {
         ],
         "positions for a 65536-bit filter are frozen: both bytes of each slice are in play"
     );
+}
+
+/// Text orders by the system ADR-0002's fold (`Ab` is encoded as `ab`,
+/// behind cllw-ore's marker byte, so three bytes), under the column salt
+/// of the `Text` target. Pins the fold, the salt and the CLLW encryption
+/// together.
+#[tokio::test]
+async fn text_order_term_bytes_are_pinned() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ore = keyset
+        .ore_term("Ab".to_string(), nonempty!("users/surname"))
+        .await
+        .unwrap();
+    let ope = keyset
+        .ope_term("Ab".to_string(), nonempty!("users/surname"))
+        .await
+        .unwrap();
+    assert_eq!(
+        hex(ore.as_ref()),
+        "bc164005ea4d0f86e537d6829de90b2809ac20f460beffeb"
+    );
+    assert_eq!(
+        hex(ope.as_ref()),
+        "00ff16eecb69b4f14c05a50b5a1249b8ad7cb63f376cbbb998"
+    );
+}
+
+/// Folded equivalents are one order term, in every owned form text takes:
+/// case, a precomposed accent and a combining one all fold away.
+#[tokio::test]
+async fn text_order_terms_fold_case_and_accents() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ore = |text: String| keyset.ore_term(text, nonempty!("users/surname"));
+    let ope = |text: String| keyset.ope_term(text, nonempty!("users/surname"));
+    let want_ore = ore("cafe".into()).await.unwrap();
+    let want_ope = ope("cafe".into()).await.unwrap();
+    for text in ["Caf\u{e9}", "CAF\u{c9}", "cafe\u{301}", "CAFE"] {
+        assert_eq!(ore(text.into()).await.unwrap(), want_ore, "{text:?} ore");
+        assert_eq!(ope(text.into()).await.unwrap(), want_ope, "{text:?} ope");
+    }
+}
+
+/// A text term is not the term of the same bytes as bytes: the column salt
+/// binds the target, `Text` or `Bytes`.
+#[tokio::test]
+async fn a_text_order_term_is_keyed_apart_from_bytes() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let text = keyset
+        .ore_term("cafe".to_string(), nonempty!("users/surname"))
+        .await
+        .unwrap();
+    let bytes = keyset
+        .ore_term(b"cafe".to_vec(), nonempty!("users/surname"))
+        .await
+        .unwrap();
+    assert_eq!(text.as_ref().len(), bytes.as_ref().len());
+    assert_ne!(text, bytes);
+}
+
+/// Text holding a code point Unicode 16 does not assign has no known fold,
+/// so it has no order term: vitaminc-ore refuses to encode it.
+#[tokio::test]
+async fn text_with_no_fold_has_no_order_term() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    assert!(keyset
+        .ore_term("a\u{378}b".to_string(), nonempty!("users/surname"))
+        .await
+        .is_err());
+    assert!(keyset
+        .ope_term("a\u{378}b".to_string(), nonempty!("users/surname"))
+        .await
+        .is_err());
 }

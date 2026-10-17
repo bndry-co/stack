@@ -55,8 +55,10 @@ use crate::target::IndexSpec;
 /// `vitaminc-normalize` gives an equality domain, which is every integer
 /// of every width, both floats, a decimal, a date, a timestamp, text and
 /// bytes, and not a boolean. The rest are this crate's: match over text
-/// alone, and ORE and OPE over every integer, both floats, text and bytes.
-/// A boolean has no order term, which would reveal which rows are `true`.
+/// alone, and ORE and OPE over the integers of 16 bits and wider, both
+/// floats, text and bytes. A boolean and an 8-bit integer have no order
+/// term: over so small a domain it would reveal which rows are `true`, or
+/// each row's rank among 256 values.
 /// A decimal, a date and a timestamp have none yet: their order encodings
 /// wait for new cllw-ore and ore-rs releases (#1236), and [`not_admitted`]
 /// names that reason. A composite (`array`, `object`) has no term. Only the
@@ -68,7 +70,9 @@ use crate::target::IndexSpec;
 /// use stack_encrypt::target::IndexSpec;
 ///
 /// assert!(admits(ValueKind::UInt64, &IndexSpec::Equality));
-/// assert!(admits(ValueKind::Int8, &IndexSpec::Ore));
+/// assert!(admits(ValueKind::Int16, &IndexSpec::Ore));
+/// assert!(admits(ValueKind::Int8, &IndexSpec::Equality));
+/// assert!(!admits(ValueKind::Int8, &IndexSpec::Ore));
 /// assert!(admits(ValueKind::Date, &IndexSpec::Equality));
 /// assert!(!admits(ValueKind::Date, &IndexSpec::Ore));
 /// assert!(!admits(ValueKind::Bool, &IndexSpec::Equality));
@@ -657,15 +661,13 @@ mod tests {
     }
 
     /// The new kinds' rows, spelled out: equality on every one, order on
-    /// every integer width and on none of the decimal, date and timestamp,
-    /// match on none.
+    /// every integer width but 8 bits and on none of the decimal, date and
+    /// timestamp, match on none.
     #[test]
     fn admits_the_new_kinds_where_their_terms_exist() {
         let integers = [
-            ValueKind::Int8,
             ValueKind::Int16,
             ValueKind::Int128,
-            ValueKind::UInt8,
             ValueKind::UInt16,
             ValueKind::UInt128,
         ];
@@ -676,6 +678,19 @@ mod tests {
             assert!(admits(kind, &IndexSpec::Ore), "{kind} ore");
             assert!(admits(kind, &IndexSpec::Ope), "{kind} ope");
             assert!(!admits(kind, &matched), "{kind} match");
+        }
+        // An 8-bit integer keeps its equality term and, like a boolean,
+        // has no order term: 256 values are too few to rank.
+        for kind in [ValueKind::Int8, ValueKind::UInt8] {
+            assert!(admits(kind, &IndexSpec::Equality), "{kind} equality");
+            assert!(!admits(kind, &IndexSpec::Ore), "{kind} ore");
+            assert!(!admits(kind, &IndexSpec::Ope), "{kind} ope");
+            assert!(!admits(kind, &matched), "{kind} match");
+            assert_eq!(
+                not_admitted(kind, &IndexSpec::Ore),
+                Some(Reason::IndexNotAdmitted),
+                "{kind} ore is refused as a boolean's is, not as pending"
+            );
         }
         for kind in logical {
             assert!(admits(kind, &IndexSpec::Equality), "{kind} equality");
@@ -722,7 +737,11 @@ mod tests {
             not_admitted(ValueKind::Date, &IndexSpec::Match(MatchOptions::default())),
             Some(Reason::IndexNotAdmitted)
         );
-        assert_eq!(not_admitted(ValueKind::Int8, &IndexSpec::Ore), None);
+        assert_eq!(not_admitted(ValueKind::Int16, &IndexSpec::Ore), None);
+        assert_eq!(
+            not_admitted(ValueKind::Int8, &IndexSpec::Ore),
+            Some(Reason::IndexNotAdmitted)
+        );
         assert!(Reason::OrderTermPending.to_string().contains("#1236"));
     }
 

@@ -133,19 +133,21 @@ use std::collections::HashSet;
 use std::fmt;
 use std::marker::PhantomData;
 
-// Re-exported because they appear in this module's public bounds
-// ([`KeysetCipher::ore_term`], [`OreTerm`], ...): a caller writing a generic
-// wrapper over the term APIs has to be able to name them without depending
-// on `cllw-ore` directly.
-pub use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt};
+// Re-exported because they appear in this module's public signatures
+// ([`KeysetCipher::ore_term`], [`OreTerm::inner`], ...): a caller can name
+// the ciphertext types without depending on `cllw-ore` directly.
+use cllw_ore::vitaminc::{Ope, Ore};
+pub use cllw_ore::{OpeCllw8VariableV1, OreCllw8VariableV1};
 use vitaminc_aead::Encrypt;
 use vitaminc_hmac::HmacSha256Prf;
 use vitaminc_normalize::{terms, NormalizeError, Normalized};
+use vitaminc_ore::{OrderColumn, OrderEncrypt, OrderError, OrderKeyInit, OrderScheme, OrderTarget};
 use vitaminc_prf::{
     BlockVisitor, Context, IntoPrfContext, MapAccess, PrfError, PrfValue, PrfVisitor,
     PrfVisitorError, SeqAccess,
 };
 use vitaminc_protected::NonEmpty;
+use vitaminc_protected::Protected;
 use zeroize::{Zeroize, Zeroizing};
 
 use stack_kms::MaybeSend;
@@ -171,10 +173,15 @@ const EQUALITY_DOMAIN: &[u8] = b"stack-encrypt/sem/equality/v2";
 /// written.
 const MATCH_DOMAIN: &[u8] = b"stack-encrypt/sem/match/v2";
 /// PAE domain for ORE key derivation.
-const ORE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ore-key/v1";
+///
+/// `v2`: the key keys cllw-ore's vitaminc ORE scheme, which encrypts the
+/// value's `vitaminc-ore` order encoding at its [`Orderable`] target, where
+/// `v1` keyed cllw-ore's own per-type encryption.
+const ORE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ore-key/v2";
 /// PAE domain for OPE key derivation (distinct from ORE: OPE ciphertexts are
-/// encrypt-only, so the two schemes must never share a key).
-const OPE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ope-key/v1";
+/// encrypt-only, so the two schemes must never share a key). `v2` as for
+/// [`ORE_KEY_DOMAIN`].
+const OPE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ope-key/v2";
 
 /// Errors from SEM term generation.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -225,16 +232,6 @@ pub enum TermError {
         help("An equality term is defined for one integer, float, text, bytes, date, timestamp, decimal or uuid value, not for a boolean, a null or a container.")
     )]
     NoEqualityTerm,
-    /// No order term (ORE or OPE) is defined for a boolean: with two values,
-    /// an order term would tell anyone holding the column which rows are
-    /// `true`. Refused on the typed path as the dynamic path refuses it
-    /// (`dynamic::admits`).
-    #[error("no order term is defined for a boolean")]
-    #[diagnostic(
-        code(stack_encrypt::no_order_term),
-        help("A boolean column cannot be ordered without revealing which rows are true. Store it with no order index, and with no equality index either: a boolean has no equality term.")
-    )]
-    NoOrderTerm,
     /// The value cannot be normalized for its term: text with a code point
     /// unassigned in Unicode 16 (an equality or match term), or a value not
     /// valid for its logical type. The reason is vitaminc's, and names no
@@ -258,7 +255,6 @@ impl crate::ErrorPayload for TermError {
             | Self::InvalidOptions(_)
             | Self::EmptyTermText
             | Self::NoEqualityTerm
-            | Self::NoOrderTerm
             | Self::Normalize(_) => serde_json::Map::new(),
         }
     }
@@ -1093,18 +1089,129 @@ where
 // ORE / OPE
 // =============================================================================
 
-/// An order-revealing (CLLW ORE) index term for a source value of type `T`.
-/// Wraps the CLLW ciphertext ([`CllwOreEncrypt::Output`]); comparisons order
-/// like the plaintexts.
+/// A plaintext type an order term ([`OreTerm`], [`OpeTerm`]) is derived
+/// over, and the `vitaminc-ore` order target its values are encoded as.
+/// This crate is the layer above the order schemes: it names each type's
+/// target, and cllw-ore encodes the value as that target and encrypts it.
+/// The encoding (integer width, the canonical float, text's fold) is the
+/// scheme's, through `vitaminc-ore`, and never this crate's. The value goes
+/// to the scheme as a `vitaminc-aead` [`Encrypt`] source, by reference, so
+/// the engine keeps the one copy it was handed and wipes it
+/// ([`Zeroizing`]) when the term is derived or refused.
+///
+/// | Type | Target |
+/// | --- | --- |
+/// | `u16` to `u128`, `i16` to `i128` | the integer at its own width |
+/// | `f32`, `f64` | `F64`: an `f32` widens to it exactly, `-0.0` ties `0.0`, every NaN is one value after `+Infinity` |
+/// | `String` | `Text`: Unicode 16 NFC with case and accents folded |
+/// | `Vec<u8>` | `Bytes`, as they are |
+///
+/// A borrowed text or byte string is not a source: an order term takes
+/// its value by ownership (the visitor carries it), so pass a `String` or
+/// a `Vec<u8>`.
+///
+/// A `bool`, a `u8` and an `i8` have no target. An order term over a
+/// domain that small tells anyone holding the column too much: with two
+/// values it says which rows are `true`, and with 256 it puts every row in
+/// one of 256 ranks, which a few known rows resolve to the values. So
+/// `OreTerm<bool>`, `OreTerm<u8>` and `OreTerm<i8>` do not compile (nor
+/// the `OpeTerm`s), as the dynamic path refuses the same scalars
+/// (`dynamic::admits`); each keeps its equality term. `vitaminc-ore` still
+/// offers the one-byte targets; their removal is tracked at
+/// <https://github.com/cipherstash/vitaminc/issues/479>.
+///
+/// ```compile_fail
+/// use stack_encrypt::sem::OreTerm;
+///
+/// let _: Option<OreTerm<bool>> = None; // `bool` is not `Orderable`
+/// ```
+///
+/// ```compile_fail
+/// use stack_encrypt::sem::OpeTerm;
+///
+/// let _: Option<OpeTerm<u8>> = None; // `u8` is not `Orderable`
+/// ```
+///
+/// Sealed: the target is part of the stored format, so a type cannot pick
+/// its own.
+///
+/// This table is a stand-in. `vitaminc-ore` leaves the target to whoever
+/// opens the column, so the type's own target is written here; once
+/// `vitaminc-ore` names it itself (tracked at
+/// <https://github.com/cipherstash/vitaminc/issues/470>), this trait and
+/// the private `encrypt_in` it rests on go, and the bound becomes
+/// vitaminc's own `Encrypt` with `Zeroize`.
+pub trait Orderable: sealed::Sealed + Zeroize + Send + 'static {
+    /// The target this type's values are encoded as.
+    const TARGET: OrderTarget;
+}
+
+mod sealed {
+    use vitaminc_ore::{OrderColumn, OrderError, OrderScheme};
+
+    /// Hands `&self` to the column as the `vitaminc-aead` `Encrypt` source
+    /// it is (`&String`, `&i32`, ...), so the owner keeps the one copy and
+    /// wipes it. Not public, and one body for every type: it is here, and
+    /// not a `&Self: Encrypt` bound on `Orderable`, because such a bound is
+    /// not implied at the trait's use sites and would have to be repeated on
+    /// each.
+    pub trait Sealed {
+        fn encrypt_in<S: OrderScheme>(
+            &self,
+            column: &OrderColumn<'_, S>,
+        ) -> Result<S::Term, OrderError<S::Error>>;
+    }
+}
+
+macro_rules! orderable {
+    ($($ty:ty => $target:ident),* $(,)?) => {$(
+        impl sealed::Sealed for $ty {
+            fn encrypt_in<S: OrderScheme>(
+                &self,
+                column: &OrderColumn<'_, S>,
+            ) -> Result<S::Term, OrderError<S::Error>> {
+                column.encrypt(self)
+            }
+        }
+        impl Orderable for $ty {
+            const TARGET: OrderTarget = OrderTarget::$target;
+        }
+    )*};
+}
+orderable!(
+    u16 => U16, u32 => U32, u64 => U64, u128 => U128,
+    i16 => I16, i32 => I32, i64 => I64, i128 => I128,
+    f32 => F64, f64 => F64,
+    String => Text, Vec<u8> => Bytes,
+);
+
+/// Why cllw-ore produced no order term, as a [`TermError`]: the value's
+/// encoding refused it, or the scheme failed. `cllw_ore::Error` carries
+/// nothing, so a scheme failure is that one value whichever way it
+/// arrives. A scalar of an [`Orderable`] type is never a container and
+/// never unsupported by a CLLW scheme, so those refusals cannot occur;
+/// they read as a scheme failure rather than a panic.
+fn order_error(error: OrderError<cllw_ore::Error>) -> TermError {
+    match error {
+        OrderError::Term(error) => TermError::Normalize(error),
+        _ => TermError::Ore(cllw_ore::Error),
+    }
+}
+
+/// An order-revealing (CLLW ORE) index term for a source value of type `T`:
+/// cllw-ore's encryption of the value's `vitaminc-ore` order encoding at
+/// `T`'s [`Orderable`] target. Comparisons order like the plaintexts, within
+/// one index.
 ///
 /// The type parameter is the *source* type: `OreTerm<u64>` in a record type
-/// declares "this field is the ORE term of a `u64`".
-pub struct OreTerm<T: CllwOreEncrypt>(T::Output);
+/// declares "this field is the ORE term of a `u64`". Every source type's
+/// term is the same ciphertext type, [`OreCllw8VariableV1`].
+pub struct OreTerm<T: Orderable>(OreCllw8VariableV1, PhantomData<fn() -> T>);
 
 /// An order-preserving (CLLW OPE) index term for a source value of type `T`
-/// (see [`OreTerm`]). The wrapped ciphertext compares with plain
+/// (see [`OreTerm`]): [`OpeCllw8VariableV1`], which compares with plain
 /// lexicographic byte order.
-pub struct OpeTerm<T: CllwOpeEncrypt>(T::Output);
+pub struct OpeTerm<T: Orderable>(OpeCllw8VariableV1, PhantomData<fn() -> T>);
 
 /// Index terms are one-way: decryption passes over them. `Decryptable` and
 /// `DecryptField` say so, which is how a derived record finds its ciphertext
@@ -1124,24 +1231,24 @@ macro_rules! index_term {
 
 index_term!(EqualityTerm);
 index_term!(MatchTerms<O>, O: MatchConfig);
-index_term!(OreTerm<T>, T: CllwOreEncrypt);
-index_term!(OpeTerm<T>, T: CllwOpeEncrypt);
+index_term!(OreTerm<T>, T: Orderable);
+index_term!(OpeTerm<T>, T: Orderable);
 
 macro_rules! term_wrapper {
-    ($name:ident, $bound:ident) => {
-        impl<T: $bound> $name<T> {
+    ($name:ident, $inner:ty) => {
+        impl<T: Orderable> $name<T> {
             /// Wrap an already-generated CLLW ciphertext.
-            pub fn new(output: T::Output) -> Self {
-                Self(output)
+            pub fn new(output: $inner) -> Self {
+                Self(output, PhantomData)
             }
 
             /// The wrapped CLLW ciphertext.
-            pub fn inner(&self) -> &T::Output {
+            pub fn inner(&self) -> &$inner {
                 &self.0
             }
 
             /// Unwrap into the CLLW ciphertext.
-            pub fn into_inner(self) -> T::Output {
+            pub fn into_inner(self) -> $inner {
                 self.0
             }
 
@@ -1150,32 +1257,12 @@ macro_rules! term_wrapper {
             /// — for terms persisted server-side. Structural only (length
             /// checks); the caller asserts the bytes were generated for this
             /// source type `T` and under the same context.
-            pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermBytesError>
-            where
-                for<'a> T::Output: TryFrom<&'a [u8]>,
-            {
-                T::Output::try_from(bytes)
-                    .map(Self)
+            pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermBytesError> {
+                <$inner>::try_from(bytes)
+                    .map(Self::new)
                     .map_err(|_| TermBytesError::MalformedCllwCiphertext(bytes.len()))
             }
-        }
 
-        /// The inherent `from_bytes` as a std conversion — the same decoder.
-        impl<T: $bound> TryFrom<&[u8]> for $name<T>
-        where
-            for<'a> T::Output: TryFrom<&'a [u8]>,
-        {
-            type Error = TermBytesError;
-
-            fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-                Self::from_bytes(bytes)
-            }
-        }
-
-        impl<T: $bound> $name<T>
-        where
-            T::Output: AsRef<[u8]>,
-        {
             /// The frozen byte encoding: the raw CLLW ciphertext bytes,
             /// unframed — the same *shape* the EQL layer hex-encodes, but
             /// not comparable with rows it wrote (see the
@@ -1190,59 +1277,53 @@ macro_rules! term_wrapper {
             }
         }
 
+        /// The inherent `from_bytes` as a std conversion — the same decoder.
+        impl<T: Orderable> TryFrom<&[u8]> for $name<T> {
+            type Error = TermBytesError;
+
+            fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+                Self::from_bytes(bytes)
+            }
+        }
+
         /// The frozen byte encoding — the same bytes as the inherent
         /// `as_bytes`.
-        impl<T: $bound> AsRef<[u8]> for $name<T>
-        where
-            T::Output: AsRef<[u8]>,
-        {
+        impl<T: Orderable> AsRef<[u8]> for $name<T> {
             fn as_ref(&self) -> &[u8] {
                 self.0.as_ref()
             }
         }
 
-        impl<T: $bound> fmt::Debug for $name<T>
-        where
-            T::Output: fmt::Debug,
-        {
+        impl<T: Orderable> fmt::Debug for $name<T> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.debug_tuple(stringify!($name)).field(&self.0).finish()
             }
         }
 
-        impl<T: $bound> Clone for $name<T>
-        where
-            T::Output: Clone,
-        {
+        impl<T: Orderable> Clone for $name<T> {
             fn clone(&self) -> Self {
-                Self(self.0.clone())
+                Self::new(self.0.clone())
             }
         }
 
-        impl<T: $bound> PartialEq for $name<T>
-        where
-            T::Output: PartialEq,
-        {
+        impl<T: Orderable> PartialEq for $name<T> {
             fn eq(&self, other: &Self) -> bool {
                 self.0 == other.0
             }
         }
 
-        impl<T: $bound> Eq for $name<T> where T::Output: Eq {}
+        impl<T: Orderable> Eq for $name<T> {}
 
-        impl<T: $bound> PartialOrd for $name<T>
-        where
-            T::Output: PartialOrd,
-        {
+        impl<T: Orderable> PartialOrd for $name<T> {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                self.0.partial_cmp(&other.0)
+                Some(self.cmp(other))
             }
         }
 
-        impl<T: $bound> Ord for $name<T>
-        where
-            T::Output: Ord,
-        {
+        /// The scheme's comparison of two terms of one index. Terms of
+        /// different indexes compare as noise: keep an index's terms
+        /// together.
+        impl<T: Orderable> Ord for $name<T> {
             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
                 self.0.cmp(&other.0)
             }
@@ -1250,16 +1331,20 @@ macro_rules! term_wrapper {
     };
 }
 
-term_wrapper!(OreTerm, CllwOreEncrypt);
-term_wrapper!(OpeTerm, CllwOpeEncrypt);
+term_wrapper!(OreTerm, OreCllw8VariableV1);
+term_wrapper!(OpeTerm, OpeCllw8VariableV1);
 
 /// A [`PrfVisitor`] that carries the plaintext in and hands the CLLW ORE
-/// ciphertext out. The PRF block becomes the CLLW [`Key`](cllw_ore::Key)
-/// *inside* `visit_block` and dies there: the block arrives by value and is
-/// copied into the `ZeroizeOnDrop` key (`[u8; 32]` is `Copy`, so `Key::from`
-/// wipes its copy and this visitor wipes the one it still holds), the value
-/// is encrypted, and only the ciphertext leaves. No key is ever returned to
-/// the caller.
+/// ciphertext out. The PRF block keys cllw-ore's vitaminc ORE scheme
+/// *inside* `visit_block` and dies there: the block arrives by value, is
+/// copied into the scheme's key (wiped when the scheme drops) and wiped
+/// here, the value is encrypted, and only the ciphertext leaves. No key is
+/// ever returned to the caller.
+///
+/// The column is opened with the value's target and the empty context:
+/// the key is already this index's own, derived under the index's
+/// descriptor, so there is nothing left for a context to separate. The
+/// column's salt still binds the scheme and the target.
 ///
 /// This is the shape a 2-party PRF needs: the caller supplies a PRF input
 /// (the context) and receives a term, and where the key comes from — or
@@ -1268,42 +1353,47 @@ term_wrapper!(OpeTerm, CllwOpeEncrypt);
 /// changes this visitor, not its callers.
 ///
 /// The plaintext is owned (`T: 'static`) because the visitor outlives the
-/// call under an asynchronous backend; `Send` for the same reason. CLLW
+/// call under an asynchronous backend; `Send` for the same reason. Scheme
 /// failures surface through the visitor's `Value` rather than
 /// [`PrfVisitorError`] so they keep their own error type.
-struct OreVisitor<T>(T);
+///
+/// The plaintext is held in a [`Zeroizing`], so it is wiped when the
+/// visitor drops: after `visit_block`, or unvisited if the PRF fails first.
+/// `encrypt_in` reads it by reference and cllw-ore copies nothing out of it
+/// unwiped, so that drop is the last place its bytes live.
+struct OreVisitor<T: Orderable>(Zeroizing<T>);
 
 impl<T, P> PrfVisitor<[u8; 32], P> for OreVisitor<T>
 where
-    T: CllwOreEncrypt + Send + 'static,
-    T::Output: Send + 'static,
+    T: Orderable,
     P: Send + 'static,
 {
-    type Value = Result<T::Output, cllw_ore::Error>;
+    type Value = Result<OreCllw8VariableV1, TermError>;
 
     fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
-        let key = cllw_ore::Key::from(block);
+        let scheme = Ore::new(Protected::new(block));
         block.zeroize();
-        Ok(self.0.encrypt(&key))
+        let column = scheme.column(T::TARGET, ());
+        Ok(sealed::Sealed::encrypt_in(&*self.0, &column).map_err(order_error))
     }
 }
 
 /// The OPE twin of [`OreVisitor`]: same key handling, produces a CLLW OPE
 /// ciphertext (byte order is plaintext order).
-struct OpeVisitor<T>(T);
+struct OpeVisitor<T: Orderable>(Zeroizing<T>);
 
 impl<T, P> PrfVisitor<[u8; 32], P> for OpeVisitor<T>
 where
-    T: CllwOpeEncrypt + Send + 'static,
-    T::Output: Send + 'static,
+    T: Orderable,
     P: Send + 'static,
 {
-    type Value = Result<T::Output, cllw_ore::Error>;
+    type Value = Result<OpeCllw8VariableV1, TermError>;
 
     fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
-        let key = cllw_ore::Key::from(block);
+        let scheme = Ope::new(Protected::new(block));
         block.zeroize();
-        Ok(self.0.encrypt_ope(&key))
+        let column = scheme.column(T::TARGET, ());
+        Ok(sealed::Sealed::encrypt_in(&*self.0, &column).map_err(order_error))
     }
 }
 
@@ -1314,12 +1404,13 @@ where
 /// PRF — never the plaintext, which rides in the visitor and is encrypted
 /// there. Deterministic, so write-time and query-time terms agree; under a
 /// 2-party PRF backend this derivation is a visible ZeroKMS event.
-fn ore<T>(prf: &HmacSha256Prf, value: T, context: Context<'_>) -> Result<OreTerm<T>, TermError>
-where
-    T: CllwOreEncrypt + Send + 'static,
-    T::Output: Send + 'static,
-{
-    refuse_bool::<T>()?;
+fn ore<T: Orderable>(
+    prf: &HmacSha256Prf,
+    value: T,
+    context: Context<'_>,
+) -> Result<OreTerm<T>, TermError> {
+    // Wrapped before anything can fail, so a refused value is wiped too.
+    let value = Zeroizing::new(value);
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
@@ -1329,28 +1420,18 @@ where
         )
         .into_result()
         .map_err(TermError::from_prf)?
-        .map(OreTerm)
-        .map_err(TermError::Ore)
-}
-
-/// cllw-ore orders a `bool`, and its two values would split a column into
-/// its `true` and `false` rows, so no order term is derived for one, on the
-/// typed path as on the dynamic one.
-fn refuse_bool<T: 'static>() -> Result<(), TermError> {
-    if std::any::TypeId::of::<T>() == std::any::TypeId::of::<bool>() {
-        return Err(TermError::NoOrderTerm);
-    }
-    Ok(())
+        .map(OreTerm::new)
 }
 
 /// Derive an OPE term — as [`ore`], under the OPE domain so the two schemes
 /// never share a key.
-fn ope<T>(prf: &HmacSha256Prf, value: T, context: Context<'_>) -> Result<OpeTerm<T>, TermError>
-where
-    T: CllwOpeEncrypt + Send + 'static,
-    T::Output: Send + 'static,
-{
-    refuse_bool::<T>()?;
+fn ope<T: Orderable>(
+    prf: &HmacSha256Prf,
+    value: T,
+    context: Context<'_>,
+) -> Result<OpeTerm<T>, TermError> {
+    // Wrapped before anything can fail, so a refused value is wiped too.
+    let value = Zeroizing::new(value);
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
@@ -1360,17 +1441,15 @@ where
         )
         .into_result()
         .map_err(TermError::from_prf)?
-        .map(OpeTerm)
-        .map_err(TermError::Ore)
+        .map(OpeTerm::new)
 }
 
-/// An ORE term of any [`CllwOreEncrypt`] source. Under the local HMAC
+/// An ORE term of any [`Orderable`] source. Under the local HMAC
 /// backend, derived during the synchronous build — the returned [`Pending`]
 /// carries no requests.
 impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OreTerm<S>
 where
-    S: CllwOreEncrypt + Send + 'static,
-    S::Output: Send + 'static,
+    S: Orderable,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
@@ -1389,13 +1468,12 @@ where
     }
 }
 
-/// An OPE term of any [`CllwOpeEncrypt`] source. Under the local HMAC
+/// An OPE term of any [`Orderable`] source. Under the local HMAC
 /// backend, derived during the synchronous build — the returned [`Pending`]
 /// carries no requests.
 impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OpeTerm<S>
 where
-    S: CllwOpeEncrypt + Send + 'static,
-    S::Output: Send + 'static,
+    S: Orderable,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
@@ -1555,20 +1633,16 @@ impl<K> KeysetCipher<'_, K> {
     /// derives the per-descriptor CLLW key from the PRF block and encrypts
     /// under it in one step. The key never leaves the visitor.
     ///
-    /// Supported inputs: `u16`/`u32`/`u64`/`u128`, `&'static str`, `String`,
-    /// `Vec<u8>` (via [`CllwOreEncrypt`]). The value must be owned
-    /// (`'static`) because the visitor carries it; pass a `String` for
-    /// borrowed text. Returns the raw CLLW ciphertext; the target-directed
-    /// path wraps the same bytes in [`OreTerm`].
-    pub fn ore_term<'c, T>(
+    /// Supported inputs: every [`Orderable`] type, each encoded as its
+    /// target. The value must be owned because the visitor carries it and
+    /// wipes it; pass a `String` for borrowed text. Returns the raw CLLW
+    /// ciphertext; the target-directed path wraps the same bytes in
+    /// [`OreTerm`].
+    pub fn ore_term<'c, T: Orderable>(
         &self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, T::Output, K>
-    where
-        T: CllwOreEncrypt + Send + 'static,
-        T::Output: Send + 'static,
-    {
+    ) -> Pending<'_, OreCllw8VariableV1, K> {
         let term = ore(self.prf(), value, descriptor.into_prf_context()).map(OreTerm::into_inner);
         Pending::ready(self, term.map_err(Error::from))
     }
@@ -1577,15 +1651,11 @@ impl<K> KeysetCipher<'_, K> {
     /// plain lexicographic byte order, no custom comparator required.
     /// Encrypt-only — pair with the record ciphertext for round-trips. Key
     /// handling and input bounds as for [`ore_term`](Self::ore_term).
-    pub fn ope_term<'c, T>(
+    pub fn ope_term<'c, T: Orderable>(
         &self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, T::Output, K>
-    where
-        T: CllwOpeEncrypt + Send + 'static,
-        T::Output: Send + 'static,
-    {
+    ) -> Pending<'_, OpeCllw8VariableV1, K> {
         let term = ope(self.prf(), value, descriptor.into_prf_context()).map(OpeTerm::into_inner);
         Pending::ready(self, term.map_err(Error::from))
     }
