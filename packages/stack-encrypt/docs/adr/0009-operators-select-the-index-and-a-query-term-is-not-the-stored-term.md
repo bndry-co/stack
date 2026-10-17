@@ -141,30 +141,46 @@ query against a case-folding index is a type error, not an empty result.
 ### 2. An index declares the operators it supports, and the query term for each
 
 ```rust
-pub trait Operator: Copy + 'static {}
+pub trait Operator: Copy + 'static { type Arity: Arity; }   // `One` plaintext, or a `Pair`
 
-pub trait Supports<Op: Operator, S>: Index<S> {
-    type Query: TermFor<Op>;   // what this index sends for `Op`
-    type Verifier;             // what the query keeps to check a row
-    fn check(&self) -> Result<(), PlanError>;
-    fn verifier(&self, value: &S) -> Self::Verifier;
-    fn query(verifier: Self::Verifier, term: Self::Term, token: QueryToken) -> Self::Query;
+pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
+    type Query: TermFor<Op>;                            // what this index sends for `Op`
+    type Verifier;                                      // what the query keeps to check a row
+    fn check(&self, input: &In) -> Result<(), Error>;   // a refusal, before any term exists
+    fn verifier(&self, input: &In) -> Self::Verifier;
+    fn query(verifier: Self::Verifier, terms: In::Terms<Self::Term>, token: QueryToken) -> Self::Query;
 }
 ```
 
-`S` is the plaintext type the index is over, and `Index<S>::Term` is the
-stored term it derives. `Query` is the query term, and `query` makes it from
-the term the index derived for the query's value. `QueryToken` can be made
-only inside the crate, so only a query chain calls `query`, and no caller can
-turn a stored term into a query term by hand. `check` refuses a configuration
-that cannot answer `Op` although its type says it can: a match index whose
-declared case disagrees with its `downcase` option.
+`In::Plaintext` is the plaintext type the index is over, and its
+`Index::Term` is the stored term it derives. `Query` is the query term, and
+`query` makes it from the verifier and the terms the index derived for the
+query's input. `QueryToken` can be made only inside the crate, so only a
+query chain calls `query`, and no caller can turn a stored term into a query
+term by hand.
 
 `QueryTerm` and the two traits that refine it are defined in decision 4.
 `Query` is not `Term`. An ORE index's `Supports<Lt, S>::Query` is the left
-ciphertext; its `Term` is left and right. A Bloom index's
-`Supports<Matches, S>::Query` is a filter over the needle (`MatchQuery`); its
-`Term` is a filter over the value (`MatchTerms`).
+ciphertext; its `Term` is left and right. (This crate's ORE is CLLW today,
+whose ciphertext has no left half to send alone, so until block ORE lands,
+#1140, the query term is the ciphertext itself, as an HMAC's is; `Supports`
+is where the left-only term goes when it arrives.) A Bloom index's
+`Supports<Matches, S>::Query` is a filter over the query's value
+(`MatchQuery`); its `Term` is a filter over the value (`MatchTerms`). There is
+no other path from a derived term to the server:
+`cipher.query_index(index, v).on(&plan)`, which returned an index's own term,
+went with the ordering operators (#1186).
+
+An operator says what a query takes through its arity. `Eq`, the orderings
+and `Matches` take the plaintext the index is declared over
+(`Supports<Lt, S>`); `Between` takes a pair of them
+(`Supports<Between, (S, S)>`); `Input` relates the input to that plaintext,
+so the plan is checked against `S` either way, and the chain derives one
+term per plaintext under the one label. `check` is where a query is refused
+before any term exists: a match index whose declared case disagrees with its
+`downcase` option, a `Between` whose bounds are the wrong way round, a match
+query with no tokens. `AtPath<Op>` takes a path and `Op`'s input, and gains
+its shape with the JSON index.
 
 The bound tightens per operator, through `TermFor<Op>`: any `QueryTerm`
 answers `Eq`, but only a `Probabilistic` one answers `Matches`, and only a
@@ -554,10 +570,14 @@ the ranked loop is worth packaging; it is deferred, not refused.
 
 ### 7. `Between` is one term and one operand
 
-`cipher.query(op::Between, (lo, hi))` produces one term carrying both ORE left
-ciphertexts, inclusive at both ends, and the client refuses `lo > hi`. One
-call derives both bounds, under one context, so a caller cannot pair a bound
-from one column with a bound from another.
+`cipher.query(op::Between, &(lo, hi)).on(&plan)` produces one term,
+`sem::RangeQuery`, carrying the index's term for each bound (the ORE left
+ciphertexts, once block ORE lands), inclusive at both ends, and the client
+refuses `lo > hi` (`TermError::InvertedRange`) before either term is
+derived; `(v, v)` is one value. One call derives both bounds, under one
+context, so a caller cannot pair a bound from one column with a bound from
+another. The ordering operators are answered over the integer types
+(`op::Ordered`), by the ORE index by default and by OPE through `.via(Ope)`.
 
 In SQL the term stays one operand. EQL v4 gains a function that takes the
 column and the range, and a range query domain beside each ordered query
@@ -685,9 +705,13 @@ EQL v4 gains `eql_v4.between(column, range)` and a range query domain per
 ordered query domain, ORE and OPE, under the inlining requirement of decision 7. That is
 EQL-side work this ADR asks for, not a deferral.
 
-It is a breaking change to the query chain. `QueryUsing::index(..)` goes;
-`QueryUsing::equality()` becomes `query(op::Eq, ..)`. The write side
-(`encrypt`, targets, plans) does not change.
+It is a breaking change to the query chain. `cipher.query(v).using(&plan)`
+with `.equality()` becomes `cipher.query(op::Eq, v).on(&plan)`: the operator
+first, and `on` for a query where a write says `using`.
+`cipher.query_index(index, v).on(&plan)`, the index's own term, is gone:
+every index a plan can declare is reachable through an operator, ORE and OPE
+through the ordering operators (#1186). The write side (`encrypt`, targets,
+plans) does not change.
 
 ## Deferred
 

@@ -9,10 +9,11 @@ use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::op::{self, Limit, MatchCase, Probabilistic, Stats};
 use stack_encrypt::plan::{Field, FieldSchema, Fields, PlanError};
 use stack_encrypt::sem::{
-    EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms, TermError, Tokenizer,
+    EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms, OpeTerm, OreTerm, RangeQuery,
+    TermError, Tokenizer,
 };
 use stack_encrypt::target::{Encrypted, IndexSpec};
-use stack_encrypt::{Equality, Error, Match, Plan};
+use stack_encrypt::{Equality, Error, Match, Ope, Ore, Plan};
 
 /// A match configuration that keeps case, so its index answers only a
 /// case-sensitive `Matches`.
@@ -129,16 +130,19 @@ async fn a_matches_query_is_a_filter_over_the_query_value_that_the_stored_filter
         "the query is the query value's filter, not the stored value's"
     );
 
-    // The operator derives the filter the index writes, under the same
-    // label: the query for BOB is the stored filter of bob.
-    let bob = Person {
-        email: "bob".into(),
-        ..person()
-    };
-    let mut bob_row = cipher.encrypt(&bob).using(&plan).await.unwrap();
-    let bob_email: Encrypted<(EqualityTerm, MatchTerms)> = bob_row.take("email").unwrap();
-    assert_eq!(query.to_bytes(), bob_email.terms.1.to_bytes());
-    assert_eq!(query.positions(), bob_email.terms.1.positions());
+    // The query's filter is the filter the index would store for the same
+    // text, under the same label.
+    let mut same_text = cipher
+        .encrypt(&Person {
+            email: "BOB".into(),
+            name: "x".into(),
+        })
+        .using(&plan)
+        .await
+        .unwrap();
+    let as_stored: Encrypted<(EqualityTerm, MatchTerms)> = same_text.take("email").unwrap();
+    assert_eq!(query.to_bytes(), as_stored.terms.1.to_bytes());
+    assert_eq!(query.positions(), as_stored.terms.1.positions());
     assert_eq!(query.clone(), query);
 
     let elsewhere: MatchQuery = cipher
@@ -938,5 +942,283 @@ async fn a_match_query_under_invalid_options_is_refused_not_tokenised() {
     assert!(
         matches!(stored, Err(Error::Term(TermError::InvalidOptions(_)))),
         "{stored:?}"
+    );
+}
+
+/// An ordering query sends the index's own term for the value: this
+/// crate's ORE is CLLW, whose ciphertext has no left half to send alone,
+/// so what is sent is what is stored, as for an HMAC. The ordering
+/// operators default to ORE; OPE is named with `via`.
+#[tokio::test]
+async fn an_ordering_query_is_the_index_term_of_the_value() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/age")
+        .with::<u32, _>((Equality, Ore, Ope))
+        .build()
+        .unwrap();
+    let stored: Encrypted<(EqualityTerm, OreTerm<u32>, OpeTerm<u32>)> =
+        cipher.encrypt(&34u32).using(&plan).await.unwrap();
+
+    let lt: OreTerm<u32> = cipher.query(op::Lt, &34u32).on(&plan).await.unwrap();
+    let lte = cipher.query(op::Lte, &34u32).on(&plan).await.unwrap();
+    let gt = cipher.query(op::Gt, &34u32).on(&plan).await.unwrap();
+    let gte = cipher.query(op::Gte, &34u32).on(&plan).await.unwrap();
+    for (name, term) in [("Lt", &lt), ("Lte", &lte), ("Gt", &gt), ("Gte", &gte)] {
+        assert_eq!(term, &stored.terms.1, "{name} sends the ORE term");
+    }
+    let above = cipher.query(op::Lt, &35u32).on(&plan).await.unwrap();
+    let below = cipher.query(op::Lt, &33u32).on(&plan).await.unwrap();
+    assert!(
+        below < stored.terms.1 && stored.terms.1 < above,
+        "ORE terms order as the values"
+    );
+
+    let ope: OpeTerm<u32> = cipher
+        .query(op::Gte, &34u32)
+        .via(Ope)
+        .on(&plan)
+        .await
+        .unwrap();
+    assert_eq!(ope, stored.terms.2, "OPE is named with via");
+    let ope_above = cipher
+        .query(op::Gt, &35u32)
+        .via(Ope)
+        .on(&plan)
+        .await
+        .unwrap();
+    assert!(
+        ope.as_bytes() < ope_above.as_bytes(),
+        "OPE terms order as bytes"
+    );
+
+    // A typed target answers the orderings through the index it names.
+    let typed = Plan::value::<u32>()
+        .context("users/balance")
+        .encrypt_into::<Encrypted<OpeTerm<u32>>>()
+        .build()
+        .unwrap();
+    let stored = cipher.encrypt(&5u32).using(&typed).await.unwrap();
+    let query = cipher.query(op::Lte, &5u32).on(&typed).await.unwrap();
+    assert_eq!(query, stored.terms);
+}
+
+/// `Between` is one term carrying both bounds, inclusive, derived under
+/// the one label; each bound is the term the index sends for that value
+/// alone (ADR-0009, decision 7).
+#[tokio::test]
+async fn a_between_query_is_one_term_carrying_both_bounds() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/age")
+        .with::<u32, _>(Ore)
+        .build()
+        .unwrap();
+
+    let range: RangeQuery<OreTerm<u32>> = cipher
+        .query(op::Between, &(18u32, 65))
+        .on(&plan)
+        .await
+        .unwrap();
+    let lo = cipher.query(op::Gte, &18u32).on(&plan).await.unwrap();
+    let hi = cipher.query(op::Lte, &65u32).on(&plan).await.unwrap();
+    assert_eq!(range.lo(), &lo);
+    assert_eq!(range.hi(), &hi);
+    assert_eq!(range.clone().into_bounds(), (lo, hi));
+
+    // A stored value inside the range orders between the bounds.
+    let inside: Encrypted<OreTerm<u32>> = cipher.encrypt(&30u32).using(&plan).await.unwrap();
+    let outside: Encrypted<OreTerm<u32>> = cipher.encrypt(&70u32).using(&plan).await.unwrap();
+    assert!(range.lo() <= &inside.terms && &inside.terms <= range.hi());
+    assert!(&outside.terms > range.hi());
+
+    // Inclusive at both ends: one value is `(v, v)`.
+    let one = cipher
+        .query(op::Between, &(40u32, 40))
+        .on(&plan)
+        .await
+        .unwrap();
+    assert_eq!(one.lo(), one.hi());
+    assert_ne!(one, range);
+
+    // OPE is named with via, and a typed target answers through its index.
+    let both = Plan::context("users/age")
+        .with::<u32, _>((Ore, Ope))
+        .build()
+        .unwrap();
+    let ope: RangeQuery<OpeTerm<u32>> = cipher
+        .query(op::Between, &(18u32, 65))
+        .via(Ope)
+        .on(&both)
+        .await
+        .unwrap();
+    assert!(ope.lo().as_bytes() < ope.hi().as_bytes());
+    let typed = Plan::value::<u32>()
+        .context("users/age")
+        .encrypt_into::<Encrypted<OreTerm<u32>>>()
+        .build()
+        .unwrap();
+    let typed_range = cipher
+        .query(op::Between, &(1u32, 2))
+        .on(&typed)
+        .await
+        .unwrap();
+    assert!(typed_range.lo() < typed_range.hi());
+}
+
+/// A range whose low bound is above its high bound holds nothing, so it is
+/// refused when the query is awaited, before either bound's term is
+/// derived and before any keyset is loaded.
+#[tokio::test]
+async fn an_inverted_range_is_refused_before_any_term_or_keyset() {
+    let (cipher, loads) = loads_counting_cipher().await;
+    let plan = Plan::context("users/age")
+        .with::<u32, _>(Ore)
+        .build()
+        .unwrap();
+    let refused = cipher
+        .query(op::Between, &(65u32, 18))
+        .on(&plan)
+        .keyset("tenant")
+        .await;
+    assert!(matches!(
+        refused,
+        Err(Error::Term(TermError::InvertedRange))
+    ));
+    let refused = stack_encrypt::all((
+        cipher.query(op::Lt, &40u32).on(&plan),
+        cipher.query(op::Between, &(2u32, 1)).on(&plan),
+    ))
+    .await;
+    assert!(matches!(
+        refused,
+        Err(Error::Term(TermError::InvertedRange))
+    ));
+    assert_eq!(
+        loads.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "refused before the named keyset is loaded"
+    );
+    assert_eq!(
+        TermError::InvertedRange.to_string(),
+        "the range's low bound is above its high bound"
+    );
+    assert!(cipher
+        .query(op::Between, &(18u32, 18))
+        .on(&plan)
+        .await
+        .is_ok());
+}
+
+/// A field of a fields plan answers the orderings over its declared index,
+/// under the field's own label, and refuses an index it does not declare.
+/// An index-only field needs no sealing, so it can hold the integer types
+/// the cipher does not seal on its own.
+#[tokio::test]
+async fn a_field_answers_the_orderings_through_its_declared_index() {
+    #[derive(Clone)]
+    struct Member {
+        age: u32,
+        balance: i64,
+    }
+    impl Fields for Member {
+        fn field_names(&self) -> Vec<&str> {
+            vec!["age", "balance"]
+        }
+        fn schema() -> Option<Vec<FieldSchema>> {
+            Some(vec![
+                FieldSchema::of::<u32>("age"),
+                FieldSchema::of::<i64>("balance"),
+            ])
+        }
+    }
+    impl Field<u32> for Member {
+        fn field(&self, name: &str) -> Option<&u32> {
+            (name == "age").then_some(&self.age)
+        }
+    }
+    impl Field<i64> for Member {
+        fn field(&self, name: &str) -> Option<&i64> {
+            (name == "balance").then_some(&self.balance)
+        }
+    }
+    let cipher = stack_cipher().await;
+    let plan: Plan<Member, FakeDataKeySource> = Plan::context("members")
+        .fields()
+        .encrypt_index::<u32>("age", Ope)
+        .index::<i64>("balance", Ore)
+        .build()
+        .unwrap();
+    let mut row = cipher
+        .encrypt(&Member {
+            age: 34,
+            balance: -250,
+        })
+        .using(&plan)
+        .await
+        .unwrap();
+    let age: Encrypted<OpeTerm<u32>> = row.take("age").unwrap();
+    let balance: OreTerm<i64> = row.take("balance").unwrap();
+    let age_plan = plan.field("age").unwrap();
+    let balance_plan = plan.field("balance").unwrap();
+
+    let query = cipher
+        .query(op::Lte, &34u32)
+        .via(Ope)
+        .on(&age_plan)
+        .await
+        .unwrap();
+    assert_eq!(query, age.terms);
+    let range = cipher
+        .query(op::Between, &(30u32, 40))
+        .via(Ope)
+        .on(&age_plan)
+        .await
+        .unwrap();
+    assert!(
+        range.lo().as_bytes() <= age.terms.as_bytes()
+            && age.terms.as_bytes() <= range.hi().as_bytes()
+    );
+
+    // A signed value, ordered as a signed value.
+    let owed = cipher
+        .query(op::Lt, &-250i64)
+        .on(&balance_plan)
+        .await
+        .unwrap();
+    assert_eq!(owed, balance);
+    let zero = cipher
+        .query(op::Gte, &0i64)
+        .on(&balance_plan)
+        .await
+        .unwrap();
+    assert!(balance < zero, "a negative balance is below zero");
+    let overdrawn = cipher
+        .query(op::Between, &(-1_000i64, -1))
+        .on(&balance_plan)
+        .await
+        .unwrap();
+    assert!(overdrawn.lo() <= &balance && &balance <= overdrawn.hi());
+
+    // The default index for an ordering is ORE, which the age field lacks.
+    assert_eq!(
+        plan_error(cipher.query(op::Lt, &34u32).on(&age_plan).await),
+        PlanError::IndexNotDeclared {
+            field: "age".into(),
+            index: "ore"
+        }
+    );
+    assert_eq!(
+        plan_error(cipher.query(op::Between, &(1u32, 2)).on(&age_plan).await),
+        PlanError::IndexNotDeclared {
+            field: "age".into(),
+            index: "ore"
+        }
+    );
+    // And a value of another type than the field declares.
+    assert_eq!(
+        plan_error(cipher.query(op::Lt, &34u64).via(Ope).on(&age_plan).await),
+        PlanError::FieldType {
+            field: "age".into(),
+            expected: "u32"
+        }
     );
 }
