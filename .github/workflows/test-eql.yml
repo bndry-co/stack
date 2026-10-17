@@ -655,17 +655,16 @@ jobs:
       # waits on its release). `cargo package` drops `[patch]`, so the verify
       # would compile against the registry's version of that crate, which
       # the tree does not use. While such a pin is in the graph the step only
-      # packages (`--no-verify`) and warns, as the stack-* crates' step in
-      # tests-crates.yml does; the publish refuses it the same way.
+      # packages (`--no-verify`) and warns, through the script the stack-*
+      # crates' step in tests-crates.yml uses; the publish refuses it the
+      # same way.
       - name: Verify eql-bindings packages cleanly for crates.io
         run: |
           set -euo pipefail
           tree="$(cargo tree --locked -e normal,build --prefix none --all-features -p eql-bindings)"
           pins="$(grep -E '\((https?|ssh)://' <<<"$tree" | sed -E 's/ \(\*\)$//' | sort -u || true)"
           if [ -n "$pins" ]; then
-            printf 'Built against git, so not verifiable against the registry:\n%s\n' "$pins"
-            echo "::warning title=eql-bindings not verified against the registry::It builds against $(wc -l <<<"$pins" | tr -d ' ') crate(s) pinned to git ([patch.crates-io]), which cargo package ignores, so the registry build was skipped and only the packaging was checked. The publish refuses eql-bindings until the pins are registry versions."
-            exec cargo package --locked --no-verify --allow-dirty --all-features -p eql-bindings
+            PINS="$pins" exec "$GITHUB_WORKSPACE/scripts/package-git-pinned-crates.sh" eql-bindings --all-features -- eql-bindings
           fi
           # cargo's own status is kept in `status`: `|| status=$?` reads it
           # before anything else runs. (`status=$?` on the line after an `if`

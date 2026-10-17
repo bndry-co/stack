@@ -161,8 +161,11 @@ jobs:
       # build that tests a dependency the tree does not use and fails on API
       # the release has not shipped. While such a pin is in the graph the step
       # packages without verifying, which still checks the metadata and that
-      # every path dependency names a version, and warns, naming the pins. It
-      # is not a hole in the release: `cargo publish` in release-crates
+      # every path dependency names a version, and warns, naming the pins; a
+      # crate that needs a pinned crate with no crates.io release at all
+      # cannot be packaged and is left out with a warning
+      # (scripts/package-git-pinned-crates.sh). It is not a hole in the
+      # release: `cargo publish` in release-crates
       # verifies the same way and refuses these crates until the pin is a
       # registry version.
       - name: Verify the stack-* crates package cleanly for crates.io
@@ -174,9 +177,8 @@ jobs:
           if [ -z "$pins" ]; then
             exec cargo publish --locked --dry-run --allow-dirty "${crates[@]}"
           fi
-          printf 'Built against git, so not verifiable against the registry:\n%s\n' "$pins"
-          echo "::warning title=stack-* crates not verified against the registry::They build against $(wc -l <<<"$pins" | tr -d ' ') crate(s) pinned to git ([patch.crates-io]), which cargo package ignores, so the registry build was skipped and only the packaging was checked. release-crates refuses to publish them until the pins are registry versions."
-          cargo package --locked --no-verify --allow-dirty "${crates[@]}"
+          PINS="$pins" exec scripts/package-git-pinned-crates.sh "stack-* crates" -- \
+            stack-profile stack-auth stack-kms stack-encrypt-derive stack-encrypt
 
   node-bindings:
     name: node bindings, napi typings, stack-auth-wasm
