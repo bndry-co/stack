@@ -827,6 +827,10 @@ fn match_term<O>(
     }
     let context = Context::pae(&[MATCH_DOMAIN, context.as_bytes()]);
 
+    // The PRF takes the tokens by value and moves each `String`'s buffer
+    // into a `Protected`, which zeroizes it on drop: the tokens are wiped
+    // there, not here. The `Vec` itself holds only their pointers.
+
     let positions = tokens
         .prf_visit_with_context(prf, context, BloomVisitor { k: options.k, mask })
         .into_result()

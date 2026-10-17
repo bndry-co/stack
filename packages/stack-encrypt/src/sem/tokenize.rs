@@ -48,10 +48,19 @@ impl Default for Tokenizer {
 ///
 /// [`match_terms`]: crate::StackCipher::match_terms
 ///
-/// The text is plaintext, so every copy made on the way is zeroized when it
-/// is dropped: the folded text, its characters, and each n-gram, which is
-/// built at its final size so it never reallocates. The tokens returned are
-/// the caller's to zeroize.
+/// An n-gram length of zero yields no tokens rather than panicking, so a
+/// caller that tokenizes before validating the options (a query's carry)
+/// still reaches [`MatchOptions::validate`]'s refusal.
+///
+/// The text is plaintext, so the copies made on the way are zeroized when
+/// they are dropped: the folded text, its characters, which are collected
+/// into a buffer sized up front, and each n-gram, which is built at its
+/// final size. Neither reallocates, so no freed buffer holds plaintext. The
+/// one exception is inside `str::to_lowercase`, which grows its output when
+/// folding lengthens the text (as `İ` does). The tokens returned are the
+/// caller's to zeroize.
+///
+/// [`MatchOptions::validate`]: super::MatchOptions
 pub(crate) fn tokenize(text: &str, tokenizer: Tokenizer, downcase: bool) -> Vec<String> {
     let text = Zeroizing::new(if downcase {
         text.to_lowercase()
@@ -66,11 +75,16 @@ pub(crate) fn tokenize(text: &str, tokenizer: Tokenizer, downcase: bool) -> Vec<
             .map(str::to_string)
             .collect(),
         Tokenizer::Ngram { length } => {
-            let chars: Zeroizing<Vec<char>> = Zeroizing::new(text.chars().collect());
+            // `collect` would size the buffer from `Chars::size_hint`, about
+            // a quarter of the text, and grow it, leaving plaintext in each
+            // buffer it frees.
+            let mut chars: Zeroizing<Vec<char>> =
+                Zeroizing::new(Vec::with_capacity(text.chars().count()));
+            chars.extend(text.chars());
             // As in the v1 indexer's `process_ngram`: shorter than one gram
             // means no tokens (never a partial or whole-text token, which
             // could not match any stored gram).
-            if chars.len() < length {
+            if length == 0 || chars.len() < length {
                 Vec::new()
             } else {
                 chars.windows(length).map(gram).collect()
@@ -97,6 +111,11 @@ mod tests {
             tokenize("hello", Tokenizer::Ngram { length: 3 }, true),
             vec!["hel", "ell", "llo"]
         );
+    }
+
+    #[test]
+    fn a_zero_ngram_length_yields_no_tokens_rather_than_panicking() {
+        assert!(tokenize("hello", Tokenizer::Ngram { length: 0 }, true).is_empty());
     }
 
     #[test]
