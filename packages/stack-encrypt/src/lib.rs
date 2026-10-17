@@ -277,6 +277,7 @@ pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
 pub mod keyset;
+pub mod op;
 pub mod plan;
 pub mod sem;
 pub mod target;

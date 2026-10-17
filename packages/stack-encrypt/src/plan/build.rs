@@ -244,7 +244,7 @@ pub(crate) fn check_declared(
 /// # struct User { email: String, id: u64 }
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
 /// use stack_encrypt::kms::FakeDataKeySource;
-/// use stack_encrypt::{Equality, Plan, StackCipher};
+/// use stack_encrypt::{op, Equality, Plan, StackCipher};
 ///
 /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 /// let user = User { email: "bob@example.com".into(), id: 42 };
@@ -259,10 +259,9 @@ pub(crate) fn check_declared(
 /// // A query and a read name the same context.
 /// let email_plan = users_plan.field("email")?;
 /// let query_value = cipher
-///     .query("bob@example.com")
+///     .query(op::Eq, "bob@example.com")
 ///     .context("tenants/acme/users")
-///     .using(&email_plan)
-///     .equality()
+///     .on(&email_plan)
 ///     .await?;
 /// # let _ = query_value;
 /// let back = cipher.open(record).context("tenants/acme/users").using(&users_plan).await?;
@@ -915,7 +914,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::sem::{EqualityTerm, MatchTerms};
-    /// use stack_encrypt::{Encrypted, Plan, StackCipher};
+    /// use stack_encrypt::{op, Encrypted, Plan, StackCipher};
     ///
     /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
     /// let users_plan = Plan::context("users")
@@ -928,7 +927,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// let email: Encrypted<(EqualityTerm, MatchTerms)> = record.take("email")?;
     ///
     /// // The target declares an equality index, so the field answers it.
-    /// let query_value = cipher.query("bob@example.com").using(&users_plan.field("email")?).equality().await?;
+    /// let query_value = cipher.query(op::Eq, "bob@example.com").on(&users_plan.field("email")?).await?;
     /// assert_eq!(query_value, email.terms.0);
     /// # Ok(())
     /// # }

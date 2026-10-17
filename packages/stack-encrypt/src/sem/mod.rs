@@ -544,13 +544,23 @@ impl<O> MatchTerms<O> {
     /// false negative).
     ///
     /// An empty `query` returns `false`: containment of zero positions is
-    /// vacuously true, which would turn an empty probe into a match-every-row
+    /// vacuously true, which would turn an empty query into a match-every-row
     /// query. Term generation already refuses to build such a term
     /// ([`TermError::EmptyTermText`]); this guards any other
     /// (e.g. deserialized) source of an empty term.
-    pub fn contains(&self, query: &MatchTerms<O>) -> bool {
-        !query.positions.is_empty()
-            && query
+    pub fn matches(&self, query: &MatchQuery<O>) -> bool {
+        self.contains(query.filter())
+    }
+
+    /// Whether this term's positions are a superset of `other`'s, for two
+    /// stored terms: `other` is a filter over a whole stored value, not a
+    /// query. [`matches`](Self::matches) is the check for a query, and the
+    /// only one that takes a [`MatchQuery`].
+    ///
+    /// An empty `other` returns `false`, as an empty query does.
+    pub fn contains(&self, other: &MatchTerms<O>) -> bool {
+        !other.positions.is_empty()
+            && other
                 .positions
                 .iter()
                 .all(|p| self.positions.binary_search(p).is_ok())
@@ -632,6 +642,67 @@ impl<O> PartialEq for MatchTerms<O> {
 }
 
 impl<O> Eq for MatchTerms<O> {}
+
+/// The query term of a match index: a Bloom filter over the *query's*
+/// tokens, where the stored [`MatchTerms`] is a filter over the whole
+/// stored value's. A row matches when its stored filter holds every position of
+/// the query's ([`MatchTerms::matches`]).
+///
+/// The two are different types because they are different things, even
+/// where their bytes share an encoding: a query is never stored, and a
+/// stored filter is never sent as a query. ADR-0009 records why. A
+/// `MatchQuery` comes from a query chain ([`op::Matches`](struct@crate::op::Matches)),
+/// never from a target.
+pub struct MatchQuery<O = DefaultMatch> {
+    terms: MatchTerms<O>,
+}
+
+impl<O> MatchQuery<O> {
+    /// The query term of the filter `terms`, derived over the query's value.
+    pub(crate) fn from_terms(terms: MatchTerms<O>) -> Self {
+        Self { terms }
+    }
+
+    /// The set positions of the query's filter, sorted ascending, no
+    /// duplicates: what the server tests a stored filter for.
+    pub fn positions(&self) -> &[u16] {
+        self.terms.positions()
+    }
+
+    /// The transport byte encoding, as [`MatchTerms::to_bytes`].
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.terms.to_bytes()
+    }
+
+    /// The query's filter.
+    pub(crate) fn filter(&self) -> &MatchTerms<O> {
+        &self.terms
+    }
+}
+
+impl<O> fmt::Debug for MatchQuery<O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MatchQuery")
+            .field("positions", &self.terms.positions)
+            .finish()
+    }
+}
+
+impl<O> Clone for MatchQuery<O> {
+    fn clone(&self) -> Self {
+        Self {
+            terms: self.terms.clone(),
+        }
+    }
+}
+
+impl<O> PartialEq for MatchQuery<O> {
+    fn eq(&self, other: &Self) -> bool {
+        self.terms == other.terms
+    }
+}
+
+impl<O> Eq for MatchQuery<O> {}
 
 /// A [`PrfVisitor`] that folds a sequence of per-token PRF blocks into
 /// Bloom-filter bit positions: `k` little-endian 2-byte slices of each block,

@@ -149,6 +149,10 @@ mod tests {
                     ..MatchOptions::default()
                 }),
             },
+            PlanError::MatchCase { .. } => PlanError::MatchCase {
+                declared: "CaseInsensitive",
+                folds: false,
+            },
             PlanError::TwoContextSources { .. } => PlanError::TwoContextSources {
                 first: "the plan",
                 second: "the call",
