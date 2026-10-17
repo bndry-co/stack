@@ -120,28 +120,12 @@ web-time = "1.1"
 zeroize = { version = "1.8.1", features = ["derive"] }
 # This is needed because lock_api 0.4.6 was breaking things and the branch forces the use of 0.4.12
 temp-env = { git = "https://github.com/cipherstash/temp-env", branch = "main" }
-vitaminc = { version = "0.5.1", features = ["random", "protected", "encrypt"] }
-vitaminc-aead = "0.5.1"
+vitaminc = { version = "0.6.0", features = ["random", "protected", "encrypt"] }
+vitaminc-aead = "0.6.0"
 # The transport frame and ciphertext codec every language binding carries
 # across its FFI boundary. Optional in stack-encrypt (the `dynamic` feature).
-vitaminc-aead-frame = "0.5.1"
-vitaminc-encrypt = "0.5.1"
-vitaminc-hmac = "0.5.1"
-vitaminc-prf = "0.5.1"
-vitaminc-protected = "0.5.1"
-
-# Temporary: every vitaminc crate this workspace uses comes from one commit
-# of cipherstash/vitaminc#464, which is vitaminc main (ADR 0001 and
-# vitaminc-ore) plus the order-term comparison ore.rs builds against, until
-# vitaminc releases 0.6. Pinned by `rev`, never by branch: a branch is deleted
-# when its stack merges. Replace this block with the released versions then. The Go guests are
-# detached workspaces and carry the same block, so every build of these
-# crates sees one vitaminc.
-[patch.crates-io]
-vitaminc = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-aead-frame = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
+vitaminc-aead-frame = "0.6.0"
+vitaminc-encrypt = "0.6.0"
+vitaminc-hmac = "0.6.0"
+vitaminc-prf = "0.6.0"
+vitaminc-protected = "0.6.0"

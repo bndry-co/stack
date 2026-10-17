@@ -17,18 +17,6 @@ publish = false
 
 [workspace]
 
-# Temporary, as in the root Cargo.toml: the vitaminc crates this guest and
-# stack-encrypt build on come from the same vitaminc commit
-# (cipherstash/vitaminc#464) until vitaminc releases 0.6.
-[patch.crates-io]
-vitaminc = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-aead-frame = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-
 [lib]
 # cdylib: the .wasm guest module. rlib: lets the ops/config/status modules
 # unit-test natively (`cargo test` here, no wasm toolchain needed).
@@ -78,8 +66,8 @@ zerokms-protocol = "=0.12.31"
 # against (see the comment in packages/stack-encrypt/Cargo.toml). A
 # different version here fails at the `FfiValue: Decrypt` bound, since the
 # aead crate would be duplicated.
-vitaminc-aead-frame = "0.5.1"
-vitaminc-protected = "0.5.1"
+vitaminc-aead-frame = "0.6.0"
+vitaminc-protected = "0.6.0"
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 serde = "1"

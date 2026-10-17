@@ -649,23 +649,9 @@ jobs:
       # here it is a warning, not a failure, and the registry build is left to
       # the release. A version that RESOLVES and then does not compile is the
       # silent case, the one a path build can never see, and that fails.
-      #
-      # And one case the verify cannot judge at all: a crate in eql-bindings'
-      # graph pinned to GIT (`[patch.crates-io]`, as vitaminc is while `next`
-      # waits on its release). `cargo package` drops `[patch]`, so the verify
-      # would compile against the registry's version of that crate, which
-      # the tree does not use. While such a pin is in the graph the step only
-      # packages (`--no-verify`) and warns, through the script the stack-*
-      # crates' step in tests-crates.yml uses; the publish refuses it the
-      # same way.
       - name: Verify eql-bindings packages cleanly for crates.io
         run: |
           set -euo pipefail
-          tree="$(cargo tree --locked -e normal,build --prefix none --all-features -p eql-bindings)"
-          pins="$(grep -E '\((https?|ssh)://' <<<"$tree" | sed -E 's/ \(\*\)$//' | sort -u || true)"
-          if [ -n "$pins" ]; then
-            PINS="$pins" exec "$GITHUB_WORKSPACE/scripts/package-git-pinned-crates.sh" eql-bindings --all-features -- eql-bindings
-          fi
           # cargo's own status is kept in `status`: `|| status=$?` reads it
           # before anything else runs. (`status=$?` on the line after an `if`
           # reads the if's status, which is 0 when its condition failed, so a

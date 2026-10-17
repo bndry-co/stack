@@ -11,6 +11,17 @@ help: the trait `stack_encrypt::Encrypt` is not implemented for `SerdeOnly`
   |
 4 | struct SerdeOnly { value: String }
   | ^^^^^^^^^^^^^^^^
+note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+ --> $CARGO/vitaminc-aead-$VERSION/src/plaintext/mod.rs
+  |
+  | pub trait Encrypt {
+  | ^^^^^^^^^^^^^^^^^ this is the expected trait
+  |
+ ::: $CARGO/vitaminc-aead-$VERSION/src/encrypt/mod.rs
+  |
+  | pub trait Encrypt {
+  | ----------------- this is the trait that was imported
+  = help: you can use `cargo tree` to explore your dependency tree
   = help: the following other types implement trait `stack_encrypt::Encrypt`:
             &&'b T
             &'a BTreeMap<K, V>

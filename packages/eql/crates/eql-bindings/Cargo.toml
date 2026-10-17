@@ -51,11 +51,11 @@ stack-encrypt = { path = "../../../stack-encrypt", version = "0.2.0", optional =
 # crate directly (stack-encrypt re-exports only `IntoPrfContext` and
 # `PrfContext`), and two vitaminc lines in one graph do not interoperate, so
 # the requirement is stack-encrypt's.
-vitaminc-prf = { version = "0.5.0", optional = true }
+vitaminc-prf = { version = "0.6.0", optional = true }
 # `Physical`, `Int`, `Float` and `FromScalar`: the scalar plaintexts in
 # `encryption::plaintext` describe themselves through vitaminc's `Encrypt`
 # and read back only their own width through `FromScalar`.
-vitaminc-aead = { version = "0.5.1", optional = true }
+vitaminc-aead = { version = "0.6.0", optional = true }
 # The plaintext a target reads out of its `Protected` runtime value is held
 # in `Zeroizing` until it is sealed, so the copy is wiped like the original.
 zeroize = { version = "1", optional = true }

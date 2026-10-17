@@ -35,15 +35,3 @@ default-members = ["tests/sqlx"]
 [workspace.lints.rust]
 dead_code = "deny"
 unused_imports = "deny"
-
-# Temporary, as in the repository root's Cargo.toml: eql-bindings'
-# `stack-encrypt` feature and tests/encryption compile stack-encrypt by path,
-# so the vitaminc crates it builds on come from the same vitaminc commit
-# (cipherstash/vitaminc#464) until vitaminc releases 0.6.
-[patch.crates-io]
-vitaminc = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }

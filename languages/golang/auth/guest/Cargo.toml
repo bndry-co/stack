@@ -18,16 +18,6 @@ publish = false
 
 [workspace]
 
-# Temporary, as in the root Cargo.toml: the vitaminc crates stack-guest-abi
-# and the stack crates build on come from the same vitaminc commit
-# (cipherstash/vitaminc#464) until vitaminc releases 0.6.
-[patch.crates-io]
-vitaminc = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-aead-frame = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "2413bd0e4bf7eb8932a31101c635e2373c1096c6" }
-
 [lib]
 # cdylib: the .wasm guest module. rlib: lets the ops/status modules
 # unit-test natively (`cargo test` here, no wasm toolchain needed).
@@ -58,7 +48,7 @@ zeroize = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 # `Controlled::risky_ref`, to read a codec value back in the tests.
-vitaminc-protected = "0.5.0"
+vitaminc-protected = "0.6.0"
 
 [profile.release]
 # Smaller .wasm; the guest is IO-bound on the FFI copy and the file reads,

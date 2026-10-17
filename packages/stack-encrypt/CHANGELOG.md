@@ -142,6 +142,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same way. Storing the empty filter tells a reader of the database that the
   value is empty, separator-only or shorter than the n-gram length
   (ADR-0009).
+- **stack-encrypt requires the vitaminc 0.6 crates.** They are the first
+  release of vitaminc ADR 0001, which the entries below build on. A crate
+  that names a vitaminc type stack-encrypt takes or returns (`Encrypt`,
+  `Decrypt`, `Protected`) moves to 0.6 with it.
 - **Values describe themselves with vitaminc's new `Encrypt` and read back
   with `Decrypt` (vitaminc ADR 0001).** `KeysetCipher::encrypt`,
   `StackCipher::decrypt` and every target take the new `Encrypt`, a source
