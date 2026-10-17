@@ -44,7 +44,8 @@
 //
 // Encrypt and Decrypt send one ZeroKMS request for each 500 sealed values in
 // the batch, plus one the first time a keyset is used. A query derives its
-// term with no request; see Queries below.
+// term locally, with no request of its own; only the first use of a keyset,
+// by a query or anything else, loads it from ZeroKMS. See Queries below.
 //
 // 6. Store the encrypted type. Each encrypt_into field is one EQL v4 column
 // (an eql.TextEq goes in a public.eql_v4_text_eq column), implementing
@@ -143,7 +144,10 @@
 // On a field with encrypt_into=TextMatch, Matches returns an
 // [EQLMatchQuery], the type's query value with the same two methods.
 // Every query type implements driver.Valuer, so it binds as a parameter
-// through database/sql or pgx:
+// through database/sql or pgx. With separate byte columns, as the example/
+// program declares its fields (Email `stash:"email,encrypt,index=equality;match"`,
+// Age `stash:"age,encrypt,index=equality;ore"`), not the encrypt_into User
+// above:
 //
 //	q, err := users.Fields.Email.Matches(ctx, cipher, "alice")
 //	limit, err := q.TargetLimit(ctx, 10, encrypt.Stats{Rows: rowCount})

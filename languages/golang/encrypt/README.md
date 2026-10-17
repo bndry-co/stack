@@ -65,8 +65,9 @@ The package reference is on [pkg.go.dev]; the generator's reference is
 
    `Encrypt` and `Decrypt` send one ZeroKMS request for each 500 sealed
    values in the batch, plus one request the first time a keyset is used.
-   A query derives its term locally and sends no request; see
-   [Queries](#queries).
+   A query derives its term locally and sends no request of its own; only
+   the first use of a keyset, by a query or anything else, loads it from
+   ZeroKMS. See [Queries](#queries).
 
 6. Store the encrypted type. Each `encrypt_into` field is one EQL v4 column:
    `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database
@@ -246,10 +247,16 @@ rules.
 | the same | `Between(ctx, cipher, lo, hi)` | `encrypt.Range[encrypt.OreTerm]` or `encrypt.Range[encrypt.OpeTerm]`, the two bounds' terms |
 | `index=match`, on a string | `Matches` | `encrypt.MatchQuery[T]` |
 | `encrypt_into=TextEq` | `Eq` | `eql.TextEqQuery` |
+| `encrypt_into=TextMatch` | `Matches` | `encrypt.EQLMatchQuery[eql.TextMatchQuery, T]` |
 
 A method takes the field's own Go type, so `Fields.Age.Lt` on a `uint32`
 field takes a `uint32`. An order index on text, bytes or a float stores its
-term but answers no ordering operator yet, so such a field has no `Lt`.
+term but answers no ordering operator yet, so such a field has no `Lt`; nor
+does the `ope` index of a field that declares `ore` too, since `ore` answers
+the orderings. stashgen prints a notice for each such index, on stderr and in
+the generated file: the terms are stored, and only your own code can compare
+them. A match index on an index-only field (`index=match` with no `encrypt`)
+is refused, because `Verify` checks a match query's rows by decrypting them.
 
 Every query type implements `driver.Valuer`, so it binds as a parameter in
 any library built on `database/sql` or pgx. A `Range` binds as two
@@ -271,6 +278,11 @@ operand with the same two):
 - `Verify(ctx, values)` says, for each decrypted value of a page, whether it
   really holds the query's text: one call into the engine for the page, with
   no key.
+
+The example below uses separate byte columns, as [`example/`](example/)
+declares its fields (`Email` with `stash:"email,encrypt,index=equality;match"`,
+`Age` with `stash:"age,encrypt,index=equality;ore"`), not the `encrypt_into`
+`User` of the quick start:
 
 ```go
 // Positions of a stored filter or a match term, for @>.
