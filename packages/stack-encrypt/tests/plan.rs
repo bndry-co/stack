@@ -298,8 +298,8 @@ async fn a_query_derives_under_the_label_the_write_used() {
         eq, email.terms.0,
         "equality query bytes equal the stored term"
     );
-    let matching: MatchTerms = cipher
-        .query_index(Match, "bob@example.com")
+    let matching = cipher
+        .query(op::Matches, "bob@example.com")
         .on(&email_plan)
         .await
         .unwrap();
@@ -1199,12 +1199,16 @@ async fn match_options_must_agree_for_a_query_to_be_declared() {
             }
         }
     }
+    impl op::MatchCase for Shingles {
+        type Case = op::CaseSensitive;
+    }
     let cipher = stack_cipher().await;
     let users_plan: Plan<User, FakeDataKeySource> = users_plan();
     let email_plan = users_plan.field("email").unwrap();
     let refused = plan_error(
         cipher
-            .query_index(Match::<Shingles>::new(), "bob")
+            .query(op::Matches.case_sensitive(), "bob")
+            .via(Match::<Shingles>::new())
             .on(&email_plan)
             .await,
     );
@@ -1721,11 +1725,8 @@ async fn a_chain_shows_no_value() {
         format!("{:?}", cipher.query(op::Eq, &secret)),
         format!("{:?}", cipher.query(op::Eq, &secret).via(Equality)),
         format!("{:?}", cipher.query(op::Eq, &secret).on(&email_plan)),
-        format!("{:?}", cipher.query_index(Equality, &secret)),
-        format!(
-            "{:?}",
-            cipher.query_index(Equality, &secret).on(&email_plan)
-        ),
+        format!("{:?}", cipher.query_index(Ore, &secret)),
+        format!("{:?}", cipher.query_index(Ore, &secret).on(&email_plan)),
         format!("{:?}", cipher.open(secret.clone())),
         format!("{:?}", cipher.open(FieldValues::new()).using(&users_plan)),
         format!(

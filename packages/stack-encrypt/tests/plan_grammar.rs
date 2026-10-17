@@ -1128,11 +1128,11 @@ async fn a_typed_field_answers_the_queries_its_target_declares_and_no_other() {
         .unwrap();
     assert_eq!(query_value, stored.terms.0);
     let matched = cipher
-        .query_index(Match, "bob@example.com")
+        .query(op::Matches, "bob@example.com")
         .on(&email_plan)
         .await
         .unwrap();
-    assert_eq!(matched, stored.terms.1);
+    assert_eq!(matched.to_bytes(), stored.terms.1.to_bytes());
     assert_eq!(
         plan_error(
             cipher

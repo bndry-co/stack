@@ -302,14 +302,16 @@ impl<K: 'static> StackCipher<K> {
 
     /// Start a chain that derives the term of `index` over `value`: the
     /// index's own term, not a query term, so nothing says what it may be
-    /// compared with. For an index no operator answers yet ([`Ore`] and
-    /// [`Ope`]); a query for an operator is [`query`](Self::query), and this
-    /// goes when the ordering operators arrive.
+    /// compared with. Only for an index no operator answers yet ([`Ore`]
+    /// and [`Ope`], the [`Unanswered`] indexes); a query for an operator is
+    /// [`query`](Self::query), and this goes when the ordering operators
+    /// arrive.
     ///
     /// [`Ore`]: crate::target::Ore
     /// [`Ope`]: crate::target::Ope
     pub fn query_index<'a, I, Q>(&'a self, index: I, value: &Q) -> QueryIndexBuilder<'a, I, F<Q>, K>
     where
+        I: Unanswered,
         Q: ToOwned + ?Sized,
     {
         QueryIndexBuilder {
@@ -678,6 +680,13 @@ pub struct QueryVia<'a, Op, F, I, K> {
 }
 
 impl<'a, Op: Operator, F: 'static, I: Supports<Op, F>, K: 'static> QueryVia<'a, Op, F, I, K> {
+    /// Name the context the term is derived under, as
+    /// [`QueryBuilder::context`], before or after the index.
+    pub fn context(mut self, context: impl IntoLabel) -> Self {
+        self.common.context = Some(context.into_label());
+        self
+    }
+
     /// Query on `plan` through the named index, which the plan must
     /// declare ([`Resolves`]): a one-value plan without it does not
     /// compile; a field of a fields plan without it is refused when the
@@ -700,6 +709,28 @@ impl<'a, Op: Operator, F: 'static, I: Supports<Op, F>, K: 'static> QueryVia<'a, 
         });
         QueryOp::new(inner, op)
     }
+}
+
+/// An index no operator answers yet, so its own term is what a query sends:
+/// [`Ore`](crate::target::Ore) and [`Ope`](crate::target::Ope). The bound on
+/// [`StackCipher::query_index`]. Sealed: an index an operator answers is
+/// queried through the operator ([`StackCipher::query`]), so its query term
+/// cannot be taken for its stored term. Goes with `query_index` when the
+/// ordering operators arrive.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is answered by an operator, so `query_index` cannot derive its term",
+    label = "an operator answers this index",
+    note = "query it through its operator: `cipher.query(op::Eq, v)` for `Equality`, `cipher.query(op::Matches, v)` for `Match`; `query_index` is for `Ore` and `Ope` only"
+)]
+pub trait Unanswered: unanswered_sealed::Sealed {}
+
+impl Unanswered for crate::target::Ore {}
+impl Unanswered for crate::target::Ope {}
+
+mod unanswered_sealed {
+    pub trait Sealed {}
+    impl Sealed for crate::target::Ore {}
+    impl Sealed for crate::target::Ope {}
 }
 
 /// A chain deriving an index's own term, before its plan is named. Started
@@ -927,10 +958,14 @@ pub struct QueryOp<'a, F, Op, I, K> {
 
 impl<'a, F, Op: Operator, I: Supports<Op, F>, K: 'static> QueryOp<'a, F, Op, I, K> {
     /// The chain for `inner`'s index, refused when awaited if the index
-    /// cannot answer `Op` as it is configured.
+    /// cannot answer `Op` as it is configured. A refusal the plan already
+    /// gave (an index it does not declare, or no context) is kept: it is
+    /// the more basic fault, and the one to fix first.
     fn new(mut inner: QueryIndex<'a, F, I, K>, _op: Op) -> Self {
-        if let Err(error) = inner.index.check() {
-            inner.label = Err(error);
+        if inner.label.is_ok() {
+            if let Err(error) = inner.index.check() {
+                inner.label = Err(error);
+            }
         }
         Self {
             inner,

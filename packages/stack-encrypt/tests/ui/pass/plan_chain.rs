@@ -52,6 +52,12 @@ async fn chains(cipher: &StackCipher<FakeDataKeySource>, person: &Person) -> Res
         .with::<String, _>(stack_encrypt::Match)
         .build()?;
     let _ = cipher.query(op::Matches, "ali").on(&name_plan).await?;
+    let _ = cipher
+        .query(op::Matches, "ali")
+        .via(Match)
+        .context("people/name")
+        .on(&people_plan.field("email")?)
+        .await;
     let age_plan = Plan::context("people/age").with((Equality, Ore)).build()?;
     let ages = vec![1u32, 2];
     let _ = cipher.encrypt(&ages).using(&age_plan).await?;

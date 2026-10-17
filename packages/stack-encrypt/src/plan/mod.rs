@@ -321,7 +321,7 @@ pub use build::{FieldKind, FieldPlan, FieldsBuilder, IntoLabel, Opens, Plan, Pla
 pub use chain::{
     all, All, Batch, Chooses, EncryptBuilder, EncryptFields, EncryptIndexed, EncryptUsing,
     EncryptWithContext, KeysetChoice, OpenBuilder, OpenUsing, Operation, PlanKms, QueryBuilder,
-    QueryIndex, QueryIndexBuilder, QueryOp, QueryVia, Resolves,
+    QueryIndex, QueryIndexBuilder, QueryOp, QueryVia, Resolves, Unanswered,
 };
 pub use error::PlanError;
 pub use field_ref::{pick, FieldRef};

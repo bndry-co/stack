@@ -113,14 +113,16 @@ async fn a_matches_query_is_a_filter_over_the_query_value_that_the_stored_filter
         "the query is the query value's filter, not the stored value's"
     );
 
-    // The operator derives the term the index does, under the same label.
-    let by_index: MatchTerms = cipher
-        .query_index(Match, "BOB")
-        .on(&email_plan)
-        .await
-        .unwrap();
-    assert_eq!(query.to_bytes(), by_index.to_bytes());
-    assert_eq!(query.positions(), by_index.positions());
+    // The operator derives the filter the index writes, under the same
+    // label: the query for BOB is the stored filter of bob.
+    let bob = Person {
+        email: "bob".into(),
+        ..person()
+    };
+    let mut bob_row = cipher.encrypt(&bob).using(&plan).await.unwrap();
+    let bob_email: Encrypted<(EqualityTerm, MatchTerms)> = bob_row.take("email").unwrap();
+    assert_eq!(query.to_bytes(), bob_email.terms.1.to_bytes());
+    assert_eq!(query.positions(), bob_email.terms.1.positions());
     assert_eq!(query.clone(), query);
 
     let elsewhere: MatchQuery = cipher
@@ -406,6 +408,63 @@ async fn a_match_case_that_disagrees_with_its_options_is_refused() {
         refused.to_string(),
         "a match configuration declares the case CaseInsensitive but its options keep case"
     );
+}
+
+#[tokio::test]
+async fn an_undeclared_index_is_refused_before_its_case_is_checked() {
+    let cipher = stack_cipher().await;
+    let plan = people_plan();
+    let refused = plan_error(
+        cipher
+            .query(op::Matches, "Bob")
+            .via(Match::<Mislabelled>::new())
+            .on(&plan.field("email").unwrap())
+            .await,
+    );
+    assert!(
+        matches!(refused, PlanError::IndexOptions { ref field, .. } if field == "email"),
+        "the plan's refusal comes first, not the case: {refused:?}"
+    );
+
+    let no_context: Plan<Person, FakeDataKeySource> = Plan::fields()
+        .encrypt::<String>("email")
+        .encrypt_index::<String>("name", Match::<Mislabelled>::new())
+        .build()
+        .unwrap();
+    let refused = plan_error(
+        cipher
+            .query(op::Matches, "Bob")
+            .via(Match::<Mislabelled>::new())
+            .on(&no_context.field("name").unwrap())
+            .await,
+    );
+    assert_eq!(refused, PlanError::NoContext);
+}
+
+#[tokio::test]
+async fn a_query_names_its_context_before_or_after_the_index() {
+    let cipher = stack_cipher().await;
+    let plan: Plan<Person, FakeDataKeySource> = Plan::fields()
+        .encrypt_index::<String>("email", Match)
+        .encrypt::<String>("name")
+        .build()
+        .unwrap();
+    let email_plan = plan.field("email").unwrap();
+    let before = cipher
+        .query(op::Matches, "bob")
+        .context("people")
+        .via(Match)
+        .on(&email_plan)
+        .await
+        .unwrap();
+    let after = cipher
+        .query(op::Matches, "bob")
+        .via(Match)
+        .context("people")
+        .on(&email_plan)
+        .await
+        .unwrap();
+    assert_eq!(before, after);
 }
 
 #[tokio::test]

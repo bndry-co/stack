@@ -553,13 +553,14 @@ impl<O> MatchTerms<O> {
     }
 
     /// Whether this term's positions are a superset of `other`'s, for two
-    /// terms of the same kind. [`matches`](Self::matches) is the check for
-    /// a query.
+    /// stored terms: `other` is a filter over a whole stored value, not a
+    /// query. [`matches`](Self::matches) is the check for a query, and the
+    /// only one that takes a [`MatchQuery`].
     ///
     /// An empty `other` returns `false`, as an empty query does.
-    pub fn contains(&self, query: &MatchTerms<O>) -> bool {
-        !query.positions.is_empty()
-            && query
+    pub fn contains(&self, other: &MatchTerms<O>) -> bool {
+        !other.positions.is_empty()
+            && other
                 .positions
                 .iter()
                 .all(|p| self.positions.binary_search(p).is_ok())
@@ -645,7 +646,7 @@ impl<O> Eq for MatchTerms<O> {}
 /// The query term of a match index: a Bloom filter over the *query's*
 /// tokens, where the stored [`MatchTerms`] is a filter over the whole
 /// stored value's. A row matches when its stored filter holds every position of
-/// the query's ([`MatchTerms::contains`]).
+/// the query's ([`MatchTerms::matches`]).
 ///
 /// The two are different types because they are different things, even
 /// where their bytes share an encoding: a query is never stored, and a

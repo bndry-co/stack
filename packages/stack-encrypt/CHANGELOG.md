@@ -75,16 +75,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **The query chain starts with the operator.** `cipher.query(v)` takes the
-  operator first: `cipher.query(op::Eq, v).on(&plan)` replaces
+- **The query chain starts with the operator.** `cipher.query(op, v)`
+  replaces `cipher.query(v)`: `cipher.query(op::Eq, v).on(&plan)` replaces
   `cipher.query(v).using(&plan).equality()`, and `on` replaces `using` for
   queries only (a write still runs `using` a plan). An index's own term, for
   an index no operator answers yet (`Ore`, `Ope`), is
   `cipher.query_index(Ore, v).on(&plan)`, which goes when the ordering
-  operators arrive. `QueryUsing` is gone; the chain's types are
-  `QueryBuilder`, `QueryVia`, `QueryIndexBuilder`, `QueryIndex` and
-  `QueryOp`, and the plan shapes implement `plan::Chooses` and
-  `plan::Resolves`.
+  operators arrive. `query_index` does not compile for `Equality` or `Match`
+  (`plan::Unanswered`), since an operator answers both. `QueryUsing` is
+  gone; the chain's types are `QueryBuilder`, `QueryVia`,
+  `QueryIndexBuilder`, `QueryIndex` and `QueryOp`, and the plan shapes
+  implement `plan::Chooses` and `plan::Resolves`.
 - **`Match::default()` is `Match`.** The match index under the default
   configuration is the value `Match`, and `Default` is now implemented for
   every `Match<O>`, so `Match::default()` no longer infers the configuration.
