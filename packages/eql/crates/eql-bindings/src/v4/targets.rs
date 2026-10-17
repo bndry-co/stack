@@ -4,7 +4,7 @@ use crate::encryption::targets::{
     open_target, refuse, refuse_query, run_target, Opener, Target, TargetError,
 };
 use crate::Identifier;
-use stack_encrypt::dynamic::FfiValue;
+use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
 /// Every EQL type a plan may name as a target, in
 /// `eql-domains::CATALOG` order: one per stored domain (every flat
@@ -707,7 +707,7 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
     name: &str,
     keyset: &'a KeysetCipher<'_, K>,
     column: NonEmpty<Identifier>,
-    plaintext: FfiValue,
+    plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     match name {
         "Integer" => {
@@ -750,7 +750,7 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
     opener: Opener<'a, K>,
     column: NonEmpty<Identifier>,
     stored: &[u8],
-) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
     match name {
         "Integer" => {
             open_target::<super::integer::Integer, i32, K>("Integer", opener, column, stored)
@@ -786,7 +786,7 @@ pub(crate) fn query_named<'a, K: 'static>(
     name: &str,
     keyset: &'a KeysetCipher<'_, K>,
     column: NonEmpty<Identifier>,
-    plaintext: FfiValue,
+    plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     match name {
         "IntegerEq" => run_target::<super::integer::IntegerEqQuery, i32, K>(
