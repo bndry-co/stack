@@ -1,10 +1,14 @@
 //! Operators: what a query asks of the server, as a type.
 //!
-//! A query names an *operator* ([`Eq`](struct@Eq), [`Lt`], [`Between`],
-//! [`Matches`](struct@Matches)), and the plan it runs on finds the index
-//! that answers it. The operator is a unit type passed by value, as an
-//! index is (`.via(Ore)`), and it decides what the query takes: one value
-//! for most, a pair of bounds for `Between`:
+//! A query names an *operator* ([`Eq`](struct@Eq), [`Lt`], [`Lte`],
+//! [`Gt`], [`Gte`], [`Between`], [`Matches`](struct@Matches), and the
+//! JSON operators [`Contains`], [`ContainedBy`] and [`AtPath`]), and the
+//! plan it runs on finds the index that answers it. The operator is a unit
+//! type passed by value, as an index is (`.via(Ore)`), and it decides what
+//! the query takes: one value for most, a pair of bounds for `Between`, a
+//! path and the leaf operator's input for `AtPath`. No index answers the
+//! JSON operators yet: this crate has no JSON index, so a query with one
+//! does not compile until that index exists.
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
@@ -42,10 +46,13 @@
 //! - [`DefaultIndex<In>`] is on an operator, and names the index a plan that
 //!   declares its indexes, rather than a target type, answers it with.
 //!
-//! What a query takes is the operator's [`Arity`]: [`One`] plaintext, or a
-//! [`Pair`] of them as a tuple. [`Input<A>`] says, for the value a query is
-//! given, which plaintext the index is declared over (`S` for `(S, S)`),
-//! so the plan's type is checked against it.
+//! What a query takes is the operator's [`Arity`]: [`One`] plaintext, a
+//! [`Pair`] of them as a tuple, or for an accessor a path and its leaf
+//! operator's input ([`Pathed<A>`](Pathed), where `A` is the leaf's arity).
+//! [`Input<A>`] says, for the value a query is given, which plaintext the
+//! index is declared over (`S` for `(S, S)`), so the plan's type is checked
+//! against it. No input of a `Pathed` arity exists until the JSON index
+//! does.
 //!
 //! What the types can see is checked at compile time: a match query on an
 //! integer, an ordering on text, an operator a target type does not answer,
@@ -92,8 +99,9 @@ use crate::{Error, KeysetCipher, Label, NonEmpty, PlanError};
 /// The trait is open, as [`Index`] is: an operator defined in another crate
 /// is answered by the indexes that implement [`Supports`] for it.
 pub trait Operator: Copy + 'static {
-    /// What a query for this operator takes: [`One`] plaintext, or a
-    /// [`Pair`] of them as a tuple.
+    /// What a query for this operator takes: [`One`] plaintext, a
+    /// [`Pair`] of them as a tuple, or for [`AtPath`] a path and its leaf
+    /// operator's input ([`Pathed`]).
     type Arity: Arity;
 }
 
@@ -148,10 +156,78 @@ impl Operator for Between {
     type Arity = Pair;
 }
 
+/// JSON containment: rows whose document contains the query's document
+/// (`@>`). Exact. Declared by ADR-0009 and answered by no index yet: this
+/// crate has no JSON index, so a query with it does not compile until one
+/// exists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Contains;
+
+/// JSON containment the other way: rows whose document is contained by
+/// the query's (`<@`). Exact, and answered by no index yet, as
+/// [`Contains`] is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ContainedBy;
+
+/// The accessor: `Op` applied at a JSON path, `op::AtPath(op::Eq)`. It
+/// takes a path and `Op`'s input, and inherits the fidelity of `Op`
+/// ([`TermFor`]): `AtPath<Eq>` and `AtPath<Lt>` are exact, and an accessor
+/// over a probabilistic leaf operator would be `Probabilistic`.
+///
+/// `Op` is a [`Leaf`] operator, one that compares a single value at the
+/// path: `AtPath<Contains>` and `AtPath<AtPath<Eq>>` are not operators,
+/// since neither is one selector and value.
+///
+/// Its arity is [`Pathed<Op::Arity>`](Pathed), so `AtPath<Eq>` (a path and
+/// a value) and `AtPath<Between>` (a path and a pair of bounds) take
+/// different inputs. No input of it exists yet: the path becomes a
+/// selector only a JSON index can derive, and this crate has none, so a
+/// query with `AtPath` does not compile until that index exists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct AtPath<Op>(pub Op);
+
+impl Operator for Contains {
+    type Arity = One;
+}
+impl Operator for ContainedBy {
+    type Arity = One;
+}
+impl<Op: Leaf> Operator for AtPath<Op> {
+    type Arity = Pathed<Op::Arity>;
+}
+
+/// An operator that compares one value, or one pair of bounds, and so can
+/// be applied at a JSON path ([`AtPath`]): [`Eq`](struct@Eq), [`Lt`],
+/// [`Lte`], [`Gt`], [`Gte`], [`Between`] and [`Matches`](struct@Matches).
+/// Containment compares whole documents and an accessor already has a
+/// path, so neither is a leaf.
+///
+/// The trait is open, as [`Operator`] is, but its arity is [`One`] or
+/// [`Pair`] ([`LeafArity`], sealed), so an accessor never nests.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a leaf operator, so it cannot be applied at a path",
+    label = "`op::AtPath` takes a leaf operator",
+    note = "`op::AtPath` applies `op::Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` or `Matches` at a path; `op::Contains` and `op::ContainedBy` compare whole documents, and an accessor does not nest"
+)]
+pub trait Leaf: Operator<Arity: LeafArity> {}
+
+impl Leaf for Eq {}
+impl Leaf for Lt {}
+impl Leaf for Lte {}
+impl Leaf for Gt {}
+impl Leaf for Gte {}
+impl Leaf for Between {}
+impl<C: Case> Leaf for Matches<C> {}
+
 /// How many plaintexts a query for an operator takes: [`One`] or a
-/// [`Pair`]. Sealed: the chain derives a term per plaintext and joins them
-/// as the arity says, so there are exactly these two.
+/// [`Pair`], or for an accessor a path and its leaf's input ([`Pathed`]).
+/// Sealed: the chain derives a term per plaintext and joins them as the
+/// arity says, so there are exactly these.
 pub trait Arity: sealed::Sealed + 'static {}
+
+/// The arity of a [`Leaf`] operator: [`One`] or [`Pair`], never
+/// [`Pathed`]. Sealed.
+pub trait LeafArity: Arity {}
 
 /// One plaintext: the query is given an `S` (`Eq`, `Lt`, `Matches`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -161,20 +237,32 @@ pub struct One;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Pair;
 
+/// A path and a leaf operator's input, of the leaf's arity `A`: what
+/// [`AtPath<Op>`] takes. `Pathed<One>` is a path and a value,
+/// `Pathed<Pair>` a path and a pair of bounds, so an input can derive one
+/// term or two as the leaf needs. No [`Input`] of this arity exists yet;
+/// it arrives with the JSON index, whose selector the path becomes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Pathed<A>(PhantomData<A>);
+
 impl Arity for One {}
 impl Arity for Pair {}
+impl<A: LeafArity> Arity for Pathed<A> {}
+impl LeafArity for One {}
+impl LeafArity for Pair {}
 
 /// What a query of arity `A` is given, and the plaintext its index is
 /// declared over: an `S` is an input of [`One`] over `S`, and an `(S, S)`
 /// an input of [`Pair`] over `S`. The chain's value type is the input, and
 /// the plan is checked against the plaintext.
 ///
-/// Those are the two impls. The arity decides how the chain derives terms
-/// from the input, which is what [`derive`](Self::derive) does.
+/// Those are the two impls; an input of [`Pathed`] arrives with the JSON
+/// index. The arity decides how the chain derives terms from the input,
+/// which is what [`derive`](Self::derive) does.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not what a query of arity `{A}` is given",
-    label = "the operator takes another shape of value",
-    note = "`op::Between` takes a pair of bounds, `cipher.query(op::Between, &(lo, hi))`; every other operator takes one value"
+    message = "`{Self}` is not what a query of arity `{A}` takes",
+    label = "the operator takes another input",
+    note = "an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes no input yet: it arrives with the JSON index"
 )]
 pub trait Input<A: Arity>: Sized + 'static {
     /// The plaintext the index is declared over.
@@ -382,6 +470,7 @@ mod sealed {
     impl Sealed for super::CaseSensitive {}
     impl Sealed for super::One {}
     impl Sealed for super::Pair {}
+    impl<A> Sealed for super::Pathed<A> {}
 }
 
 /// The case a text operator is asked in: [`CaseInsensitive`] or
@@ -510,7 +599,12 @@ impl<T: QueryTerm> TermFor<Lte> for T {}
 impl<T: QueryTerm> TermFor<Gt> for T {}
 impl<T: QueryTerm> TermFor<Gte> for T {}
 impl<T: QueryTerm> TermFor<Between> for T {}
+impl<T: QueryTerm> TermFor<Contains> for T {}
+impl<T: QueryTerm> TermFor<ContainedBy> for T {}
 impl<C: Case, T: Probabilistic> TermFor<Matches<C>> for T {}
+/// An accessor inherits its leaf's requirement: what answers `Op` at a
+/// path is held to what answers `Op`.
+impl<Op: Leaf, T: TermFor<Op>> TermFor<AtPath<Op>> for T {}
 
 /// An index that answers the operator `Op` for the input `In`, and the
 /// query term it sends for it.
@@ -758,7 +852,7 @@ impl<Op: Operator, In: Input<Op::Arity>, T: Answers<Op, In>> Answers<Op, In>
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no default index given `{In}`",
     label = "no default index answers this operator here",
-    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; name another index, such as `Ope`, with `.via(index)`"
+    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; name another index, such as `Ope`, with `.via(index)`; no index answers `op::Contains`, `op::ContainedBy` or `op::AtPath` yet, since this crate has no JSON index"
 )]
 pub trait DefaultIndex<In: Input<Self::Arity>>: Operator {
     /// The index. An index is a unit type, so its `Default` is the index.
@@ -799,6 +893,35 @@ mod tests {
         );
         assert_eq!(format!("{:?}", Eq), "Eq");
         assert_eq!(format!("{:?}", Between), "Between");
+        assert_eq!(format!("{:?}", AtPath(Gte)), "AtPath(Gte)");
+        assert_eq!(AtPath(Matches.case_sensitive()).0, Matches.case_sensitive());
+    }
+
+    /// An accessor is held to its leaf's requirement: an exact term
+    /// answers `AtPath<Eq>` and `AtPath<Lt>`, and only a probabilistic one
+    /// answers `AtPath<Matches>`. Containment takes any term.
+    #[test]
+    fn an_accessor_inherits_the_fidelity_of_its_leaf() {
+        fn answers<Op: Operator, T: TermFor<Op>>() {}
+        answers::<AtPath<Eq>, EqualityTerm>();
+        answers::<AtPath<Lt>, OreTerm<u32>>();
+        answers::<AtPath<Between>, RangeQuery<OpeTerm<i64>>>();
+        answers::<AtPath<Matches>, MatchQuery>();
+        answers::<Contains, EqualityTerm>();
+        answers::<ContainedBy, EqualityTerm>();
+        // `answers::<AtPath<Matches>, EqualityTerm>()` does not compile:
+        // `tests/ui/op_at_path_inherits_fidelity.rs`. Nor does an accessor
+        // over a non-leaf: `tests/ui/op_at_path_not_a_leaf.rs`.
+    }
+
+    /// An accessor's arity carries its leaf's, so an input can tell a path
+    /// and a value from a path and a pair of bounds.
+    #[test]
+    fn an_accessor_takes_its_leafs_arity_under_a_path() {
+        fn arity<Op: Operator<Arity = A>, A: Arity>() {}
+        arity::<AtPath<Eq>, Pathed<One>>();
+        arity::<AtPath<Matches>, Pathed<One>>();
+        arity::<AtPath<Between>, Pathed<Pair>>();
     }
 
     /// The ordering operators default to ORE, and a range is refused only

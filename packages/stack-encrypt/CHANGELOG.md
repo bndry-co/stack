@@ -59,6 +59,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   What a query takes is the operator's `op::Arity` (`op::One` or
   `op::Pair`), and `op::Input` relates the value given to the plaintext the
   plan is checked against (ADR-0009, decision 7).
+- **The JSON operators are declared.** `op::Contains` and `op::ContainedBy`
+  (`@>` and `<@`) and the accessor `op::AtPath<Op>`, `op::AtPath(op::Eq)`,
+  which applies another operator at a JSON path and inherits its fidelity
+  (`op::TermFor`): `AtPath<Eq>` and `AtPath<Lt>` are exact. No index
+  answers them yet, since this crate has no JSON index, so a query with
+  them does not compile until one exists. `AtPath<Op>` takes a leaf
+  operator (`op::Leaf`: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between`,
+  `Matches`), so `AtPath<Contains>` and a nested `AtPath<AtPath<_>>` do not
+  compile, and its arity, `op::Pathed<A>`, carries the leaf's (`Pathed<One>`
+  for `AtPath<Eq>`, `Pathed<Pair>` for `AtPath<Between>`); it has no
+  `op::Input` until the JSON index exists (ADR-0009, decision 1).
 - **`target_limit` says how many rows a match query should fetch.**
   `query.target_limit(want, &stats)` is `want` plus the false positives
   expected at the confidence `stats` names (99% by default), as an
