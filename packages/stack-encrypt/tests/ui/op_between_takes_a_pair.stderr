@@ -1,13 +1,13 @@
-error[E0277]: `u32` is not what a query of arity `Pair` is given
+error[E0277]: `u32` is not what a query of arity `Pair` takes
   --> tests/ui/op_between_takes_a_pair.rs:12:39
    |
 12 |     let _ = cipher.query(op::Between, &40u32).on(&age_plan);
-   |                    -----              ^^^^^^ the operator takes another shape of value
+   |                    -----              ^^^^^^ the operator takes another input
    |                    |
    |                    required by a bound introduced by this call
    |
    = help: the trait `Input<Pair>` is not implemented for `u32`
-   = note: `op::Between` takes a pair of bounds, `cipher.query(op::Between, &(lo, hi))`; every other operator takes one value
+   = note: an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes no input yet: it arrives with the JSON index
 help: the trait `Input<Pair>` is implemented for `(S, S)`
   --> src/op/mod.rs
    |
