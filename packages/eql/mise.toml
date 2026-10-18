@@ -316,6 +316,9 @@ cargo test --locked -p eql-bindings --features stack-encrypt
 cargo test --locked -p eql-bindings --features targets
 cargo test --locked -p eql-encryption-tests
 cargo clippy --locked -p eql-bindings -p eql-encryption-tests --all-features --all-targets -- -D warnings
+# The typed set alone, linted on its own: a lint that fires only without
+# `targets` (an import only the dispatch uses) is invisible to the line above.
+cargo clippy --locked -p eql-bindings --features stack-encrypt --all-targets -- -D warnings
 """
 
 [tasks."test:encryption:postgres"]
@@ -345,12 +348,13 @@ done
 """
 
 [tasks."check:encryption:wasi"]
-description = "Compile eql-bindings with the targets feature for wasm32-wasip1 (no HTTP), as the Go guest builds it"
+description = "Compile eql-bindings for wasm32-wasip1 (no HTTP): the typed stack-encrypt set alone, and with the targets feature as the Go guest builds it"
 dir = "{{config_root}}"
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
 rustup target add wasm32-wasip1
+cargo check --locked -p eql-bindings --features stack-encrypt --target wasm32-wasip1
 cargo check --locked -p eql-bindings --features targets --target wasm32-wasip1
 """
 
