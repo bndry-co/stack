@@ -191,9 +191,13 @@
 // that call fails: one Client is shared by every request in a service, and
 // one request giving up never closes it for the others. A call waiting
 // for the client, which runs one call at a time, leaves the queue when its
-// context ends and never starts. A call waiting on ZeroKMS, or on its auth
-// strategy for a token, has that request cancelled; its error matches both
-// the context's error and [ErrTransport].
+// context ends and never starts. A call waiting on ZeroKMS has that request
+// cancelled; its error matches both the context's error and
+// [ErrTransport]. A call waiting on its auth strategy for a token returns
+// too, with the context's error. If the strategy is refreshing a device
+// session, the refresh finishes in the background, for up to 10 seconds:
+// the service rotates the refresh token when it answers, and dropping that
+// answer would leave the strategy unable to refresh.
 //
 // A Client closes itself, and every later call returns [ErrState], only
 // when the guest's state is unknown: the guest trapped, or a call ran on

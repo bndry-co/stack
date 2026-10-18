@@ -57,7 +57,9 @@ func RequireLockedMemory() Option {
 // A call whose context ends fails with the context's error, and only that
 // call: a request cancelled while its token is fetched or refreshed never
 // closes the profile, or the strategies and encrypt clients that read
-// tokens from it. The profile closes itself, and every later call is
+// tokens from it. A device session's refresh already sent finishes in the
+// background, for up to 10 seconds, so a rotated refresh token is never
+// lost (see refreshGrace). The profile closes itself, and every later call is
 // [ErrState], only when the guest's state is unknown: it trapped, or it
 // went on running long after its caller gave up, which is a bug.
 type ProfileStore struct {
@@ -235,7 +237,8 @@ func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]b
 //
 // The caller's context bounds the wait for the lock, as encrypt's
 // Client.call does, and the guest runs under guest.Detach, so a caller
-// that gives up cancels its token request without closing the profile.
+// that gives up never closes the profile. A refresh request runs on for
+// refreshGrace, so the guest keeps the rotated token the service sends.
 func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Arg) ([]byte, error) {
 	r := s.root
 	if err := r.mu.Acquire(ctx); err != nil {

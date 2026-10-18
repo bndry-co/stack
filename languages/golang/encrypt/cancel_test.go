@@ -150,13 +150,15 @@ func TestACallWhoseContextEndsInTheQueueNeverReachesTheGuest(t *testing.T) {
 		time.AfterFunc(200*time.Millisecond, func() { c.mu.Unlock(); close(released) })
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 		defer cancel()
-		start := time.Now()
 		err := cipherInit(ctx, c)
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("queued call: %v, want the deadline", err)
 		}
-		if waited := time.Since(start); waited > 150*time.Millisecond {
-			t.Errorf("the queued call waited %v, past its deadline, for the lock", waited)
+		// It left at its deadline, not when the lock came free.
+		select {
+		case <-released:
+			t.Error("the queued call waited past its deadline for the lock")
+		default:
 		}
 		<-released
 	})

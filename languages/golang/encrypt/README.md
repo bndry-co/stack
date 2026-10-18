@@ -123,9 +123,13 @@ request giving up never closes the shared client for the others.
 
 - A call waiting for the client (it runs one call at a time) leaves the
   queue when its `ctx` ends, and never starts.
-- A call waiting on ZeroKMS, or on its auth strategy for a token, has that
-  request cancelled. Its error matches both `context.Canceled` or
-  `context.DeadlineExceeded` and `ErrTransport`.
+- A call waiting on ZeroKMS has that request cancelled. Its error matches
+  both `context.Canceled` or `context.DeadlineExceeded` and `ErrTransport`.
+- A call waiting on its auth strategy for a token returns too, with the
+  context's error. If the strategy is refreshing a device session, the
+  refresh finishes in the background, for up to 10 seconds. The service
+  rotates the refresh token when it answers, and dropping that answer
+  would leave the strategy unable to refresh.
 
 A client closes itself, and every later call returns `ErrState`, only when
 the guest's state is unknown: the guest trapped, or a call ran on for 30
