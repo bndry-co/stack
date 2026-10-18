@@ -95,6 +95,9 @@ pub mod ops;
 pub mod options;
 pub mod response;
 pub mod status;
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod support;
 pub mod targets;
 #[cfg(test)]
 mod test_frame;
