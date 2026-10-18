@@ -1405,7 +1405,11 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
 /// A passthrough field comes back exactly as the store holds it, beside the
 /// decrypted fields in the same map. It is not authenticated: anyone who can
 /// write to the store can change it, and `decrypt` does not detect the
-/// change. Only the fields a plan seals (`"c"`) are checked.
+/// change. The fields a plan seals (`"c"`) are checked, and so, in effect, is
+/// a plan's [context field](Plan::with_context_field), although it too is
+/// stored as a passthrough: every other field was sealed under it, so a
+/// changed context field either fails [`Error::ContextMismatch`](crate::Error::ContextMismatch)
+/// against `expected` or leaves the sealed fields unable to open.
 ///
 /// `expected` is the context the caller expects, for a plan with a
 /// [context field](Plan::with_context_field): the chain's
