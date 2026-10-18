@@ -30,6 +30,10 @@ pub mod inventory;
 /// (`public.eql_v4_json`, the `Json` struct).
 pub mod json;
 pub mod numeric;
+// The Rust plaintexts of the `date`, `timestamp` and `numeric` families. A
+// plain comment: an outer doc comment here would resolve the module's own
+// links from this scope.
+pub mod plaintext;
 pub mod real;
 pub mod smallint;
 /// Generated: the table of EQL types a Stack Encrypt data plan may name as

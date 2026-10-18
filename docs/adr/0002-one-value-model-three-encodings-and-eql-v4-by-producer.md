@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-10-08
-revised: 2026-10-12, amended 2026-10-18
+revised: 2026-10-12, amended 2026-10-18 and 2026-10-19
 relates-to: ADR-0001; stack-encrypt ADR-0003, ADR-0007
 ---
 
@@ -30,6 +30,10 @@ relates-to: ADR-0001; stack-encrypt ADR-0003, ADR-0007
 >   design (see "Exhaustive handling of kinds").
 >
 > The bullets below that this changes say so where they stand.
+>
+> **Amended 2026-10-19.** A timestamp's microsecond resolution truncates
+> rather than rounding half to even, as vitaminc does for both the equality
+> and the order term. The reason, and the rule, are under "Lossy transforms".
 
 Every value Stack Encrypt handles is encoded three times: as a **ciphertext**
 (reversible and self-describing), as an **equality term** (a keyed hash that
@@ -194,13 +198,22 @@ domain: timestamp resolution, text folding and prefix truncation. Each
 transform and its version is named in the domain label, for example
 `…/timestamp/day/v1`. The ones defined now:
 
-- **Timestamp resolution**: exact, microsecond or day. Microsecond rounds to
-  the nearest microsecond, ties to even, on the signed microsecond count
+- **Timestamp resolution**: exact, microsecond or day. ~~Microsecond rounds
+  to the nearest microsecond, ties to even, on the signed microsecond count
   since the epoch. That is what Postgres does when it parses a timestamp with
   more digits than it keeps (`.1234565` becomes `.123456` and `.1234575`
-  becomes `.123458`, before and after 1970; checked on Postgres 17.5). A
-  value that already has microsecond precision is unchanged. Day takes the
-  UTC calendar day.
+  becomes `.123458`, before and after 1970; checked on Postgres 17.5).~~
+  *Amended 2026-10-19:* microsecond truncates: the nanoseconds below the
+  microsecond are dropped, never rounded, which is floor on the signed count
+  since the epoch (`.1234567` becomes `.123456`, and before 1970 an instant
+  moves earlier). vitaminc applies this rule to the equality term and to the
+  order term alike (vitaminc-ore's timestamp domain is
+  `vitaminc/ore/value/timestamp-micros/v1`, and both terms normalise through
+  `vitaminc_normalize::timestamp`), so `=` and the order agree on which
+  instants are one. Matching PostgreSQL's parse-time rounding is not a goal:
+  timestamps are stored in many places besides PostgreSQL, and a term must
+  mean the same thing whichever store holds it. A value that already has
+  microsecond precision is unchanged. Day takes the UTC calendar day.
 - **Text fold, v1**: NFD, then full Unicode case folding (`CaseFolding.txt`
   statuses C and F, so `ß` becomes `ss`), then NFD again, then removal of
   every accent, then NFC. An accent is a mark (General_Category `Mn`, `Mc`

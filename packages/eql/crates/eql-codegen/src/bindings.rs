@@ -336,8 +336,9 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
 /// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
 /// `stack-encrypt` derives: the storage and equality domains of every family
 /// whose plaintext eql-bindings names (`plaintext_of`), the OPE-ordered
-/// domains (`ord`, `ord_ope`) of the families listed, and text match. Every
-/// other stored domain has a reason in [`encryption_gap`], and a test holds the two together so a new domain
+/// domains (`ord`, `ord_ope`) of those whose order terms the engine derives,
+/// and text match. Every other stored domain has a reason in
+/// [`encryption_gap`], and a test holds the two together so a new domain
 /// cannot arrive without either a derive or a reason.
 pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("integer", ""),
@@ -352,6 +353,12 @@ pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("bigint", "eq"),
     ("bigint", "ord"),
     ("bigint", "ord_ope"),
+    ("date", ""),
+    ("date", "eq"),
+    ("timestamp", ""),
+    ("timestamp", "eq"),
+    ("numeric", ""),
+    ("numeric", "eq"),
     ("text", ""),
     ("text", "eq"),
     ("text", "match"),
@@ -368,6 +375,11 @@ pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("double", "ord_ope"),
 ];
 
+/// The families whose plaintext is a vitaminc logical type (a date, a
+/// timestamp, a decimal) rather than a physical one. Their equality terms
+/// are derived; their order terms are not (`encryption_gap`).
+const ORDER_PENDING_FAMILIES: &[&str] = &["date", "timestamp", "numeric"];
+
 /// Why no `eql_v3` struct derives Stack Encrypt's traits.
 pub const V3_ENCRYPTION_GAP: &str =
     "Stack Encrypt produces EQL v4 only: its output is not byte-for-byte compatible with \
@@ -376,7 +388,9 @@ pub const V3_ENCRYPTION_GAP: &str =
 /// The plaintext a family's v4 domains are produced from: the vitaminc
 /// `ValueKind` name a plan field's `"type"` key spells, and the Rust type the
 /// derive and the by-name dispatch name. `None` for a family eql-bindings
-/// names no Rust plaintext type for yet.
+/// names no Rust plaintext type for yet. A date, a timestamp and a decimal
+/// are eql-bindings' own types (`v4::plaintext`), which can be wiped where
+/// chrono's and rust_decimal's cannot.
 pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
     Some(match family {
         "text" => ("string", "String"),
@@ -386,6 +400,9 @@ pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
         "boolean" => ("bool", "bool"),
         "real" => ("float32", "f32"),
         "double" => ("float64", "f64"),
+        "date" => ("date", "crate::v4::plaintext::Date"),
+        "timestamp" => ("timestamp", "crate::v4::plaintext::Timestamp"),
+        "numeric" => ("decimal", "crate::v4::plaintext::Decimal"),
         _ => return None,
     })
 }
@@ -412,8 +429,15 @@ pub fn encryption_gap(
          becomes one sealed leaf is not decided"
     } else if plaintext_of(family.name).is_none() {
         "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK \
-         carry the kind, and which Rust type a date, timestamp or decimal is produced from is \
-         not decided (#1130)"
+         carry the kind"
+    } else if ORDER_PENDING_FAMILIES.contains(&family.name)
+        && (domain.terms.contains(&Term::Ope) || domain.terms.contains(&Term::Ore))
+    {
+        // Before the ORE branch: the engine derives no order term of either
+        // scheme for these kinds, so block ORE is not the first thing a
+        // `*OrdOre` type of these families waits for.
+        "the engine derives no order term for a date, timestamp or decimal yet: how they are \
+         ordered is not decided (#1236)"
     } else if domain.terms.contains(&Term::Ore) {
         "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"
     } else if domain.terms.contains(&Term::Bloom) && domain.terms.contains(&Term::Ope) {
@@ -1742,6 +1766,8 @@ mod tests {
                         "tree of leaves"
                     } else if plaintext_of(family.name).is_none() {
                         "no Rust plaintext type for this family"
+                    } else if ORDER_PENDING_FAMILIES.contains(&family.name) {
+                        "no order term for a date, timestamp or decimal"
                     } else if domain.terms.contains(&Term::Ore) {
                         "block ORE terms"
                     } else if domain.terms.contains(&Term::Bloom)

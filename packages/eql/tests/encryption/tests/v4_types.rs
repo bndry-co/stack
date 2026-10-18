@@ -14,7 +14,7 @@ mod common;
 use eql_bindings::encryption::targets::{self as targets, TargetError};
 use eql_bindings::encryption::{CiphertextVisitor, NativeCiphertextVisitor as NativeLeaf};
 use eql_bindings::v3::terms::Ciphertext;
-use eql_bindings::v4::{bigint, boolean, double, integer, real, smallint, text};
+use eql_bindings::v4::{bigint, boolean, double, integer, plaintext, real, smallint, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
 use stack_encrypt::dynamic::{ValueFrame, ValueKind};
@@ -123,6 +123,9 @@ fn sample(kind: ValueKind) -> ValueFrame {
         ValueKind::Float32 => frame::<f32>(-0.0),
         ValueKind::Float64 => frame::<f64>(f64::NAN),
         ValueKind::String => frame("a private note"),
+        ValueKind::Date => frame(plaintext::Date::from_days_since_epoch(-719_162).unwrap()),
+        ValueKind::Timestamp => frame(plaintext::Timestamp::new(-1, 999_999_999).unwrap()),
+        ValueKind::Decimal => frame(plaintext::Decimal::new(-123_450, 2).unwrap()),
         other => panic!("no sample for {other:?}: add one with the type that takes it"),
     }
 }

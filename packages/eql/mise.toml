@@ -340,7 +340,7 @@ psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f release/cipherstash-encrypt-
 # `--ignored` selects by attribute, and cargo exits 0 on an empty selection, so
 # a test that loses its `#[ignore]` or is renamed would leave this task passing
 # on nothing. List what the filter selects before running it.
-for suite in text_eq v4_types v4_order; do
+for suite in text_eq v4_types v4_order v4_date_time_numeric; do
   listing=$(cargo test --locked -p eql-encryption-tests --test "$suite" -- --ignored --list | sed -n 's/: test$//p')
   [ -n "$listing" ] || { echo "error: '--ignored' selects no test in $suite; the PostgreSQL test has gone missing." >&2; exit 1; }
   cargo test --locked -p eql-encryption-tests --test "$suite" -- --ignored

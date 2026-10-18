@@ -1375,6 +1375,12 @@ fn targets_lists_what_the_build_holds() {
             "BigintEq",
             "BigintOrd",
             "BigintOrdOpe",
+            "Date",
+            "DateEq",
+            "Timestamp",
+            "TimestampEq",
+            "Numeric",
+            "NumericEq",
             "Text",
             "TextEq",
             "TextMatch",
@@ -1793,7 +1799,8 @@ fn the_catalog_lists_each_types_operators() {
                 want.extend(orderings());
                 assert_eq!(listed, want, "{name}");
             }
-            "TextEq" | "IntegerEq" | "SmallintEq" | "BigintEq" | "RealEq" | "DoubleEq" => only([
+            "TextEq" | "IntegerEq" | "SmallintEq" | "BigintEq" | "RealEq" | "DoubleEq"
+            | "DateEq" | "TimestampEq" | "NumericEq" => only([
                 ("operator", "eq"),
                 ("fidelity", "exact"),
                 ("arity", "one"),

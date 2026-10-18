@@ -414,6 +414,9 @@ mod sealed {
     impl Sealed for bool {}
     impl Sealed for f32 {}
     impl Sealed for f64 {}
+    impl Sealed for crate::v4::plaintext::Date {}
+    impl Sealed for crate::v4::plaintext::Timestamp {}
+    impl Sealed for crate::v4::plaintext::Decimal {}
 }
 
 /// A Rust plaintext an EQL type is produced from, read out of and written
@@ -494,6 +497,20 @@ scalar_plaintext!(
     f32 => Float32,
     f64 => Float64,
 );
+
+/// The date, timestamp and decimal plaintexts read exactly their own kind,
+/// and are range checked as they are read: a frame vitaminc's value model
+/// admits is always in range, so the check refuses nothing a binding can
+/// send. Each wipes itself on drop as well as inside `Zeroizing`.
+mod logical {
+    use super::*;
+    use crate::v4::plaintext::{Date, Decimal, Timestamp};
+    scalar_plaintext!(
+        Date => Date,
+        Timestamp => Timestamp,
+        Decimal => Decimal,
+    );
+}
 
 /// Run a target's own plan over one runtime value and resolve to the EQL
 /// value's JSON bytes. The generated dispatch calls this with the type and

@@ -30,6 +30,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The `date`, `timestamp` and `numeric` families say why they are still
   unproducible: the engine has their kinds, and their Rust plaintext types
   are not chosen yet.
+- **`Date`, `DateEq`, `Timestamp`, `TimestampEq`, `Numeric` and `NumericEq`
+  are producible** (`stack-encrypt` feature), from the new
+  `v4::plaintext::Date` (an `i32` of days since 1970-01-01),
+  `v4::plaintext::Timestamp` (`i64` Unix seconds and `u32` nanoseconds,
+  UTC) and `v4::plaintext::Decimal` (an `i128` mantissa and a `u8` scale).
+  Each is built range checked against vitaminc's ranges, refused with a
+  `v4::plaintext::RangeError` that does not show the value, wiped on drop
+  (`Zeroize`, `ZeroizeOnDrop`), and not `Copy`: chrono's and
+  rust_decimal's types cannot be wiped, so the by-name dispatch could not
+  hold them. The `chrono` and `rust_decimal` features add conversions to
+  and from `NaiveDate`, `DateTime<Utc>` and rust_decimal's `Decimal`; a
+  leap second is refused. `NumericEq`'s `=` normalises the scale and
+  `TimestampEq`'s compares to the microsecond, truncating (never
+  rounding) the nanoseconds below it. The ordered types of these
+  families stay unproducible, with a reason: the engine derives no order
+  term for these kinds yet (#1236).
 - **The OPE-ordered types are producible** (`stack-encrypt` feature):
   `IntegerOrd`, `IntegerOrdOpe`, `SmallintOrd`, `SmallintOrdOpe`,
   `BigintOrd`, `BigintOrdOpe`, `RealOrd`, `RealOrdOpe`, `DoubleOrd`,
