@@ -973,7 +973,7 @@ async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
         },
         "email": {
             "plaintext": "alice@example.com",
-            "query": query("TextEq", "email", FfiValue::String("alice@example.com".into())).await,
+            "query": query("TextEq", "email", frame("alice@example.com")).await,
         },
     });
     let path =
