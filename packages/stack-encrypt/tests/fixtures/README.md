@@ -193,3 +193,68 @@ runs; the frames and the terms must not. Do not edit the file by hand.
   and `…03.123456Z` finds the stored `…03.123456789Z` (a timestamp's term is
   truncated to the microsecond; the ciphertext keeps every nanosecond).
   Each `term` equals the stored field's `eq`.
+
+# Stored-rows fixture: `stored_rows_v1.json` (FROZEN)
+
+Rows the `next` build stored, which every later build must still read. The
+fixtures above prove that two authors of one record agree *today*, and are
+regenerated when the encoding moves. This one is the opposite: it is written
+once and **never regenerated or edited**. A change that alters the bytes of a
+stored row (the leaf encoding, the AAD, a term derivation, the stored tree's
+shape) fails `tests/stored_rows.rs` instead of being regenerated away.
+
+`tests/stored_rows.rs` checks every case two ways:
+
+- the stored tree opens, through `dynamic::record::decrypt`, to exactly the
+  `opened` frame; and
+- sealing `source` again under `plan` gives the same tree, apart from the
+  sealed leaves (which carry a fresh nonce): the same shape and map keys in
+  order, the same terms and the same passthroughs.
+
+Nothing reads `STACK_ENCRYPT_UPDATE_FIXTURES` for this file. The one test that
+writes it, `write_stored_rows_v1`, is `#[ignore]`d and refuses to run when the
+file exists. The rows depend on `stack_kms::DeterministicSource` and the seed
+below; both are part of the frozen contract.
+
+**If this test fails, the change broke stored data.** Do not regenerate the
+file. Either fix the change, or, for a deliberate change to the stored
+format, add `stored_rows_v2.json` (and a `write_stored_rows_v2`) beside this
+one, keep v1, and say in the CHANGELOG how v1 rows migrate.
+
+## Schema
+
+```json
+{
+  "_comment":   "what this file is",
+  "key_source": { "kind": "deterministic-sha256", "seed": "<32 bytes, hex>" },
+  "keyset_id":  "<uuid the leaves were sealed under>",
+  "cases": [
+    {
+      "name":             "<case name>",
+      "about":            "<what the case covers>",
+      "plan":             { "<field>": { "context": [...], "outputs": [...], "type": "<kind>" }, ... },
+      "source":           "<the plaintext record (or batch) as a transport frame, hex>",
+      "expected_context": "<the context decrypt is told to expect>" | null,
+      "stored":           <node>,
+      "opened":           "<the frame decrypt returned, hex>"
+    }
+  ]
+}
+```
+
+A `<node>` is one stored-tree node, an object with one key: `{"leaf": hex}`
+(a `SealedValue`'s frozen bytes), `{"seq": [<node>, ...]}`, `{"empty_seq":
+hex}`, `{"map": [[key, <node>], ...]}` (in stored order), `{"empty_map":
+hex}`, or `{"passthrough": hex}` (the payload's frame; a term is a
+passthrough of its bytes).
+
+The cases:
+
+| Case | Covers |
+| --- | --- |
+| `every_kind` | one field per value kind with every index it admits (OPE on a twin field), the non-default match options, an array and an object (with empty containers), an untyped field, a field whose key is not its label's last segment, and a passthrough |
+| `three_segment_label` | labels of three segments |
+| `one_extension_part` | every label extended by an integer part |
+| `two_extension_parts` | every label extended by an integer part, then a text part |
+| `context_field` | a plan whose context is the record's tenant field, opened expecting it |
+| `batch` | a batch of two records under one plan |

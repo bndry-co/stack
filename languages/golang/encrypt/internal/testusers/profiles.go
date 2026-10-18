@@ -2,10 +2,10 @@ package testusers
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Profile -name Profile
 
-// Profile stores one field in each EQL v4 type the engine produces besides
-// TextEq, the shape the cross-language fixtures under
-// packages/eql/tests/encryption/fixtures (v4_queries.json, v4_rows.json) are
-// derived under (table profiles).
+// Profile stores one field in each EQL v4 type the engine produces, the
+// shape the cross-language fixtures under
+// packages/eql/tests/encryption/fixtures (v4_queries.json, v4_rows.json,
+// stored_v4_rows_v1.json) are derived under (table profiles).
 type Profile struct {
 	_       struct{} `stash:"context=profiles"`
 	ID      int64    `stash:"id,passthrough"`
@@ -20,6 +20,7 @@ type Profile struct {
 	Rank    int64    `stash:"rank,encrypt_into=BigintEq"`
 	Weight  float32  `stash:"weight,encrypt_into=RealEq"`
 	Price   float64  `stash:"price,encrypt_into=DoubleEq"`
+	Email   string   `stash:"email,encrypt_into=TextEq"`
 }
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Widened -name Widened
