@@ -975,6 +975,39 @@ pnpm changeset:publish
    A skills-only change is **not** internal: `skills/` ships inside the
    `stash` tarball, so it needs a `stash` patch changeset.
 
+## Review guidelines
+
+These apply to every agent that reviews a pull request here, human-prompted
+or automated (Codex, Copilot, CodeRabbit, Claude Code's `/code-review`).
+
+### Known non-findings
+
+These are deliberate design decisions, recorded in ADRs. Do not report them
+as defects or security issues, and do not change code to "fix" them. If a
+change seems to need one reversed, say so and link the ADR.
+
+- **A sealed container's membership, order and length are not
+  authenticated.** Each leaf is bound to its context, its map key, its role
+  (single value or sequence element), its type tag and the wire version. But
+  which entries a stored map holds, and a stored sequence's order, length
+  and duplicates, are deliberately not bound: stored values are database
+  rows and columns, which come back in any order and in part. A target that
+  refuses a container's shape (a missing field, say) is a shape mismatch,
+  `Error::OpenedType`, not tampering, `Error::Aead`. Stricter authentication
+  will be opt-in, through named types. See
+  `packages/stack-encrypt/docs/adr/0010-what-a-stored-value-authenticates.md`
+  and vitaminc's ADR 0002.
+- **A passthrough field is not authenticated.** It is stored in the clear,
+  by definition, and comes back as the store holds it. A plan's context
+  field is the exception: every other field is sealed under it, so a change
+  to it is caught. Same ADR.
+- **Two leaves sealed under the same context are interchangeable between
+  rows.** Binding a value to its row is the caller's choice of context (a
+  row id or tenant in it). Same ADR.
+
+A finding that a *leaf* is not bound to its context, key, role, type or
+version is a real defect: report it.
+
 ## Useful Links
 
 - `README.md` for quickstart and feature overview
