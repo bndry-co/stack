@@ -480,12 +480,13 @@ mod the_table {
             assert_eq!(row.suffix, suffix, "{name}: suffix");
             let kind = match family.name {
                 "text" => Some(ValueKind::String),
+                "smallint" => Some(ValueKind::Int16),
                 "integer" => Some(ValueKind::Int32),
                 "bigint" => Some(ValueKind::Int64),
                 "boolean" => Some(ValueKind::Bool),
                 "real" => Some(ValueKind::Float32),
                 "double" => Some(ValueKind::Float64),
-                // The rest have no kind in the engine's value enum yet.
+                // The rest have no Rust plaintext type in eql-bindings yet.
                 _ => None,
             };
             assert_eq!(
@@ -560,10 +561,10 @@ mod the_table {
     }
 
     /// The types the engine produces in EQL v4 today: the storage and
-    /// equality domains of every family whose plaintext the engine's value
-    /// enum carries, and text match.
+    /// equality domains of every family whose plaintext eql-bindings names,
+    /// and text match.
     #[test]
-    fn the_producible_types_are_the_unordered_ones_the_value_enum_carries() {
+    fn the_producible_types_are_the_unordered_ones_with_a_rust_plaintext() {
         let producible: Vec<&str> = targets::targets()
             .iter()
             .filter(|t| t.producible)
@@ -574,6 +575,8 @@ mod the_table {
             [
                 "Integer",
                 "IntegerEq",
+                "Smallint",
+                "SmallintEq",
                 "Bigint",
                 "BigintEq",
                 "Text",
@@ -591,7 +594,7 @@ mod the_table {
             let expected = match (row.family, row.suffix) {
                 ("json", "Search") => "JSON index",
                 ("json", "") => "tree of leaves",
-                ("smallint" | "date" | "timestamp" | "numeric", _) => "no kind for this family",
+                ("date" | "timestamp" | "numeric", _) => "no Rust plaintext type for this family",
                 (_, "OrdOre" | "SearchOre") => "derives CLLW ORE (#1132)",
                 ("text", "Ord" | "OrdOpe" | "Search") => "text order terms yet (#1131)",
                 (_, "Ord" | "OrdOpe") => "order keys (#1236)",

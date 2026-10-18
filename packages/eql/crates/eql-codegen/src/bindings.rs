@@ -335,12 +335,14 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
 
 /// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
 /// `stack-encrypt` derives: the storage and equality domains of every family
-/// whose plaintext the engine's value enum carries, and text match. Every
+/// whose plaintext eql-bindings names (`plaintext_of`), and text match. Every
 /// other stored domain has a reason in [`encryption_gap`], and a test holds the two together so a new domain
 /// cannot arrive without either a derive or a reason.
 pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("integer", ""),
     ("integer", "eq"),
+    ("smallint", ""),
+    ("smallint", "eq"),
     ("bigint", ""),
     ("bigint", "eq"),
     ("text", ""),
@@ -360,11 +362,12 @@ pub const V3_ENCRYPTION_GAP: &str =
 
 /// The plaintext a family's v4 domains are produced from: the vitaminc
 /// `ValueKind` name a plan field's `"type"` key spells, and the Rust type the
-/// derive and the by-name dispatch name. `None` for a family the engine's
-/// value enum has no kind for.
+/// derive and the by-name dispatch name. `None` for a family eql-bindings
+/// names no Rust plaintext type for yet.
 pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
     Some(match family {
         "text" => ("string", "String"),
+        "smallint" => ("int16", "i16"),
         "integer" => ("int32", "i32"),
         "bigint" => ("int64", "i64"),
         "boolean" => ("bool", "bool"),
@@ -395,8 +398,9 @@ pub fn encryption_gap(
         "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document \
          becomes one sealed leaf is not decided"
     } else if plaintext_of(family.name).is_none() {
-        "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 \
-         specifies the kind and its encodings (ADR-0002, #1144)"
+        "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK \
+         carry the kind, and which Rust type a date, timestamp or decimal is produced from is \
+         not decided (#1130)"
     } else if domain.terms.contains(&Term::Ore) {
         "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"
     } else if domain.terms.contains(&Term::Ope) && family.name == "text" {
@@ -1718,7 +1722,7 @@ mod tests {
                     } else if family.name == "json" {
                         "tree of leaves"
                     } else if plaintext_of(family.name).is_none() {
-                        "no kind for this family"
+                        "no Rust plaintext type for this family"
                     } else if domain.terms.contains(&Term::Ore) {
                         "block ORE terms"
                     } else if domain.terms.contains(&Term::Ope) {

@@ -1372,6 +1372,8 @@ fn targets_lists_what_the_build_holds() {
         [
             "Integer",
             "IntegerEq",
+            "Smallint",
+            "SmallintEq",
             "Bigint",
             "BigintEq",
             "Text",
@@ -1776,7 +1778,7 @@ fn the_catalog_lists_each_types_operators() {
             assert_eq!(op, want, "{name}");
         };
         match name.as_str() {
-            "TextEq" | "IntegerEq" | "BigintEq" | "RealEq" | "DoubleEq" => only([
+            "TextEq" | "IntegerEq" | "SmallintEq" | "BigintEq" | "RealEq" | "DoubleEq" => only([
                 ("operator", "eq"),
                 ("fidelity", "exact"),
                 ("arity", "one"),

@@ -70,6 +70,10 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `float32` or `float64` field tagged `encrypt_into=` one of them gets `Eq`.
   `=` compares as PostgreSQL compares the plain types: an integer has one
   term whatever its width, and for floats `-0.0 = 0.0` and `NaN = NaN`.
+- **`Smallint` and `SmallintEq`**: an `int16` field (or any Go integer
+  type, range checked as for `Integer`) tagged `encrypt_into=` one of them
+  seals at 16 bits; `SmallintEq` gets `Eq`, with the same equality term as
+  an integer of the same value under the same column.
 - **stashgen notices an index no generated method queries**: an `ore` or
   `ope` index on text, bytes or a float (the engine answers the orderings
   over integers only), or the second of two order indexes on an integer.

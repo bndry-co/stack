@@ -408,6 +408,7 @@ pub(crate) fn refuse(name: &str) -> TargetError {
 mod sealed {
     pub trait Sealed {}
     impl Sealed for String {}
+    impl Sealed for i16 {}
     impl Sealed for i32 {}
     impl Sealed for i64 {}
     impl Sealed for bool {}
@@ -486,6 +487,7 @@ macro_rules! scalar_plaintext {
     )+};
 }
 scalar_plaintext!(
+    i16 => Int16,
     i32 => Int32,
     i64 => Int64,
     bool => Bool,
