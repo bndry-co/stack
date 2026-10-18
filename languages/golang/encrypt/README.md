@@ -236,14 +236,14 @@ or a type defined over one (`type Email string`):
 | `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` | the same |
 | `int8`, `uint8` (`byte`) | an 8-bit integer | `equality` | `Eq` |
 | `encrypt.Int128`, `encrypt.Uint128` | a 128-bit integer | `equality`, `ore`, `ope` | the same |
-| `float32`, `float64` | a float of its width | `equality`, `ore`, `ope` | `Eq` |
+| `float32`, `float64` | a float of its width | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
 | `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` | `Eq` |
 | `encrypt.Date` | a calendar date | `equality` | `Eq` |
 | `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
 
 Each query method needs its index declared. An `ore` or `ope` index on bytes
-or a float stores its term, but the engine answers no ordering through it
-yet, so such a field has no `Lt` (see [Queries](#queries)).
+stores its term, but the engine answers no ordering through it, so such a
+field has no `Lt` (see [Queries](#queries)).
 
 `encrypt.Date`, `Int128`, `Uint128` and `Decimal` are vitaminc's `vcvalue`
 types; build them with `encrypt.DateOf`, `ParseInt128`, `ParseUint128` and
@@ -261,8 +261,8 @@ a few known rows resolve to the values, as a `bool`'s would say which rows
 are true. Equality follows vitaminc's normalisation: an
 integer equals itself at every width, decimals compare at any scale
 (`1.50 = 1.5`), and a timestamp compares to the microsecond. An order index on
-a decimal, date or timestamp is refused for now: those order terms wait for
-new cllw-ore and ore-rs releases (#1236).
+a decimal, date or timestamp is refused for now: the engine derives no
+order term for those kinds yet.
 
 A `match` index stores text with no token (an empty string, separator-only
 text, or text shorter than the n-gram length of 3 characters) as the empty
@@ -320,7 +320,12 @@ range matches nothing. So `Between("b", "A")` matches nothing, since `A`
 folds to `a`, below `b`. Text holding a code point Unicode 16 does not assign has no
 fold, and its query or write is refused with `encrypt.ErrTerm`.
 
-An order index on bytes or a float stores its term but answers no ordering
+Floats order as PostgreSQL's `float8` does (ADR-0002): `-0.0` and `0.0` are
+one value, and every NaN is one value, above `+Inf`, so `Between(math.NaN(),
+math.Inf(1))` matches nothing. A `float32` orders as the `float64` it
+widens to.
+
+An order index on bytes stores its term but answers no ordering
 operator, so such a field has no `Lt`; nor does the `ope` index of a field
 that declares `ore` too, since `ore` answers the orderings. stashgen prints a notice for each such index, on stderr and in
 the generated file: the terms are stored, and only your own code can compare

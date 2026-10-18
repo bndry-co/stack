@@ -104,9 +104,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The ordering operators, and `Between` as one term.** `op::Lt`, `Lte`,
   `Gt` and `Gte` take one value and `op::Between` a pair of bounds,
   `cipher.query(op::Between, &(18, 65)).on(&age_plan)`, inclusive at both
-  ends. They are answered over the integer types and text (`op::Ordered`)
-  by the `Ore` index by default and by `Ope` through `.via(Ope)`; an
-  ordering on bytes or a float does not compile. A comparison's query term is the index's own term
+  ends. They are answered over the integer types, the floats and text
+  (`op::Ordered`) by the `Ore` index by default and by `Ope` through
+  `.via(Ope)`; an ordering on bytes does not compile. A comparison's query term is the index's own term
   for the value (`OreTerm`, `OpeTerm`); a range's is one `sem::RangeQuery`
   carrying both bounds' terms, read with `lo()` and `hi()`, so no statement
   can pair the low bound of one query with the high bound of another. A
@@ -307,6 +307,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   equality alone, and the frozen `stored_rows_v1.json` loses its four
   8-bit order terms under the order-term exception; every other stored
   byte is as it was.
+- **Floats are ordered.** An `f32` or `f64` is encoded at the `F64`
+  target, whose encoding folds `-0.0` into `0.0` and every NaN into one
+  value above `+Infinity`: Postgres's `float8` order. So the ordering
+  operators are answered over `f32` and `f64` (`op::Ordered`) and over a
+  data plan's `float32` and `float64` fields, which they were not. An `f32`
+  is ordered as the `f64` it widens to: vitaminc widens it exactly, so an
+  `f32` and its `f64` are one term. Float order terms change bytes with
+  every other order term (above).
 
 - **A binding's control data is read from its frame with serde, not
   decoded into an `FfiValue`** (`dynamic` feature). Each message is a typed

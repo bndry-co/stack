@@ -92,9 +92,14 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`. Text orders by its
   folded form (ADR-0002: case and accents folded, under Unicode 16), so
   `Café` and `cafe` tie and `alice` orders before `Zoe`.
+- **Ordering methods on floats.** A `float32` or `float64` field with
+  `index=ore` or `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`.
+  Floats order as PostgreSQL's `float8` does (ADR-0002): `-0.0` ties `0.0`,
+  and every NaN is one value, above `+Inf`. A `float32` orders as the
+  `float64` it widens to.
 - **stashgen notices an index no generated method queries**: an `ore` or
-  `ope` index on bytes or a float (the engine answers the orderings over
-  integers and text only), or the second of two order indexes on a field.
+  `ope` index on bytes (the engine answers the orderings over integers,
+  floats and text only), or the second of two order indexes on a field.
   The index is still stored; the notice is on stderr and in the file.
 
 ### Changed
