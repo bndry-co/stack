@@ -6240,8 +6240,13 @@ mod tests {
                 let mut age = map(node(&mut fields, "age"));
                 let as_string: Result<String, _> =
                     cipher.decrypt(node(&mut age, "c"), age_label.clone()).await;
+                // The leaf authenticates, so a reader of another kind is
+                // told the type, not that the leaf was tampered with.
                 assert!(
-                    matches!(as_string, Err(crate::Error::Aead)),
+                    matches!(
+                        as_string,
+                        Err(crate::Error::OpenedType { expected: "string" })
+                    ),
                     "a uint32 leaf is not text, type {ty:?}: {as_string:?}"
                 );
             }

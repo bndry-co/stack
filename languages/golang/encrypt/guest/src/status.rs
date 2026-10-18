@@ -137,6 +137,10 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // statement about the caller's input, raised by the engine the
         // record exports run their plans through.
         stack_encrypt::Error::Plan(_) => STATUS_ENCODING,
+        // A ciphertext that authenticated but holds another type than the
+        // one it was opened as: sealed as that type, not tampered with, so
+        // the caller's input and not STATUS_AUTH.
+        stack_encrypt::Error::OpenedType { .. } => STATUS_ENCODING,
         _ => STATUS_INTERNAL,
     }
 }
@@ -282,6 +286,10 @@ mod tests {
     #[test]
     fn aead_and_composition_errors_map_to_the_vitaminc_codes() {
         assert_eq!(status_for_error(&stack_encrypt::Error::Aead), STATUS_AUTH);
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::OpenedType { expected: "i32" }),
+            STATUS_ENCODING
+        );
         assert_eq!(
             status_for_error(&stack_encrypt::Error::DescriptorTooLong { len: 513 }),
             STATUS_ENCODING

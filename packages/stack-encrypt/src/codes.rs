@@ -48,6 +48,7 @@ mod tests {
         errors.extend(boxed(variants![
             Error::Kms(_) => Error::Kms(crate::kms::Error::Unexpected("kms".into())),
             Error::Aead => Error::Aead,
+            Error::OpenedType { .. } => Error::OpenedType { expected: "i32" },
             Error::KeyCountMismatch { .. } => Error::KeyCountMismatch {
                 expected: 2,
                 received: 1,
@@ -377,6 +378,10 @@ mod tests {
                 json!({ "left": a.to_string(), "right": b.to_string() }),
             ),
             (Box::new(Error::Aead), json!({})),
+            (
+                Box::new(Error::OpenedType { expected: "i32" }),
+                json!({ "expected": "i32" }),
+            ),
             (
                 Box::new(LeafBytesError::UnknownVersion(9)),
                 json!({ "version": 9 }),
