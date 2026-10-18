@@ -184,6 +184,23 @@
 // memory until the garbage collector reclaims it; a MatchQuery never prints
 // it.
 //
+// # Cancellation
+//
+// Every call takes a [context.Context], and a call whose context is
+// cancelled or passes its deadline fails with that context's error. Only
+// that call fails: one Client is shared by every request in a service, and
+// one request giving up never closes it for the others. A call waiting
+// for the client, which runs one call at a time, leaves the queue when its
+// context ends and never starts. A call waiting on ZeroKMS, or on its auth
+// strategy for a token, has that request cancelled; its error matches both
+// the context's error and [ErrTransport].
+//
+// A Client closes itself, and every later call returns [ErrState], only
+// when the guest's state is unknown: the guest trapped, or a call ran on
+// for 30 seconds after its context ended, which means a bug, not a caller
+// that gave up. A service that sees ErrState from a client it did not
+// close builds a new one.
+//
 // # Transport and auth
 //
 // The guest imports exactly two host functions: an HTTP send, served by any
@@ -216,7 +233,8 @@
 //
 // The generator and the compiler find a mistake in a declaration, so no call
 // returns an error for one. A call returns an error for a key, for the
-// network, or for stored data: [ErrForeignKeyset] when a *Cipher is given a
+// network, or for stored data, or because its context ended (see
+// Cancellation): [ErrForeignKeyset] when a *Cipher is given a
 // record another keyset sealed, [ErrAuthentication] or [ErrForbidden] for a
 // ciphertext that does not open under its field's context, [ErrEncoding] for
 // a stored value that does not fit its declaration. Read the kind with

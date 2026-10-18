@@ -39,6 +39,13 @@
 // [OAuth2TokenSource] adapts an existing golang.org/x/oauth2.TokenSource
 // into the OIDC provider interface.
 //
+// A call whose context ends, [Strategy.Token] included, fails with the
+// context's error and leaves the store and its strategies open: a request
+// cancelled while its token is exchanged or refreshed does not stop the
+// encrypt clients that read tokens from the same store. The store closes
+// itself, and every later call is [ErrState], only when its guest traps or
+// a call runs on for 30 seconds after its context ended.
+//
 // # Why a second guest
 //
 // The crypto guest behind encrypt has no filesystem and no

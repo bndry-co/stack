@@ -124,7 +124,8 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte("request buffer out of range"))
 	}
 	requestBody := newAuthRequestBody(body)
-	req, err := http.NewRequestWithContext(ctx, string(method), string(url), requestBody)
+	// The caller's context, not the call's: see guest.Detach.
+	req, err := http.NewRequestWithContext(guest.Caller(ctx), string(method), string(url), requestBody)
 	if err != nil {
 		_ = requestBody.Close()
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte(err.Error()))
@@ -174,7 +175,7 @@ func (t *authTransport) oidcTokenGet(ctx context.Context, m api.Module, provider
 	if source == nil {
 		return 1
 	}
-	token, err := source.Token(ctx)
+	token, err := source.Token(guest.Caller(ctx))
 	if err != nil || token == "" || strings.ContainsAny(token, "\r\n\x00") {
 		return 1
 	}

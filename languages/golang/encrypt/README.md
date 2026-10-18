@@ -117,6 +117,21 @@ ZeroKMS round trip `NewClient` makes. It has nothing to do with an
 *encryption* context, which is what a field is sealed under; that is the
 `context=` tag.
 
+Every call takes a `ctx` too, and a call whose `ctx` is cancelled or passes
+its deadline fails with the context's error. Only that call fails: one
+request giving up never closes the shared client for the others.
+
+- A call waiting for the client (it runs one call at a time) leaves the
+  queue when its `ctx` ends, and never starts.
+- A call waiting on ZeroKMS, or on its auth strategy for a token, has that
+  request cancelled. Its error matches both `context.Canceled` or
+  `context.DeadlineExceeded` and `ErrTransport`.
+
+A client closes itself, and every later call returns `ErrState`, only when
+the guest's state is unknown: the guest trapped, or a call ran on for 30
+seconds after its `ctx` ended, which means a bug. A service that sees
+`ErrState` from a client it did not close builds a new one.
+
 Every other setting is a functional option with a default:
 
 ```go
@@ -372,7 +387,11 @@ or for stored data. Check an error two ways.
   its field's context (ZeroKMS refuses the key, or the AEAD fails).
 - `ErrEncoding`: a stored value or a call that does not fit the declaration.
 - `ErrUnauthorized`, `ErrNotFound`, `ErrTransport`, `ErrKMS`: ZeroKMS.
-- `ErrState`: a call on a closed client. `ErrMemoryLock`: see below.
+- `ErrState`: a call on a closed client: you closed it, or the guest
+  trapped or ran on long after a call's context ended (see Connect).
+  `ErrMemoryLock`: see below.
+- `context.Canceled`, `context.DeadlineExceeded`: the call's `ctx` ended.
+  The client is still open.
 
 `errors.As` with a `*Diagnostic` gives you the detail behind a failure the
 engine reports: a stable `Code` (`stack_encrypt::foreign_keyset`,

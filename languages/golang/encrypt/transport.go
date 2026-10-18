@@ -14,6 +14,8 @@ import (
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 )
 
 // transportModule is the name of the guest's one import module. Its two
@@ -117,7 +119,10 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 	// included, and a wipe racing that send would put a truncated or
 	// zeroed request on the wire.
 	reqBody := newRequestBody(body)
-	req, err := http.NewRequestWithContext(ctx, string(method), string(url), reqBody)
+	// The request runs under the caller's context, not the call's: the
+	// caller's cancellation ends the request, and the guest sees a
+	// transport failure it returns through its ordinary error path.
+	req, err := http.NewRequestWithContext(guest.Caller(ctx), string(method), string(url), reqBody)
 	if err != nil {
 		_ = reqBody.Close()
 		return transportFailed, nil, []byte(err.Error())
@@ -212,7 +217,9 @@ func (b *requestBody) Close() error {
 
 // tokenGet is token_get: hand the guest the current bearer token.
 func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tokenLenOut uint32) int32 {
-	token, err := t.token.Token(ctx)
+	// The caller's context, as for a request: a token fetch or refresh the
+	// caller gave up on ends, and the client stays open.
+	token, err := t.token.Token(guest.Caller(ctx))
 	if err != nil {
 		t.tokenErr = err
 		return hostFailed

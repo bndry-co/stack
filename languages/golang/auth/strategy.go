@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"sync"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/tetratelabs/wazero/api"
@@ -58,7 +57,7 @@ type Strategy struct {
 	handle     string
 	providerID uint32
 	device     bool
-	mu         sync.Mutex
+	mu         guest.Lock
 	closed     bool
 }
 
@@ -182,7 +181,11 @@ func (s *ProfileStore) hasToken(ctx context.Context) (bool, error) {
 // Token gets the current CTS bearer credential. Device sessions read a fresh
 // token without a file lock; only a refresh call takes the cross-process lock.
 func (s *Strategy) Token(ctx context.Context) (string, error) {
-	s.mu.Lock()
+	// A request queued behind another's refresh leaves when its context
+	// ends, as at the profile's own lock.
+	if err := s.mu.Acquire(ctx); err != nil {
+		return "", err
+	}
 	defer s.mu.Unlock()
 	if s.closed {
 		return "", ErrState

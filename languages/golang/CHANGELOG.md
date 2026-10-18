@@ -77,6 +77,16 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Changed
 
+- **A call whose context ends fails on its own and leaves the client
+  open.** A cancelled or timed-out call used to close the `encrypt.Client`,
+  or the `auth` profile behind its strategy, for every later caller, and a
+  request whose deadline passed while it waited for the client closed it
+  before running. Now a call waiting for the client leaves the queue with
+  the context's error; a ZeroKMS request or a token fetch in flight is
+  cancelled, and the error matches both the context's error and
+  `ErrTransport`; and the client stays open. A client or profile still
+  closes itself (`ErrState`) when the guest traps, or when a call runs on
+  for 30 seconds after its context ended.
 - **stashgen refuses a match index on an index-only field**
   (`stash:"name,index=match"` with no `encrypt`). A match query's rows are
   checked by decrypting them, and such a field stores no ciphertext.

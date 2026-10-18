@@ -19,7 +19,7 @@ var (
 	// it.
 	ErrEncoding = errors.New("cipherstash: malformed input")
 	// ErrState is a call on something that has been closed: a client, a
-	// store, or an instance an interrupted call took down.
+	// store, or an instance a trap or a stuck call took down.
 	ErrState = errors.New("cipherstash: closed")
 	// ErrInternal is a guest panic or any other unexpected guest failure.
 	ErrInternal = errors.New("cipherstash: internal guest failure")
