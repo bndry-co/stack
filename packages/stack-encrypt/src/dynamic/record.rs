@@ -1327,9 +1327,8 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{record, FfiValue, Scope, ValueFrame};
+/// use stack_encrypt::dynamic::{record, Scope, ValueFrame};
 /// use stack_encrypt::StackCipher;
-/// use vitaminc_protected::Controlled;
 /// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -1344,9 +1343,10 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "eq"], "type": "uint32" },
 /// }))?)?;
 ///
-/// // The row as a binding hands it over: one transport frame.
-/// let row = FfiValue::Object(vec![("age".to_string(), FfiValue::UInt32(34))]);
-/// let frame = ValueFrame::from_bytes(row.to_frame()?.risky_ref())?;
+/// // The row as a binding hands it over: one transport frame. Here a Rust
+/// // map writes it; a binding's codec writes the same bytes.
+/// let row = std::collections::BTreeMap::from([("age", 34u32)]);
+/// let frame = ValueFrame::of(&row)?;
 /// let sealed = record::encrypt(&keyset, &frame, &plan)?.await?;
 ///
 /// // Only the ciphertext comes back, as the record's frame; the term is

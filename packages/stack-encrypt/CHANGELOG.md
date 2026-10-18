@@ -214,7 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a decrypt target that writes what it opens straight into a frame
   (`Decrypt`). The plaintext paths walk frames:
   - `record::encrypt`, `encrypt_with` and `check_source` take the source as
-    any `Encrypt` (a `ValueFrame`, a `vitaminc_aead::Frame`, or an `FfiValue`
+    any `Encrypt` (a `ValueFrame`, a `vitaminc_aead::Frame`, or a Rust value
     a test spells), walk it once and write each field's value into a
     `ValueFrame` of its own, which is all the engine keeps of it. A value
     refused while the source is split names its field, with the reasons it
@@ -246,8 +246,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `TargetResolver::encrypt` and `query` take a `ValueFrame`, and
     `decrypt` resolves to one.
 
-  `FfiValue` stays for now, in the control data not yet read with serde
-  (see the next entry).
+  `FfiValue` is gone (see the entry after next).
   Ciphertexts, terms and the cross-language fixtures are byte for byte what
   they were. The Go guest decodes plaintext as `ValueFrame`s and returns an
   opened record's frame as it is. Copies of an opened string that remain in
@@ -287,6 +286,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `QueryTerm`, `TargetDescriptor` and `IndexSpec` replace their
     `to_value`, `OperatorEntry::new` replaces `operator_to_value`, and
     `Limit::rows` replaces `limit_to_value` (`None` writes null).
+
+- **`dynamic::FfiValue` is removed** (`dynamic` feature, #1252). Nothing
+  takes a value tree any more: a plaintext is a `ValueFrame`, and control
+  data is read from its frame by serde (above). Gone with it are
+  `Utf8String`, the tree's sink types (`ValueSink`, `ValueSeq`, `ValueMap`,
+  `Put`, `Root`, `Element`, `Entry`), `ValueKind::holds` and
+  `FfiValue::kind`. `ValueKind` and `ParseValueKindError` are unchanged and
+  still exported from `dynamic`, as is `FromFrameError`, now the error of
+  `ValueFrame::from_bytes` and `ValueFrame::check` alone. A value a test or
+  a caller spelled as an `FfiValue` is a Rust value instead
+  (`ValueFrame::of(34u32)`, `ValueFrame::of(&map)`), or the frame bytes a
+  binding sends. Stored records, terms and the frozen fixtures are byte for
+  byte what they were.
 
 - **A match value with no tokens is stored as the empty filter, so
   `KeysetCipher::match_terms` is no longer a query.** In 0.2.0 the same call

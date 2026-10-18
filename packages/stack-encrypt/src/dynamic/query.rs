@@ -699,7 +699,7 @@ pub fn check_query(
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{query_term, record, FfiValue, NoTargets, OpSpec, Operand};
+/// use stack_encrypt::dynamic::{query_term, record, NoTargets, OpSpec, Operand};
 /// use stack_encrypt::kms::FakeDataKeySource;
 /// use stack_encrypt::{op, Ore, Plan, StackCipher};
 ///
@@ -710,7 +710,7 @@ pub fn check_query(
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint32" },
 /// }))?)?;
 ///
-/// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, FfiValue::UInt32(40), &NoTargets)?.await?;
+/// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, 40u32, &NoTargets)?.await?;
 ///
 /// // The typed path's term for the same query.
 /// let typed_plan = Plan::context("users/age").with::<u32, _>(Ore).build()?;

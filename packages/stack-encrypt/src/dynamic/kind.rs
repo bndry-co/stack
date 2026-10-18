@@ -8,9 +8,8 @@
 //!
 //! The vocabulary is [`ValueKind`], whose
 //! [`name`](ValueKind::name)s (`"uint64"`, `"string"`, …, `"array"`,
-//! `"object"`) are frozen wire format, and whose
-//! [`holds`](ValueKind::holds), [`FfiValue::kind`](super::FfiValue::kind) and
-//! [`ValueFrame::kind`] say whether a value is of a kind. Beside it, this module adds two rules:
+//! `"object"`) are frozen wire format; [`ValueFrame::kind`] says which kind
+//! a value is. Beside it, this module adds two rules:
 //!
 //! - [`admits`]: which indexes a kind is defined for, so a plan asking for
 //!   match on an integer or equality on a boolean is refused when it is
@@ -36,11 +35,14 @@
 //! field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field). A field that only seals, or
 //! only carries its value through, may leave it out: no term derives from it.
+use std::fmt;
+use std::str::FromStr;
+
 use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw, TimeUnit};
 use vitaminc_aead::Encrypt;
 
 use super::term::OneScalar;
-use super::{ValueFrame, ValueKind};
+use super::ValueFrame;
 
 use super::{Error, Reason};
 use crate::target::IndexSpec;
@@ -175,17 +177,16 @@ fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
 /// (`query(v).using(&plan)`) is tracked in #1057.
 ///
 /// ```
-/// use stack_encrypt::dynamic::{read, FfiValue, ValueKind};
-/// use vitaminc_protected::Controlled;
+/// use stack_encrypt::dynamic::{read, ValueFrame, ValueKind};
 ///
 /// // A JavaScript number is a float; against a `uint64` field it is 34.
-/// let value = read(ValueKind::UInt64, FfiValue::Float64(34.0))?;
+/// let value = read(ValueKind::UInt64, 34.0f64)?;
 /// assert_eq!(value.kind(), Some(ValueKind::UInt64));
-/// assert_eq!(value.risky_ref(), FfiValue::UInt64(34).to_frame()?.risky_ref());
-/// assert!(read(ValueKind::UInt64, FfiValue::Float64(34.5)).is_err());
+/// assert_eq!(value.risky_ref(), ValueFrame::of(34u64)?.risky_ref());
+/// assert!(read(ValueKind::UInt64, 34.5f64).is_err());
 /// // Against an `int8` field, 34 is the 8-bit integer; 300 does not fit.
-/// assert_eq!(read(ValueKind::Int8, FfiValue::Int64(34))?.kind(), Some(ValueKind::Int8));
-/// assert!(read(ValueKind::Int8, FfiValue::Int64(300)).is_err());
+/// assert_eq!(read(ValueKind::Int8, 34i64)?.kind(), Some(ValueKind::Int8));
+/// assert!(read(ValueKind::Int8, 300i64).is_err());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
@@ -343,6 +344,147 @@ impl Number {
     }
 }
 
+/// The kind of a value: the type vocabulary a plan field declares in its
+/// `"type"` key, and what [`ValueFrame::kind`] reports.
+///
+/// `Null`, `Undefined` and `Passthrough` have no kind: each null is a type
+/// with one value, so declaring a field as one says nothing, and a
+/// passthrough is a transport choice, not a type.
+///
+/// # Names are wire format
+///
+/// [`name`](Self::name) (also its [`Display`](fmt::Display) and [`FromStr`]
+/// form) is how a binding spells a kind. The names are frozen: matched
+/// exactly, case-sensitively, and never renamed.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ValueKind {
+    /// `"bool"`.
+    Bool,
+    /// `"int8"`.
+    Int8,
+    /// `"int16"`.
+    Int16,
+    /// `"int32"`.
+    Int32,
+    /// `"int64"`.
+    Int64,
+    /// `"int128"`.
+    Int128,
+    /// `"uint8"`.
+    UInt8,
+    /// `"uint16"`.
+    UInt16,
+    /// `"uint32"`.
+    UInt32,
+    /// `"uint64"`.
+    UInt64,
+    /// `"uint128"`.
+    UInt128,
+    /// `"float32"`.
+    Float32,
+    /// `"float64"`.
+    Float64,
+    /// `"decimal"`: vitaminc's `Decimal` logical type, a mantissa and a
+    /// scale.
+    Decimal,
+    /// `"date"`: vitaminc's `Date` logical type, a calendar date with no
+    /// time or zone.
+    Date,
+    /// `"timestamp"`: vitaminc's `Timestamp` logical type, an instant in
+    /// UTC, to the nanosecond.
+    Timestamp,
+    /// `"string"`.
+    String,
+    /// `"bytes"`.
+    Bytes,
+    /// `"array"`. Says nothing about the elements' kinds.
+    Array,
+    /// `"object"`. Says nothing about the entries' kinds.
+    Object,
+}
+
+impl ValueKind {
+    /// Every kind, in declaration order.
+    pub const ALL: [ValueKind; 20] = [
+        ValueKind::Bool,
+        ValueKind::Int8,
+        ValueKind::Int16,
+        ValueKind::Int32,
+        ValueKind::Int64,
+        ValueKind::Int128,
+        ValueKind::UInt8,
+        ValueKind::UInt16,
+        ValueKind::UInt32,
+        ValueKind::UInt64,
+        ValueKind::UInt128,
+        ValueKind::Float32,
+        ValueKind::Float64,
+        ValueKind::Decimal,
+        ValueKind::Date,
+        ValueKind::Timestamp,
+        ValueKind::String,
+        ValueKind::Bytes,
+        ValueKind::Array,
+        ValueKind::Object,
+    ];
+
+    /// How a declaration spells this kind: `"bool"`, `"int8"`, `"int16"`,
+    /// `"int32"`, `"int64"`, `"int128"`, `"uint8"`, `"uint16"`, `"uint32"`,
+    /// `"uint64"`, `"uint128"`, `"float32"`, `"float64"`, `"decimal"`,
+    /// `"date"`, `"timestamp"`, `"string"`, `"bytes"`, `"array"` or
+    /// `"object"`. Frozen wire format.
+    pub const fn name(self) -> &'static str {
+        match self {
+            ValueKind::Bool => "bool",
+            ValueKind::Int8 => "int8",
+            ValueKind::Int16 => "int16",
+            ValueKind::Int32 => "int32",
+            ValueKind::Int64 => "int64",
+            ValueKind::Int128 => "int128",
+            ValueKind::UInt8 => "uint8",
+            ValueKind::UInt16 => "uint16",
+            ValueKind::UInt32 => "uint32",
+            ValueKind::UInt64 => "uint64",
+            ValueKind::UInt128 => "uint128",
+            ValueKind::Float32 => "float32",
+            ValueKind::Float64 => "float64",
+            ValueKind::Decimal => "decimal",
+            ValueKind::Date => "date",
+            ValueKind::Timestamp => "timestamp",
+            ValueKind::String => "string",
+            ValueKind::Bytes => "bytes",
+            ValueKind::Array => "array",
+            ValueKind::Object => "object",
+        }
+    }
+}
+
+impl fmt::Display for ValueKind {
+    /// Writes [`name`](Self::name).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl FromStr for ValueKind {
+    type Err = ParseValueKindError;
+
+    /// Parses a [`name`](Self::name), exactly: `"uint64"`, not `"UInt64"`,
+    /// `"u64"` or `" uint64"`. `"null"` and `"undefined"` are not kinds.
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        ValueKind::ALL
+            .into_iter()
+            .find(|kind| kind.name() == name)
+            .ok_or(ParseValueKindError)
+    }
+}
+
+/// The error from parsing a string that is not a [`ValueKind::name`].
+/// Carries no detail: the caller holds the string it tried to parse.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, thiserror::Error)]
+#[error("not a value kind")]
+pub struct ParseValueKindError;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,8 +492,44 @@ mod tests {
     use crate::sem::{MatchOptions, Tokenizer};
     use vitaminc_aead::plaintext::Raw;
 
-    // What a kind is, its name and its tags, and which values it holds are
-    // vitaminc's to test (`ValueKind`). These test the two rules this crate
+    #[test]
+    fn kind_names_parse_back_exactly() {
+        let names: Vec<&str> = ValueKind::ALL.iter().map(|kind| kind.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "bool",
+                "int8",
+                "int16",
+                "int32",
+                "int64",
+                "int128",
+                "uint8",
+                "uint16",
+                "uint32",
+                "uint64",
+                "uint128",
+                "float32",
+                "float64",
+                "decimal",
+                "date",
+                "timestamp",
+                "string",
+                "bytes",
+                "array",
+                "object"
+            ],
+            "the frozen names"
+        );
+        for kind in ValueKind::ALL {
+            assert_eq!(kind.name().parse::<ValueKind>(), Ok(kind));
+            assert_eq!(kind.to_string(), kind.name());
+        }
+        assert_eq!("UInt64".parse::<ValueKind>(), Err(ParseValueKindError));
+        assert_eq!("null".parse::<ValueKind>(), Err(ParseValueKindError));
+    }
+
+    // Beside the frozen names (above), these test the two rules this crate
     // adds over the vocabulary.
 
     /// A scalar as the engine holds it: its frame.

@@ -73,6 +73,17 @@ use crate::{Label, LabelError};
 #[derive(OpaqueDebug)]
 pub struct ValueFrame(Protected<Vec<u8>>);
 
+/// Why [`ValueFrame::from_bytes`] or [`ValueFrame::check`] refused its bytes.
+#[derive(Debug, thiserror::Error)]
+pub enum FromFrameError {
+    /// The bytes are not exactly one well-formed frame.
+    #[error(transparent)]
+    Frame(FrameError),
+    /// The frame holds a value outside the value model.
+    #[error(transparent)]
+    Value(DecodeError),
+}
+
 impl ValueFrame {
     /// The frame of any source, in the value model.
     ///
@@ -91,13 +102,13 @@ impl ValueFrame {
     ///
     /// # Errors
     ///
-    /// [`FromFrameError::Frame`](super::FromFrameError::Frame) when the
+    /// [`FromFrameError::Frame`] when the
     /// bytes are not exactly one frame, and
-    /// [`FromFrameError::Value`](super::FromFrameError::Value) as
+    /// [`FromFrameError::Value`] as
     /// [`of`](Self::of) refuses a value.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, super::FromFrameError> {
-        let frame = Frame::parse(bytes).map_err(super::FromFrameError::Frame)?;
-        Self::of(frame).map_err(super::FromFrameError::Value)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, FromFrameError> {
+        let frame = Frame::parse(bytes).map_err(FromFrameError::Frame)?;
+        Self::of(frame).map_err(FromFrameError::Value)
     }
 
     /// Check frame bytes a host handed over as [`from_bytes`](Self::from_bytes)
@@ -114,9 +125,9 @@ impl ValueFrame {
     /// # Errors
     ///
     /// As [`from_bytes`](Self::from_bytes).
-    pub fn check(bytes: &[u8]) -> Result<Frame<'_>, super::FromFrameError> {
-        let frame = Frame::parse(bytes).map_err(super::FromFrameError::Frame)?;
-        frame.visit(Check).map_err(super::FromFrameError::Value)?;
+    pub fn check(bytes: &[u8]) -> Result<Frame<'_>, FromFrameError> {
+        let frame = Frame::parse(bytes).map_err(FromFrameError::Frame)?;
+        frame.visit(Check).map_err(FromFrameError::Value)?;
         Ok(frame)
     }
 
@@ -1283,20 +1294,16 @@ mod tests {
         for refused in [hidden.risky_ref(), uuid.risky_ref()] {
             assert!(matches!(
                 ValueFrame::check(refused),
-                Err(super::super::FromFrameError::Value(DecodeError::Expected(
-                    _
-                )))
+                Err(super::FromFrameError::Value(DecodeError::Expected(_)))
             ));
             assert!(matches!(
                 ValueFrame::from_bytes(refused),
-                Err(super::super::FromFrameError::Value(DecodeError::Expected(
-                    _
-                )))
+                Err(super::FromFrameError::Value(DecodeError::Expected(_)))
             ));
         }
         assert!(matches!(
             ValueFrame::check(&[]),
-            Err(super::super::FromFrameError::Frame(_))
+            Err(super::FromFrameError::Frame(_))
         ));
     }
 
@@ -1362,15 +1369,13 @@ mod tests {
         ));
         assert!(matches!(
             ValueFrame::from_bytes(&[]),
-            Err(super::super::FromFrameError::Frame(_))
+            Err(super::FromFrameError::Frame(_))
         ));
         let uuid = vitaminc_aead::to_frame(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16])))
             .expect("frames");
         assert!(matches!(
             ValueFrame::from_bytes(uuid.risky_ref()),
-            Err(super::super::FromFrameError::Value(DecodeError::Expected(
-                _
-            )))
+            Err(super::FromFrameError::Value(DecodeError::Expected(_)))
         ));
     }
 

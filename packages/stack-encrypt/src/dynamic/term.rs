@@ -310,7 +310,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// derives for the same value under the same context:
 ///
 /// ```
-/// use stack_encrypt::dynamic::{context, term, FfiValue};
+/// use stack_encrypt::dynamic::{context, term};
 /// use stack_encrypt::target::IndexSpec;
 /// use stack_encrypt::StackCipher;
 /// use stack_encrypt::kms::FakeDataKeySource;
@@ -324,7 +324,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 ///
 /// // `["users", "age"]`, as a binding writes it.
 /// let ctx = context(&vitaminc_aead_frame::serde::to_vec(&("users", "age"))?)?;
-/// let probe = term(&keyset, &FfiValue::UInt32(34), &IndexSpec::Equality, ctx.clone()).await?;
+/// let probe = term(&keyset, &34u32, &IndexSpec::Equality, ctx.clone()).await?;
 /// let typed = keyset.equality_term(34u32, ctx).await?;
 /// assert_eq!(probe, typed.into_bytes().to_vec());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -599,9 +599,8 @@ impl<F> OneScalar<F> {
     }
 }
 
-/// Why a [`OneScalar`] walk stopped. A source that fails (an [`FfiValue`]
-/// string that is not UTF-8, which its construction rules out) is `None`,
-/// as a value with no term is.
+/// Why a [`OneScalar`] walk stopped. A source that fails, rather than
+/// describing a value, is `None`, as a value with no term is.
 pub(super) struct Refused(pub(super) Option<Error>);
 
 impl SinkError for Refused {

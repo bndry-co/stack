@@ -64,7 +64,7 @@ zerokms-protocol = "=0.12.31"
 # The transport frame and ciphertext codec, shared with vitaminc's own
 # guest — one codec, not a fork. Same vitaminc version stack-encrypt builds
 # against (see the comment in packages/stack-encrypt/Cargo.toml). A
-# different version here fails at the `FfiValue: Decrypt` bound, since the
+# different version here fails at the `ValueFrame: Decrypt` bound, since the
 # aead crate would be duplicated.
 vitaminc-aead-frame = { version = "0.6.1", features = ["serde"] }
 vitaminc-protected = "0.6.1"
