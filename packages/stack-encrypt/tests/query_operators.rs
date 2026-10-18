@@ -70,6 +70,11 @@ fn stats_cases() -> Vec<(Json, Stats)> {
     ]
 }
 
+/// A plan written as JSON, as frame bytes: what a binding sends.
+fn frame_of_json(value: &Json) -> Vec<u8> {
+    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+}
+
 fn ffi_of_json(value: &Json) -> FfiValue {
     match value {
         Json::Null => FfiValue::Null,
@@ -226,7 +231,7 @@ async fn data_term(
 async fn derived() -> Json {
     let cipher = deterministic_cipher(SEED).await;
     let keyset = cipher.default_keyset();
-    let plan = record::plan(ffi_of_json(&plan_json())).expect("the plan parses");
+    let plan = record::plan(&frame_of_json(&plan_json())).expect("the plan parses");
 
     let mut terms = Vec::new();
     for (field, operator, input) in queries() {

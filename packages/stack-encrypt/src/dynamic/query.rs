@@ -473,24 +473,18 @@ fn answers(
 /// with [`operator_to_value`].
 ///
 /// ```
-/// use stack_encrypt::dynamic::{field_operators, record, FfiValue, NoTargets, OpSpec};
+/// use stack_encrypt::dynamic::{field_operators, record, NoTargets, OpSpec};
 /// use stack_encrypt::target::IndexSpec;
 ///
-/// let text = |s: &str| FfiValue::String(s.into());
-/// let plan = record::plan(FfiValue::Object(vec![(
-///     "age".into(),
-///     FfiValue::Object(vec![
-///         ("context".into(), FfiValue::Array(vec![text("users"), text("age")])),
-///         ("outputs".into(), FfiValue::Array(vec![text("c"), text("eq"), text("ore")])),
-///         ("type".into(), text("uint32")),
-///     ]),
-/// )]))?;
+/// let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+///     "age": { "context": ["users", "age"], "outputs": ["c", "eq", "ore"], "type": "uint32" },
+/// }))?)?;
 ///
 /// let operators = field_operators(&plan, "age", &NoTargets)?;
 /// assert_eq!(operators[0], (OpSpec::Eq, IndexSpec::Equality));
 /// assert_eq!(operators[1], (OpSpec::Lt, IndexSpec::Ore));
 /// assert_eq!(operators.len(), 6, "eq, the four comparisons and between");
-/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Errors
@@ -699,15 +693,9 @@ pub fn check_query(
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 /// let keyset = cipher.default_keyset();
-/// let text = |s: &str| FfiValue::String(s.into());
-/// let plan = record::plan(FfiValue::Object(vec![(
-///     "age".into(),
-///     FfiValue::Object(vec![
-///         ("context".into(), FfiValue::Array(vec![text("users"), text("age")])),
-///         ("outputs".into(), FfiValue::Array(vec![text("c"), text("ore")])),
-///         ("type".into(), text("uint32")),
-///     ]),
-/// )]))?;
+/// let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+///     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint32" },
+/// }))?)?;
 ///
 /// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, FfiValue::UInt32(40), &NoTargets)?.await?;
 ///
@@ -1020,6 +1008,7 @@ pub fn limit_to_value(limit: Limit) -> FfiValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dynamic::test_frame::frame_of;
 
     /// Statistics as a binding sends them.
     fn stats_frame(value: &FfiValue) -> Result<Stats, Error> {
@@ -1071,14 +1060,14 @@ mod tests {
             "match".into(),
             FfiValue::Object(vec![("downcase".into(), FfiValue::Bool(false))]),
         )]);
-        record::plan(FfiValue::Object(vec![
+        record::plan(&frame_of(&FfiValue::Object(vec![
             field("email", "string", vec![text("c"), text("eq")]),
             field("name", "string", vec![text("c"), text("match")]),
             field("age", "uint32", vec![text("c"), text("ope"), text("ore")]),
             field("score", "int64", vec![text("ope")]),
             field("nickname", "string", vec![text("c"), text("ore")]),
             field("handle", "string", vec![text("c"), case_sensitive]),
-        ]))
+        ])))
         .expect("the plan parses")
     }
 
@@ -1471,11 +1460,11 @@ mod tests {
                 ]),
             )
         };
-        let plan = record::plan(FfiValue::Object(vec![
+        let plan = record::plan(&frame_of(&FfiValue::Object(vec![
             ("context_field".into(), text("tenant")),
             one("tenant", "string", "passthrough"),
             one("email", "string", "eq"),
-        ]))
+        ])))
         .unwrap();
         let error = query_term(&keyset, &plan, "email", OpSpec::Eq, text("a"), &NoTargets)
             .map(drop)
@@ -1872,13 +1861,13 @@ mod tests {
         use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = record::plan(FfiValue::Object(vec![
+        let plan = record::plan(&frame_of(&FfiValue::Object(vec![
             field("tiny", "int8", vec![text("c"), text("ore")]),
             field("huge", "int128", vec![text("c"), text("ope")]),
             field("day", "date", vec![text("c"), text("eq")]),
             field("at", "timestamp", vec![text("c"), text("eq")]),
             field("price", "decimal", vec![text("c"), text("eq")]),
-        ]))
+        ])))
         .expect("the plan parses");
         let frame = |ty: Option<Logical>, value: Physical<'_>| {
             ValueFrame::of(Raw(ty, value)).expect("a value")
@@ -2380,7 +2369,7 @@ mod tests {
 
     fn match_type_plan() -> Plan {
         record::plan_with(
-            FfiValue::Object(vec![(
+            &frame_of(&FfiValue::Object(vec![(
                 "name".into(),
                 FfiValue::Object(vec![
                     (
@@ -2389,7 +2378,7 @@ mod tests {
                     ),
                     ("target".into(), text("Some")),
                 ]),
-            )]),
+            )])),
             &MatchType,
         )
         .unwrap()
@@ -2559,7 +2548,7 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = record::plan_with(
-            FfiValue::Object(vec![(
+            &frame_of(&FfiValue::Object(vec![(
                 "email".into(),
                 FfiValue::Object(vec![
                     (
@@ -2568,7 +2557,7 @@ mod tests {
                     ),
                     ("target".into(), text("Some")),
                 ]),
-            )]),
+            )])),
             &OneType,
         )
         .unwrap();

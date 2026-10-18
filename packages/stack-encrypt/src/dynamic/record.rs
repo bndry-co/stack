@@ -140,6 +140,12 @@
 //! that a round-trip invariant rather than data loss.
 
 use super::value_frame::{split_rows, FieldFault, SourceRow, SourceRows};
+use std::fmt;
+
+use serde::de::{Deserializer, MapAccess, Visitor};
+use serde::Deserialize;
+
+use super::term::{IndexWire, MatchWire};
 use super::{FfiValue, ValueFrame, ValueKind};
 use vitaminc_aead::frame::{Frame, FrameWriter};
 use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SeqSink, Sink};
@@ -147,7 +153,7 @@ use vitaminc_aead::{DecodeError, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
 
 use super::{
-    not_admitted, utf8, Error, NoTargets, Reason, Scope, TargetError, TargetResolver, TermBytes,
+    not_admitted, Error, NoTargets, Reason, Scope, TargetError, TargetResolver, TermBytes,
 };
 use crate::plan::{FieldValues, FieldsBuilder, Opens, Runs};
 use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, IndexSpec};
@@ -182,27 +188,12 @@ pub enum Output {
 impl Output {
     /// The output a bare key names, or `None` for a key that is not one. A
     /// `"match"` key names the match index under default options; a plan
-    /// spells other options in the object form [`from_value`](Self::from_value)
-    /// reads.
+    /// spells other options in the object form (see [`plan`]).
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "c" => Some(Output::Ciphertext),
             "passthrough" => Some(Output::Passthrough),
             _ => IndexSpec::parse(s).map(Output::Term),
-        }
-    }
-
-    /// Read one entry of a plan's `"outputs"` list: `"c"`, `"passthrough"`,
-    /// or an index in its wire form ([`IndexSpec::from_value`]; see [`plan`]).
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Plan`] for anything else.
-    pub fn from_value(value: &FfiValue) -> Result<Self, Error> {
-        match value {
-            FfiValue::String(s) if utf8(s) == Some("c") => Ok(Output::Ciphertext),
-            FfiValue::String(s) if utf8(s) == Some("passthrough") => Ok(Output::Passthrough),
-            _ => IndexSpec::from_value(value).map(Output::Term),
         }
     }
 
@@ -916,21 +907,22 @@ fn declare<K: 'static>(
     }
 }
 
-/// Read a record plan from a decoded value, for a build without EQL types:
+/// Read a record plan from its frame, for a build without EQL types:
 /// [`plan_with`] under [`NoTargets`], so a field that names a `"target"` is
 /// refused ([`TargetError::NoTargets`]).
 ///
 /// # Errors
 ///
 /// As [`plan_with`].
-pub fn plan(value: FfiValue) -> Result<Plan, Error> {
-    plan_with(value, &NoTargets)
+pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
+    plan_with(frame, &NoTargets)
 }
 
-/// Read a record plan from a decoded value, resolving each target field's
-/// name through `resolver`.
+/// Read a record plan from its frame, resolving each target field's name
+/// through `resolver`.
 ///
-/// The plan is an [`FfiValue::Object`]:
+/// The plan is a frame object, read by serde
+/// (`vitaminc_aead_frame::serde`):
 ///
 /// ```text
 /// { <field>: { "context": <context>, "outputs": [ "c" | "passthrough" | <index>, ... ], "type": <type> }, ... }
@@ -975,7 +967,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// a power of two in `32..=65536`, a zero n-gram length), is refused. The
 /// other three indexes have no options and no object form. A field names
 /// each output key at most once, so it carries at most one match index.
-/// [`IndexSpec::to_value`] writes this form and [`IndexSpec::from_value`]
+/// [`IndexSpec::to_value`] writes this form and [`IndexSpec::from_frame`]
 /// reads it. `"passthrough"` is a field's only output when it has it.
 ///
 /// [`MatchOptions::default`]: crate::sem::MatchOptions::default
@@ -1002,31 +994,19 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{record, FfiValue, NoTargets, Output};
+/// use stack_encrypt::dynamic::{record, NoTargets, Output};
 /// use stack_encrypt::target::IndexSpec;
 ///
-/// // As a binding would decode it from its caller: seal `age` under the
-/// // label users/age and index it for equality.
-/// let plan = record::plan_with(FfiValue::Object(vec![(
-///     "age".to_string(),
-///     FfiValue::Object(vec![
-///         (
-///             "context".to_string(),
-///             FfiValue::Array(vec![
-///                 FfiValue::String("users".into()),
-///                 FfiValue::String("age".into()),
-///             ]),
-///         ),
-///         (
-///             "outputs".to_string(),
-///             FfiValue::Array(vec![
-///                 FfiValue::String("c".into()),
-///                 FfiValue::String("eq".into()),
-///             ]),
-///         ),
-///         ("type".to_string(), FfiValue::String("uint32".into())),
-///     ]),
-/// )]), &NoTargets)?;
+/// // As a binding sends it: seal `age` under the label users/age and index
+/// // it for equality.
+/// let frame = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+///     "age": {
+///         "context": ["users", "age"],
+///         "outputs": ["c", "eq"],
+///         "type": "uint32",
+///     },
+/// }))?;
+/// let plan = record::plan_with(&frame, &NoTargets)?;
 ///
 /// assert_eq!(plan.fields().len(), 1);
 /// assert_eq!(plan.fields()[0].name(), "age");
@@ -1035,131 +1015,288 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 ///     plan.fields()[0].outputs(),
 ///     [Output::Ciphertext, Output::Term(IndexSpec::Equality)]
 /// );
-/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Errors
 ///
-/// [`Error::Plan`] for a plan that is not an object of field specs, an
-/// empty plan, a field named twice, a spec with a key other than
-/// `"context"`, `"outputs"`, `"target"` and `"type"` or with one given
-/// twice, missing `"context"`, having neither `"outputs"` nor `"target"`
-/// or having both, an output list that is not a list of outputs (above),
-/// is empty, names an output key twice or names `"passthrough"` beside
-/// another output, a `"target"` that is not a non-empty string, a `"type"`
-/// that is not a string naming a [`ValueKind`], a type that does not admit
-/// one of the field's index outputs, a context that is not a label of at
-/// least two segments (optionally extended), fields under different
-/// contexts or extensions, or a plan the builder refuses ([`Plan::new`]);
-/// with `"context_field"`, a value that is not a string, given twice,
-/// naming no field of the plan, or a plan [`Plan::with_context_field`]
-/// refuses. [`Error::UntypedIndex`], naming the field, for a field with a
-/// term output and no `"type"`. [`Error::Context`] for a `"context"` that
-/// is present but is not a context at all, or renders empty.
-/// [`Error::Target`] for a target the resolver refuses ([`Plan::new_with`]).
-///
-/// The transport codec refuses duplicate object keys before a binding's
-/// value reaches here, but an [`FfiValue`] can be built with them directly
-/// and this is a public parser, so it refuses them itself rather than
-/// letting the last one win.
-pub fn plan_with(
-    value: FfiValue,
-    resolver: &(impl TargetResolver + ?Sized),
-) -> Result<Plan, Error> {
-    let FfiValue::Object(entries) = value else {
-        return Err(Error::bad_plan(Reason::NotAnObject));
-    };
-    let mut fields: Vec<FieldPlan> = Vec::with_capacity(entries.len());
-    let mut context_field: Option<String> = None;
-    for (name, spec) in entries {
-        if name == "context_field" {
-            // Reserved: the plan-level key, never a field. A second one, or
-            // one that is not a string, is refused rather than read as a
-            // field spec.
-            if context_field.is_some() {
-                return Err(Error::bad_plan(Reason::RepeatedKey));
-            }
-            let FfiValue::String(s) = &spec else {
-                return Err(Error::bad_plan(Reason::ContextField));
-            };
-            let s = utf8(s).ok_or(Error::bad_plan(Reason::ContextField))?;
-            context_field = Some(s.to_owned());
-            continue;
-        }
-        let refuse = |reason| Error::Plan {
+/// [`Error::Plan`] for a plan that is not an object of field specs
+/// (including bytes that are not one frame, which is how a field or key
+/// given twice is refused: the frame refuses it), an empty plan, a spec with
+/// a key other than `"context"`, `"outputs"`, `"target"` and `"type"`,
+/// missing `"context"`, having neither `"outputs"` nor `"target"` or having
+/// both, an output list that is not a list of outputs (above), is empty,
+/// names an output key twice or names `"passthrough"` beside another
+/// output, a `"target"` that is not a non-empty string, a `"type"` that is
+/// not a string naming a [`ValueKind`], a type that does not admit one of
+/// the field's index outputs, a context that is not a label of at least two
+/// segments (optionally extended), fields under different contexts or
+/// extensions, or a plan the builder refuses ([`Plan::new`]); with
+/// `"context_field"`, a value that is not a string, naming no field of the
+/// plan, or a plan [`Plan::with_context_field`] refuses.
+/// [`Error::UntypedIndex`], naming the field, for a field with a term output
+/// and no `"type"`. [`Error::Context`] for a `"context"` that is present but
+/// is not a context at all, or renders empty. [`Error::Target`] for a
+/// target the resolver refuses ([`Plan::new_with`]).
+pub fn plan_with(frame: &[u8], resolver: &(impl TargetResolver + ?Sized)) -> Result<Plan, Error> {
+    let wire: PlanWire =
+        vitaminc_aead_frame::serde::from_slice(frame).map_err(|e| plan_refusal(&e, frame))?;
+    let mut fields: Vec<FieldPlan> = Vec::with_capacity(wire.fields.len());
+    for (name, spec) in wire.fields {
+        let spec = FieldSpec::try_from(spec).map_err(|reason| Error::Plan {
             field: Some(name.clone()),
             reason,
+        })?;
+        let context = super::context::non_empty(spec.context.0).map_err(|e| e.in_field(&name))?;
+        let field = match spec.what {
+            What::Outputs(outputs) => FieldPlan::new(name, context, outputs)?,
+            What::Target(target) => FieldPlan::with_target(name, context, target)?,
         };
-        let FfiValue::Object(spec) = spec else {
-            return Err(refuse(Reason::NotAnObject));
-        };
-        let mut context: Option<NonEmpty<ContextPiece<'static>>> = None;
-        let mut outputs: Option<Vec<Output>> = None;
-        let mut target: Option<String> = None;
-        let mut field_type: Option<ValueKind> = None;
-        for (key, value) in spec {
-            match key.as_str() {
-                "context" if context.is_none() => {
-                    let frame = value
-                        .to_frame()
-                        .map_err(|_| Error::bad_context(Reason::ContextKind).in_field(&name))?;
-                    context = Some(
-                        super::context(frame.risky_ref()).map_err(|error| error.in_field(&name))?,
-                    );
-                }
-                "target" if target.is_none() => {
-                    let FfiValue::String(s) = &value else {
-                        return Err(refuse(Reason::InvalidTarget));
-                    };
-                    target = Some(
-                        utf8(s)
-                            .ok_or_else(|| refuse(Reason::InvalidTarget))?
-                            .to_owned(),
-                    );
-                }
-                "outputs" if outputs.is_none() => {
-                    let FfiValue::Array(items) = value else {
-                        return Err(refuse(Reason::OutputsNotList));
-                    };
-                    let parsed = items
-                        .iter()
-                        .map(Output::from_value)
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|error| error.in_field(&name))?;
-                    outputs = Some(parsed);
-                }
-                "type" if field_type.is_none() => {
-                    let FfiValue::String(s) = &value else {
-                        return Err(refuse(Reason::UnknownType));
-                    };
-                    let kind = utf8(s).ok_or_else(|| refuse(Reason::UnknownType))?;
-                    field_type = Some(kind.parse().map_err(|_| refuse(Reason::UnknownType))?);
-                }
-                // One of the four given twice.
-                "context" | "target" | "outputs" | "type" => {
-                    return Err(refuse(Reason::RepeatedKey))
-                }
-                _ => return Err(refuse(Reason::UnknownKey)),
-            }
-        }
-        let context = context.ok_or_else(|| refuse(Reason::MissingContext))?;
-        // One form or the other: a field with both, or neither, is refused.
-        let field = match (outputs, target) {
-            (Some(outputs), None) => FieldPlan::new(name, context, outputs)?,
-            (None, Some(target)) => FieldPlan::with_target(name, context, target)?,
-            (Some(_), Some(_)) => return Err(refuse(Reason::OutputsWithTarget)),
-            (None, None) => return Err(refuse(Reason::MissingOutputs)),
-        };
-        fields.push(match field_type {
-            Some(field_type) => field.with_type(field_type)?,
+        fields.push(match spec.field_type {
+            Some(KindName(field_type)) => field.with_type(field_type)?,
             None => field,
         });
     }
     // The whole-plan rules are the constructors', so a parsed plan and a
     // hand-built one are refused alike.
-    match context_field {
+    match wire.context_field {
         Some(name) => Plan::with_context_field(name, fields),
         None => Plan::new_with(fields, resolver),
+    }
+}
+
+/// A plan as a binding writes it: an object of field specs, in order, with
+/// one reserved key beside them, `"context_field"`. A visitor only to tell
+/// that key from a field's name; every value below it is derived.
+struct PlanWire {
+    context_field: Option<String>,
+    fields: Vec<(String, FieldSpecWire)>,
+}
+
+impl<'de> Deserialize<'de> for PlanWire {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = PlanWire;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a plan: an object of field specs")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<PlanWire, A::Error> {
+                let mut plan = PlanWire {
+                    context_field: None,
+                    fields: Vec::with_capacity(super::context::reserved(map.size_hint())),
+                };
+                while let Some(name) = map.next_key::<&'de str>()? {
+                    if name == CONTEXT_FIELD {
+                        plan.context_field = Some(map.next_value()?);
+                    } else {
+                        plan.fields.push((name.to_owned(), map.next_value()?));
+                    }
+                }
+                Ok(plan)
+            }
+        }
+        d.deserialize_map(V)
+    }
+}
+
+/// The key of the `position`th entry of the object `frame` holds, or `None`
+/// when it is not an object of that many entries.
+fn entry_key(frame: &[u8], position: usize) -> Option<String> {
+    struct Keys(Vec<String>);
+    impl<'de> Deserialize<'de> for Keys {
+        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = Keys;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("an object")
+                }
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Keys, A::Error> {
+                    let mut keys = Vec::new();
+                    while let Some(key) = map.next_key::<&'de str>()? {
+                        let _: serde::de::IgnoredAny = map.next_value()?;
+                        keys.push(key.to_owned());
+                    }
+                    Ok(Keys(keys))
+                }
+            }
+            d.deserialize_map(V)
+        }
+    }
+    vitaminc_aead_frame::serde::from_slice::<Keys>(frame)
+        .ok()?
+        .0
+        .into_iter()
+        .nth(position)
+}
+
+/// The keys a field's spec reads ([`FieldSpecWire`]).
+const SPEC_KEYS: [&str; 4] = ["context", "outputs", "target", "type"];
+
+/// The keys of the spec `field` holds in the plan `frame`, or `None` when
+/// that spec is not an object (or the plan is not one frame of unique keys).
+fn spec_keys(frame: &[u8], field: &str) -> Option<Vec<String>> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Spec {
+        Object(std::collections::BTreeMap<String, serde::de::IgnoredAny>),
+        Other(serde::de::IgnoredAny),
+    }
+    match vitaminc_aead_frame::serde::from_slice::<std::collections::BTreeMap<String, Spec>>(frame)
+        .ok()?
+        .remove(field)?
+    {
+        Spec::Object(keys) => Some(keys.into_keys().collect()),
+        Spec::Other(_) => None,
+    }
+}
+
+/// The plan-level key naming the field a plan takes its context from.
+const CONTEXT_FIELD: &str = "context_field";
+
+/// One field's spec: a context, and exactly one of `"outputs"` and
+/// `"target"` (checked in `TryFrom`, once the field's name is known, so the
+/// refusal names it), and optionally a `"type"`. A key that is present must
+/// hold its kind of value: a null is refused.
+struct FieldSpec {
+    context: super::context::Context,
+    what: What,
+    field_type: Option<KindName>,
+}
+
+enum What {
+    Outputs(Vec<Output>),
+    Target(String),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FieldSpecWire {
+    context: super::context::Context,
+    #[serde(default, deserialize_with = "present")]
+    outputs: Option<Vec<OutputWire>>,
+    #[serde(default, deserialize_with = "present")]
+    target: Option<String>,
+    #[serde(default, deserialize_with = "present", rename = "type")]
+    field_type: Option<KindName>,
+}
+
+impl TryFrom<FieldSpecWire> for FieldSpec {
+    type Error = Reason;
+
+    fn try_from(wire: FieldSpecWire) -> Result<Self, Reason> {
+        let what = match (wire.outputs, wire.target) {
+            (Some(outputs), None) => What::Outputs(outputs.into_iter().map(Output::from).collect()),
+            (None, Some(target)) => What::Target(target),
+            (Some(_), Some(_)) => return Err(Reason::OutputsWithTarget),
+            (None, None) => return Err(Reason::MissingOutputs),
+        };
+        Ok(FieldSpec {
+            context: wire.context,
+            what,
+            field_type: wire.field_type,
+        })
+    }
+}
+
+/// Absent is `None`. Present, a value must be of its kind: a null is
+/// refused, as any other value of the wrong kind is.
+fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
+/// One entry of a field's `"outputs"`: `"c"`, `"passthrough"`, or an index
+/// in its wire form ([`IndexSpec`'s docs](IndexSpec#wire-form)).
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum OutputWire {
+    #[serde(rename = "c")]
+    Ciphertext,
+    Passthrough,
+    Eq,
+    Match(Option<MatchWire>),
+    Ore,
+    Ope,
+}
+
+impl From<OutputWire> for Output {
+    fn from(output: OutputWire) -> Self {
+        let index = match output {
+            OutputWire::Ciphertext => return Output::Ciphertext,
+            OutputWire::Passthrough => return Output::Passthrough,
+            OutputWire::Eq => IndexWire::Eq,
+            OutputWire::Match(options) => IndexWire::Match(options),
+            OutputWire::Ore => IndexWire::Ore,
+            OutputWire::Ope => IndexWire::Ope,
+        };
+        Output::Term(index.into())
+    }
+}
+
+/// A `"type"`: the name of a [`ValueKind`].
+#[derive(Deserialize)]
+#[serde(try_from = "&str")]
+struct KindName(ValueKind);
+
+impl TryFrom<&str> for KindName {
+    type Error = Reason;
+
+    fn try_from(name: &str) -> Result<Self, Reason> {
+        name.parse().map(KindName).map_err(|_| Reason::UnknownType)
+    }
+}
+
+/// The parser's refusal of a plan the frame reader refused: the field from
+/// the error's path, and the reason from where in the field it happened,
+/// or from the reason a field's own rule gave.
+fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Error {
+    use vitaminc_aead_frame::serde::PathSegment::{Entry, Key};
+
+    let path = error.path();
+    // A plan's keys are the host's, so the adapter places an error under one
+    // by its position, never its text; the field is read back from the
+    // frame that was refused.
+    let field = match path.first() {
+        Some(Entry(position)) => entry_key(frame, *position),
+        _ => None,
+    };
+    let Some(field) = field else {
+        // The root: not an object, or not one frame.
+        return Error::bad_plan(Reason::NotAnObject);
+    };
+    let field = &field;
+    if field == CONTEXT_FIELD {
+        return Error::bad_plan(Reason::ContextField);
+    }
+    let reason = match path.get(1) {
+        Some(Key(key)) if key == "context" => {
+            return Error::bad_context(Reason::ContextKind).in_field(field)
+        }
+        Some(Key(key)) if key == "outputs" && path.len() == 2 => Reason::OutputsNotList,
+        Some(Key(key)) if key == "outputs" => Reason::UnknownOutput,
+        Some(Key(key)) if key == "target" => Reason::InvalidTarget,
+        // `"type"`: the one other key a spec reads, and so the only other
+        // key an error inside a spec's value is placed under (an unknown
+        // key is never on the path).
+        Some(_) => Reason::UnknownType,
+        // The spec itself: a key it does not know, a missing context, or not
+        // an object at all. Read from the spec's own keys, not the error's
+        // wording, so a reworded message cannot change the reason. An object
+        // of known keys refused at its own level lacks its context: a value
+        // under a key is refused under that key, a repeated key is not an
+        // object, and the outputs-or-target rule is checked after parsing.
+        None => match spec_keys(frame, field) {
+            Some(keys) if keys.iter().any(|key| !SPEC_KEYS.contains(&key.as_str())) => {
+                Reason::UnknownKey
+            }
+            Some(_) => Reason::MissingContext,
+            None => Reason::NotAnObject,
+        },
+    };
+    Error::Plan {
+        field: Some(field.clone()),
+        reason,
     }
 }
 
@@ -1203,26 +1340,9 @@ pub fn plan_with(
 /// let keyset = cipher.default_keyset();
 ///
 /// // Seal `age` under users/age with an equality term beside it.
-/// let plan = record::plan(FfiValue::Object(vec![(
-///     "age".to_string(),
-///     FfiValue::Object(vec![
-///         (
-///             "context".to_string(),
-///             FfiValue::Array(vec![
-///                 FfiValue::String("users".into()),
-///                 FfiValue::String("age".into()),
-///             ]),
-///         ),
-///         (
-///             "outputs".to_string(),
-///             FfiValue::Array(vec![
-///                 FfiValue::String("c".into()),
-///                 FfiValue::String("eq".into()),
-///             ]),
-///         ),
-///         ("type".to_string(), FfiValue::String("uint32".into())),
-///     ]),
-/// )]))?;
+/// let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+///     "age": { "context": ["users", "age"], "outputs": ["c", "eq"], "type": "uint32" },
+/// }))?)?;
 ///
 /// // The row as a binding hands it over: one transport frame.
 /// let row = FfiValue::Object(vec![("age".to_string(), FfiValue::UInt32(34))]);
@@ -2177,7 +2297,7 @@ mod tests {
     use vitaminc_aead::frame::MAX_DEPTH;
     use vitaminc_protected::{Controlled, Protected};
 
-    use crate::dynamic::term;
+    use crate::dynamic::{term, utf8};
     use crate::plan::pick;
     use crate::sem::EqualityTerm;
     use crate::target::{AeadContext, DecryptInto, EncryptFrom};
@@ -2258,6 +2378,19 @@ mod tests {
     /// The context `value` spells, read from its frame as a binding sends it.
     fn context(value: FfiValue) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
         crate::dynamic::context(&crate::dynamic::test_frame::frame_of(&value))
+    }
+
+    /// The plan `value` spells, read from its frame as a binding sends it.
+    fn plan(value: FfiValue) -> Result<Plan, Error> {
+        super::plan(&crate::dynamic::test_frame::frame_of(&value))
+    }
+
+    /// [`plan`], under `resolver`.
+    fn plan_with(
+        value: FfiValue,
+        resolver: &(impl TargetResolver + ?Sized),
+    ) -> Result<Plan, Error> {
+        super::plan_with(&crate::dynamic::test_frame::frame_of(&value), resolver)
     }
 
     fn obj(entries: Vec<(&str, FfiValue)>) -> FfiValue {
@@ -2495,6 +2628,48 @@ mod tests {
 
     mod given_a_plan_value {
         use super::*;
+
+        /// A spec, or its match options, sent as an array is refused as
+        /// not an object: the frame reads a struct only from an object,
+        /// never by position.
+        #[test]
+        /// A plan that declares more fields than its frame holds is refused
+        /// when they run out, without reserving room for the count it declared:
+        /// four billion fields would abort the guest on allocation.
+        fn a_plan_that_declares_more_fields_than_it_holds_is_refused() {
+            let mut bytes = vec![vitaminc_aead::frame::OBJECT];
+            bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+            assert!(crate::dynamic::record::plan(&bytes).is_err());
+        }
+
+        #[test]
+        fn a_spec_or_its_options_sent_as_an_array_is_not_an_object() {
+            let as_array = FfiValue::Array(vec![
+                FfiValue::Array(vec![s("users"), s("age")]),
+                strings(&["ciphertext"]),
+            ]);
+            for spec in [as_array, FfiValue::Array(vec![FfiValue::Null])] {
+                let error = plan(obj(vec![("age", spec)])).expect_err("refused");
+                assert_eq!(error.field(), Some("age"), "{error}");
+                assert_eq!(error.reason(), Some(Reason::NotAnObject), "{error}");
+            }
+            let positional = obj(vec![(
+                "match",
+                FfiValue::Array(vec![
+                    s("standard"),
+                    FfiValue::Bool(true),
+                    FfiValue::UInt32(3),
+                    FfiValue::UInt32(256),
+                ]),
+            )]);
+            let spec = obj(vec![
+                ("context", FfiValue::Array(vec![s("users"), s("nick")])),
+                ("outputs", FfiValue::Array(vec![positional])),
+            ]);
+            let error = plan(obj(vec![("nick", spec)])).expect_err("refused");
+            assert_eq!(error.field(), Some("nick"), "{error}");
+            assert_eq!(error.reason(), Some(Reason::UnknownOutput), "{error}");
+        }
 
         #[test]
         fn parses_each_field_in_order_with_its_label_and_outputs() {
@@ -6424,6 +6599,111 @@ mod tests {
             obj(vec![("age", obj(spec))])
         }
 
+        /// A key that is present must hold its kind of value: a null is
+        /// refused as that key's reason, never read as absent.
+        #[test]
+        fn a_null_is_refused_as_its_key() {
+            use Reason::*;
+            let cases: Vec<(&str, FfiValue, Option<&str>, Reason, &str)> = vec![
+                (
+                    "a null context",
+                    age(vec![
+                        ("context", FfiValue::Null),
+                        ("outputs", strings(&["c"])),
+                    ]),
+                    Some("age"),
+                    ContextKind,
+                    "Context",
+                ),
+                (
+                    "null outputs",
+                    age(vec![("context", label("age")), ("outputs", FfiValue::Null)]),
+                    Some("age"),
+                    OutputsNotList,
+                    "Plan",
+                ),
+                (
+                    "a null target",
+                    age(vec![("context", label("age")), ("target", FfiValue::Null)]),
+                    Some("age"),
+                    InvalidTarget,
+                    "Plan",
+                ),
+                (
+                    "a null type",
+                    age(vec![
+                        ("context", label("age")),
+                        ("outputs", strings(&["c"])),
+                        ("type", FfiValue::Null),
+                    ]),
+                    Some("age"),
+                    UnknownType,
+                    "Plan",
+                ),
+                (
+                    "a null context field",
+                    obj(vec![
+                        ("context_field", FfiValue::Null),
+                        ("age", spec(label("age"), &["c"])),
+                    ]),
+                    None,
+                    ContextField,
+                    "Plan",
+                ),
+                (
+                    "a spec that is null",
+                    obj(vec![("age", FfiValue::Null)]),
+                    Some("age"),
+                    NotAnObject,
+                    "Plan",
+                ),
+            ];
+            for (what, value, field, reason, variant) in cases {
+                let error = refused_plan(value);
+                assert!(
+                    !matches!(error, Error::UntypedIndex { .. }),
+                    "{what}: {error}"
+                );
+                expect(&error, variant, field, reason);
+            }
+        }
+
+        /// An index's payload may be missing or null alike: a bare
+        /// `"match"`, `{"match": null}` and `{"match": {}}` are each the
+        /// match index under the default options, and `{"eq": null}` is the
+        /// bare `"eq"`.
+        #[test]
+        fn a_missing_or_null_index_payload_is_the_default() {
+            let outputs = |output: FfiValue| {
+                let plan = plan(age(vec![
+                    ("context", label("age")),
+                    ("outputs", FfiValue::Array(vec![output])),
+                    ("type", s("string")),
+                ]))
+                .expect("the plan parses");
+                plan.fields()[0].outputs().to_vec()
+            };
+            let default_match = vec![Output::Term(IndexSpec::Match(
+                crate::sem::MatchOptions::default(),
+            ))];
+            assert_eq!(outputs(s("match")), default_match);
+            assert_eq!(outputs(obj(vec![("match", FfiValue::Null)])), default_match);
+            assert_eq!(outputs(obj(vec![("match", obj(vec![]))])), default_match);
+            assert_eq!(
+                outputs(obj(vec![("eq", FfiValue::Null)])),
+                vec![Output::Term(IndexSpec::Equality)]
+            );
+        }
+
+        /// Bytes that are not one frame are not a plan.
+        #[test]
+        fn bytes_that_are_not_a_frame_are_not_a_plan() {
+            for bytes in [&[][..], &[0xff, 1, 2]] {
+                let error = super::super::plan(bytes).expect_err("refused");
+                expect(&error, "Plan", None, Reason::NotAnObject);
+            }
+        }
+
         #[test]
         fn a_malformed_plan() {
             use Reason::*;
@@ -6448,6 +6728,8 @@ mod tests {
                     UnknownKey,
                     "Plan",
                 ),
+                // A key given twice anywhere is refused by the frame before
+                // the plan is read, so it names no field.
                 (
                     "a key given twice",
                     age(vec![
@@ -6455,8 +6737,8 @@ mod tests {
                         ("context", label("age")),
                         ("outputs", strings(&["c"])),
                     ]),
-                    Some("age"),
-                    RepeatedKey,
+                    None,
+                    NotAnObject,
                     "Plan",
                 ),
                 (
@@ -6594,8 +6876,8 @@ mod tests {
                         ("age".to_string(), spec(label("age"), &["c"])),
                         ("age".to_string(), spec(label("age"), &["c"])),
                     ]),
-                    Some("age"),
-                    DuplicateField,
+                    None,
+                    NotAnObject,
                     "Plan",
                 ),
                 (
@@ -6638,8 +6920,8 @@ mod tests {
                         ),
                         ("type", s("string")),
                     ]),
-                    Some("age"),
-                    RepeatedKey,
+                    None,
+                    NotAnObject,
                     "Plan",
                 ),
             ];

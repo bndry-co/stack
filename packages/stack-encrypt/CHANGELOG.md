@@ -272,6 +272,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     are contexts: an 8- or 16-bit integer, which was widened to 32 bits
     before, and a 128-bit one are `Reason::ContextKind`, as are bytes that
     are not one frame.
+  - `record::plan` and `record::plan_with` take the plan's frame bytes.
+    `IndexSpec::from_frame` replaces `IndexSpec::from_value`, and
+    `Output::from_value` is gone. Each `Reason` a plan was refused with is
+    unchanged, with two exceptions: a key, a field or a match option given
+    twice is refused by the frame before the plan is read, as
+    `Reason::NotAnObject` naming no field (it was `RepeatedKey` or
+    `DuplicateField`), and so are bytes that are not one frame. An index's
+    payload may be missing or null alike: `{"match": null}` is a bare
+    `"match"`, and `{"eq": null}` a bare `"eq"`.
   - `Stats::from_frame` replaces `Stats::from_value`.
 
 - **A match value with no tokens is stored as the empty filter, so

@@ -152,11 +152,11 @@ fn spec(field: &str, outputs: &[&str], ty: Option<&str>) -> (String, FfiValue) {
 }
 
 fn plan() -> record::Plan {
-    record::plan(FfiValue::Object(vec![
+    record::plan(&ffi_frame(&FfiValue::Object(vec![
         spec("email", &["c", "eq", "match", "ore"], Some("string")),
         spec("doc", &["c"], None),
         spec("id", &["passthrough"], None),
-    ]))
+    ])))
     .unwrap()
 }
 
@@ -301,4 +301,9 @@ fn verify_leaves_no_plaintext_on_the_heap() {
 fn the_spy_sees_an_unwiped_free() {
     let text = marked("control");
     watched("control", || drop(text));
+}
+
+/// A plan as frame bytes: what a binding sends.
+fn ffi_frame(value: &FfiValue) -> Vec<u8> {
+    vitaminc_protected::Controlled::risky_unwrap(value.to_frame().expect("frames"))
 }

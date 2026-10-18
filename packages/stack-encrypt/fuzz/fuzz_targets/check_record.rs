@@ -401,7 +401,12 @@ fuzz_target!(|case: Case| {
     let Case { plan: spec, record } = case;
     // The plan parser is fuzzed for panics only: its rules are a separate
     // model, and a plan that does not parse has no record to check.
-    let Ok(plan) = plan_with(spec.into_value(), &Fixed) else {
+    // The plan crosses as a binding sends it, as frame bytes; a spec the
+    // frame cannot carry is no plan.
+    let Ok(frame) = spec.into_value().to_frame() else {
+        return;
+    };
+    let Ok(plan) = plan_with(frame.risky_ref(), &Fixed) else {
         if trace {
             eprintln!("verdict: plan refused");
         }

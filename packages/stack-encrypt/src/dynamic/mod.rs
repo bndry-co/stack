@@ -21,12 +21,13 @@
 //! indexed by walking its frame into the encrypting sink and the term
 //! derivers; and a record opens straight into a frame (vitaminc ADR 0001: a
 //! value describes itself once, and sinks consume it). A binding's control
-//! data (a plan, a context, options, a configuration, whose credentials are
-//! secret) is an [`FfiValue`] tree, with its text and bytes wiped.
+//! data (a plan, a context, query statistics) is read from its frame by
+//! serde (`vitaminc_aead_frame::serde`) into a typed message, with no tree
+//! built.
 //!
 //! # What is here
 //!
-//! * [`context`](context()) — an [`FfiValue`] read as an encryption context.
+//! * [`context`](context()) — a frame read as an encryption context.
 //! * [`ValueFrame`] — the engine's plaintext for a value whose type is known
 //!   only at run time, and the value model it holds.
 //! * [`term`](term()) — one index term for a value, derived at the one
@@ -159,8 +160,9 @@ impl<K> fmt::Debug for Scope<'_, K> {
     }
 }
 
-/// The UTF-8 inside a string leaf. Valid by `Utf8String`'s construction
-/// invariant; checked rather than assumed because this is boundary code.
+/// The UTF-8 inside a string leaf, for tests. Valid by `Utf8String`'s
+/// construction invariant; checked rather than assumed.
+#[cfg(test)]
 fn utf8(s: &Utf8String) -> Option<&str> {
     std::str::from_utf8(s.risky_ref()).ok()
 }

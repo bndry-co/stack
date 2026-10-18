@@ -91,19 +91,9 @@ fn plaintext_json() -> Json {
 
 // ---- JSON <-> FfiValue, for the subset the fixture uses --------------------
 
-fn ffi_of_json(value: &Json) -> FfiValue {
-    match value {
-        Json::String(s) => FfiValue::String(s.as_str().into()),
-        Json::Array(items) => FfiValue::Array(items.iter().map(ffi_of_json).collect()),
-        Json::Object(entries) => FfiValue::Object(
-            entries
-                .iter()
-                .map(|(k, v)| (k.clone(), ffi_of_json(v)))
-                .collect(),
-        ),
-        Json::Number(n) => FfiValue::UInt64(n.as_u64().expect("a non-negative integer")),
-        other => panic!("the fixture does not use {other}"),
-    }
+/// A plan written as JSON, as frame bytes: what a binding sends.
+fn frame_of_json(value: &Json) -> Vec<u8> {
+    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
 }
 
 /// The plaintext as the binding sends it: each field at the kind the plan
@@ -403,7 +393,7 @@ async fn open_lowered(
 #[tokio::test]
 async fn the_chain_and_the_lowering_are_one_engine_today() {
     let cipher = deterministic_cipher(SEED).await;
-    let plan = record::plan(ffi_of_json(&data_plan_json())).expect("the data plan parses");
+    let plan = record::plan(&frame_of_json(&data_plan_json())).expect("the data plan parses");
 
     let typed = json_of_record(seal_typed(&cipher).await);
     let lowered = json_of_record(seal_lowered(&cipher, &plan).await);
@@ -433,7 +423,7 @@ async fn the_chain_and_the_lowering_are_one_engine_today() {
 #[tokio::test]
 async fn the_committed_fixture_opens_both_ways() {
     let cipher = deterministic_cipher(SEED).await;
-    let plan = record::plan(ffi_of_json(&data_plan_json())).expect("the data plan parses");
+    let plan = record::plan(&frame_of_json(&data_plan_json())).expect("the data plan parses");
     let path = fixture_path();
 
     if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
@@ -708,7 +698,7 @@ async fn open_note_lowered(
 #[tokio::test]
 async fn the_chain_and_the_lowering_agree_on_a_context_field_today() {
     let cipher = deterministic_cipher(SEED).await;
-    let plan = record::plan(ffi_of_json(&note_plan_json())).expect("the data plan parses");
+    let plan = record::plan(&frame_of_json(&note_plan_json())).expect("the data plan parses");
     assert_eq!(plan.context_field(), Some("tenant"));
 
     let typed = json_of_record(seal_note_typed(&cipher).await);
@@ -755,7 +745,7 @@ async fn the_chain_and_the_lowering_agree_on_a_context_field_today() {
 #[tokio::test]
 async fn the_committed_context_field_case_opens_both_ways() {
     let cipher = deterministic_cipher(SEED).await;
-    let plan = record::plan(ffi_of_json(&note_plan_json())).expect("the data plan parses");
+    let plan = record::plan(&frame_of_json(&note_plan_json())).expect("the data plan parses");
     let path = fixture_path();
 
     if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
@@ -827,7 +817,7 @@ async fn the_committed_context_field_case_opens_both_ways() {
 #[tokio::test]
 async fn the_fixture_records_are_bound_to_their_labels() {
     let cipher = deterministic_cipher(SEED).await;
-    let plan = record::plan(ffi_of_json(&data_plan_json())).expect("plan");
+    let plan = record::plan(&frame_of_json(&data_plan_json())).expect("plan");
     let sealed = seal_lowered(&cipher, &plan).await;
     let CipherText::Map(mut fields) = sealed else {
         panic!("a map");

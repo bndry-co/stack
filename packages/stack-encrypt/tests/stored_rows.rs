@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{admits, FfiValue, Scope, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{admits, Scope, ValueFrame, ValueKind};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::StackCipherText as Node;
 use stack_encrypt::{
@@ -146,25 +146,13 @@ fn skeleton(json: &Json) -> Json {
 
 // ---- a plan as JSON ---------------------------------------------------------
 
-/// A plan in the fixture as the value a binding sends.
-fn ffi_of_json(value: &Json) -> FfiValue {
-    match value {
-        Json::String(text) => FfiValue::String(text.as_str().into()),
-        Json::Bool(b) => FfiValue::Bool(*b),
-        Json::Number(n) => FfiValue::UInt64(n.as_u64().expect("a non-negative integer")),
-        Json::Array(items) => FfiValue::Array(items.iter().map(ffi_of_json).collect()),
-        Json::Object(entries) => FfiValue::Object(
-            entries
-                .iter()
-                .map(|(key, value)| (key.clone(), ffi_of_json(value)))
-                .collect(),
-        ),
-        Json::Null => FfiValue::Null,
-    }
+/// A plan written as JSON, as frame bytes: what a binding sends.
+fn frame_of_json(value: &Json) -> Vec<u8> {
+    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
 }
 
 fn plan_of(json: &Json) -> DataPlan {
-    record::plan(ffi_of_json(json)).expect("the frozen plan parses")
+    record::plan(&frame_of_json(json)).expect("the frozen plan parses")
 }
 
 // ---- sealing and opening ----------------------------------------------------

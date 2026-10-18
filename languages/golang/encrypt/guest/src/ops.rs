@@ -42,8 +42,8 @@
 //! values to verify are read as [`ValueFrame`]s: the frame is checked against
 //! the engine's value model, and the engine walks it, splitting a source into
 //! one frame per field as it goes. A record opens into one frame, which is
-//! the output. Control data (a plan, an options object, query statistics)
-//! carries no secret and is decoded into an [`FfiValue`].
+//! the output. Control data (a plan, a context, an options object, query
+//! statistics) carries no secret and is read from its frame with serde.
 
 use stack_encrypt::dynamic::{self, FfiValue, Scope, ValueFrame};
 use stack_encrypt::sem::MatchOptions;
@@ -357,11 +357,13 @@ fn parse_query<'f>(
     Ok((plan, field, operator))
 }
 
-/// A codec-encoded plan, parsed against this build's resolver: a target
-/// name this build cannot run is refused here, the same way at every
-/// export that takes a plan.
+/// A plan's frame, parsed against this build's resolver: a target name this
+/// build cannot run is refused here, the same way at every export that
+/// takes a plan. Bytes that are not a frame are refused as every other
+/// input's are, before the plan's own grammar.
 fn parse_plan(plan: &[u8]) -> Result<dynamic::record::Plan, u32> {
-    dynamic::record::plan_with(decode_value(plan)?, &resolver()).map_err(|e| fail_dynamic(&e))
+    let _ = parse_frame(plan)?;
+    dynamic::record::plan_with(plan, &resolver()).map_err(|e| fail_dynamic(&e))
 }
 
 // =============================================================================
@@ -517,11 +519,6 @@ pub mod validate {
 // =============================================================================
 // Codec glue
 // =============================================================================
-
-/// Control data from a frame: a plan, an options object, statistics.
-fn decode_value(bytes: &[u8]) -> Result<FfiValue, u32> {
-    FfiValue::from_frame(bytes).map_err(|_| not_a_frame())
-}
 
 /// Plaintext from a frame: checked against the engine's value model and
 /// held as the frame, in a buffer wiped when it drops. The same frames are
@@ -832,7 +829,7 @@ mod tests {
     #[test]
     fn targets_lists_what_this_build_holds_in_the_wire_shape() {
         let out = targets().expect("encodes");
-        let FfiValue::Object(entries) = decode_value(&out).expect("decodes") else {
+        let FfiValue::Object(entries) = FfiValue::from_frame(&out).expect("decodes") else {
             panic!("an object");
         };
         assert_eq!(entries.len(), 1);
@@ -955,7 +952,7 @@ mod tests {
         validate::record_tree(&sealed, &plan, None).expect("the tree fits");
         let opened =
             block_on(decrypt_record(Scope::Client(&cipher), &sealed, &plan, None)).expect("opens");
-        let FfiValue::Object(values) = decode_value(&opened).expect("a value") else {
+        let FfiValue::Object(values) = FfiValue::from_frame(&opened).expect("a value") else {
             panic!("an object")
         };
         assert!(
@@ -968,7 +965,7 @@ mod tests {
         let probe = encoded(text("alice@example.com"));
         validate::query_term(&probe, &plan, b"email", b"eq").expect("a target field answers eq");
         let term = block_on(query_term(&keyset, &probe, &plan, b"email", b"eq")).expect("derives");
-        let FfiValue::Object(term) = decode_value(&term).expect("a value") else {
+        let FfiValue::Object(term) = FfiValue::from_frame(&term).expect("a value") else {
             panic!("a query term is an object")
         };
         assert!(
