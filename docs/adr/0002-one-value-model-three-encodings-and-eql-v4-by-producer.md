@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-10-08
-revised: 2026-10-12
+revised: 2026-10-12, amended 2026-10-18
 relates-to: ADR-0001; stack-encrypt ADR-0003, ADR-0007
 ---
 
@@ -12,8 +12,24 @@ relates-to: ADR-0001; stack-encrypt ADR-0003, ADR-0007
 > vitaminc sits at the bottom of the stack, equality and order terms take
 > per-domain transforms over a shared semantic baseline, `vitaminc-prf` no
 > longer depends on order encodings, and `orderable-bytes` is frozen. The plan
-> keeps the steps; this document is the decision. One question is still open,
-> under "Open decision".
+> keeps the steps; this document is the decision.
+>
+> **Amended 2026-10-18.** vitaminc 0.6 removed the shared value type rather
+> than renaming `FfiValue` to `Value` (vitaminc ADR 0001: a value describes
+> itself once, and sinks consume it). Stack Encrypt follows:
+>
+> - A plaintext whose type is known only at run time is held as its
+>   transport frame (`dynamic::ValueFrame`) and walked into vitaminc's sinks.
+> - `FfiValue` is removed. Each kind of control data a binding exchanges
+>   with the engine (a plan, a context, options, statistics, a configuration,
+>   the engine's answers) gets a type of its own, read from and written to a
+>   frame. Credentials in a configuration, such as the client key, are held
+>   in `Protected` fields. Until each message has its type, `FfiValue` carries
+>   only control data, never plaintext.
+> - The open decision on exhaustive handling is settled by vitaminc 0.6's
+>   design (see "Exhaustive handling of kinds").
+>
+> The bullets below that this changes say so where they stand.
 
 Every value Stack Encrypt handles is encoded three times: as a **ciphertext**
 (reversible and self-describing), as an **equality term** (a keyed hash that
@@ -74,8 +90,8 @@ type, `eql_v3_boolean`, stores a ciphertext and nothing else.)
 2. **Keep it in vitaminc, and move term derivation there too.** All three
    encodings then live in one repository, next to the value type they
    encode. Chosen. How "a kind exists in every layer or in none" is enforced
-   is the open decision below; until it is settled, the conformance test
-   described under "Which kinds get which terms" is what enforces it.
+   is under "Exhaustive handling of kinds" below, with the conformance test
+   described under "Which kinds get which terms" as the backstop.
 
 **Where order schemes sit.**
 
@@ -119,9 +135,19 @@ bundle (see Consequences). Chosen.
   `UInt128`, `Date`, `Timestamp` and `Decimal`, each with a `ValueKind` name,
   a `Value` variant and a ciphertext tag, in one breaking release. Rust `i128`
   and `u128` get `Encrypt` and `Decrypt` impls.
-- `FfiValue` is renamed `Value`, with `#[deprecated] pub type FfiValue = Value`
-  for one release. Whether `Value` and `ValueKind` are `#[non_exhaustive]` is
-  the open decision.
+- ~~`FfiValue` is renamed `Value`, with `#[deprecated] pub type FfiValue = Value`
+  for one release.~~ *Amended 2026-10-18:* vitaminc 0.6 has no shared value
+  type to rename it to. Its ADR 0001 has a value describe itself once
+  (`Encrypt`) and every consumer be a sink: the encrypting sink, a term
+  deriver, a frame writer. A host binding walks its transport frame straight
+  into those sinks. So Stack Encrypt holds a dynamic plaintext as its frame,
+  `dynamic::ValueFrame`, in a wiped buffer, from the source a binding hands
+  over to the sealed leaves and from the opened leaves back to the frame it
+  returns, with no value tree in between. `FfiValue` is removed rather than
+  kept for control data: each control message gets its own type, read from
+  and written to a frame, and holds any credential in a `Protected` field.
+  `ValueKind`, the vocabulary a plan field declares, stays, and is
+  exhaustive.
 - Every variant exists in every build. `Date`, `Timestamp` and `Decimal` use
   vitaminc's own representation (the payloads in the table below), with
   conversions to and from chrono and rust_decimal behind those features. A
@@ -285,8 +311,11 @@ equal under `Value` semantics produce equal terms in both.
 ### Stack Encrypt
 
 - `dynamic::Value` and `dynamic::term::Scalar` are deleted. `dynamic::term`
-  takes a `&vitaminc_aead_value::Value`. `admits` keeps only the rules that
-  belong to Stack Encrypt, such as `Match` taking text only.
+  takes any source that describes itself to vitaminc (amended 2026-10-17,
+  #1232: there is no `vitaminc_aead_value::Value`; a binding's value arrives
+  as a transport frame and stays one, `dynamic::ValueFrame`). `admits` keeps
+  only the rules that belong to Stack Encrypt, such as `Match` taking text
+  only.
 - Order terms go through `vitaminc-ore`. The index for an ORE or OPE column
   picks the concrete scheme (cllw-ore or ore-rs, through `OrderScheme`) and
   its transforms; Stack Encrypt no longer calls cllw-ore's typed API. A block
@@ -386,22 +415,22 @@ transformed bytes, and that choice is frozen once data is stored under it.
 Dan Draper signs off each such domain in writing before it ships. Domains
 whose equality and order transforms are independent need no such sign-off.
 
-## Open decision: exhaustive handling of `Value`
+## Exhaustive handling of kinds
 
 `vitaminc-prf`, `vitaminc-ore` and every binding must handle every kind of
-`Value`, and adding a kind should fail to build until each one does. Two
-approaches remain:
+value, and adding a kind should fail to build until each one does. This was
+left open between dropping `#[non_exhaustive]` (A) and a visitor trait with
+one required method per kind (B).
 
-- **A: drop `#[non_exhaustive]`.** Every crate that matches `Value` gets
-  exhaustiveness, and adding a kind is a breaking change for all of them.
-- **B: a `ValueVisitor` trait with one required method per kind, keeping
-  `#[non_exhaustive]`.** Crates that must handle every kind implement it, and
-  adding a kind is breaking only for them; other crates keep a `_ =>` arm.
-
-The leaning is B. The layering plan sets out the comparison. Either way,
-the conformance test is the backstop: a `#[non_exhaustive]` enum lets a
-downstream match compile with a wildcard, so the compiler alone does not
-guarantee coverage under B.
+*Settled 2026-10-18 by vitaminc 0.6's design.* There is no value enum to
+match. A sink receives each scalar as a physical value and an optional
+logical type. The physical enums (`Physical`, `Int`, `Float`) are exhaustive,
+so a new physical kind fails to build in every sink that matches them, which
+is A for the bytes a value is made of. `Logical` is `#[non_exhaustive]`, so a
+new logical type (a date, a timestamp) is additive, and a sink that does not
+know it refuses it at run time. Stack Encrypt's `ValueKind` is exhaustive.
+The conformance test stays the backstop for the logical types a sink reaches
+through a wildcard.
 
 ## Consequences
 
@@ -413,8 +442,8 @@ guarantee coverage under B.
   changes follow.
 - **Adding a kind later** takes a tag, PRF and order encodings, a codec in
   every binding, test vectors and a row in the kind-to-family table, or an
-  entry in the exceptions list. Whether it is a breaking change depends on
-  the open decision.
+  entry in the exceptions list. A new physical kind is a breaking change for
+  every sink. A new logical type is not.
 - **Stack Encrypt's terms change** for `-0.0` and negative-sign NaN floats,
   for non-NFC text equality, for `Bool` order terms, which are removed, and
   for every text order term: `orderize_string` drops symbols and keeps case,
