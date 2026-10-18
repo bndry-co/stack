@@ -1,19 +1,18 @@
-//! The v4 counterpart of `catalog_parity.rs`: every v4 inventory entry must be
-//! the catalog domain it claims, under the `eql_v4` names, and the version
-//! boundary between the two generations must hold in both directions. A v3
-//! payload that a v4 type accepted would let a cipherstash-client value be
-//! read as a Stack Encrypt one (ADR-0002), so these are pinned with literals
-//! rather than through the helpers they check.
+//! Every v4 inventory entry is the eql-domains catalog domain it claims,
+//! under its `eql_v4` name and schema id, and a v4 type admits only `"v": 4`.
+//! The expected names and ids are written as literals rather than through the
+//! helpers they check.
 
 // `eql_bindings::v4` exists only with the `stack-encrypt` feature.
 #![cfg(feature = "stack-encrypt")]
 
-use eql_bindings::{v3, v4};
+use eql_bindings::v4;
 use eql_domains::{Term, CATALOG};
 use serde_json::{json, Value};
 
 /// The catalog's scalar domains under their v4 names, in catalog order. v4 has
-/// no SteVec bindings, so only scalar domains appear.
+/// no SteVec bindings, so only scalar domains appear. The catalog spells each
+/// name with the `eql_v3_` prefix, which is swapped for v4's.
 fn expected_v4_domains() -> Vec<String> {
     CATALOG
         .iter()
@@ -26,7 +25,7 @@ fn expected_v4_domains() -> Vec<String> {
         .map(|name| {
             let bare = name
                 .strip_prefix(eql_domains::PUBLIC_TYPNAME_PREFIX)
-                .unwrap_or_else(|| panic!("{name} does not carry the v3 typname prefix"));
+                .unwrap_or_else(|| panic!("{name} does not carry the catalog typname prefix"));
             format!("{}{bare}", v4::PUBLIC_TYPNAME_PREFIX)
         })
         .collect()
@@ -58,23 +57,10 @@ fn stored_entries_name_public_v4_domains_and_v4_schema_ids() {
 
 #[test]
 fn query_entries_live_in_the_eql_v4_schema() {
-    let v3_queries: Vec<String> = v3::all_query()
-        .iter()
-        .filter(|e| e.term_json_keys().is_some())
-        .map(|e| e.domain().to_string())
-        .collect();
-    let v4_queries: Vec<String> = v4::all_query()
-        .iter()
-        .map(|e| {
-            let sql = e.sql_domain();
-            assert!(sql.starts_with("eql_v4.query_"), "{sql}");
-            e.domain().to_string()
-        })
-        .collect();
-    assert_eq!(
-        v4_queries, v3_queries,
-        "each scalar query twin exists in v4 under the same name"
-    );
+    for entry in v4::all_query() {
+        let sql = entry.sql_domain();
+        assert!(sql.starts_with("eql_v4.query_"), "{sql}");
+    }
 }
 
 #[test]
@@ -82,8 +68,8 @@ fn term_keys_match_the_catalog() {
     let entries = v4::all();
     for spec in CATALOG {
         for domain in spec.domains.iter().filter(|d| d.is_scalar()) {
-            let v3_name = spec.domain_name(domain);
-            let name = v3_name.replacen("eql_v3_", "eql_v4_", 1);
+            let catalog_name = spec.domain_name(domain);
+            let name = catalog_name.replacen("eql_v3_", "eql_v4_", 1);
             let entry = entries
                 .iter()
                 .find(|e| e.domain() == name)
@@ -97,7 +83,7 @@ fn term_keys_match_the_catalog() {
     }
 }
 
-fn text_eq(version: u8) -> Value {
+fn text_eq(version: u16) -> Value {
     json!({
         "v": version,
         "i": { "t": "users", "c": "email" },
@@ -106,24 +92,27 @@ fn text_eq(version: u8) -> Value {
     })
 }
 
-/// The boundary the move to v4 relies on: the payloads are otherwise
-/// well-formed, so only the version can be what refuses them.
+/// The payload is otherwise well-formed, so only the version can be what
+/// refuses it.
 #[test]
-fn each_generation_refuses_the_other_version() {
+fn a_v4_type_admits_only_version_4() {
     assert!(serde_json::from_value::<v4::text::TextEq>(text_eq(4)).is_ok());
-    assert!(serde_json::from_value::<v3::text::TextEq>(text_eq(3)).is_ok());
-
-    let err = serde_json::from_value::<v4::text::TextEq>(text_eq(3)).unwrap_err();
-    assert!(err.to_string().contains("version 3"), "{err}");
-    let err = serde_json::from_value::<v3::text::TextEq>(text_eq(4)).unwrap_err();
-    assert!(err.to_string().contains("version 4"), "{err}");
+    for version in [0, 3, 5] {
+        let err = serde_json::from_value::<v4::text::TextEq>(text_eq(version)).unwrap_err();
+        assert!(
+            err.to_string().contains(&format!(
+                "unsupported EQL schema version {version} (expected 4)"
+            )),
+            "{err}"
+        );
+    }
 
     // And through the inventory, which is how a caller holding only a name
     // validates a payload.
-    let v4_entry = v4::all()
+    let entry = v4::all()
         .into_iter()
         .find(|e| e.domain() == "eql_v4_text_eq")
         .expect("eql_v4_text_eq in v4::all()");
-    assert!(v4_entry.parse_value(&text_eq(4)).is_ok());
-    assert!(v4_entry.parse_value(&text_eq(3)).is_err());
+    assert!(entry.parse_value(&text_eq(4)).is_ok());
+    assert!(entry.parse_value(&text_eq(3)).is_err());
 }
