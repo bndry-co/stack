@@ -381,8 +381,57 @@ func TestV4RowsMatchTheCommittedFixture(t *testing.T) {
 	}
 
 	// The committed ciphertexts still open, to the committed plaintexts.
-	sealed := make([]testusers.EncryptedProfile, len(committed.Rows))
-	for i, row := range committed.Rows {
+	opensToItsPlaintexts(t, c, committed.Rows)
+}
+
+// TestFrozenV4RowsStillOpen holds stored_v4_rows_v1.json, rows the Go SDK
+// stored with the next build. Unlike v4_rows.json it is never regenerated:
+// nothing writes it. Sealing its plaintexts today must give the same rows
+// apart from each `c` (the envelopes and the terms), and its committed `c`
+// values must still open to its plaintexts. A failure here means a change
+// broke rows already stored; see the README in that directory before
+// touching the file.
+func TestFrozenV4RowsStillOpen(t *testing.T) {
+	raw, err := os.ReadFile(fixturePath("stored_v4_rows_v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var frozen rowsFixture
+	if err := json.Unmarshal(raw, &frozen); err != nil {
+		t.Fatal(err)
+	}
+	if frozen.Seed != string(testSeed[:]) || frozen.Table != "profiles" || len(frozen.Rows) == 0 {
+		t.Fatalf("the frozen fixture changed shape: seed %q, table %q, %d rows", frozen.Seed, frozen.Table, len(frozen.Rows))
+	}
+	c := deterministicEQLClient(t)
+	in := make([]testusers.Profile, len(frozen.Rows))
+	for i, row := range frozen.Rows {
+		in[i] = profileOf(row.ID, row.Plaintext)
+	}
+	encrypted, err := testusers.EncryptProfile(context.Background(), c.DefaultKeyset(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	today := rowsFixture{Comment: frozen.Comment, Seed: frozen.Seed, Table: frozen.Table}
+	for i, e := range encrypted {
+		row := fixtureRow{ID: frozen.Rows[i].ID, Plaintext: frozen.Rows[i].Plaintext, Stored: map[string]json.RawMessage{}}
+		for column, value := range stored(e) {
+			row.Stored[column] = json.RawMessage(value)
+		}
+		today.Rows = append(today.Rows, row)
+	}
+	if !bytes.Equal(withoutCiphertexts(t, frozen), withoutCiphertexts(t, today)) {
+		t.Errorf("sealing the frozen rows' plaintexts today stores different envelopes or terms: a change broke stored rows. Do not regenerate stored_v4_rows_v1.json")
+	}
+	opensToItsPlaintexts(t, c, frozen.Rows)
+}
+
+// opensToItsPlaintexts opens each row's committed `c` values with today's
+// code and checks them against the row's plaintext.
+func opensToItsPlaintexts(t *testing.T, c *encrypt.Client, rows []fixtureRow) {
+	t.Helper()
+	sealed := make([]testusers.EncryptedProfile, len(rows))
+	for i, row := range rows {
 		sealed[i] = testusers.EncryptedProfile{
 			ID:      row.ID,
 			Visits:  []byte(row.Stored["visits"]),
@@ -402,10 +451,18 @@ func TestV4RowsMatchTheCommittedFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, row := range committed.Rows {
+	for i, row := range rows {
 		if got := plainOf(opened[i]); got != row.Plaintext {
 			t.Errorf("row %d opens to %+v, want %+v", row.ID, got, row.Plaintext)
 		}
+	}
+}
+
+// profileOf is the profile a fixture row records.
+func profileOf(id int64, p fixturePlain) testusers.Profile {
+	return testusers.Profile{
+		ID: id, Visits: p.Visits, Balance: p.Balance, Active: p.Active, Ratio: p.Ratio, Score: p.Score,
+		Note: p.Note, Name: p.Name, Age: p.Age, Rank: p.Rank, Weight: p.Weight, Price: p.Price,
 	}
 }
 

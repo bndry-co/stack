@@ -1069,6 +1069,16 @@ mod go_rows {
         serde_json::from_str(&raw).unwrap()
     }
 
+    /// `fixtures/stored_v4_rows_v1.json`: rows the Go SDK stored with the
+    /// next build. Frozen: nothing writes it, and no variable redirects it.
+    pub fn frozen() -> Fixture {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/stored_v4_rows_v1.json");
+        let raw =
+            std::fs::read_to_string(path).expect("fixtures/stored_v4_rows_v1.json is committed");
+        serde_json::from_str(&raw).unwrap()
+    }
+
     pub async fn cipher(seed: &str) -> stack_encrypt::StackCipher<stack_kms::DeterministicSource> {
         let seed: [u8; 32] = seed.as_bytes().try_into().expect("a 32-byte seed");
         stack_encrypt::StackCipher::builder()
@@ -1186,6 +1196,20 @@ mod go_rows {
 #[tokio::test]
 async fn rows_the_go_sdk_sealed_open_in_rust() {
     let fixture = go_rows::fixture();
+    assert_eq!(fixture.table, "profiles");
+    assert!(!fixture.rows.is_empty());
+    let cipher = go_rows::cipher(&fixture.seed).await;
+    for row in &fixture.rows {
+        go_rows::open_row(&cipher, row).await;
+    }
+}
+
+/// The frozen rows the Go SDK stored with the next build still parse as each
+/// v4 type and open, field by field. Unlike `v4_rows.json` this file is never
+/// regenerated, so a change that breaks stored rows fails here.
+#[tokio::test]
+async fn frozen_rows_the_go_sdk_stored_still_open() {
+    let fixture = go_rows::frozen();
     assert_eq!(fixture.table, "profiles");
     assert!(!fixture.rows.is_empty());
     let cipher = go_rows::cipher(&fixture.seed).await;
