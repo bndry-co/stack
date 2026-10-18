@@ -6704,6 +6704,32 @@ mod tests {
             let batch = FfiValue::Array(vec![row(34), FfiValue::Object(repeated)]);
             let error = check_source(batch, &plan).expect_err("a repeated key in a batch row");
             expect(&error, "Source", Some("id"), RepeatedKey);
+            // A repeated key inside a passthrough subtree is a repeated key
+            // too, not an unframeable source.
+            let mut repeated = object(row(34));
+            let _ = take(&mut repeated, "id");
+            repeated.push((
+                "id".to_string(),
+                FfiValue::Passthrough(Box::new(FfiValue::Object(vec![
+                    ("k".to_string(), FfiValue::Null),
+                    ("k".to_string(), FfiValue::Null),
+                ]))),
+            ));
+            let error = check_source(FfiValue::Object(repeated), &plan)
+                .expect_err("a repeated key in a passthrough");
+            expect(&error, "Source", Some("id"), RepeatedKey);
+            // Distinct keys in a passthrough subtree are not refused.
+            let mut distinct = object(row(34));
+            let _ = take(&mut distinct, "id");
+            distinct.push((
+                "id".to_string(),
+                FfiValue::Passthrough(Box::new(FfiValue::Object(vec![
+                    ("j".to_string(), FfiValue::Null),
+                    ("k".to_string(), FfiValue::Null),
+                ]))),
+            ));
+            check_source(FfiValue::Object(distinct), &plan)
+                .expect("distinct keys in a passthrough");
         }
 
         /// A refusal from the split that names no field is the source's

@@ -374,13 +374,15 @@ pub(super) struct FieldFault {
 
 /// A frame writer's refusal as a decode error. A repeated key is reported
 /// where the key is known ([`Modeled::entry`]). A value the model does not
-/// hold inside a passthrough subtree reaches here wrapped as the writer's
-/// source error ([`ModelOnly`] can only return the writer's error type), and
-/// is unwrapped, so it is refused as the same `Expected` a sealed value is.
+/// hold, or a repeated key, inside a passthrough subtree reaches here wrapped
+/// as the writer's source error ([`ModelOnly`] can only return the writer's
+/// error type), and is unwrapped, so it is refused as the same `Expected` or
+/// `DuplicateKey` a sealed value is.
 fn decode_error(error: FrameWriteError) -> DecodeError {
     match error {
         FrameWriteError::Source(error) => match error.inner().downcast_ref::<DecodeError>() {
             Some(DecodeError::Expected(expected)) => DecodeError::Expected(expected),
+            Some(DecodeError::DuplicateKey(key)) => DecodeError::duplicate_key(key),
             _ => DecodeError::Source(error),
         },
         FrameWriteError::Invalid => DecodeError::Expected(EXPECTED),
@@ -500,13 +502,22 @@ impl<P: Encrypt> Encrypt for ModeledSource<P> {
 
 /// [`model`] in front of any sink, keeping that sink's error: the
 /// passthrough half of [`Modeled`], whose inner writer reports frame errors.
+/// A map refuses a repeated key itself, naming it, before the writer can
+/// refuse it as a bare frame error.
 struct ModelOnly<S>(S);
+
+/// A map under [`ModelOnly`], with the keys it has been given. A
+/// passthrough is not plaintext, so its keys may be kept.
+struct ModelOnlyMap<S> {
+    inner: S,
+    keys: BTreeSet<String>,
+}
 
 impl<S: Sink> Sink for ModelOnly<S> {
     type Ok = S::Ok;
     type Error = S::Error;
     type Seq = ModelOnly<S::Seq>;
-    type Map = ModelOnly<S::Map>;
+    type Map = ModelOnlyMap<S::Map>;
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<S::Ok, S::Error> {
         match model(ty, value) {
@@ -522,7 +533,10 @@ impl<S: Sink> Sink for ModelOnly<S> {
     }
 
     fn map(self, len: Option<usize>) -> Result<Self::Map, S::Error> {
-        self.0.map(len).map(ModelOnly)
+        self.0.map(len).map(|inner| ModelOnlyMap {
+            inner,
+            keys: BTreeSet::new(),
+        })
     }
 
     fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<S::Ok, S::Error> {
@@ -547,7 +561,7 @@ impl<S: SeqSink> SeqSink for ModelOnly<S> {
     }
 }
 
-impl<S: MapSink> MapSink for ModelOnly<S> {
+impl<S: MapSink> MapSink for ModelOnlyMap<S> {
     type Ok = S::Ok;
     type Error = S::Error;
     type Entry<'s>
@@ -556,11 +570,16 @@ impl<S: MapSink> MapSink for ModelOnly<S> {
         Self: 's;
 
     fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, S::Error> {
-        self.0.entry(key).map(ModelOnly)
+        if !self.keys.insert(key.to_owned()) {
+            return Err(S::Error::source(SourceError::new(
+                DecodeError::duplicate_key(key),
+            )));
+        }
+        self.inner.entry(key).map(ModelOnly)
     }
 
     fn end(self) -> Result<S::Ok, S::Error> {
-        self.0.end()
+        self.inner.end()
     }
 }
 
