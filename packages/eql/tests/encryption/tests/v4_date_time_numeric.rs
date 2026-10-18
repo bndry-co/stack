@@ -7,10 +7,10 @@
 //! Each type must round-trip through both entry points, seal the leaf a
 //! chrono or rust_decimal value of the same instant, day or number seals
 //! (what any other producer writes for that kind), open a leaf such a value
-//! sealed, and refuse a value of another kind.
-//!
-//! The queries this file derives are pinned in
-//! `fixtures/v4_ledger_queries.json`, for other producers to match.
+//! sealed, and refuse a value of another kind. The Go SDK's rows
+//! (`fixtures/v4_ledger_rows.json`) open here and are queried in
+//! PostgreSQL with the queries this file derives
+//! (`fixtures/v4_ledger_queries.json`).
 
 mod common;
 
@@ -661,5 +661,249 @@ fn postgres_stores_and_finds_date_timestamp_and_numeric_rows() {
             message.contains(&format!("is not supported for public.{domain}")),
             "{column_name}: {message}"
         );
+    }
+}
+
+/// `fixtures/v4_ledger_rows.json`: `Ledger` rows the Go SDK's generated code
+/// sealed over the deterministic EQL guest
+/// (`TestV4LedgerRowsMatchTheCommittedFixture` writes it).
+mod go_ledger {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[derive(serde::Deserialize)]
+    pub struct Fixture {
+        pub seed: String,
+        pub table: String,
+        pub rows: Vec<Row>,
+    }
+    #[derive(serde::Deserialize)]
+    pub struct Row {
+        pub id: i32,
+        pub plaintext: Plain,
+        pub stored: BTreeMap<String, serde_json::Value>,
+    }
+    /// Dates in ISO 8601, instants in RFC 3339 with nanoseconds, decimals
+    /// as fixed-point text with their scale.
+    #[derive(serde::Deserialize)]
+    pub struct Plain {
+        pub opened: String,
+        pub due: String,
+        pub created: String,
+        pub posted: String,
+        pub total: String,
+        pub amount: String,
+    }
+
+    pub fn fixture() -> Fixture {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/v4_ledger_rows.json");
+        let raw = std::fs::read_to_string(path).expect(
+            "fixtures/v4_ledger_rows.json is written by the Go SDK's \
+             TestV4LedgerRowsMatchTheCommittedFixture",
+        );
+        serde_json::from_str(&raw).unwrap()
+    }
+
+    pub async fn cipher(seed: &str) -> stack_encrypt::StackCipher<stack_kms::DeterministicSource> {
+        let seed: [u8; 32] = seed.as_bytes().try_into().expect("a 32-byte seed");
+        stack_encrypt::StackCipher::builder()
+            .kms(stack_kms::DeterministicSource::new(seed))
+            .init()
+            .await
+            .unwrap()
+    }
+
+    fn parsed<T: DeserializeOwned>(row: &Row, column: &str) -> T {
+        serde_json::from_value(row.stored[column].clone())
+            .unwrap_or_else(|e| panic!("row {} {column}: {e}", row.id))
+    }
+
+    /// Open every field of `row` as its v4 type, into eql-bindings'
+    /// plaintexts, and check it against what Go sealed.
+    pub async fn open_row(
+        cipher: &stack_encrypt::StackCipher<stack_kms::DeterministicSource>,
+        row: &Row,
+    ) {
+        let column = |name: &str| Identifier::for_column("profiles", name).unwrap();
+        let p = &row.plaintext;
+        let id = row.id;
+        let opened: Date = cipher
+            .decrypt_as(parsed::<date::Date>(row, "opened"), column("opened").into())
+            .await
+            .unwrap();
+        assert_eq!(NaiveDate::from(&opened), day(&p.opened), "row {id} opened");
+        let due: Date = cipher
+            .decrypt_as(parsed::<date::DateEq>(row, "due"), column("due").into())
+            .await
+            .unwrap();
+        assert_eq!(NaiveDate::from(&due), day(&p.due), "row {id} due");
+        let created: Timestamp = cipher
+            .decrypt_as(
+                parsed::<timestamp::Timestamp>(row, "created"),
+                column("created").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            DateTime::<Utc>::from(&created),
+            instant(&p.created),
+            "row {id} created"
+        );
+        let posted: Timestamp = cipher
+            .decrypt_as(
+                parsed::<timestamp::TimestampEq>(row, "posted"),
+                column("posted").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            DateTime::<Utc>::from(&posted),
+            instant(&p.posted),
+            "row {id} posted"
+        );
+        let total: Decimal = cipher
+            .decrypt_as(
+                parsed::<numeric::Numeric>(row, "total"),
+                column("total").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rust_decimal::Decimal::from(&total).to_string(),
+            p.total,
+            "row {id} total keeps its scale"
+        );
+        let amount: Decimal = cipher
+            .decrypt_as(
+                parsed::<numeric::NumericEq>(row, "amount"),
+                column("amount").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rust_decimal::Decimal::from(&amount).to_string(),
+            p.amount,
+            "row {id} amount keeps its scale"
+        );
+    }
+}
+
+/// What the Go SDK sealed as the date, timestamp and numeric types parses as
+/// each type and opens in Rust to the same day, instant and number.
+#[tokio::test]
+async fn ledger_rows_the_go_sdk_sealed_open_in_rust() {
+    let fixture = go_ledger::fixture();
+    assert_eq!(fixture.table, "profiles");
+    assert!(fixture.rows.len() > 1);
+    let cipher = go_ledger::cipher(&fixture.seed).await;
+    for row in &fixture.rows {
+        go_ledger::open_row(&cipher, row).await;
+    }
+}
+
+/// The Go-sealed ledger rows in PostgreSQL: each value passes its domain
+/// check, and `=` with this file's queries (which the Go SDK's test derives
+/// byte for byte) finds the rows holding that day, microsecond and number.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_stores_and_queries_ledger_rows_the_go_sdk_sealed() {
+    let fixture = go_ledger::fixture();
+    let mut db = database();
+    db.batch_execute(
+        "CREATE TEMP TABLE go_ledgers (
+            id int PRIMARY KEY,
+            opened public.eql_v4_date,
+            due public.eql_v4_date_eq,
+            created public.eql_v4_timestamp,
+            posted public.eql_v4_timestamp_eq,
+            total public.eql_v4_numeric,
+            amount public.eql_v4_numeric_eq
+        );",
+    )
+    .unwrap();
+    for row in &fixture.rows {
+        let v = |column: &str| row.stored[column].to_string();
+        db.execute(
+            "INSERT INTO go_ledgers VALUES ($1,
+                $2::text::jsonb::public.eql_v4_date,
+                $3::text::jsonb::public.eql_v4_date_eq,
+                $4::text::jsonb::public.eql_v4_timestamp,
+                $5::text::jsonb::public.eql_v4_timestamp_eq,
+                $6::text::jsonb::public.eql_v4_numeric,
+                $7::text::jsonb::public.eql_v4_numeric_eq)",
+            &[
+                &row.id,
+                &v("opened"),
+                &v("due"),
+                &v("created"),
+                &v("posted"),
+                &v("total"),
+                &v("amount"),
+            ],
+        )
+        .unwrap();
+    }
+    let queries: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("fixtures/v4_ledger_queries.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let plaintext = |key: &str| queries[key]["plaintext"].as_str().unwrap().to_owned();
+    let due = day(&plaintext("due"));
+    let posted = instant(&plaintext("posted")).timestamp_micros();
+    let amount = number(&plaintext("amount")).normalize();
+    for (column_name, query_domain, expected) in [
+        (
+            "due",
+            "query_date_eq",
+            fixture
+                .rows
+                .iter()
+                .filter(|r| day(&r.plaintext.due) == due)
+                .map(|r| r.id)
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "posted",
+            "query_timestamp_eq",
+            fixture
+                .rows
+                .iter()
+                .filter(|r| instant(&r.plaintext.posted).timestamp_micros() == posted)
+                .map(|r| r.id)
+                .collect(),
+        ),
+        (
+            "amount",
+            "query_numeric_eq",
+            fixture
+                .rows
+                .iter()
+                .filter(|r| number(&r.plaintext.amount).normalize() == amount)
+                .map(|r| r.id)
+                .collect(),
+        ),
+    ] {
+        assert!(
+            !expected.is_empty() && expected.len() < fixture.rows.len(),
+            "{column_name}: the fixture splits the rows"
+        );
+        let key = column_name;
+        let ids: Vec<i32> = db
+            .query(
+                &format!(
+                    "SELECT id FROM go_ledgers WHERE {column_name} = $1::text::jsonb::eql_v4.{query_domain} ORDER BY id"
+                ),
+                &[&queries[key]["query"].as_str().unwrap()],
+            )
+            .unwrap()
+            .iter()
+            .map(|r| r.get(0))
+            .collect();
+        assert_eq!(ids, expected, "= over Go-sealed {column_name}");
     }
 }
