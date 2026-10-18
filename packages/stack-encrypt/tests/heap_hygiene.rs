@@ -13,12 +13,16 @@
 //! plaintext buffer on every seal. That is vitaminc's to fix, not this
 //! crate's; the spy reports how many it skipped, and recognises them by
 //! their backtrace, so a build without symbols fails rather than passes.
-#![cfg(feature = "dynamic")]
+//!
+//! Unix only: the spy scans a freed block with libc's `memmem`, not as a
+//! Rust slice (see [`holds_mark`]).
+#![cfg(all(feature = "dynamic", unix))]
 
 mod common;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::ffi::c_void;
 use std::sync::Mutex;
 
 use stack_encrypt::dynamic::{
@@ -45,6 +49,26 @@ static UPSTREAM: Mutex<usize> = Mutex::new(0);
 /// The vitaminc frame whose free is excluded (see the module docs).
 const UPSTREAM_SEAL: &str = "vitaminc_encrypt::backend::aws_lc::CipherKey::seal";
 
+/// Whether the `len` bytes at `ptr` hold [`MARK`]. A freed block can hold
+/// bytes Rust never initialised (a `Vec`'s spare capacity, a struct's
+/// padding), and reading those through a `&[u8]` is undefined behaviour, so
+/// the scan is libc's `memmem`, which reads the block as plain memory.
+///
+/// # Safety
+///
+/// `ptr` must point to `len` allocated bytes.
+unsafe fn holds_mark(ptr: *const u8, len: usize) -> bool {
+    extern "C" {
+        fn memmem(
+            haystack: *const c_void,
+            haystack_len: usize,
+            needle: *const c_void,
+            needle_len: usize,
+        ) -> *mut c_void;
+    }
+    !memmem(ptr.cast(), len, MARK.as_ptr().cast(), MARK.len()).is_null()
+}
+
 struct Spy;
 
 unsafe impl GlobalAlloc for Spy {
@@ -57,8 +81,7 @@ unsafe impl GlobalAlloc for Spy {
         if watching {
             // SAFETY: `ptr` is a live block of `layout.size()` bytes until
             // the `System.dealloc` below.
-            let block = std::slice::from_raw_parts(ptr, layout.size());
-            if block.windows(MARK.len()).any(|window| window == MARK) {
+            if holds_mark(ptr, layout.size()) {
                 BUSY.with(|busy| busy.set(true));
                 let trace = std::backtrace::Backtrace::force_capture().to_string();
                 // Symbol demangling differs by platform: Linux writes
@@ -140,6 +163,10 @@ fn plan() -> record::Plan {
 /// A row with a marked scalar field, a marked nested object field, and a
 /// passthrough, as its frame. The `FfiValue` it is built from is dropped
 /// before anything is watched: it is the test's input, not the engine's.
+///
+/// The nested object ends with a value of several KiB after its marked
+/// children, so the buffer its frame is joined into grows while it already
+/// holds plaintext.
 fn row() -> ValueFrame {
     let row = FfiValue::Object(vec![
         ("email".into(), s(&marked("email"))),
@@ -151,6 +178,7 @@ fn row() -> ValueFrame {
                     "n".into(),
                     FfiValue::Array(vec![s(&marked("nested")), FfiValue::Null]),
                 ),
+                ("big".into(), s(&"x".repeat(8 * 1024))),
             ]),
         ),
         ("id".into(), FfiValue::UInt64(7)),
