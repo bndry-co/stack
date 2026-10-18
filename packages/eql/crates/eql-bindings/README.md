@@ -235,7 +235,7 @@ let opened: ValueFrame = targets::decrypt("TextEq", &cipher, &column, &stored)?.
 ```
 
 The table and the dispatch are generated into `src/v4/targets.rs` beside
-the v4 family modules (`mise run types:generate`), gated to the `stack-encrypt`
+the v4 family modules (`mise run types:generate`), gated to the `targets`
 feature, and drift-gated by the same parity tests. The same generator writes
 the Go package `languages/golang/encrypt/eql` from the same rows
 (`eql-codegen go-eql`, also under `types:generate` / `types:check`). The
@@ -247,6 +247,17 @@ when its generated struct carries the `stack-encrypt` derives
 (`ENCRYPTION_DOMAINS` in `eql-codegen`), because the dispatch runs the derived
 plan; `targets::targets()` lists them, each with `producible` and, when it is
 `false`, the reason.
+
+### Features
+
+- `stack-encrypt`: the EQL v4 types (`eql_bindings::v4`) with Stack
+  Encrypt's `EncryptFrom` and `DecryptInto`, for a Rust program that
+  encrypts through `encrypt_as`. It builds Stack Encrypt with no default
+  features and without its `dynamic` layer.
+- `targets`: `stack-encrypt`, plus the by-name dispatch a language binding
+  needs (`encryption::targets`, `v4::targets`), where the EQL type is named at
+  run time and the plaintext is a `ValueFrame`. It turns on Stack Encrypt's
+  `dynamic` feature. The Go guest's `eql` build enables it.
 
 ### Developing the `stack-encrypt` feature
 

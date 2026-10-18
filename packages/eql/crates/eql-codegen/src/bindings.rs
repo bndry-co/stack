@@ -1051,7 +1051,7 @@ fn render_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
 /// Render the v4 bindings: one module per family with a scalar domain (a
 /// mixed family's scalar domains under its own name, since v4 has no
 /// hand-written SteVec module to sit beside), and the Stack Encrypt target
-/// table and dispatch (`targets.rs`, under the `stack-encrypt` feature with
+/// table and dispatch (`targets.rs`, declared under the `targets` feature in
 /// the hand-written `v4/mod.rs`). Stack Encrypt produces v4 only, so the
 /// target table lives here.
 fn render_v4_bindings(dir: &Path) -> Vec<(PathBuf, String)> {

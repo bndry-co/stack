@@ -13,6 +13,10 @@
 //! [`crate::v4::targets`], beside the v4 family modules, so a type cannot be in the
 //! catalog and missing from the table.
 //!
+//! This module needs the `targets` feature, which also turns on Stack
+//! Encrypt's `dynamic` feature. The `stack-encrypt` feature alone gives only
+//! the typed EQL v4 types.
+//!
 //! The guest build that holds the EQL types links this module; the build
 //! without them has no `eql-bindings` and refuses a target name before
 //! reaching here.

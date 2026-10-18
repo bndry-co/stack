@@ -58,7 +58,7 @@ stack-kms = { path = "../../../../packages/stack-kms", default-features = false 
 # The EQL types, for the `eql` build only. By path, like every other
 # eql-bindings dependency in the repository: the SQL that stores a payload
 # and the Rust that emits it must agree (scripts/lint-no-eql-registry-pins.mjs).
-eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features = ["stack-encrypt"], optional = true }
+eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features = ["targets"], optional = true }
 zerokms-protocol = "=0.12.31"
 
 # The transport frame and ciphertext codec, shared with vitaminc's own

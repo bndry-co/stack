@@ -13,7 +13,7 @@ harness = false
 
 # Keep crypto/Postgres test dependencies out of eql-bindings' default test build.
 [dev-dependencies]
-eql-bindings = { path = "../../crates/eql-bindings", features = ["stack-encrypt"] }
+eql-bindings = { path = "../../crates/eql-bindings", features = ["targets"] }
 # The parity oracle for the generated target table (tests/targets.rs): the
 # table must name every stored catalog domain, in catalog order.
 eql-domains = { path = "../../crates/eql-domains" }

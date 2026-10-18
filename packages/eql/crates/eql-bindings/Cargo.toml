@@ -43,29 +43,42 @@ schemars = "1"
 # from the PACKAGED crate against the registry stack-encrypt instead:
 # `cargo publish --dry-run --all-features` in test-eql.yml at PR time, and
 # `publish_all_features` in ../../release-plz.toml at release time.
-# `dynamic`: `ValueFrame` / `ValueKind`, the runtime plaintext a plan field
-# target takes and the kind names a plan's `"type"` key spells
-# (`encryption::targets`).
-stack-encrypt = { path = "../../../stack-encrypt", version = "0.3.0", optional = true, default-features = false, features = ["dynamic"] }
-# The plaintext a target reads out of its `Protected` runtime value is held
-# in `Zeroizing` until it is sealed, so the copy is wiped like the original.
+# No default features and no `dynamic`: the typed EQL v4 types need only
+# Stack Encrypt's typed API. The `targets` feature turns `dynamic` on.
+stack-encrypt = { path = "../../../stack-encrypt", version = "0.3.0", optional = true, default-features = false }
+# `targets` only. The plaintext a target reads out of its `Protected`
+# runtime value is held in `Zeroizing` until it is sealed, so the copy is
+# wiped like the original.
 zeroize = { version = "1", optional = true }
+# `targets` only: `TargetError`.
 thiserror = { version = "2", optional = true }
 base64 = { version = "0.22", optional = true }
 hex = { version = "0.4", optional = true }
 
 [features]
 default = []
+# The EQL v4 types as Stack Encrypt targets: `eql_bindings::v4`, with
+# `EncryptFrom` / `DecryptInto` on every producible type, for a Rust program
+# that encrypts through `encrypt_as`. No `dynamic` layer.
 stack-encrypt = [
   "dep:stack-encrypt",
-  "dep:zeroize",
-  "dep:thiserror",
   "dep:base64",
   "dep:hex",
 ]
+# The by-name dispatch a language binding needs (`encryption::targets`,
+# `v4::targets`): an EQL type named at run time, a `ValueFrame` plaintext,
+# and the target table a guest serializes. Turns on stack-encrypt's
+# `dynamic` feature. The Go guest's `eql` build and the encryption tests
+# enable it.
+targets = [
+  "stack-encrypt",
+  "stack-encrypt/dynamic",
+  "dep:zeroize",
+  "dep:thiserror",
+]
 
 [package.metadata.docs.rs]
-features = ["stack-encrypt"]
+features = ["targets"]
 
 [dev-dependencies]
 # Parity oracle: tests/catalog_parity.rs asserts the v3 domain inventory

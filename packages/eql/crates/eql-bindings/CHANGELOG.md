@@ -13,17 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Encrypt produces an EQL v4 value (ADR-0002), so the module is compiled with
   that feature alone, and its producible types derive `EncryptFrom` and
   `DecryptInto` with no attribute of their own gated on it.
+- **A `targets` feature for the by-name dispatch.** `encryption::targets` and
+  `v4::targets`, which name an EQL type at run time and take a `ValueFrame`,
+  need `targets`, which turns on `stack-encrypt` and Stack Encrypt's
+  `dynamic` feature. `stack-encrypt` alone builds Stack Encrypt with no
+  default features and no `dynamic` layer, so a Rust program that encrypts
+  the v4 types through `encrypt_as` no longer compiles it.
 - **`IntegerEq`, `BigintEq`, `RealEq` and `DoubleEq` are producible**
   (`stack-encrypt` feature), from `i32`, `i64`, `f32` and `f64`. Their equality term follows ADR-0002's semantic
   baseline, so `=` compares as PostgreSQL's own integer and `float8 =` do:
   one term per integer value whatever its width, `-0.0 = 0.0` and
   `NaN = NaN`. The ciphertext keeps the exact value.
-- **`Target::match_options`** (`stack-encrypt` feature): the options a type's
+- **`Target::match_options`** (`targets` feature): the options a type's
   match index is built under, `EqlMatch`'s, for a type that carries one
   (`TextMatch`), and `None` otherwise. Stack Encrypt answers `matches`
   through the type with them, cutting the query's tokens for `verify` as the
   stored filter was cut.
-- **EQL types as plan field targets, by name** (`stack-encrypt` feature).
+- **EQL types as plan field targets, by name** (`targets` feature).
   `eql_bindings::encryption::targets` holds a catalog-generated table
   (`targets()`) of every EQL type a Stack Encrypt data plan may name as a
   field target — name, family, suffix, plaintext `ValueKind`, SQL domain,
@@ -71,8 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The `stack-encrypt` feature builds on vitaminc ADR 0001.**
   `encryption::targets` takes `ValueFrame` and `ValueKind` from
-  `stack_encrypt::dynamic` (the feature turns on stack-encrypt's `dynamic`
-  feature) in place of `vitaminc-aead-value`, which is gone, and the
+  `stack_encrypt::dynamic` (the `targets` feature turns on stack-encrypt's
+  `dynamic` feature) in place of `vitaminc-aead-value`, which is gone, and the
   `Ciphertext` target takes any vitaminc `Encrypt` plaintext and opens into any
   `Decrypt + Send` type, as stack-encrypt's own targets do.
 

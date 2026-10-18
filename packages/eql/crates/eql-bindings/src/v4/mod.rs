@@ -36,6 +36,8 @@ pub mod smallint;
 /// a field target (`TARGETS`) and the by-name dispatch that runs a
 /// producible type's own plan. The descriptor type, the errors and the
 /// public entry points are hand-written in [`crate::encryption::targets`].
+/// `targets` feature only.
+#[cfg(feature = "targets")]
 pub mod targets;
 pub mod text;
 pub mod timestamp;
