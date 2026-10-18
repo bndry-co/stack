@@ -211,8 +211,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they were. The Go guest decodes plaintext as `ValueFrame`s and returns an
   opened record's frame as it is. Copies of an opened string that remain in
   the guest's memory after a decrypt were traced to the plaintext output of
-  the AES-CTR XOR, left in the unwiped stack temporaries of the RustCrypto
-  cipher crates under vitaminc-encrypt's wasm32 backend (their number varies
+  AES-256-GCM's keystream XOR, left in the unwiped stack temporaries of the
+  RustCrypto crates behind vitaminc-encrypt's wasm32 backend (their number varies
   with the leaf's length), not to this crate, and
   `TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt` stays skipped with
   that reason (cipherstash/vitaminc#370). The heap is guarded separately:

@@ -350,7 +350,8 @@ func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 // 1 MiB, in the wasm shadow stack, at the same addresses on every run. Each
 // is the decrypted leaf (vitaminc's STRING tag 0x0a, then the text) directly
 // after a 16-byte AES-GCM counter block (the leaf's own nonce, then the
-// big-endian block counter): the plaintext output of the CTR XOR, held in
+// big-endian block counter): the plaintext that AES-256-GCM's keystream XOR
+// produces (GCM encrypts by XORing an AES counter-mode keystream), held in
 // the stack temporaries of the RustCrypto cipher crates (cipher, inout) that
 // vitaminc-encrypt's wasm32 backend (aes-gcm 0.10) decrypts through, which
 // nothing wipes. How many survive depends on the leaf's length and on how
@@ -365,7 +366,7 @@ func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 // same name), whose allocator fails a test on any freed block that still
 // holds plaintext.
 func TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt(t *testing.T) {
-	t.Skip("known: copies of an opened string can remain in the guest's shadow stack after Decrypt, as the plaintext output of the AES-CTR XOR in the RustCrypto cipher crates' unwiped stack temporaries, under vitaminc-encrypt's wasm32 backend (cipherstash/vitaminc#370); the count varies with the leaf's length; run this test again when that is wiped")
+	t.Skip("known: copies of an opened string can remain in the guest's shadow stack after Decrypt, as the plaintext output of AES-256-GCM's keystream XOR, in the unwiped stack temporaries of the RustCrypto crates behind vitaminc-encrypt's wasm32 backend (cipherstash/vitaminc#370); the count varies with the leaf's length; run this test again when that is wiped")
 	c := deterministicClient(t)
 	cipher := c.DefaultKeyset()
 	const plaintext = "residency-probe-4111-b1c2d3e4f5"
