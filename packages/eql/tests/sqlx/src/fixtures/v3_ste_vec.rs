@@ -175,15 +175,7 @@ mod tests {
         max: i64,
         rows_at_max: i64,
     ) -> ste_vec_selector::OpSelectorCandidate {
-        ste_vec_selector::OpSelectorCandidate {
-            selector: selector.to_string(),
-            rows,
-            total_rows: rows,
-            distinct_op_lengths: lengths,
-            min_op_length: min,
-            max_op_length: max,
-            rows_at_max_op_length: rows_at_max,
-        }
+        ste_vec_selector::test_candidate(selector, rows, rows, lengths, min, max, rows_at_max)
     }
 
     /// The `$.hello` rule against the leaf profile the fixture documents
@@ -212,7 +204,7 @@ mod tests {
         assert!(err.contains("found 0"), "{err}");
     }
 
-    /// E9 regression: the rule must enforce the documented `world-1..9` vs
+    /// Regression: the rule must enforce the documented `world-1..9` vs
     /// `world-10` split, not merely "two lengths on every row".
     ///
     /// Profile of the same documents with `ROW_COUNT = 9`, using the op hex

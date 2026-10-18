@@ -594,7 +594,7 @@ monorepo, which is where the silent failures are.
   selectors) the EQL workspace resolves; protect-ffi resolves its own from its
   own lockfile, and `scripts/__tests__/cipherstash-client-parity.test.mjs`
   (`pnpm run test:scripts`, every PR) fails when the two lockfiles disagree on
-  either, so a protect-ffi bump has to move the EQL pins with it. Primitive
+  the version, source or checksum of either, so a protect-ffi bump has to move the EQL pins with it. Primitive
   dependencies such as blake3 are not compared, and already differ at patch
   level.
 - **`FROZEN_PUBLISHERS` is what stops this repo publishing a package whose

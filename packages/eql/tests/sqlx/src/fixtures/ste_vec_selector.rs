@@ -54,6 +54,10 @@ impl std::fmt::Display for OpSelectorCandidate {
     }
 }
 
+/// The selector an `op`-carrying entry with no `s` key is listed under, so it
+/// stays visible among the candidates rather than dropping out of the join.
+pub const MISSING_SELECTOR: &str = "(no s key)";
+
 /// SQL listing every distinct `op`-carrying selector in `table`, one row per
 /// selector, ordered by selector. The payload is cast to bare jsonb first so
 /// `-> 'sv'` is the native array accessor, not the `eql_v3_json_search -> text`
@@ -61,7 +65,8 @@ impl std::fmt::Display for OpSelectorCandidate {
 pub fn op_selector_candidates_sql(table: &str) -> String {
     format!(
         "WITH entries AS ( \
-           SELECT f.id, e ->> 's' AS selector, length(e ->> 'op') AS op_length \
+           SELECT f.id, coalesce(e ->> 's', '{MISSING_SELECTOR}') AS selector, \
+                  length(e ->> 'op') AS op_length \
            FROM {table} f, jsonb_array_elements(f.payload::jsonb -> 'sv') e \
            WHERE e ? 'op' \
          ), longest AS ( \
@@ -127,20 +132,37 @@ pub fn pick_one(
     )
 }
 
+/// An [`OpSelectorCandidate`] with every field given, for selection-rule unit
+/// tests. The one place a test builds the struct, so a new field is added here
+/// only.
+#[cfg(test)]
+pub(crate) fn test_candidate(
+    selector: &str,
+    rows: i64,
+    total_rows: i64,
+    distinct_op_lengths: i64,
+    min_op_length: i64,
+    max_op_length: i64,
+    rows_at_max_op_length: i64,
+) -> OpSelectorCandidate {
+    OpSelectorCandidate {
+        selector: selector.to_string(),
+        rows,
+        total_rows,
+        distinct_op_lengths,
+        min_op_length,
+        max_op_length,
+        rows_at_max_op_length,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn candidate(selector: &str, rows: i64, lengths: i64) -> OpSelectorCandidate {
-        OpSelectorCandidate {
-            selector: selector.to_string(),
-            rows,
-            total_rows: 10,
-            distinct_op_lengths: lengths,
-            min_op_length: 132,
-            max_op_length: if lengths > 1 { 148 } else { 132 },
-            rows_at_max_op_length: if lengths > 1 { 1 } else { rows },
-        }
+        let (max, rows_at_max) = if lengths > 1 { (148, 1) } else { (132, rows) };
+        test_candidate(selector, rows, 10, lengths, 132, max, rows_at_max)
     }
 
     fn two_lengths_on_every_row(c: &OpSelectorCandidate) -> bool {
@@ -196,5 +218,28 @@ mod tests {
         assert!(sql.contains("FROM fixtures.v3_ste_vec f,"));
         assert!(sql.contains("(SELECT count(*) FROM fixtures.v3_ste_vec)"));
         assert!(sql.contains("payload::jsonb -> 'sv'"));
+    }
+
+    /// An `op`-carrying entry with no `s` key stays in the candidate list, so a
+    /// generator regression that drops selectors shows up in `pick_one`'s
+    /// listing instead of vanishing from it.
+    #[sqlx::test]
+    async fn an_op_entry_without_a_selector_is_still_a_candidate(pool: sqlx::PgPool) -> Result<()> {
+        sqlx::query("CREATE TABLE candidates_fx (id int PRIMARY KEY, payload jsonb)")
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            r#"INSERT INTO candidates_fx VALUES
+                 (1, '{"sv":[{"s":"sel-a","op":"00"},{"op":"0000"}]}'),
+                 (2, '{"sv":[{"s":"sel-a","op":"00"}]}')"#,
+        )
+        .execute(&pool)
+        .await?;
+
+        let candidates = op_selector_candidates(&pool, "candidates_fx").await?;
+        let mut selectors: Vec<&str> = candidates.iter().map(|c| c.selector.as_str()).collect();
+        selectors.sort_unstable();
+        assert_eq!(selectors, [MISSING_SELECTOR, "sel-a"], "{candidates:?}");
+        Ok(())
     }
 }

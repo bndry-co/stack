@@ -12,7 +12,7 @@
 //! validated by `test:matrix:inventory:jsonb_entry` (NOT the scalar inventory).
 
 use eql_tests::fixtures::v3_doc_integer::field_op_selector;
-use eql_tests::jsonb_entry::JsonbEntryInteger;
+use eql_tests::jsonb_entry::{entry_column_expr, JsonbEntryInteger};
 use eql_tests::scalar_domains::ScalarType;
 
 eql_tests::jsonb_entry_matrix! {
@@ -102,14 +102,24 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
 // `payload -> '<sel>'::text`. What stays checkable is the SHAPE that makes the
 // lookup unambiguous: exactly one op-carrying selector in the fixture. This test
 // fails, naming every candidate, when that stops holding, instead of leaving it
-// to surface as ~40 confusing failures across the matrix. That the matrix's
-// access path reaches a valid, `op`-carrying entry on every row is
-// `jsonb_entry_integer_fixture_shape`. Whether a keyset and path still produce
-// the same selector bytes is pinned in `packages/eql/tests/encryption`.
+// to surface as ~40 confusing failures across the matrix. It also pins that the
+// matrix's `column_expr` is the literal lookup of exactly that selector, not a
+// subquery or a different selector. That the access path reaches a valid,
+// `op`-carrying entry on every row is `jsonb_entry_integer_fixture_shape`, which
+// a subquery returning the same entry would pass too. Whether a keyset and path
+// still produce the same selector bytes is pinned in
+// `packages/eql/tests/encryption`.
 // ----------------------------------------------------------------------------
 #[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
 async fn jsonb_entry_integer_field_selector_is_unique(pool: sqlx::PgPool) -> anyhow::Result<()> {
-    field_op_selector(&pool).await?;
+    let sel = field_op_selector(&pool).await?;
+    let col = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await?;
+    anyhow::ensure!(
+        col == entry_column_expr(&sel),
+        "column_expr must be the literal lookup of the fixture's $.field op \
+         selector, `{}`; got `{col}`",
+        entry_column_expr(&sel),
+    );
     Ok(())
 }
 

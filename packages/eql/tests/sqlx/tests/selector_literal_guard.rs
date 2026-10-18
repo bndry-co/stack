@@ -55,40 +55,52 @@ fn looks_like_real_selector(content: &str) -> bool {
     seen.iter().filter(|s| **s).count() >= MIN_DISTINCT_DIGITS
 }
 
-/// Whether the hex run starting at `start` has a left boundary: nothing, a
-/// non-word byte, a backslash then any ASCII letter (`\n`, `\x`, whether or not
-/// the backslash is itself escaped or in a raw string), or a standalone `0x`
-/// prefix before it. A backslash then a hex character is handled by the caller,
-/// which strips that character from the run (`after_escape`).
-fn left_bounded(bytes: &[u8], start: usize) -> bool {
-    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+/// A byte that continues an identifier or number: an ASCII letter, digit or `_`.
+/// The one word-boundary rule both sides of a run are judged by.
+fn is_word(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// What stands directly left of a hex run that has a left boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeftBoundary {
+    /// Nothing, a non-word byte, or a backslash then an ASCII letter (`\n`,
+    /// `\x`, whether or not the backslash is itself escaped or in a raw string).
+    Plain,
+    /// A standalone `0x` / `0X` prefix: the run is a Rust integer literal, which
+    /// may carry a type suffix on its right.
+    HexPrefix,
+}
+
+/// The left boundary of the hex run starting at `start`, if it has one. A
+/// backslash then a hex character is handled by the caller, which strips that
+/// character from the run (`after_escape`).
+fn left_boundary(bytes: &[u8], start: usize) -> Option<LeftBoundary> {
     let Some(prev) = start.checked_sub(1).map(|i| bytes[i]) else {
-        return true;
+        return Some(LeftBoundary::Plain);
     };
     if !is_word(prev) {
-        return true;
+        return Some(LeftBoundary::Plain);
     }
     let before = start.checked_sub(2).map(|i| bytes[i]);
     match (before, prev) {
         // `\n`, `\t`, `\r`, `\x` (and `\\x`, the same inside a Rust string).
-        (Some(b'\\'), p) if p.is_ascii_alphabetic() => true,
+        (Some(b'\\'), p) if p.is_ascii_alphabetic() => Some(LeftBoundary::Plain),
         // `0x` / `0X`, itself standalone.
-        (Some(b'0'), b'x' | b'X') => start < 3 || !is_word(bytes[start - 3]),
-        _ => false,
+        (Some(b'0'), b'x' | b'X') if start < 3 || !is_word(bytes[start - 3]) => {
+            Some(LeftBoundary::HexPrefix)
+        }
+        _ => None,
     }
 }
 
-/// Whether the `0x`-prefixed run `start..end` ends in a Rust integer suffix
-/// (`u128`, `_u128`, …) that is itself standalone, as in `0x<hex>u128`.
-fn int_suffix_follows(bytes: &[u8], start: usize, end: usize) -> bool {
+/// Whether `rest`, the bytes after a `0x`-prefixed run, starts with a Rust
+/// integer suffix (`u128`, `_u128`, …) that is itself standalone, as in
+/// `0x<hex>u128`.
+fn int_suffix_follows(rest: &[u8]) -> bool {
     const SUFFIXES: [&str; 12] = [
         "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
     ];
-    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    if start < 2 || bytes[start - 2] != b'0' || !matches!(bytes[start - 1], b'x' | b'X') {
-        return false;
-    }
-    let rest = &bytes[end..];
     let rest = rest.strip_prefix(b"_").unwrap_or(rest);
     SUFFIXES.iter().any(|suffix| {
         rest.strip_prefix(suffix.as_bytes())
@@ -99,19 +111,22 @@ fn int_suffix_follows(bytes: &[u8], start: usize, end: usize) -> bool {
 /// Every standalone 32-hex run on `line` that looks like a real selector.
 fn selector_literals(line: &str) -> Vec<&str> {
     let bytes = line.as_bytes();
-    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     let mut found = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        if !bytes[i].is_ascii_hexdigit() || !left_bounded(bytes, i) {
-            i += 1;
-            continue;
-        }
+        let boundary = match left_boundary(bytes, i) {
+            Some(boundary) if bytes[i].is_ascii_hexdigit() => boundary,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
         let start = i;
         while i < bytes.len() && bytes[i].is_ascii_hexdigit() {
             i += 1;
         }
-        if i < bytes.len() && is_word(bytes[i]) && !int_suffix_follows(bytes, start, i) {
+        let suffixed = boundary == LeftBoundary::HexPrefix && int_suffix_follows(&bytes[i..]);
+        if i < bytes.len() && is_word(bytes[i]) && !suffixed {
             continue;
         }
         let run = &line[start..i];
@@ -223,7 +238,7 @@ mod classifier {
     }
 
     /// A Rust or SQL string escape (`\n`, `\t`, `\r`) ends in a letter, but the
-    /// run after it is still standalone in the string's value (E3a). So is a
+    /// run after it is still standalone in the string's value. So is a
     /// run after `\x` (Postgres bytea), after an escape whose letter is itself
     /// hex (`\0`, `\b`, `\f`), and after a `0x` prefix (a Rust integer).
     #[test]
@@ -251,7 +266,7 @@ mod classifier {
         assert!(selector_literals(&format!("0x{r}u128x")).is_empty());
     }
 
-    /// Uppercase and mixed-case hex selectors are flagged too (E3b).
+    /// Uppercase and mixed-case hex selectors are flagged too.
     #[test]
     fn flags_uppercase_and_mixed_case_selectors() {
         let upper = random_looking().to_uppercase();
@@ -295,7 +310,7 @@ mod classifier {
         assert!(!looks_like_real_selector(&aa_mixed), "{aa_mixed}");
     }
 
-    /// Pins the randomness threshold at 8 distinct digits (E11). Written as
+    /// Pins the randomness threshold at 8 distinct digits. Written as
     /// literal numbers, not `MIN_DISTINCT_DIGITS`, so moving the constant
     /// fails here.
     #[test]

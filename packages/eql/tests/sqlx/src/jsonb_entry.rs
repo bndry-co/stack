@@ -167,10 +167,12 @@ mod tests {
     /// returning a static expression: against a pool that reaches no database
     /// it fails with the pool's connection error. (The scalar default, by
     /// contrast, succeeds against the same pool — see
-    /// `scalar_domains::seam_tests`.) This proves only that a query is made.
-    /// That the expression is the literal lookup of the selector
-    /// `field_op_selector` reads from the fixture is the `ensure` in
-    /// `jsonb_entry_integer_field_selector_is_unique`
+    /// `scalar_domains::seam_tests`.) This proves only that a query is made,
+    /// so any `sqlx::Error` will do: whether the host refuses the connect
+    /// (retried until `PoolTimedOut`) or forbids it (an immediate `Io` error)
+    /// is not this test's business. That the expression is the literal lookup
+    /// of the selector `field_op_selector` reads from the fixture is the
+    /// `ensure` in `jsonb_entry_integer_field_selector_is_unique`
     /// (`tests/encrypted_domain/jsonb_entry.rs`), against the live fixture.
     #[tokio::test]
     async fn column_expr_reads_the_selector_from_the_fixture() {
@@ -182,11 +184,8 @@ mod tests {
             .await
             .expect_err("column_expr must query the database for its selector");
         assert!(
-            matches!(
-                err.downcast_ref::<sqlx::Error>(),
-                Some(sqlx::Error::PoolTimedOut)
-            ),
-            "column_expr must fail acquiring a connection, got {err:?}"
+            err.downcast_ref::<sqlx::Error>().is_some(),
+            "column_expr must fail reaching the database, got {err:?}"
         );
     }
 
