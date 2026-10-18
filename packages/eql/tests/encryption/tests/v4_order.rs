@@ -441,6 +441,121 @@ async fn the_ordered_query_fixture_is_what_the_dispatch_derives() {
     );
 }
 
+/// `fixtures/v4_ordered_rows.json`: `Ranking` rows the Go SDK's generated
+/// code sealed over the deterministic EQL guest
+/// (`TestV4OrderedRowsMatchTheCommittedFixture` in languages/golang/encrypt
+/// writes it).
+mod go_rows {
+    use super::*;
+    use serde::de::DeserializeOwned;
+    use std::collections::BTreeMap;
+
+    #[derive(serde::Deserialize)]
+    pub struct Fixture {
+        pub seed: String,
+        pub table: String,
+        pub rows: Vec<Row>,
+    }
+    #[derive(serde::Deserialize)]
+    pub struct Row {
+        pub id: i32,
+        pub plaintext: Plain,
+        pub stored: BTreeMap<String, serde_json::Value>,
+    }
+    #[derive(serde::Deserialize, Clone)]
+    pub struct Plain {
+        pub level: i32,
+        pub floor: i32,
+        pub points: i64,
+        pub total: i64,
+        pub speed: f32,
+        pub pace: f32,
+        pub score: f64,
+        pub mean: f64,
+        pub title: String,
+        pub handle: String,
+    }
+
+    pub fn fixture() -> Fixture {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/v4_ordered_rows.json");
+        let raw = std::fs::read_to_string(path).expect(
+            "fixtures/v4_ordered_rows.json is written by the Go SDK's \
+             TestV4OrderedRowsMatchTheCommittedFixture",
+        );
+        serde_json::from_str(&raw).unwrap()
+    }
+
+    pub async fn cipher(seed: &str) -> stack_encrypt::StackCipher<stack_kms::DeterministicSource> {
+        let seed: [u8; 32] = seed.as_bytes().try_into().expect("a 32-byte seed");
+        stack_encrypt::StackCipher::builder()
+            .kms(stack_kms::DeterministicSource::new(seed))
+            .init()
+            .await
+            .unwrap()
+    }
+
+    pub fn column(name: &str) -> NonEmpty<Identifier> {
+        Identifier::for_column("rankings", name).unwrap()
+    }
+
+    pub fn parsed<T: DeserializeOwned>(row: &Row, column: &str) -> T {
+        serde_json::from_value(row.stored[column].clone())
+            .unwrap_or_else(|e| panic!("row {} {column}: {e}", row.id))
+    }
+
+    /// Open every field of `row` and check it against what Go sealed.
+    pub async fn open_row(
+        cipher: &stack_encrypt::StackCipher<stack_kms::DeterministicSource>,
+        row: &Row,
+    ) {
+        let p = &row.plaintext;
+        macro_rules! open {
+            ($ty:ty, $plain:ty, $column:literal) => {{
+                let opened: $plain = cipher
+                    .decrypt_as(parsed::<$ty>(row, $column), column($column).into())
+                    .await
+                    .unwrap();
+                opened
+            }};
+        }
+        assert_eq!(open!(integer::IntegerOrd, i32, "level"), p.level);
+        assert_eq!(open!(integer::IntegerOrdOpe, i32, "floor"), p.floor);
+        assert_eq!(open!(bigint::BigintOrd, i64, "points"), p.points);
+        assert_eq!(open!(bigint::BigintOrdOpe, i64, "total"), p.total);
+        assert_eq!(
+            open!(real::RealOrd, f32, "speed").to_bits(),
+            p.speed.to_bits()
+        );
+        assert_eq!(
+            open!(real::RealOrdOpe, f32, "pace").to_bits(),
+            p.pace.to_bits()
+        );
+        assert_eq!(
+            open!(double::DoubleOrd, f64, "score").to_bits(),
+            p.score.to_bits()
+        );
+        assert_eq!(
+            open!(double::DoubleOrdOpe, f64, "mean").to_bits(),
+            p.mean.to_bits()
+        );
+        assert_eq!(open!(text::TextOrd, String, "title"), p.title);
+        assert_eq!(open!(text::TextOrdOpe, String, "handle"), p.handle);
+    }
+}
+
+/// What the Go SDK sealed parses as each ordered v4 type and opens in Rust.
+#[tokio::test]
+async fn ordered_rows_the_go_sdk_sealed_open_in_rust() {
+    let fixture = go_rows::fixture();
+    assert_eq!(fixture.table, "rankings");
+    assert!(fixture.rows.len() > 1);
+    let cipher = go_rows::cipher(&fixture.seed).await;
+    for row in &fixture.rows {
+        go_rows::open_row(&cipher, row).await;
+    }
+}
+
 /// The ordered columns and their SQL types, for the PostgreSQL tests:
 /// (column, stored domain, query domain).
 const COLUMNS: &[(&str, &str, &str)] = &[
@@ -632,4 +747,140 @@ fn postgres_compares_and_orders_ope_rows() {
         })
         .unwrap();
     assert_eq!(opened, i32::MAX);
+}
+
+/// The Go-sealed rows in PostgreSQL: each value passes its domain check,
+/// `<`, `<=`, `>` and `>=` with the fixture's query operands (which the Go
+/// SDK's test derives byte for byte) find the rows whose plaintext is on
+/// that side of the query's, and `ORDER BY eql_v4.ord_term(column)` sorts
+/// Go's rows as their plaintexts do.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_compares_rows_the_go_sdk_sealed() {
+    let fixture = go_rows::fixture();
+    let mut db = connect();
+    create_table(&mut db, "go_rankings");
+    for row in &fixture.rows {
+        let stored: Vec<String> = COLUMNS
+            .iter()
+            .map(|(column, _, _)| row.stored[*column].to_string())
+            .collect();
+        insert(&mut db, "go_rankings", row.id, &stored);
+    }
+    let queries: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("fixtures/v4_ordered_queries.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    // A column's order key, as a value that sorts as the order term does.
+    #[derive(PartialEq, PartialOrd, Debug)]
+    enum Key {
+        Int(i64),
+        Float(f64),
+        Text(String),
+    }
+    let fold = |s: &str| {
+        // The fixture's text is ASCII, so lower-casing is the fold here.
+        assert!(s.is_ascii(), "{s}: the expectation folds ASCII only");
+        Key::Text(s.to_ascii_lowercase())
+    };
+    let key = |column: &str, p: &go_rows::Plain| -> Key {
+        match column {
+            "level" => Key::Int(p.level.into()),
+            "floor" => Key::Int(p.floor.into()),
+            "points" => Key::Int(p.points),
+            "total" => Key::Int(p.total),
+            "speed" => Key::Float(p.speed.into()),
+            "pace" => Key::Float(p.pace.into()),
+            "score" => Key::Float(p.score),
+            "mean" => Key::Float(p.mean),
+            "title" => fold(&p.title),
+            "handle" => fold(&p.handle),
+            other => panic!("no order key for {other}"),
+        }
+    };
+    let query_key = |column: &str, plain: &serde_json::Value| -> Key {
+        match column {
+            "level" | "floor" | "points" | "total" => Key::Int(plain.as_i64().unwrap()),
+            "speed" | "pace" | "score" | "mean" => Key::Float(plain.as_f64().unwrap()),
+            "title" | "handle" => fold(plain.as_str().unwrap()),
+            other => panic!("no order key for {other}"),
+        }
+    };
+    for (column, _, query_domain) in COLUMNS {
+        let probe = query_key(column, &queries[*column]["plaintext"]);
+        // Sorted, as the SQL below sorts its ids: the assertion is about
+        // which rows, not the order the fixture lists them in.
+        let side = |keep: &dyn Fn(&Key) -> bool| -> Vec<i32> {
+            let mut ids: Vec<i32> = fixture
+                .rows
+                .iter()
+                .filter(|r| keep(&key(column, &r.plaintext)))
+                .map(|r| r.id)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        let below = side(&|k| *k < probe);
+        let above = side(&|k| *k > probe);
+        assert!(
+            !below.is_empty() && !above.is_empty(),
+            "{column}: the fixture has rows on both sides of the query"
+        );
+        let not_below = side(&|k| *k >= probe);
+        let not_above = side(&|k| *k <= probe);
+
+        let query = queries[*column]["query"].as_str().unwrap();
+        let cmp = |op: &str| {
+            format!(
+                "SELECT id FROM go_rankings WHERE {column} {op} $1::text::jsonb::eql_v4.{query_domain} ORDER BY id"
+            )
+        };
+        assert_eq!(
+            ids(&mut db, &cmp("<"), query),
+            below,
+            "< over Go-sealed {column}"
+        );
+        assert_eq!(
+            ids(&mut db, &cmp("<="), query),
+            not_above,
+            "<= over Go-sealed {column}"
+        );
+        assert_eq!(
+            ids(&mut db, &cmp(">"), query),
+            above,
+            "> over Go-sealed {column}"
+        );
+        assert_eq!(
+            ids(&mut db, &cmp(">="), query),
+            not_below,
+            ">= over Go-sealed {column}"
+        );
+
+        // Go's terms sort among themselves as the plaintexts do, ties
+        // broken by id.
+        let mut by_plaintext: Vec<(Key, i32)> = fixture
+            .rows
+            .iter()
+            .map(|r| (key(column, &r.plaintext), r.id))
+            .collect();
+        by_plaintext.sort_by(|a, b| a.partial_cmp(b).expect("the fixture's keys are finite"));
+        let expected: Vec<i32> = by_plaintext.into_iter().map(|(_, id)| id).collect();
+        let ordered: Vec<i32> = db
+            .query(
+                &format!("SELECT id FROM go_rankings ORDER BY eql_v4.ord_term({column}), id"),
+                &[],
+            )
+            .unwrap()
+            .iter()
+            .map(|r| r.get(0))
+            .collect();
+        assert_eq!(
+            ordered, expected,
+            "ORDER BY ord_term over Go-sealed {column}"
+        );
+    }
 }

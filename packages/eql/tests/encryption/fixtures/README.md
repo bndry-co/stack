@@ -5,9 +5,17 @@
 | `v4_rows.json` | the Go SDK's `TestV4RowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `v4_queries.json` | the by-name dispatch in `tests/v4_types.rs` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `v4_ordered_queries.json` | the by-name dispatch in `tests/v4_order.rs` | yes, with `EQL_UPDATE_FIXTURES=1` |
+| `v4_ordered_rows.json` | the Go SDK's `TestV4OrderedRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `text_eq_query.json`, `ste_vec_selectors.json` | `tests/text_eq.rs`, `tests/ste_vec_selectors.rs` | yes, see each test |
 | `v4_smallint_rows.json` | the Go SDK's `TestV4SmallintRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `stored_v4_rows_v1.json` | copied from `v4_rows.json` at the next build | **never: frozen** |
+
+`v4_ordered_queries.json` and `v4_ordered_rows.json` are not frozen: their
+`op` bytes are the order terms Stack Encrypt writes today, so a change that moves
+those bytes regenerates both together (Go writes the rows, Rust writes the
+queries, each with `EQL_UPDATE_FIXTURES=1`). No frozen
+`stored_v4_ordered_rows_*` file exists yet; one is cut once the order-term
+bytes are final.
 
 ## `stored_v4_rows_v1.json` (FROZEN)
 
