@@ -53,6 +53,34 @@ func TestIntegersOfOtherWidthsSealAtTheirEQLTypesWidth(t *testing.T) {
 		t.Errorf("a uint32 into BigintEq stores hm %s, an int64 %s", got, want)
 	}
 
+	// A query converts its operand as a write does, so it finds what the
+	// write stored: the same query as an int32 or int64 field's.
+	age, err := testusers.WidenedFields.Age.Eq(ctx, cipher, 34)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAge, err := testusers.ProfileFields.Age.Eq(ctx, cipher, 34)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(age) != string(wantAge) {
+		t.Errorf("an int16 IntegerEq query = %s, an int32's %s", age, wantAge)
+	}
+	rank, err := testusers.WidenedFields.Rank.Eq(ctx, cipher, math.MaxUint32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRank, err := testusers.ProfileFields.Rank.Eq(ctx, cipher, math.MaxUint32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(rank) != string(wantRank) {
+		t.Errorf("a uint32 BigintEq query = %s, an int64's %s", rank, wantRank)
+	}
+	if _, err := testusers.WidenedFields.Count.Eq(ctx, cipher, math.MaxInt32+1); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("an int64 query outside IntegerEq's range: %v, want ErrEncoding", err)
+	}
+
 	for _, count := range []int64{math.MaxInt32 + 1, math.MinInt32 - 1} {
 		_, err := testusers.EncryptWidened(ctx, cipher, []testusers.Widened{{Count: count}})
 		if !errors.Is(err, encrypt.ErrEncoding) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
@@ -20,6 +21,11 @@ import (
 // with encrypt.ErrEncoding: a Go type wider than the kind is accepted by
 // stashgen and range checked here, value by value.
 //
+// A value whose type writes itself (vcffi.Encryptable) crosses as it is too:
+// converting it to a built-in integer would drop its EncryptValue, and the
+// engine holds what it writes to the field's kind. A write and a query of one
+// field both convert here ([Field.Encrypt], [Field.Term]), so they agree.
+//
 // The error names the kind and not the value, which is plaintext.
 func asKind(kind Kind, v any) (any, error) {
 	if err := checkValue(v); err != nil {
@@ -29,7 +35,7 @@ func asKind(kind Kind, v any) (any, error) {
 		return v, nil
 	}
 	switch v.(type) {
-	case vcvalue.Int128, vcvalue.Uint128:
+	case vcvalue.Int128, vcvalue.Uint128, vcffi.Encryptable:
 		return v, nil
 	}
 	rv := reflect.ValueOf(v)

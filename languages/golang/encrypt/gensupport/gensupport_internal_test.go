@@ -12,6 +12,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
@@ -435,6 +436,27 @@ func TestAsKindConvertsAnIntegerThatFitsAndRefusesOneThatDoesNot(t *testing.T) {
 		}
 		if err != nil && strings.Contains(err.Error(), fmt.Sprint(c.in)) {
 			t.Errorf("asKind's error names the value: %v", err)
+		}
+	}
+}
+
+// encodedInt is an integer type that writes itself, as an int32 of its value
+// plus 100.
+type encodedInt int16
+
+func (v encodedInt) EncryptValue(enc vcffi.Encoder) error {
+	enc.Int32(int32(v) + 100)
+	return nil
+}
+
+// A value whose type writes itself crosses as it is, whatever the kind: a
+// conversion to a built-in integer would drop its EncryptValue, so a write
+// would store one value and a query, which keeps it, ask for another.
+func TestAsKindLeavesAValueThatWritesItself(t *testing.T) {
+	for _, kind := range []Kind{Int16, Int32, Int64} {
+		got, err := asKind(kind, encodedInt(7))
+		if err != nil || got != encodedInt(7) {
+			t.Errorf("asKind(%s, encodedInt(7)) = %v (%T), %v; want encodedInt(7)", kind, got, got, err)
 		}
 	}
 }

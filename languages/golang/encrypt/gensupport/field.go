@@ -102,7 +102,8 @@ func (f Field[T]) Range(ctx context.Context, c *encrypt.Cipher, operator string,
 
 // query derives an exact operator's terms, and refuses an answer of another
 // shape than the generated method's: a probabilistic term has a query type
-// of its own (Matches).
+// of its own (Matches). Each operand is converted to the field's kind as a
+// written value is ([asKind]), so the query finds what a write stored.
 func (f Field[T]) query(ctx context.Context, c *encrypt.Cipher, operator string, input any, parts int) ([][]byte, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -110,16 +111,24 @@ func (f Field[T]) query(ctx context.Context, c *encrypt.Cipher, operator string,
 	if c == nil {
 		return nil, fmt.Errorf("%w: gensupport: %s: a query needs a cipher", encrypt.ErrEncoding, f.name)
 	}
+	pair, isPair := input.([]any)
 	values := []any{input}
-	if pair, ok := input.([]any); ok {
+	if isPair {
 		values = pair
 	}
-	for _, v := range values {
-		if err := checkValue(v); err != nil {
+	converted := make([]any, len(values))
+	for i, v := range values {
+		value, err := asKind(f.kind(), v)
+		if err != nil {
 			return nil, fmt.Errorf("gensupport: %s: %w", f.name, err)
 		}
+		converted[i] = value
 	}
-	term, err := c.QueryTerm(ctx, f.plan, f.name, operator, input)
+	operand := converted[0]
+	if isPair {
+		operand = converted
+	}
+	term, err := c.QueryTerm(ctx, f.plan, f.name, operator, operand)
 	if err != nil {
 		return nil, err
 	}
