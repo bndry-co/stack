@@ -179,15 +179,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **A ciphertext that opens as the wrong type is `Error::OpenedType`, not
-  `Error::Aead`** (#1118). A typed decrypt of a leaf that authenticates but
-  holds another type (an integer opened as `String`, a value too wide for
-  the target) was reported as `Aead`, the error for a wrong key or a
-  tampered ciphertext, and the Go guest reported it as `STATUS_AUTH`. The new
-  variant names only the type the target reads (`expected`). The Go guest
-  maps it to `STATUS_ENCODING`, as it does a typed record field that opens to
-  another kind. A wrong key, a wrong context and a tampered ciphertext are
-  still `Aead`.
+- **A leaf that opens as the wrong kind is `Error::OpenedType`, not
+  `Error::Aead`** (#1118). A typed decrypt of a single leaf that
+  authenticates but holds another kind (an integer opened as `String`, a
+  value too wide for the target) was reported as `Aead`, the error for a
+  wrong key or a tampered ciphertext, and the Go guest reported it as
+  `STATUS_AUTH`. The new variant names only the kind the target reads
+  (`expected`). The Go guest maps it to `STATUS_ENCODING`, as it does a
+  typed record field that opens to another kind. A wrong key, a wrong
+  context and a tampered ciphertext are still `Aead`, and so is any refusal
+  of a container's value: a container's entries and elements are not
+  authenticated as a set, so a missing or repeated entry may be tampering.
 - **An 8- or 16-bit integer in a dynamic value keeps its width** (`dynamic`
   feature; #1144). The value model used to widen it to 32 bits before it
   was sealed; now it is sealed as itself, so a field declared `int16` seals
