@@ -365,11 +365,11 @@ pub const V3_ENCRYPTION_GAP: &str =
 pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
     Some(match family {
         "text" => ("string", "String"),
-        "integer" => ("int32", "crate::encryption::plaintext::Int32"),
-        "bigint" => ("int64", "crate::encryption::plaintext::Int64"),
-        "boolean" => ("bool", "crate::encryption::plaintext::Bool"),
-        "real" => ("float32", "crate::encryption::plaintext::Float32"),
-        "double" => ("float64", "crate::encryption::plaintext::Float64"),
+        "integer" => ("int32", "i32"),
+        "bigint" => ("int64", "i64"),
+        "boolean" => ("bool", "bool"),
+        "real" => ("float32", "f32"),
+        "double" => ("float64", "f64"),
         _ => return None,
     })
 }

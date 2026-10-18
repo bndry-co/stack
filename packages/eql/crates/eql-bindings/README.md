@@ -106,18 +106,17 @@ The optional `stack-encrypt` feature enables `EncryptFrom<String>` for
 `v4::text::TextEq`. Stack Encrypt writes EQL v4 only, so no `v3` type
 implements these traits. The derives are emitted by `eql-codegen`.
 
-The other v4 types Stack Encrypt produces take a plaintext from
-`eql_bindings::encryption::plaintext`, which seal as the primitive they wrap
-and read back only a value of their own width:
+The other v4 types Stack Encrypt produces take a Rust primitive as their
+plaintext:
 
 | v4 type | Plaintext |
 | --- | --- |
 | `Text`, `TextMatch` | `String` |
-| `Integer`, `IntegerEq` | `Int32` |
-| `Bigint`, `BigintEq` | `Int64` |
-| `Boolean` | `Bool` |
-| `Real`, `RealEq` | `Float32` |
-| `Double`, `DoubleEq` | `Float64` |
+| `Integer`, `IntegerEq` | `i32` |
+| `Bigint`, `BigintEq` | `i64` |
+| `Boolean` | `bool` |
+| `Real`, `RealEq` | `f32` |
+| `Double`, `DoubleEq` | `f64` |
 
 Each seals the leaf the value enum (`FfiValue`) seals for the same value, so
 values written here and by the Go SDK open each other. On the equality

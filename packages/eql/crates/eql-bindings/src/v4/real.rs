@@ -15,11 +15,11 @@ use ts_rs::TS;
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`Float32`](crate::encryption::plaintext::Float32). Implements `EncryptFrom<Float32>` and `DecryptInto<Float32>`.
+/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptFrom<f32>` and `DecryptInto<f32>`.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
-#[stash(plaintext = crate::encryption::plaintext::Float32)]
+#[stash(plaintext = f32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Real {
@@ -64,11 +64,11 @@ impl DomainType for Real {
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`Float32`](crate::encryption::plaintext::Float32). Implements `EncryptFrom<Float32>` and `DecryptInto<Float32>`.
+/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptFrom<f32>` and `DecryptInto<f32>`.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
-#[stash(plaintext = crate::encryption::plaintext::Float32)]
+#[stash(plaintext = f32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RealEq {
@@ -240,11 +240,11 @@ impl DomainType for RealOrdOpe {
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`Float32`](crate::encryption::plaintext::Float32). Implements `EncryptFrom<Float32>` to build equality query terms. Query operands do not decrypt.
+/// Plaintext input: [`f32`](f32). Implements `EncryptFrom<f32>` to build equality query terms. Query operands do not decrypt.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom)]
-#[stash(plaintext = crate::encryption::plaintext::Float32)]
+#[stash(plaintext = f32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RealEqQuery {

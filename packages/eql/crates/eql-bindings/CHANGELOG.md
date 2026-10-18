@@ -14,8 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that feature alone, and its producible types derive `EncryptFrom` and
   `DecryptInto` with no attribute of their own gated on it.
 - **`IntegerEq`, `BigintEq`, `RealEq` and `DoubleEq` are producible**
-  (`stack-encrypt` feature), from the `Int32`, `Int64`, `Float32` and
-  `Float64` plaintexts. Their equality term follows ADR-0002's semantic
+  (`stack-encrypt` feature), from `i32`, `i64`, `f32` and `f64`. Their equality term follows ADR-0002's semantic
   baseline, so `=` compares as PostgreSQL's own integer and `float8 =` do:
   one term per integer value whatever its width, `-0.0 = 0.0` and
   `NaN = NaN`. The ciphertext keeps the exact value.
