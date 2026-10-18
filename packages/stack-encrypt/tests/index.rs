@@ -38,7 +38,7 @@ fn caller() -> CallerContext {
 #[cfg(feature = "dynamic")]
 #[tokio::test]
 async fn a_vec_of_indexes_is_an_index_set_in_order_and_never_empty() {
-    use stack_encrypt::dynamic::{FfiValue, ValueFrame};
+    use stack_encrypt::dynamic::ValueFrame;
 
     let (cipher, generates, _) = counting_cipher().await;
     let keyset = cipher.default_keyset();
@@ -62,7 +62,7 @@ async fn a_vec_of_indexes_is_an_index_set_in_order_and_never_empty() {
     let terms: Vec<stack_encrypt::dynamic::TermBytes> = keyset
         .run(
             Indexes::<ValueFrame>::operations::<_, Borrowed>(&list),
-            &ValueFrame::of(FfiValue::UInt32(34)).unwrap(),
+            &ValueFrame::of(34u32).unwrap(),
             caller(),
         )
         .await

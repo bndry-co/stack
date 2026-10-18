@@ -160,13 +160,6 @@ impl<K> fmt::Debug for Scope<'_, K> {
     }
 }
 
-/// The UTF-8 inside a string leaf, for tests. Valid by `Utf8String`'s
-/// construction invariant; checked rather than assumed.
-#[cfg(test)]
-fn utf8(s: &Utf8String) -> Option<&str> {
-    std::str::from_utf8(s.risky_ref()).ok()
-}
-
 /// Bytes, written as a frame's bytes leaf rather than a list of integers.
 struct WireBytes<'a>(&'a [u8]);
 

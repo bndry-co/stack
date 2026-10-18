@@ -758,8 +758,7 @@ impl Index<ValueFrame> for IndexSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dynamic::utf8;
-    use crate::dynamic::FfiValue;
+    use crate::dynamic::test_frame::Tree;
     use crate::dynamic::{context, Output};
     use crate::sem::TermError;
     use crate::{nonempty, StackCipher};
@@ -787,18 +786,14 @@ mod tests {
         for (what, value, kind) in [
             (
                 "a boolean under equality",
-                FfiValue::Bool(true),
+                Tree::Bool(true),
                 IndexSpec::Equality,
             ),
-            (
-                "an integer under match",
-                FfiValue::UInt32(34),
-                default_match(),
-            ),
-            ("a boolean under ore", FfiValue::Bool(true), IndexSpec::Ore),
+            ("an integer under match", Tree::UInt32(34), default_match()),
+            ("a boolean under ore", Tree::Bool(true), IndexSpec::Ore),
             (
                 "a container under ope",
-                FfiValue::Array(vec![FfiValue::UInt32(1)]),
+                Tree::Array(vec![Tree::UInt32(1)]),
                 IndexSpec::Ope,
             ),
         ] {
@@ -935,7 +930,7 @@ mod tests {
                 Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
                     &IndexSpec::Equality,
                 ),
-                vf(FfiValue::UInt32(34)),
+                vf(Tree::UInt32(34)),
                 CallerContext::from(nonempty!("users/age")),
             )
             .await
@@ -952,7 +947,7 @@ mod tests {
     }
 
     /// An index read from the frame of its wire form, as a plan carries it.
-    fn index_of(value: &FfiValue) -> Result<IndexSpec, Error> {
+    fn index_of(value: &Tree) -> Result<IndexSpec, Error> {
         IndexSpec::from_frame(&crate::dynamic::test_frame::frame_of(value))
     }
 
@@ -961,8 +956,8 @@ mod tests {
         context(&vitaminc_aead_frame::serde::to_vec(&label).expect("frames")).expect("context")
     }
 
-    fn s(value: &str) -> FfiValue {
-        FfiValue::String(value.into())
+    fn s(value: &str) -> Tree {
+        Tree::String(value.into())
     }
 
     fn logical(ty: Logical, value: i128) -> ValueFrame {
@@ -984,24 +979,24 @@ mod tests {
         )
     }
 
-    fn vf(value: FfiValue) -> ValueFrame {
+    fn vf(value: Tree) -> ValueFrame {
         ValueFrame::of(&value).expect("in the value model")
     }
 
-    fn bytes(value: &[u8]) -> FfiValue {
-        FfiValue::Bytes(vitaminc_protected::Protected::new(value.to_vec()))
+    fn bytes(value: &[u8]) -> Tree {
+        Tree::Bytes(value.to_vec())
     }
 
     /// One value of every scalar variant.
-    fn every_scalar() -> Vec<(&'static str, FfiValue)> {
+    fn every_scalar() -> Vec<(&'static str, Tree)> {
         vec![
-            ("a bool", FfiValue::Bool(true)),
-            ("an i32", FfiValue::Int32(-3)),
-            ("an i64", FfiValue::Int64(-4)),
-            ("a u32", FfiValue::UInt32(34)),
-            ("a u64", FfiValue::UInt64(35)),
-            ("an f32", FfiValue::Float32(1.5)),
-            ("an f64", FfiValue::Float64(2.5)),
+            ("a bool", Tree::Bool(true)),
+            ("an i32", Tree::Int32(-3)),
+            ("an i64", Tree::Int64(-4)),
+            ("a u32", Tree::UInt32(34)),
+            ("a u64", Tree::UInt64(35)),
+            ("an f32", Tree::Float32(1.5)),
+            ("an f64", Tree::Float64(2.5)),
             ("text", s("alice")),
             ("bytes", bytes(b"ab")),
         ]
@@ -1018,7 +1013,7 @@ mod tests {
             let keyset = cipher.default_keyset();
             let ctx = ctx("users/x");
             let ks = &keyset;
-            let dynamic = |value: FfiValue, kind: IndexSpec| {
+            let dynamic = |value: Tree, kind: IndexSpec| {
                 let ctx = ctx.clone();
                 async move { term(ks, &value, &kind, ctx).await }
             };
@@ -1035,12 +1030,12 @@ mod tests {
                     );
                 };
             }
-            equal!(-3i32, FfiValue::Int32(-3), "i32");
-            equal!(-4i64, FfiValue::Int64(-4), "i64");
-            equal!(34u32, FfiValue::UInt32(34), "u32");
-            equal!(35u64, FfiValue::UInt64(35), "u64");
-            equal!(1.5f32, FfiValue::Float32(1.5), "f32");
-            equal!(2.5f64, FfiValue::Float64(2.5), "f64");
+            equal!(-3i32, Tree::Int32(-3), "i32");
+            equal!(-4i64, Tree::Int64(-4), "i64");
+            equal!(34u32, Tree::UInt32(34), "u32");
+            equal!(35u64, Tree::UInt64(35), "u64");
+            equal!(1.5f32, Tree::Float32(1.5), "f32");
+            equal!(2.5f64, Tree::Float64(2.5), "f64");
             equal!("alice".to_string(), s("alice"), "text");
             equal!(b"ab".to_vec(), bytes(b"ab"), "bytes");
 
@@ -1076,12 +1071,12 @@ mod tests {
                     );
                 };
             }
-            ordered!(-3i32, FfiValue::Int32(-3), "i32");
-            ordered!(-4i64, FfiValue::Int64(-4), "i64");
-            ordered!(34u32, FfiValue::UInt32(34), "u32");
-            ordered!(35u64, FfiValue::UInt64(35), "u64");
-            ordered!(1.5f32, FfiValue::Float32(1.5), "f32");
-            ordered!(2.5f64, FfiValue::Float64(2.5), "f64");
+            ordered!(-3i32, Tree::Int32(-3), "i32");
+            ordered!(-4i64, Tree::Int64(-4), "i64");
+            ordered!(34u32, Tree::UInt32(34), "u32");
+            ordered!(35u64, Tree::UInt64(35), "u64");
+            ordered!(1.5f32, Tree::Float32(1.5), "f32");
+            ordered!(2.5f64, Tree::Float64(2.5), "f64");
             ordered!("alice".to_string(), s("alice"), "text");
             ordered!(b"ab".to_vec(), bytes(b"ab"), "bytes");
         }
@@ -1094,7 +1089,7 @@ mod tests {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let ctx = ctx("users/x");
-            let eq = |value: FfiValue| {
+            let eq = |value: Tree| {
                 let ctx = ctx.clone();
                 let keyset = &keyset;
                 async move {
@@ -1103,21 +1098,13 @@ mod tests {
                         .expect("eq")
                 }
             };
-            let thirty_four = eq(FfiValue::UInt32(34)).await;
-            for width in [
-                FfiValue::Int32(34),
-                FfiValue::Int64(34),
-                FfiValue::UInt64(34),
-            ] {
+            let thirty_four = eq(Tree::UInt32(34)).await;
+            for width in [Tree::Int32(34), Tree::Int64(34), Tree::UInt64(34)] {
                 assert_eq!(eq(width).await, thirty_four, "34 at every width");
             }
+            assert_ne!(eq(Tree::Int64(-34)).await, thirty_four, "the sign counts");
             assert_ne!(
-                eq(FfiValue::Int64(-34)).await,
-                thirty_four,
-                "the sign counts"
-            );
-            assert_ne!(
-                eq(FfiValue::Float64(34.0)).await,
+                eq(Tree::Float64(34.0)).await,
                 thirty_four,
                 "a float is not the integer it equals"
             );
@@ -1300,7 +1287,7 @@ mod tests {
         #[test]
         fn defines_is_true() {
             for (label, leaf) in every_scalar() {
-                let not_bool = !matches!(leaf, FfiValue::Bool(_));
+                let not_bool = !matches!(leaf, Tree::Bool(_));
                 assert_eq!(
                     IndexSpec::Ore.defines(&leaf),
                     not_bool,
@@ -1318,7 +1305,7 @@ mod tests {
                 );
                 assert_eq!(
                     default_match().defines(&leaf),
-                    matches!(leaf, FfiValue::String(_)),
+                    matches!(leaf, Tree::String(_)),
                     "{label} takes a match term exactly when it is text"
                 );
             }
@@ -1336,12 +1323,12 @@ mod tests {
             let keyset = cipher.default_keyset();
             let ctx = ctx("users/x");
             let refused = [
-                ("a bool", FfiValue::Bool(true), IndexSpec::Equality),
-                ("a bool", FfiValue::Bool(true), default_match()),
-                ("a u32", FfiValue::UInt32(34), default_match()),
+                ("a bool", Tree::Bool(true), IndexSpec::Equality),
+                ("a bool", Tree::Bool(true), default_match()),
+                ("a u32", Tree::UInt32(34), default_match()),
                 ("bytes", bytes(b"ab"), default_match()),
-                ("a bool", FfiValue::Bool(true), IndexSpec::Ore),
-                ("a bool", FfiValue::Bool(false), IndexSpec::Ope),
+                ("a bool", Tree::Bool(true), IndexSpec::Ore),
+                ("a bool", Tree::Bool(false), IndexSpec::Ope),
             ];
             for (label, leaf, kind) in refused {
                 assert!(!kind.defines(&leaf), "{label} must not take a {kind} term");
@@ -1410,16 +1397,16 @@ mod tests {
             let keyset = cipher.default_keyset();
             let ctx = ctx("users/x");
             let not_scalars = [
-                ("null", FfiValue::Null),
-                ("undefined", FfiValue::Undefined),
-                ("an array", FfiValue::Array(vec![FfiValue::UInt32(1)])),
+                ("null", Tree::Null),
+                ("undefined", Tree::Undefined),
+                ("an array", Tree::Array(vec![Tree::UInt32(1)])),
                 (
                     "an object",
-                    FfiValue::Object(vec![("k".to_string(), FfiValue::UInt32(1))]),
+                    Tree::Object(vec![("k".to_string(), Tree::UInt32(1))]),
                 ),
                 (
                     "a passthrough",
-                    FfiValue::Passthrough(Box::new(FfiValue::UInt32(1))),
+                    Tree::Passthrough(Box::new(Tree::UInt32(1))),
                 ),
             ];
             for (label, value) in not_scalars {
@@ -1486,7 +1473,7 @@ mod tests {
             ] {
                 let wire = crate::dynamic::test_frame::value_of(&spec);
                 assert!(
-                    matches!(&wire, FfiValue::String(k) if utf8(k) == Some(spec.key())),
+                    matches!(&wire, Tree::String(k) if k == spec.key()),
                     "{spec} writes as its bare key"
                 );
                 assert_eq!(
@@ -1532,7 +1519,7 @@ mod tests {
                 let spec = IndexSpec::Match(options.clone());
                 let wire = crate::dynamic::test_frame::value_of(&spec);
                 assert!(
-                    matches!(&wire, FfiValue::Object(_)),
+                    matches!(&wire, Tree::Object(_)),
                     "{options:?} is not the default, so it writes as an object"
                 );
                 assert_eq!(
@@ -1547,8 +1534,8 @@ mod tests {
         /// rest; the exact shape here is what a binding writes.
         #[test]
         fn the_object_form_defaults_omitted_options() {
-            let obj = |entries: Vec<(&str, FfiValue)>| {
-                FfiValue::Object(
+            let obj = |entries: Vec<(&str, Tree)>| {
+                Tree::Object(
                     entries
                         .into_iter()
                         .map(|(k, v)| (k.to_string(), v))
@@ -1558,9 +1545,9 @@ mod tests {
             let wire = obj(vec![(
                 "match",
                 obj(vec![
-                    ("tokenizer", obj(vec![("ngram", FfiValue::UInt32(4))])),
-                    ("k", FfiValue::Int64(5)),
-                    ("m", FfiValue::Int32(64)),
+                    ("tokenizer", obj(vec![("ngram", Tree::UInt32(4))])),
+                    ("k", Tree::Int64(5)),
+                    ("m", Tree::Int32(64)),
                 ]),
             )]);
             assert_eq!(
@@ -1576,8 +1563,8 @@ mod tests {
                 "match",
                 obj(vec![
                     ("tokenizer", s("standard")),
-                    ("downcase", FfiValue::Bool(false)),
-                    ("m", FfiValue::UInt64(2048)),
+                    ("downcase", Tree::Bool(false)),
+                    ("m", Tree::UInt64(2048)),
                 ]),
             )]);
             assert_eq!(
@@ -1599,19 +1586,19 @@ mod tests {
 
         #[test]
         fn a_malformed_wire_form_is_error_plan() {
-            let obj = |entries: Vec<(&str, FfiValue)>| {
-                FfiValue::Object(
+            let obj = |entries: Vec<(&str, Tree)>| {
+                Tree::Object(
                     entries
                         .into_iter()
                         .map(|(k, v)| (k.to_string(), v))
                         .collect(),
                 )
             };
-            let opts = |entries: Vec<(&str, FfiValue)>| obj(vec![("match", obj(entries))]);
+            let opts = |entries: Vec<(&str, Tree)>| obj(vec![("match", obj(entries))]);
             let refused = [
                 ("an unknown key", s("eqq")),
                 ("the ciphertext key", s("c")),
-                ("a number", FfiValue::UInt32(1)),
+                ("a number", Tree::UInt32(1)),
                 ("an object for eq", obj(vec![("eq", obj(vec![]))])),
                 (
                     "match options that are not an object",
@@ -1622,10 +1609,10 @@ mod tests {
                     obj(vec![("match", obj(vec![])), ("ore", obj(vec![]))]),
                 ),
                 ("an empty object", obj(vec![])),
-                ("an unknown option", opts(vec![("q", FfiValue::UInt32(1))])),
+                ("an unknown option", opts(vec![("q", Tree::UInt32(1))])),
                 (
                     "an option twice",
-                    opts(vec![("k", FfiValue::UInt32(4)), ("k", FfiValue::UInt32(5))]),
+                    opts(vec![("k", Tree::UInt32(4)), ("k", Tree::UInt32(5))]),
                 ),
                 (
                     "an unknown tokenizer",
@@ -1633,29 +1620,20 @@ mod tests {
                 ),
                 (
                     "a tokenizer object that is not ngram",
-                    opts(vec![(
-                        "tokenizer",
-                        obj(vec![("words", FfiValue::UInt32(3))]),
-                    )]),
+                    opts(vec![("tokenizer", obj(vec![("words", Tree::UInt32(3))]))]),
                 ),
                 (
                     "a zero n-gram",
-                    opts(vec![(
-                        "tokenizer",
-                        obj(vec![("ngram", FfiValue::UInt32(0))]),
-                    )]),
+                    opts(vec![("tokenizer", obj(vec![("ngram", Tree::UInt32(0))]))]),
                 ),
                 ("a mistyped downcase", opts(vec![("downcase", s("yes"))])),
-                ("a negative k", opts(vec![("k", FfiValue::Int32(-3))])),
-                ("a float k", opts(vec![("k", FfiValue::Float64(3.0))])),
-                ("k out of bounds", opts(vec![("k", FfiValue::UInt32(17))])),
-                (
-                    "m not a power of two",
-                    opts(vec![("m", FfiValue::UInt32(300))]),
-                ),
+                ("a negative k", opts(vec![("k", Tree::Int32(-3))])),
+                ("a float k", opts(vec![("k", Tree::Float64(3.0))])),
+                ("k out of bounds", opts(vec![("k", Tree::UInt32(17))])),
+                ("m not a power of two", opts(vec![("m", Tree::UInt32(300))])),
                 (
                     "m too wide for u16",
-                    opts(vec![("m", FfiValue::UInt64(1 << 17))]),
+                    opts(vec![("m", Tree::UInt64(1 << 17))]),
                 ),
             ];
             for (label, wire) in refused {
@@ -1717,9 +1695,9 @@ mod tests {
 #[cfg(test)]
 mod wire_form {
     use super::*;
-    use crate::dynamic::FfiValue;
+    use crate::dynamic::test_frame::Tree;
 
-    fn index_of(value: &FfiValue) -> Result<IndexSpec, Error> {
+    fn index_of(value: &Tree) -> Result<IndexSpec, Error> {
         IndexSpec::from_frame(&crate::dynamic::test_frame::frame_of(value))
     }
     use crate::sem::{MatchConfig, Tokenizer};
@@ -1761,7 +1739,7 @@ mod wire_form {
         let spec = Index::<String>::spec(&Match);
         assert!(matches!(
             crate::dynamic::test_frame::value_of(&spec),
-            FfiValue::String(key) if crate::dynamic::utf8(&key) == Some("match")
+            Tree::String(key) if key == "match"
         ));
     }
 
@@ -1770,10 +1748,7 @@ mod wire_form {
         let spec = Index::<String>::spec(&Match::<Words>::new());
         assert_eq!(spec, IndexSpec::Match(Words::options()));
         assert!(
-            matches!(
-                crate::dynamic::test_frame::value_of(&spec),
-                FfiValue::Object(_)
-            ),
+            matches!(crate::dynamic::test_frame::value_of(&spec), Tree::Object(_)),
             "non-default options are written, not dropped"
         );
     }

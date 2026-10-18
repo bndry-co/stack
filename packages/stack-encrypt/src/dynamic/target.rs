@@ -590,7 +590,7 @@ impl fmt::Display for TargetDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dynamic::FfiValue;
+    use crate::dynamic::test_frame::Tree;
 
     fn text_eq() -> TargetDescriptor {
         TargetDescriptor::new(
@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn the_wire_form_has_every_key_in_order_with_null_for_absent() {
-        let FfiValue::Object(entries) = crate::dynamic::test_frame::value_of(&text_eq()) else {
+        let Tree::Object(entries) = crate::dynamic::test_frame::value_of(&text_eq()) else {
             panic!("an object");
         };
         let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
@@ -681,20 +681,20 @@ mod tests {
             ],
             "the se_targets entry's keys, in order"
         );
-        assert!(matches!(&entries[3].1, FfiValue::String(s) if s.risky_ref() == b"string"));
-        assert!(matches!(&entries[8].1, FfiValue::Bool(true)));
+        assert!(matches!(&entries[3].1, Tree::String(s) if s.as_bytes() == b"string"));
+        assert!(matches!(&entries[8].1, Tree::Bool(true)));
         assert!(
-            matches!(&entries[9].1, FfiValue::Null),
+            matches!(&entries[9].1, Tree::Null),
             "no reason is null, not absent"
         );
         let mut unspecified = text_eq();
         unspecified.plaintext = None;
         unspecified.query = None;
-        let FfiValue::Object(entries) = crate::dynamic::test_frame::value_of(&unspecified) else {
+        let Tree::Object(entries) = crate::dynamic::test_frame::value_of(&unspecified) else {
             panic!("an object");
         };
-        assert!(matches!(&entries[3].1, FfiValue::Null));
-        assert!(matches!(&entries[6].1, FfiValue::Null));
+        assert!(matches!(&entries[3].1, Tree::Null));
+        assert!(matches!(&entries[6].1, Tree::Null));
         assert_eq!(
             entries.len(),
             11,
