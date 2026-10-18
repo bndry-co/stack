@@ -158,15 +158,16 @@ The engine produces these EQL types today, each from one Go field type:
 
 | `encrypt_into` | Go field |
 |---|---|
-| `TextEq`, `Text`, `TextMatch` | `string` |
-| `Smallint`, `SmallintEq` | `int16`, or any Go integer type |
-| `Integer`, `IntegerEq` | `int32`, or any Go integer type |
-| `Bigint`, `BigintEq` | `int64`, or any Go integer type |
+| `TextEq`, `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe` | `string` |
+| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe` | `int16`, or any Go integer type |
+| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe` | `int32`, or any Go integer type |
+| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe` | `int64`, or any Go integer type |
 | `Boolean` | `bool` |
-| `Real`, `RealEq` | `float32` |
-| `Double`, `DoubleEq` | `float64` |
+| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe` | `float32` |
+| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe` | `float64` |
 
-The `Eq` types answer `Eq`; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real` and `Double` are stored and read only, with no query method.
+The `Eq` types answer `Eq`; the `Ord` and `OrdOpe` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real` and `Double` are stored and read only, with no query method.
+An ordered type has no `Between` method yet, because a `BETWEEN` operand needs EQL v4's range query domains.
 
 Any built-in Go integer field takes an integer type (ADR-0002) and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.
 A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index; its query refuses such text too.

@@ -335,24 +335,37 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
 
 /// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
 /// `stack-encrypt` derives: the storage and equality domains of every family
-/// whose plaintext eql-bindings names (`plaintext_of`), and text match. Every
+/// whose plaintext eql-bindings names (`plaintext_of`), the OPE-ordered
+/// domains (`ord`, `ord_ope`) of the families listed, and text match. Every
 /// other stored domain has a reason in [`encryption_gap`], and a test holds the two together so a new domain
 /// cannot arrive without either a derive or a reason.
 pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("integer", ""),
     ("integer", "eq"),
+    ("integer", "ord"),
+    ("integer", "ord_ope"),
     ("smallint", ""),
     ("smallint", "eq"),
+    ("smallint", "ord"),
+    ("smallint", "ord_ope"),
     ("bigint", ""),
     ("bigint", "eq"),
+    ("bigint", "ord"),
+    ("bigint", "ord_ope"),
     ("text", ""),
     ("text", "eq"),
     ("text", "match"),
+    ("text", "ord"),
+    ("text", "ord_ope"),
     ("boolean", ""),
     ("real", ""),
     ("real", "eq"),
+    ("real", "ord"),
+    ("real", "ord_ope"),
     ("double", ""),
     ("double", "eq"),
+    ("double", "ord"),
+    ("double", "ord_ope"),
 ];
 
 /// Why no `eql_v3` struct derives Stack Encrypt's traits.
@@ -403,14 +416,15 @@ pub fn encryption_gap(
          not decided (#1130)"
     } else if domain.terms.contains(&Term::Ore) {
         "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"
-    } else if domain.terms.contains(&Term::Ope) && family.name == "text" {
-        "no EQL type is built from the engine's text order terms yet (#1131)"
-    } else if domain.terms.contains(&Term::Ope) {
-        "the engine does not yet derive this family's order terms over ADR-0002's order keys \
-         (#1236)"
+    } else if domain.terms.contains(&Term::Bloom) && domain.terms.contains(&Term::Ope) {
+        "every query of this type carries a match term, which text shorter than one 3-gram \
+         cannot make, so `=` or `<` on short text would be refused; how a query that is not a \
+         match leaves it out is not decided (#1131)"
     } else {
-        // Reached by an equality-only domain of a family whose plaintext is
-        // specified but which is not listed: nothing in the catalog today.
+        // Reached by any unlisted domain of a family whose plaintext is
+        // specified and whose terms are neither ORE nor match-and-order (an
+        // equality or OPE-ordered domain of a family that gains a plaintext,
+        // say): nothing in the catalog today.
         "this domain derives the way its family's other domains do; it is not listed in \
          ENCRYPTION_DOMAINS yet"
     })
@@ -436,10 +450,15 @@ fn encryption_attrs(
     let shown = rust.rsplit("::").next().unwrap_or(rust);
     let plaintext_doc = |named: &str| {
         if query {
-            let terms = if domain.terms.contains(&Term::Bloom) {
-                "match"
-            } else {
-                "equality"
+            let terms = match (
+                domain.terms.contains(&Term::Bloom),
+                domain.terms.contains(&Term::Hm),
+                domain.terms.contains(&Term::Ope),
+            ) {
+                (true, _, _) => "match",
+                (false, true, true) => "equality and order",
+                (false, false, true) => "order",
+                _ => "equality",
             };
             format!(
                 " Plaintext input: {named}. Implements `EncryptFrom<{shown}>` to build {terms} \
@@ -1725,14 +1744,15 @@ mod tests {
                         "no Rust plaintext type for this family"
                     } else if domain.terms.contains(&Term::Ore) {
                         "block ORE terms"
-                    } else if domain.terms.contains(&Term::Ope) {
-                        if family.name == "text" {
-                            "text order terms"
-                        } else {
-                            "order keys (#1236)"
-                        }
+                    } else if domain.terms.contains(&Term::Bloom)
+                        && domain.terms.contains(&Term::Ope)
+                    {
+                        "carries a match term"
                     } else {
-                        panic!("{full}: every specified, unordered domain is derived: {reason}")
+                        panic!(
+                            "{full}: every specified domain without ORE or a match-and-order \
+                             query is derived: {reason}"
+                        )
                     };
                     assert!(reason.contains(expected), "{full}: {reason}");
                 }

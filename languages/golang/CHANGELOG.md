@@ -88,6 +88,12 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   type, range checked as for `Integer`) tagged `encrypt_into=` one of them
   seals at 16 bits; `SmallintEq` gets `Eq`, with the same equality term as
   an integer of the same value under the same column.
+- **`IntegerOrd`, `SmallintOrd`, `BigintOrd`, `RealOrd`, `DoubleOrd`,
+  `TextOrd` and their `OrdOpe` twins**: a field tagged `encrypt_into=` one of them gets `Lt`,
+  `Lte`, `Gt` and `Gte`, and a text one `Eq` too. They store an OPE term
+  that orders by ADR-0002's order key: floats as PostgreSQL's `float8`
+  sorts them, text by its fold. No `Between` yet: it needs EQL v4's range
+  query domains.
 - **Ordering methods on text.** A string field with `index=ore` or
   `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`. Text orders by its
   folded form (ADR-0002: case and accents folded, under Unicode 16), so

@@ -7,6 +7,11 @@
 //! precomposed `é` and with `e` and a combining accent is one value, `Café`
 //! another. The stored identifier supplies context for ciphertext and terms.
 //!
+//! Order (the `op` term of the `Ord` and `OrdOpe` types) compares ADR-0002's
+//! order key, which folds text's case and accents: `Café` and `cafe` are
+//! neither `<` nor `>` each other, while `=` on a `TextOrd` column, which
+//! reads the equality term, still tells them apart.
+//!
 //! This is a new producer profile, independent of existing cipherstash-client
 //! ciphertext and terms, so it writes the `eql_v4` domains ([`crate::v4`]),
 //! never `eql_v3` (ADR-0002).
@@ -93,7 +98,9 @@ pub mod targets;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 #[allow(deprecated)]
 use stack_encrypt::sem::MatchTerm;
-use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, TermError, Tokenizer};
+use stack_encrypt::sem::{
+    EqualityTerm, MatchConfig, MatchOptions, OpeTerm, Orderable, TermError, Tokenizer,
+};
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{self, AeadContext, CallerContext};
 use stack_encrypt::{
@@ -103,7 +110,7 @@ use stack_encrypt::{
 };
 
 use crate::{
-    v3::terms::{BloomFilter, Ciphertext, Hmac256},
+    v3::terms::{BloomFilter, Ciphertext, Hmac256, OpeCllw},
     Identifier,
 };
 
@@ -355,6 +362,51 @@ impl Decryptable for BloomFilter {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for BloomFilter {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
+/// Builds EQL's hex OPE term from the native order-preserving term.
+///
+/// The bytes are Stack Encrypt's CLLW OPE ciphertext of the value's
+/// ADR-0002 order key, which `vitaminc-ore` encodes: an integer at its own
+/// width, a float as the `f64` it widens to (`-0.0` ties `0.0`, every NaN is
+/// one value after `+Infinity`), text in Unicode 16 NFC with case and accents
+/// folded. EQL compares `op` as `bytea`, which is the lexicographic byte
+/// order the scheme preserves, so `<` on the stored terms is `<` on the
+/// order keys. Matching cipherstash-client's bytes is not a goal:
+/// cipherstash-client never writes an `eql_v4` column.
+///
+/// Text with no fold (a code point Unicode 16 does not assign) has no order
+/// term and is refused, stored or queried.
+#[doc(hidden)]
+pub struct OpeVisitor;
+impl Visitor for OpeVisitor {
+    type Value = OpeCllw;
+    fn ope<T: Orderable>(self, term: OpeTerm<T>) -> Result<Self::Value, Error> {
+        Ok(OpeCllw(hex::encode(term.as_bytes())))
+    }
+}
+impl Transcode for OpeCllw {
+    type Visitor = OpeVisitor;
+    fn visitor() -> Self::Visitor {
+        OpeVisitor
+    }
+}
+impl<S: Orderable + Clone> EncryptFrom<S> for OpeCllw {
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    where
+        S: 's,
+    {
+        target::ope().transcode()
+    }
+}
+impl Decryptable for OpeCllw {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for OpeCllw {
     fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
         None
     }

@@ -28,7 +28,9 @@
 // also takes any other built-in Go integer type, sealed at the type's width:
 // one every value of which fits it (an int16 into Integer) always seals, and
 // a wider one (an int64 into Integer) is range checked, a value that does not
-// fit refused with [ErrEncoding]. The *Eq types answer Eq; Smallint,
+// fit refused with [ErrEncoding]. The *Eq types answer Eq; the *Ord and
+// *OrdOpe types (IntegerOrd, SmallintOrd, BigintOrd, RealOrd, DoubleOrd,
+// TextOrd and their OrdOpe twins) answer Lt, Lte, Gt and Gte, and Eq too on text; Smallint,
 // Integer, Bigint, Boolean, Real, Double and Text are stored and read only.
 //
 // 3. Run the generator. It writes user_stash.go beside the struct:

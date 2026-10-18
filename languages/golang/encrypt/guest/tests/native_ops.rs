@@ -1365,18 +1365,30 @@ fn targets_lists_what_the_build_holds() {
         [
             "Integer",
             "IntegerEq",
+            "IntegerOrd",
+            "IntegerOrdOpe",
             "Smallint",
             "SmallintEq",
+            "SmallintOrd",
+            "SmallintOrdOpe",
             "Bigint",
             "BigintEq",
+            "BigintOrd",
+            "BigintOrdOpe",
             "Text",
             "TextEq",
             "TextMatch",
+            "TextOrd",
+            "TextOrdOpe",
             "Boolean",
             "Real",
             "RealEq",
+            "RealOrd",
+            "RealOrdOpe",
             "Double",
-            "DoubleEq"
+            "DoubleEq",
+            "DoubleOrd",
+            "DoubleOrdOpe"
         ],
         "the engine's producible types, in catalog order"
     );
@@ -1727,8 +1739,9 @@ fn target_limit_sizes_a_fetch_from_the_terms_bytes() {
 }
 
 /// The `eql` build's catalog lists, per type, the operators the engine
-/// answers: `TextEq` answers `eq`, exactly, and a type the engine does not
-/// produce answers nothing.
+/// answers: `TextEq` answers `eq`, exactly, an OPE-ordered type the four
+/// orderings of one value through `ope` (and `eq` first when it stores an
+/// equality term), and a type the engine does not produce answers nothing.
 #[test]
 fn the_catalog_lists_each_types_operators() {
     if !stack_encrypt_guest::targets::HOLDS_EQL {
@@ -1749,15 +1762,37 @@ fn the_catalog_lists_each_types_operators() {
             panic!("{name}: operators is a list");
         };
         let producible = matches!(entry(fields, "producible"), Tree::Bool(true));
+        let listed: Vec<Vec<(&str, &str)>> = operators
+            .iter()
+            .map(|op| {
+                let Tree::Object(op) = op else {
+                    panic!("an object");
+                };
+                op.iter().map(|(k, v)| (k.as_str(), text(v))).collect()
+            })
+            .collect();
         let only = |want: [(&str, &str); 4]| {
-            assert_eq!(operators.len(), 1, "{name} answers one operator");
-            let Tree::Object(op) = &operators[0] else {
-                panic!("an object");
-            };
-            let op: Vec<(&str, &str)> = op.iter().map(|(k, v)| (k.as_str(), text(v))).collect();
-            assert_eq!(op, want, "{name}");
+            assert_eq!(listed, [want.to_vec()], "{name}");
         };
+        let exact = |operator: &'static str, index: &'static str| {
+            vec![
+                ("operator", operator),
+                ("fidelity", "exact"),
+                ("arity", "one"),
+                ("index", index),
+            ]
+        };
+        let orderings = || ["lt", "lte", "gt", "gte"].map(|op| exact(op, "ope"));
         match name.as_str() {
+            "IntegerOrd" | "IntegerOrdOpe" | "SmallintOrd" | "SmallintOrdOpe" | "BigintOrd"
+            | "BigintOrdOpe" | "RealOrd" | "RealOrdOpe" | "DoubleOrd" | "DoubleOrdOpe" => {
+                assert_eq!(listed, orderings().to_vec(), "{name}");
+            }
+            "TextOrd" | "TextOrdOpe" => {
+                let mut want = vec![exact("eq", "eq")];
+                want.extend(orderings());
+                assert_eq!(listed, want, "{name}");
+            }
             "TextEq" | "IntegerEq" | "SmallintEq" | "BigintEq" | "RealEq" | "DoubleEq" => only([
                 ("operator", "eq"),
                 ("fidelity", "exact"),

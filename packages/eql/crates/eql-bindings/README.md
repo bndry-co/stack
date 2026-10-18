@@ -111,19 +111,31 @@ plaintext:
 
 | v4 type | Plaintext |
 | --- | --- |
-| `Text`, `TextMatch` | `String` |
-| `Smallint`, `SmallintEq` | `i16` |
-| `Integer`, `IntegerEq` | `i32` |
-| `Bigint`, `BigintEq` | `i64` |
+| `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe` | `String` |
+| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe` | `i16` |
+| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe` | `i32` |
+| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe` | `i64` |
 | `Boolean` | `bool` |
-| `Real`, `RealEq` | `f32` |
-| `Double`, `DoubleEq` | `f64` |
+| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe` | `f32` |
+| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe` | `f64` |
 
 Each seals the same leaf the Go SDK seals for the same value, so values
 written here and by the Go SDK open each other. On the equality
 types, `=` behaves as Postgres's own does: an integer has one term whatever
 its width, and for floats `-0.0 = 0.0` and `NaN = NaN`. The ciphertext keeps
 the exact value.
+The `Ord` and `OrdOpe` types store an OPE term (`op`), which EQL compares as
+bytes, so `<`, `<=`, `>`, `>=` and `ORDER BY eql_v4.ord_term(col)` follow
+ADR-0002's order key: integers by value, floats as PostgreSQL's `float8`
+sorts them (`-0.0` ties `0.0`, every NaN is one value after `+Infinity`, and
+an `f32` orders as the `f64` it widens to), and text by its fold (case and
+accents folded, under Unicode 16). On a number column `=` compares the order
+term too. A text order type also stores `TextEq`'s equality term, and `=`
+reads that one, so `Café` and `cafe` are neither `<` nor `>` each other, and
+not `=` either. Text with a code point Unicode 16 does not assign has no
+order term and is refused, stored or queried. A family's `Ord` and `OrdOpe`
+types store the same term under one column. The query value carries one
+bound: `BETWEEN` needs EQL v4's range query domains and is not produced yet.
 `TextMatch` builds its filter under a configuration pinned in this crate
 (`EqlMatch`: 3-grams of the lower-cased text, `k = 6`, a 2048-bit filter) for
 stored values and queries alike. The configuration is part of the stored
@@ -133,11 +145,11 @@ where that matters. Write the stored column on the left, `col @@ query`: the
 other order finds nothing until #1171 is fixed. Text too short to make a
 3-gram (empty strings, two-letter codes) cannot be stored in a `TextMatch`
 column yet, and a `TextMatchQuery` for it is refused too: one filter type
-builds both, and an empty filter as a query would match every row. The
-ordering types wait for the engine's order keys (#1236), text's order types
-(#1131) and block ORE (#1132), `Date`, `Timestamp` and `Numeric` for a
-choice of their Rust plaintext types (#1130), and `Json` for a decision on
-sealing a document as one leaf.
+builds both, and an empty filter as a query would match every row. The ORE
+types (`*OrdOre`, `TextSearchOre`) wait for block ORE (#1132), `TextSearch`
+for how a query that is not a match leaves out its match term (#1131),
+`Date`, `Timestamp` and `Numeric` for a choice of their Rust plaintext types
+(#1130), and `Json` for a decision on sealing a document as one leaf.
 
 The generated API docs include a complete, executable example in the
 `eql_bindings::encryption` module, from cipher setup through decryption. Its

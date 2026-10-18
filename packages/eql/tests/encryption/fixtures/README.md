@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | `v4_rows.json` | the Go SDK's `TestV4RowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `v4_queries.json` | the by-name dispatch in `tests/v4_types.rs` | yes, with `EQL_UPDATE_FIXTURES=1` |
+| `v4_ordered_queries.json` | the by-name dispatch in `tests/v4_order.rs` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `text_eq_query.json`, `ste_vec_selectors.json` | `tests/text_eq.rs`, `tests/ste_vec_selectors.rs` | yes, see each test |
 | `v4_smallint_rows.json` | the Go SDK's `TestV4SmallintRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `stored_v4_rows_v1.json` | copied from `v4_rows.json` at the next build | **never: frozen** |

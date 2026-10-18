@@ -19,11 +19,10 @@
 //! [`encryption_gap`](crate::bindings::encryption_gap) on every domain.
 //!
 //! The reasons a type is not producible, each naming the issue that tracks
-//! it: no Rust plaintext type is chosen for the family yet (#1130); the
-//! engine's order terms are not yet derived over ADR-0002's order keys
-//! (#1236) or, for text, no EQL type is built from them (#1131); EQL's ORE
-//! term is block ORE where the engine derives CLLW ORE (#1132); and the JSON
-//! index is a new engine operation (#1060).
+//! it: no Rust plaintext type is chosen for the family yet (#1130); EQL's
+//! ORE term is block ORE where the engine derives CLLW ORE (#1132); a
+//! `TextSearch` query carries a match term that short text cannot make
+//! (#1131); and the JSON index is a new engine operation (#1060).
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -391,15 +390,13 @@ mod tests {
             target_gap(family, family.domain_by_name(name).expect("domain"))
         };
         let text = eql_domains::TEXT;
-        for producible in ["", "eq", "match"] {
+        for producible in ["", "eq", "match", "ord", "ord_ope"] {
             assert!(gap(&text, producible).is_none(), "text {producible:?}");
         }
-        for ordered in ["ord", "ord_ope", "search"] {
-            assert!(
-                gap(&text, ordered).unwrap().contains("text order terms"),
-                "{ordered}"
-            );
-        }
+        assert!(
+            gap(&text, "search").unwrap().contains("match term"),
+            "TextSearch waits on how a query leaves out its match term"
+        );
         for block_ore in ["ord_ore", "search_ore"] {
             assert!(
                 gap(&text, block_ore).unwrap().contains("block ORE"),
@@ -416,11 +413,12 @@ mod tests {
         for family_name in ["integer", "smallint", "bigint", "real", "double"] {
             let family = family(family_name);
             assert!(gap(family, "").is_none(), "{family_name}");
-            assert!(gap(family, "eq").is_none(), "{family_name}Eq is producible");
-            assert!(
-                gap(family, "ord").unwrap().contains("#1236"),
-                "{family_name}"
-            );
+            for producible in ["eq", "ord", "ord_ope"] {
+                assert!(
+                    gap(family, producible).is_none(),
+                    "{family_name} {producible}"
+                );
+            }
             assert!(
                 gap(family, "ord_ore").unwrap().contains("block ORE"),
                 "{family_name}"

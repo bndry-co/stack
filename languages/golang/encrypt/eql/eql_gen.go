@@ -12,18 +12,18 @@ var Types = []Type{
 	{Name: "Integer", GoName: "Integer", Family: "integer", Suffix: "", Plaintext: "int32", SQLDomain: "public.eql_v4_integer", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "IntegerEq", GoName: "IntegerEq", Family: "integer", Suffix: "Eq", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_eq", Indexes: []string{"eq"}, Query: "IntegerEqQuery", QuerySQLDomain: "eql_v4.query_integer_eq", Producible: true, Reason: ""},
 	{Name: "IntegerOrdOre", GoName: "IntegerOrdOre", Family: "integer", Suffix: "OrdOre", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord_ore", Indexes: []string{"ore"}, Query: "IntegerOrdOreQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
-	{Name: "IntegerOrd", GoName: "IntegerOrd", Family: "integer", Suffix: "Ord", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord", Indexes: []string{"ope"}, Query: "IntegerOrdQuery", QuerySQLDomain: "eql_v4.query_integer_ord", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
-	{Name: "IntegerOrdOpe", GoName: "IntegerOrdOpe", Family: "integer", Suffix: "OrdOpe", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord_ope", Indexes: []string{"ope"}, Query: "IntegerOrdOpeQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ope", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
+	{Name: "IntegerOrd", GoName: "IntegerOrd", Family: "integer", Suffix: "Ord", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord", Indexes: []string{"ope"}, Query: "IntegerOrdQuery", QuerySQLDomain: "eql_v4.query_integer_ord", Producible: true, Reason: ""},
+	{Name: "IntegerOrdOpe", GoName: "IntegerOrdOpe", Family: "integer", Suffix: "OrdOpe", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord_ope", Indexes: []string{"ope"}, Query: "IntegerOrdOpeQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ope", Producible: true, Reason: ""},
 	{Name: "Smallint", GoName: "Smallint", Family: "smallint", Suffix: "", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "SmallintEq", GoName: "SmallintEq", Family: "smallint", Suffix: "Eq", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint_eq", Indexes: []string{"eq"}, Query: "SmallintEqQuery", QuerySQLDomain: "eql_v4.query_smallint_eq", Producible: true, Reason: ""},
 	{Name: "SmallintOrdOre", GoName: "SmallintOrdOre", Family: "smallint", Suffix: "OrdOre", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint_ord_ore", Indexes: []string{"ore"}, Query: "SmallintOrdOreQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
-	{Name: "SmallintOrd", GoName: "SmallintOrd", Family: "smallint", Suffix: "Ord", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint_ord", Indexes: []string{"ope"}, Query: "SmallintOrdQuery", QuerySQLDomain: "eql_v4.query_smallint_ord", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
-	{Name: "SmallintOrdOpe", GoName: "SmallintOrdOpe", Family: "smallint", Suffix: "OrdOpe", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint_ord_ope", Indexes: []string{"ope"}, Query: "SmallintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ope", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
+	{Name: "SmallintOrd", GoName: "SmallintOrd", Family: "smallint", Suffix: "Ord", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint_ord", Indexes: []string{"ope"}, Query: "SmallintOrdQuery", QuerySQLDomain: "eql_v4.query_smallint_ord", Producible: true, Reason: ""},
+	{Name: "SmallintOrdOpe", GoName: "SmallintOrdOpe", Family: "smallint", Suffix: "OrdOpe", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint_ord_ope", Indexes: []string{"ope"}, Query: "SmallintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ope", Producible: true, Reason: ""},
 	{Name: "Bigint", GoName: "Bigint", Family: "bigint", Suffix: "", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "BigintEq", GoName: "BigintEq", Family: "bigint", Suffix: "Eq", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_eq", Indexes: []string{"eq"}, Query: "BigintEqQuery", QuerySQLDomain: "eql_v4.query_bigint_eq", Producible: true, Reason: ""},
 	{Name: "BigintOrdOre", GoName: "BigintOrdOre", Family: "bigint", Suffix: "OrdOre", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord_ore", Indexes: []string{"ore"}, Query: "BigintOrdOreQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
-	{Name: "BigintOrd", GoName: "BigintOrd", Family: "bigint", Suffix: "Ord", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord", Indexes: []string{"ope"}, Query: "BigintOrdQuery", QuerySQLDomain: "eql_v4.query_bigint_ord", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
-	{Name: "BigintOrdOpe", GoName: "BigintOrdOpe", Family: "bigint", Suffix: "OrdOpe", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord_ope", Indexes: []string{"ope"}, Query: "BigintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ope", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
+	{Name: "BigintOrd", GoName: "BigintOrd", Family: "bigint", Suffix: "Ord", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord", Indexes: []string{"ope"}, Query: "BigintOrdQuery", QuerySQLDomain: "eql_v4.query_bigint_ord", Producible: true, Reason: ""},
+	{Name: "BigintOrdOpe", GoName: "BigintOrdOpe", Family: "bigint", Suffix: "OrdOpe", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord_ope", Indexes: []string{"ope"}, Query: "BigintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ope", Producible: true, Reason: ""},
 	{Name: "Date", GoName: "Date", Family: "date", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_date", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
 	{Name: "DateEq", GoName: "DateEq", Family: "date", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_date_eq", Indexes: []string{"eq"}, Query: "DateEqQuery", QuerySQLDomain: "eql_v4.query_date_eq", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
 	{Name: "DateOrdOre", GoName: "DateOrdOre", Family: "date", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ore", Indexes: []string{"ore"}, Query: "DateOrdOreQuery", QuerySQLDomain: "eql_v4.query_date_ord_ore", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
@@ -43,27 +43,27 @@ var Types = []Type{
 	{Name: "TextEq", GoName: "TextEq", Family: "text", Suffix: "Eq", Plaintext: "string", SQLDomain: "public.eql_v4_text_eq", Indexes: []string{"eq"}, Query: "TextEqQuery", QuerySQLDomain: "eql_v4.query_text_eq", Producible: true, Reason: ""},
 	{Name: "TextMatch", GoName: "TextMatch", Family: "text", Suffix: "Match", Plaintext: "string", SQLDomain: "public.eql_v4_text_match", Indexes: []string{"match"}, Query: "TextMatchQuery", QuerySQLDomain: "eql_v4.query_text_match", Producible: true, Reason: ""},
 	{Name: "TextOrdOre", GoName: "TextOrdOre", Family: "text", Suffix: "OrdOre", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ore", Indexes: []string{"eq", "ore"}, Query: "TextOrdOreQuery", QuerySQLDomain: "eql_v4.query_text_ord_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
-	{Name: "TextOrd", GoName: "TextOrd", Family: "text", Suffix: "Ord", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord", Indexes: []string{"eq", "ope"}, Query: "TextOrdQuery", QuerySQLDomain: "eql_v4.query_text_ord", Producible: false, Reason: "no EQL type is built from the engine's text order terms yet (#1131)"},
-	{Name: "TextOrdOpe", GoName: "TextOrdOpe", Family: "text", Suffix: "OrdOpe", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ope", Indexes: []string{"eq", "ope"}, Query: "TextOrdOpeQuery", QuerySQLDomain: "eql_v4.query_text_ord_ope", Producible: false, Reason: "no EQL type is built from the engine's text order terms yet (#1131)"},
+	{Name: "TextOrd", GoName: "TextOrd", Family: "text", Suffix: "Ord", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord", Indexes: []string{"eq", "ope"}, Query: "TextOrdQuery", QuerySQLDomain: "eql_v4.query_text_ord", Producible: true, Reason: ""},
+	{Name: "TextOrdOpe", GoName: "TextOrdOpe", Family: "text", Suffix: "OrdOpe", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ope", Indexes: []string{"eq", "ope"}, Query: "TextOrdOpeQuery", QuerySQLDomain: "eql_v4.query_text_ord_ope", Producible: true, Reason: ""},
 	{Name: "TextSearchOre", GoName: "TextSearchOre", Family: "text", Suffix: "SearchOre", Plaintext: "string", SQLDomain: "public.eql_v4_text_search_ore", Indexes: []string{"eq", "ore", "match"}, Query: "TextSearchOreQuery", QuerySQLDomain: "eql_v4.query_text_search_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
-	{Name: "TextSearch", GoName: "TextSearch", Family: "text", Suffix: "Search", Plaintext: "string", SQLDomain: "public.eql_v4_text_search", Indexes: []string{"eq", "ope", "match"}, Query: "TextSearchQuery", QuerySQLDomain: "eql_v4.query_text_search", Producible: false, Reason: "no EQL type is built from the engine's text order terms yet (#1131)"},
+	{Name: "TextSearch", GoName: "TextSearch", Family: "text", Suffix: "Search", Plaintext: "string", SQLDomain: "public.eql_v4_text_search", Indexes: []string{"eq", "ope", "match"}, Query: "TextSearchQuery", QuerySQLDomain: "eql_v4.query_text_search", Producible: false, Reason: "every query of this type carries a match term, which text shorter than one 3-gram cannot make, so `=` or `<` on short text would be refused; how a query that is not a match leaves it out is not decided (#1131)"},
 	{Name: "Boolean", GoName: "Boolean", Family: "boolean", Suffix: "", Plaintext: "bool", SQLDomain: "public.eql_v4_boolean", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "Real", GoName: "Real", Family: "real", Suffix: "", Plaintext: "float32", SQLDomain: "public.eql_v4_real", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "RealEq", GoName: "RealEq", Family: "real", Suffix: "Eq", Plaintext: "float32", SQLDomain: "public.eql_v4_real_eq", Indexes: []string{"eq"}, Query: "RealEqQuery", QuerySQLDomain: "eql_v4.query_real_eq", Producible: true, Reason: ""},
 	{Name: "RealOrdOre", GoName: "RealOrdOre", Family: "real", Suffix: "OrdOre", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord_ore", Indexes: []string{"ore"}, Query: "RealOrdOreQuery", QuerySQLDomain: "eql_v4.query_real_ord_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
-	{Name: "RealOrd", GoName: "RealOrd", Family: "real", Suffix: "Ord", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord", Indexes: []string{"ope"}, Query: "RealOrdQuery", QuerySQLDomain: "eql_v4.query_real_ord", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
-	{Name: "RealOrdOpe", GoName: "RealOrdOpe", Family: "real", Suffix: "OrdOpe", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord_ope", Indexes: []string{"ope"}, Query: "RealOrdOpeQuery", QuerySQLDomain: "eql_v4.query_real_ord_ope", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
+	{Name: "RealOrd", GoName: "RealOrd", Family: "real", Suffix: "Ord", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord", Indexes: []string{"ope"}, Query: "RealOrdQuery", QuerySQLDomain: "eql_v4.query_real_ord", Producible: true, Reason: ""},
+	{Name: "RealOrdOpe", GoName: "RealOrdOpe", Family: "real", Suffix: "OrdOpe", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord_ope", Indexes: []string{"ope"}, Query: "RealOrdOpeQuery", QuerySQLDomain: "eql_v4.query_real_ord_ope", Producible: true, Reason: ""},
 	{Name: "Double", GoName: "Double", Family: "double", Suffix: "", Plaintext: "float64", SQLDomain: "public.eql_v4_double", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "DoubleEq", GoName: "DoubleEq", Family: "double", Suffix: "Eq", Plaintext: "float64", SQLDomain: "public.eql_v4_double_eq", Indexes: []string{"eq"}, Query: "DoubleEqQuery", QuerySQLDomain: "eql_v4.query_double_eq", Producible: true, Reason: ""},
 	{Name: "DoubleOrdOre", GoName: "DoubleOrdOre", Family: "double", Suffix: "OrdOre", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ore", Indexes: []string{"ore"}, Query: "DoubleOrdOreQuery", QuerySQLDomain: "eql_v4.query_double_ord_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
-	{Name: "DoubleOrd", GoName: "DoubleOrd", Family: "double", Suffix: "Ord", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord", Indexes: []string{"ope"}, Query: "DoubleOrdQuery", QuerySQLDomain: "eql_v4.query_double_ord", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
-	{Name: "DoubleOrdOpe", GoName: "DoubleOrdOpe", Family: "double", Suffix: "OrdOpe", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ope", Indexes: []string{"ope"}, Query: "DoubleOrdOpeQuery", QuerySQLDomain: "eql_v4.query_double_ord_ope", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
+	{Name: "DoubleOrd", GoName: "DoubleOrd", Family: "double", Suffix: "Ord", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord", Indexes: []string{"ope"}, Query: "DoubleOrdQuery", QuerySQLDomain: "eql_v4.query_double_ord", Producible: true, Reason: ""},
+	{Name: "DoubleOrdOpe", GoName: "DoubleOrdOpe", Family: "double", Suffix: "OrdOpe", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ope", Indexes: []string{"ope"}, Query: "DoubleOrdOpeQuery", QuerySQLDomain: "eql_v4.query_double_ord_ope", Producible: true, Reason: ""},
 	{Name: "SteVecDocument", GoName: "SteVecDocument", Family: "json", Suffix: "Search", Plaintext: "", SQLDomain: "public.eql_v4_json_search", Indexes: []string{"json"}, Query: "SteVecQuery", QuerySQLDomain: "eql_v4.query_json", Producible: false, Reason: "the JSON index is a new operation in the engine (#1060)"},
 	{Name: "Json", GoName: "JSON", Family: "json", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_json", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided"},
 }
 
 // Integer is the EQL type stored in public.eql_v4_integer: the integer family with no index.
-// The engine produces it from a int32.
+// The engine produces it from an int32.
 type Integer []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -87,7 +87,7 @@ func (v *Integer) UnmarshalJSON(b []byte) error {
 }
 
 // IntegerEq is the EQL type stored in public.eql_v4_integer_eq: the integer family with the eq index.
-// The engine produces it from a int32.
+// The engine produces it from an int32.
 type IntegerEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -181,7 +181,7 @@ func (v *IntegerOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // IntegerOrd is the EQL type stored in public.eql_v4_integer_ord: the integer family with the ope index.
-// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
+// The engine produces it from an int32.
 type IntegerOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -228,7 +228,7 @@ func (v *IntegerOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // IntegerOrdOpe is the EQL type stored in public.eql_v4_integer_ord_ope: the integer family with the ope index.
-// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
+// The engine produces it from an int32.
 type IntegerOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -275,7 +275,7 @@ func (v *IntegerOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Smallint is the EQL type stored in public.eql_v4_smallint: the smallint family with no index.
-// The engine produces it from a int16.
+// The engine produces it from an int16.
 type Smallint []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -299,7 +299,7 @@ func (v *Smallint) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintEq is the EQL type stored in public.eql_v4_smallint_eq: the smallint family with the eq index.
-// The engine produces it from a int16.
+// The engine produces it from an int16.
 type SmallintEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -393,7 +393,7 @@ func (v *SmallintOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintOrd is the EQL type stored in public.eql_v4_smallint_ord: the smallint family with the ope index.
-// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
+// The engine produces it from an int16.
 type SmallintOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -440,7 +440,7 @@ func (v *SmallintOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintOrdOpe is the EQL type stored in public.eql_v4_smallint_ord_ope: the smallint family with the ope index.
-// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
+// The engine produces it from an int16.
 type SmallintOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -487,7 +487,7 @@ func (v *SmallintOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Bigint is the EQL type stored in public.eql_v4_bigint: the bigint family with no index.
-// The engine produces it from a int64.
+// The engine produces it from an int64.
 type Bigint []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -511,7 +511,7 @@ func (v *Bigint) UnmarshalJSON(b []byte) error {
 }
 
 // BigintEq is the EQL type stored in public.eql_v4_bigint_eq: the bigint family with the eq index.
-// The engine produces it from a int64.
+// The engine produces it from an int64.
 type BigintEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -605,7 +605,7 @@ func (v *BigintOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // BigintOrd is the EQL type stored in public.eql_v4_bigint_ord: the bigint family with the ope index.
-// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
+// The engine produces it from an int64.
 type BigintOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -652,7 +652,7 @@ func (v *BigintOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // BigintOrdOpe is the EQL type stored in public.eql_v4_bigint_ord_ope: the bigint family with the ope index.
-// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
+// The engine produces it from an int64.
 type BigintOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1500,7 +1500,7 @@ func (v *TextOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextOrd is the EQL type stored in public.eql_v4_text_ord: the text family with the eq and ope indexes.
-// The engine cannot produce it yet: no EQL type is built from the engine's text order terms yet (#1131).
+// The engine produces it from a string.
 type TextOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1547,7 +1547,7 @@ func (v *TextOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextOrdOpe is the EQL type stored in public.eql_v4_text_ord_ope: the text family with the eq and ope indexes.
-// The engine cannot produce it yet: no EQL type is built from the engine's text order terms yet (#1131).
+// The engine produces it from a string.
 type TextOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1641,7 +1641,7 @@ func (v *TextSearchOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextSearch is the EQL type stored in public.eql_v4_text_search: the text family with the eq and ope and match indexes.
-// The engine cannot produce it yet: no EQL type is built from the engine's text order terms yet (#1131).
+// The engine cannot produce it yet: every query of this type carries a match term, which text shorter than one 3-gram cannot make, so `=` or `<` on short text would be refused; how a query that is not a match leaves it out is not decided (#1131).
 type TextSearch []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1830,7 +1830,7 @@ func (v *RealOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // RealOrd is the EQL type stored in public.eql_v4_real_ord: the real family with the ope index.
-// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
+// The engine produces it from a float32.
 type RealOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1877,7 +1877,7 @@ func (v *RealOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // RealOrdOpe is the EQL type stored in public.eql_v4_real_ord_ope: the real family with the ope index.
-// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
+// The engine produces it from a float32.
 type RealOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2042,7 +2042,7 @@ func (v *DoubleOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DoubleOrd is the EQL type stored in public.eql_v4_double_ord: the double family with the ope index.
-// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
+// The engine produces it from a float64.
 type DoubleOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2089,7 +2089,7 @@ func (v *DoubleOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DoubleOrdOpe is the EQL type stored in public.eql_v4_double_ord_ope: the double family with the ope index.
-// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
+// The engine produces it from a float64.
 type DoubleOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
