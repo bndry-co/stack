@@ -18,6 +18,8 @@ Three changes to the v3 SteVec design, taken together:
 
 Everything here works on standard PostgreSQL, as a non-superuser, with no extension: the SQL uses `sha256(bytea)` (core since 11), `get_byte` / `set_byte`, recursive CTEs and the `jsonb_path_ops` GIN operator class.
 
+**It ships as a new domain type in EQL v4, not as the v4 SteVec (decided 2026-10-18).** The scheme gets its own column domain, query domain and entry domain beside `public.eql_v4_json` and whatever v4 port of the v3 SteVec `json_search` type may follow, and it shares no wire shape or SQL with them. Two reasons. It must not block the v4 release: a new domain is additive and can land in any 4.x. And this is what the domain-per-scheme design of EQL v3, carried into v4, was for: a new encryption scheme is a new domain type, with its own CHECK, operators and functions, and never a new EQL version. The domain names below use the placeholder `eql_v4_json_tree`; the final name is a Phase 4 decision.
+
 ## Where we are
 
 ### The v3 SteVec, as cipherstash-client 0.42.3 produces it
@@ -152,7 +154,7 @@ OR (q.alt IS NOT NULL AND to_query(doc) @> q.alt)  -- a second GIN probe, bitmap
 
 ### 4. Wire format
 
-A v4 searchable JSON document, `public.eql_v4_json_search`:
+A document in the new domain, `public.eql_v4_json_tree` (placeholder name; a sibling of `public.eql_v4_json`, not a replacement for any SteVec domain):
 
 ```jsonc
 {
@@ -242,13 +244,13 @@ Everything the server does: `sha256(bytea)` (core since PostgreSQL 11), `get_byt
 
 **`packages/eql/crates/eql-bindings`**
 
-- `v4::json`: `SteVecDocument`, `SteVecEntry`, `SteVecQuery` with the fields above, `v: 4`, and the `stack-encrypt` feature's `EncryptFrom<Value>` / `DecryptInto<Value>` for `public.eql_v4_json_search` that frames the index's output with `i`, `v`, `h`. The v3 structs are untouched.
+- A new module beside `v4::json` for the new domain family (placeholder `v4::json_tree`): `JsonTreeDocument`, `JsonTreeEntry`, `JsonTreeQuery` with the fields above, `v: 4`, and the `stack-encrypt` feature's `EncryptFrom<Value>` / `DecryptInto<Value>` for `public.eql_v4_json_tree` that frames the index's output with `i`, `v`, `h`. Not a change to any SteVec struct: the v3 `SteVec*` types are untouched, and a v4 SteVec port, if one happens, is separate work with its own domain. The catalog (`eql-domains`) gains the family so `inventory`, `targets` and the Go table pick it up by generation.
 - `encryption/targets.rs`: `Json` becomes producible in the `se_targets` table once the type exists.
 
 **`packages/eql` SQL**
 
-- A v4-only `src/v4/json/{types,functions,operators,blockers}.sql`: the two domains and the query domain with their CHECKs, `to_query`, `@>` and `<@` as the two-stage expression, `groups_ok`, `->` with `h` and `j` grafted, `subtree(doc, token)` and `subtree_at(doc, token, selector)`, `jsonb_array_elements(doc, token)` and `jsonb_array_length(doc, token)`, the ordering extractor on an entry, and the blockers the v3 surface has.
-- **A build change.** `tasks/build.sh` renders `src/v3/**` as both bundles and `verify_installer_complete.sh` asserts every ordered v3 file is in the v4 installer. A v4 JSON surface that differs from v3's needs the renderer to exclude `src/v3/json/**` from the v4 render and include `src/v4/json/**`, and the completeness check to follow. During the spike the v4 JSON SQL can be installed as a separate file over the v4 bundle; the build integration is a task of its own.
+- A v4-only `src/v4/json_tree/{types,functions,operators,blockers}.sql` (placeholder path) for the **new** domain family: the column domain, the entry domain and the query domain with their CHECKs, `to_query`, `@>` and `<@` as the two-stage expression, `groups_ok`, `->` with `h` and `j` grafted, `subtree(doc, token)` and `subtree_at(doc, token, selector)`, `jsonb_array_elements(doc, token)` and `jsonb_array_length(doc, token)`, the ordering extractor on an entry, and the blockers the v3 JSON surface has. The existing `src/v3/json/**` is not touched and is not excluded from anything: the two families coexist.
+- **A build change, additive only.** `tasks/build.sh` renders `src/v3/**` as both bundles and `verify_installer_complete.sh` asserts every ordered v3 file is in the v4 installer. The new family needs the renderer to also order and render a v4-only source tree into the v4 bundle, and the completeness check to accept files that exist in one bundle only. Nothing is removed from either bundle, so this cannot block the v4 release: until the build change lands, the spike installs the new family as a separate file over the v4 bundle.
 - Tests: `mise run test:stack_encrypt_pg` on `next` already installs the v4 bundle and runs a Stack Encrypt PostgreSQL test with fresh encryption under a fake KMS and no credentials. The JSON suite joins it. The SQLx fixture machinery is not needed for this and should not be used: the point of the fake key source is that the whole suite runs on a fork PR.
 
 **`languages/golang`**
