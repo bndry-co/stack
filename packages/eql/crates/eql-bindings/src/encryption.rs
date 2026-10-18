@@ -44,10 +44,14 @@
 //! builder with `StackCipher::new().await?`, using your configured CipherStash
 //! credentials. The encryption and decryption calls are identical.
 //!
-//! A binding that holds no Rust type to name reaches the same plans by the
-//! type's *name* through `targets`, with the `targets` feature: the
-//! catalog-generated table of EQL types a data plan may name as a field
-//! target, and `encrypt` / `decrypt` / `query` dispatching on that name.
+#![cfg_attr(
+    feature = "targets",
+    doc = "A binding that holds no Rust type to name reaches the same plans by the type's *name* through [`targets`] (`targets` feature): the catalog-generated table of EQL types a data plan may name as a field target, and `encrypt` / `decrypt` / `query` dispatching on that name."
+)]
+#![cfg_attr(
+    not(feature = "targets"),
+    doc = "A binding that holds no Rust type to name reaches the same plans by the type's *name* through `targets`, with the `targets` feature: the catalog-generated table of EQL types a data plan may name as a field target, and `encrypt` / `decrypt` / `query` dispatching on that name."
+)]
 //!
 //! Use the same table and column identifier for writes and queries. Passing
 //! `column.into()` on decryption also checks that the stored identifier matches
