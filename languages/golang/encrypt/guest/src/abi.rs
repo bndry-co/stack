@@ -75,7 +75,6 @@ use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use futures::executor::block_on;
-use stack_encrypt::dynamic::FfiValue;
 use stack_encrypt::{KeysetCipher, StackCipher};
 use stack_guest_abi::abi::{export, input, take_plaintext, wipe_input};
 use stack_guest_abi::buffers;
@@ -109,12 +108,6 @@ thread_local! {
     /// an instance the host has torn down cannot be quietly revived with
     /// stale buffers around.
     static SHUT_DOWN: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Decode one codec-encoded input.
-fn decode(bytes: &[u8]) -> Result<FfiValue, u32> {
-    FfiValue::from_frame(bytes)
-        .map_err(|_| malformed("an input is not a value in the transport frame"))
 }
 
 /// Run `f` with the instance's cipher, or report `STATUS_STATE` when there
@@ -159,7 +152,7 @@ fn with_scope<R>(
     })
 }
 
-/// Initialise the instance's cipher from an FFI-codec-encoded config object
+/// Initialise the instance's cipher from a config frame
 /// (see [`crate::config`]). Performs one `load-keyset` round trip through
 /// the host transport for the default keyset, and returns that keyset's id
 /// (16 raw UUID bytes) as the output buffer. The raw config buffer — which
@@ -182,27 +175,36 @@ pub unsafe extern "C" fn se_cipher_init(cfg_ptr: *mut u8, cfg_len: u32) -> u64 {
     export(|| {
         // The pointer/length pair is validated first and on its own: a pair
         // that fails here returns before anything touches the range, which
-        // is `wipe_input`'s precondition. Only a validated buffer is decoded
-        // and, whatever the decode outcome, wiped.
+        // is `wipe_input`'s precondition. Only a validated buffer is parsed
+        // and, whatever the outcome, wiped.
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns and before any wipe of an overlapping range.
         let bytes = unsafe { input(cfg_ptr, cfg_len)? };
-        let decoded = decode(bytes);
-        // The borrow of the raw buffer ends with `decoded` owned; wipe the
-        // buffer now — it holds the client-key hex — before parsing (and
-        // before the init round trip), whatever the decode outcome.
+        // The parser borrows the buffer's strings and owns only what it
+        // builds from them, so the borrow ends here; wipe the buffer now —
+        // it holds the client key — before the init round trip, whatever
+        // the parse outcome.
+        let config = parse_init(bytes);
         unsafe { wipe_input(cfg_ptr, cfg_len) };
-        cipher_init(decoded?)
+        cipher_init(config?)
     })
 }
 
 #[cfg(not(feature = "deterministic-kms"))]
-fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
+use crate::config::{parse_config as parse_init, CipherConfig as InitConfig};
+#[cfg(feature = "deterministic-kms")]
+use crate::deterministic::Seed as InitConfig;
+#[cfg(feature = "deterministic-kms")]
+fn parse_init(bytes: &[u8]) -> Result<InitConfig, u32> {
+    InitConfig::parse(bytes)
+}
+
+#[cfg(not(feature = "deterministic-kms"))]
+fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
     use crate::host::{HostTokenStrategy, WasiHostConnection};
     use crate::status::STATUS_KMS_TRANSPORT;
     use stack_kms::{ClientOpts, StackKms};
 
-    let config = crate::config::parse_config(decoded).map_err(|e| malformed(e.describe()))?;
     if SHUT_DOWN.with(Cell::get) || CIPHER.with(|c| c.borrow().is_some()) {
         return Err(init_out_of_order());
     }
@@ -246,22 +248,11 @@ fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
 /// endpoint, no token, no network. A test artefact, never shipped; see
 /// [`crate::deterministic`].
 #[cfg(feature = "deterministic-kms")]
-fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
-    use vitaminc_protected::Controlled;
-
-    let not_a_seed = || malformed("the deterministic build's config is a 32-byte seed");
-    let FfiValue::Bytes(seed) = decoded else {
-        return Err(not_a_seed());
-    };
-    let seed: [u8; 32] = seed
-        .risky_ref()
-        .as_slice()
-        .try_into()
-        .map_err(|_| not_a_seed())?;
+fn cipher_init(seed: InitConfig) -> Result<Vec<u8>, u32> {
     if SHUT_DOWN.with(Cell::get) || CIPHER.with(|c| c.borrow().is_some()) {
         return Err(init_out_of_order());
     }
-    let builder = StackCipher::builder().kms(crate::deterministic::DeterministicSource::new(seed));
+    let builder = StackCipher::builder().kms(seed.source());
     install(block_on(builder.init()).map_err(|e| crate::status::fail_error(&e))?)
 }
 

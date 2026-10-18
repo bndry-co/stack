@@ -27,7 +27,7 @@ use stack_encrypt::{CipherText, Descriptor, Node, PassthroughFrame, StackCipher}
 use stack_encrypt_guest::options::{parse_options, Side};
 use stack_encrypt_guest::status::fail_error;
 use stack_encrypt_guest::{config, ops};
-use stack_guest_abi::{call, last_error};
+use stack_guest_abi::call;
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyError,
     GenerateKeyPayload, IndexKeySource, LoadKeysetError, RetrieveKeyError, RetrieveKeyPayload,
@@ -619,17 +619,13 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
                     ("client_id", s("6a1b8c6e-6f3a-4e43-9a3b-2f0f6f8b1c2d")),
                     ("client_key", s(CLIENT_KEY)),
                 ]);
-                config::parse_config(config)
-                    .map(drop)
-                    .map_err(|e| last_error::malformed(e.describe()))
+                config::parse_config(&encode(config)).map(drop)
             }),
         ),
         (
             "a config key this version does not know",
             failure("config key", &["stack_guest_abi::malformed_input"], || {
-                config::parse_config(obj(vec![(CLIENT_KEY, s(CLIENT_KEY))]))
-                    .map(drop)
-                    .map_err(|e| last_error::malformed(e.describe()))
+                config::parse_config(&encode(obj(vec![(CLIENT_KEY, s(CLIENT_KEY))]))).map(drop)
             }),
         ),
         // -- an error no native path raises, recorded the same way ---------

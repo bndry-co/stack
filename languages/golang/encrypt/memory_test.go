@@ -236,12 +236,17 @@ func TestRequireLockedMemoryFailsTheCallThatCannotGrow(t *testing.T) {
 // same way, but the guest cannot report it: its allocator aborts, the trap
 // closes the module, and the client is closed with it, its keys wiped.
 // The call still fails with ErrMemoryLock naming the refusal, and the
-// client is ErrState from then on. Provoked by staging a config the guest
-// must copy while decoding, with the refusal installed after the staging.
+// client is ErrState from then on. Provoked by staging a config whose
+// client key the guest must decode into a buffer of its own (the parser
+// borrows every other string from the staged config), with the refusal
+// installed after the staging.
 func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T) {
 	ctx := context.Background()
 	c := strictClient(t)
-	cfg := initConfig{clientID: strings.Repeat("a", 2<<20), clientKey: NewClientKey([]byte("00"))}
+	cfg := initConfig{
+		clientID:  "6a1b8c6e-6f3a-4e43-9a3b-2f0f6f8b1c2d",
+		clientKey: NewClientKey([]byte(strings.Repeat("00", 2<<20))),
+	}
 	encoded, err := encodeConfig(cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -121,8 +121,9 @@ pub fn parse_selector(bytes: &[u8]) -> Result<KeysetSelector, u32> {
 /// The options and the selector as a host writes them, read straight from
 /// the frame by serde (`vitaminc_aead_frame::serde`). Each field type
 /// validates as it reads, through `TryFrom`, so a parsed value is already
-/// the guest's. A `TryFrom` error is the whole message serde reports, so
-/// each is a fixed string that never repeats the value.
+/// the guest's. The frame's serde never repeats a `TryFrom` error's text,
+/// so a refusal names the key and says only that its value was not
+/// accepted; each error here is still a fixed string, for the reader.
 mod wire {
     use serde::{Deserialize, Deserializer};
     use stack_encrypt::Label;
@@ -258,59 +259,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::{Serialize, Serializer};
-    use vitaminc_aead_frame::serde::to_vec;
-
-    /// A test input, written as raw frame bytes: objects by hand, so a test
-    /// can send what no writer would (a repeated key).
-    enum V {
-        Obj(Vec<(&'static str, V)>),
-        Str(String),
-        Bytes(Vec<u8>),
-        U64(u64),
-        Bool(bool),
-        Null,
-    }
-
-    struct RawBytes<'a>(&'a [u8]);
-
-    impl Serialize for RawBytes<'_> {
-        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-            s.serialize_bytes(self.0)
-        }
-    }
-
-    fn frame(v: &V) -> Vec<u8> {
-        let scalar = |r: Result<Vec<u8>, _>| r.expect("a scalar frames");
-        match v {
-            V::Obj(entries) => {
-                let mut out = vec![vitaminc_aead_frame::OBJECT];
-                out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
-                for (key, value) in entries {
-                    out.extend_from_slice(&(key.len() as u32).to_le_bytes());
-                    out.extend_from_slice(key.as_bytes());
-                    out.extend_from_slice(&frame(value));
-                }
-                out
-            }
-            V::Str(text) => scalar(to_vec(text)),
-            V::Bytes(bytes) => scalar(to_vec(&RawBytes(bytes))),
-            V::U64(n) => scalar(to_vec(n)),
-            V::Bool(b) => scalar(to_vec(b)),
-            V::Null => scalar(to_vec(&())),
-        }
-    }
-
-    fn obj(entries: Vec<(&'static str, V)>) -> V {
-        V::Obj(entries)
-    }
+    use crate::test_frame::{empty, frame, obj, V};
 
     fn options(selector: V) -> V {
         obj(vec![("keyset", selector)])
-    }
-
-    fn empty() -> V {
-        V::Obj(Vec::new())
     }
 
     fn selector(v: V) -> Result<KeysetSelector, u32> {
@@ -377,6 +329,18 @@ mod tests {
                 obj(vec![("id", V::Bytes(vec![1, 2, 3]))]),
             ),
             (
+                "a 16-byte id sent as text",
+                obj(vec![("id", V::Str("0123456789abcdef".into()))]),
+            ),
+            (
+                "a name sent as bytes",
+                obj(vec![("name", V::Bytes(b"acme".to_vec()))]),
+            ),
+            (
+                "a selector sent as an array",
+                V::Arr(vec![obj(vec![("name", V::Str("acme".into()))])]),
+            ),
+            (
                 "an id as text",
                 obj(vec![(
                     "id",
@@ -390,6 +354,14 @@ mod tests {
                 "{label} is not a selector and must be refused"
             );
         }
+    }
+
+    /// Options sent as an array are refused: the frame reads them only from
+    /// an object, never by position.
+    #[test]
+    fn options_sent_as_an_array_are_refused() {
+        let positional = V::Arr(vec![obj(vec![("name", V::Str("acme".into()))])]);
+        assert_eq!(opts(positional, Side::Open), Err(STATUS_ENCODING));
     }
 
     #[test]
