@@ -212,16 +212,6 @@ pub enum TermError {
         help("A match query needs text with at least one token: a query with none would match every row, and one shorter than the n-gram length could match none. Query on longer text, or leave the match condition out.")
     )]
     EmptyTermText,
-    /// A `Between` query's low bound is above its high bound, so the range
-    /// holds nothing. Refused when the query is awaited, before a term
-    /// exists. The range is inclusive at both ends, so equal bounds are one
-    /// value, not an error.
-    #[error("the range's low bound is above its high bound")]
-    #[diagnostic(
-        code(stack_encrypt::inverted_range),
-        help("Give `op::Between` its bounds as `(lo, hi)` with `lo <= hi`. The range is inclusive at both ends, so one value is `(v, v)`.")
-    )]
-    InvertedRange,
     /// The value is not one scalar an equality term is defined for: a
     /// null, a boolean, a container, or a value of a logical type vitaminc
     /// gives no equality domain. Equality derives over one scalar, in the
@@ -267,7 +257,6 @@ impl crate::ErrorPayload for TermError {
             | Self::Ore(_)
             | Self::InvalidOptions(_)
             | Self::EmptyTermText
-            | Self::InvertedRange
             | Self::NoEqualityTerm
             | Self::NoOrderTerm
             | Self::Normalize(_) => serde_json::Map::new(),
@@ -875,9 +864,9 @@ impl<O> Eq for MatchQuery<O> {}
 /// term the index would send for that value alone, which is how a query
 /// domain that carries a range serialises it.
 ///
-/// It comes only from a query chain: a range is never stored, and the
-/// chain refuses one whose low bound is above its high bound
-/// ([`TermError::InvertedRange`]) before either term is derived.
+/// It comes only from a query chain: a range is never stored. Both ends
+/// are inclusive, and a range whose low bound is above its high bound is
+/// not refused: as SQL's `BETWEEN`, it matches nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RangeQuery<T> {
     lo: T,

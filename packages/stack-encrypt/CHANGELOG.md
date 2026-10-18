@@ -110,8 +110,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the value (`OreTerm`, `OpeTerm`); a range's is one `sem::RangeQuery`
   carrying both bounds' terms, read with `lo()` and `hi()`, so no statement
   can pair the low bound of one query with the high bound of another. A
-  range whose low bound is above its high bound is refused when the query
-  is awaited, before either term is derived (`TermError::InvertedRange`).
+  range whose low bound is above its high bound is not refused: as SQL's
+  `BETWEEN`, it matches nothing.
   What a query takes is the operator's `op::Arity` (`op::One` or
   `op::Pair`), and `op::Input` relates the value given to the plaintext the
   plan is checked against (ADR-0009, decision 7).

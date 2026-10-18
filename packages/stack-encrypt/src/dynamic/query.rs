@@ -70,7 +70,6 @@
 use serde::{Serialize, Serializer};
 
 use super::WireBytes;
-use std::cmp::Ordering;
 use std::fmt;
 
 use stack_kms::DataKeySource;
@@ -585,19 +584,15 @@ fn not_a_range(field: &str) -> Error {
 }
 
 /// The refusals the typed path makes when a query is awaited, before any
-/// term exists ([`Supports::check`](crate::op::Supports::check)): a range
-/// whose low bound is above its high bound, and match text the index
-/// cannot normalize or that cuts no token. The match index's own
-/// derivation refuses the last two again; asking here lets a binding
-/// refuse at its boundary.
+/// term exists ([`Supports::check`](crate::op::Supports::check)): match
+/// text the index cannot normalize or that cuts no token, and equality
+/// text the scheme cannot normalize. Each index's own derivation refuses
+/// these again; asking here lets a binding refuse at its boundary. A range
+/// whose low bound is above its high bound is not refused: as SQL's
+/// `BETWEEN`, it matches nothing.
 fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
     let refused = |error: TermError| Error::Cipher(error.into());
     match (index, input) {
-        (_, Input::Pair(lo, hi)) => {
-            if integer_order(lo, hi) == Some(Ordering::Greater) {
-                return Err(refused(TermError::InvertedRange));
-            }
-        }
         (IndexSpec::Match(options), Input::One(value)) => {
             query_tokens(value, options).map(drop)?;
         }
@@ -610,33 +605,6 @@ fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
         _ => {}
     }
     Ok(())
-}
-
-/// The order of two integers of one kind, or `None` for anything else.
-fn integer_order(lo: &ValueFrame, hi: &ValueFrame) -> Option<Ordering> {
-    let (lo_kind, lo) = integer_of(lo)?;
-    let (hi_kind, hi) = integer_of(hi)?;
-    (lo_kind == hi_kind).then(|| lo.cmp(&hi))
-}
-
-/// An integer scalar's kind and value, or `None` for anything else. The
-/// value is its sign and 128-bit two's-complement word (vitaminc's
-/// [`Int::sign_and_word`](vitaminc_aead::plaintext::Int::sign_and_word)),
-/// ordered negatives first, so one comparison covers every width from
-/// `i128::MIN` to `u128::MAX`.
-fn integer_of(value: &ValueFrame) -> Option<(ValueKind, (bool, u128))> {
-    let kind = value.kind()?;
-    let (negative, word) = value
-        .visit(OneScalar::new(
-            |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
-                (None, Physical::Int(int)) => Ok(int.sign_and_word()),
-                _ => Err(None),
-            },
-        ))
-        .ok()?;
-    // `!negative` so a negative sorts below every non-negative; within a
-    // sign the two's-complement words order as the values do.
-    Some((kind, (!negative, word)))
 }
 
 /// The tokens a match query of `value` keeps, under the index's options.
@@ -730,10 +698,11 @@ pub fn check_query(
 /// field does not answer ([`Reason::OperatorNotAnswered`]), an input that
 /// cannot be read as the field's kind ([`Reason::FieldType`]) and a
 /// `between` input that is not two values ([`Reason::NotARange`]).
-/// [`Error::Cipher`] for the query refusals the typed path makes: a range
-/// whose low bound is above its high ([`TermError::InvertedRange`]), and
-/// match text that cuts no token ([`TermError::EmptyTermText`]) or that
-/// the index cannot normalize ([`TermError::Normalize`]).
+/// [`Error::Cipher`] for the query refusals the typed path makes: match
+/// text that cuts no token ([`TermError::EmptyTermText`]), and text the
+/// index cannot normalize ([`TermError::Normalize`]). A range whose low
+/// bound is above its high bound is not refused: as SQL's `BETWEEN`, it
+/// matches nothing.
 /// [`Error::Target`] for what the resolver refuses.
 pub fn query_term<'a, K>(
     cipher: &'a KeysetCipher<'_, K>,
@@ -1417,9 +1386,7 @@ mod tests {
     async fn the_typed_paths_query_refusals_are_made_before_any_term() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let pair = |lo, hi| Tree::Array(vec![Tree::UInt32(lo), Tree::UInt32(hi)]);
         let cases = [
-            ("age", OpSpec::Between, pair(65, 18), "inverted"),
             ("name", OpSpec::Matches, text("al"), "empty"),
             ("name", OpSpec::Matches, text("\u{0378}abc"), "normalize"),
             ("email", OpSpec::Eq, text("a\u{0378}bc"), "normalize"),
@@ -1431,7 +1398,6 @@ mod tests {
             ] {
                 let term = term_error(&error);
                 let expected = match what {
-                    "inverted" => matches!(term, Some(TermError::InvertedRange)),
                     "empty" => matches!(term, Some(TermError::EmptyTermText)),
                     _ => matches!(term, Some(TermError::Normalize(_))),
                 };
@@ -1912,8 +1878,8 @@ mod tests {
         ])
         .unwrap();
         assert!(
-            ask("huge", OpSpec::Between, inverted).await.is_err(),
-            "an inverted 128-bit range is refused"
+            ask("huge", OpSpec::Between, inverted).await.is_ok(),
+            "an inverted 128-bit range is not refused"
         );
 
         let stored = |value: &ValueFrame, name: &'static str| {
@@ -1990,53 +1956,30 @@ mod tests {
         );
     }
 
-    /// A range is refused the wrong way round for every integer kind a
-    /// field can declare, and two values of different kinds have no order
-    /// here: the input was read as one kind first.
-    #[test]
-    fn a_range_is_ordered_within_each_integer_kind() {
-        let cases = [
-            (Tree::Int32(-1), Tree::Int32(1)),
-            (Tree::Int64(-1), Tree::Int64(1)),
-            (Tree::UInt32(1), Tree::UInt32(2)),
-            (Tree::UInt64(1), Tree::UInt64(2)),
-        ];
-        for (lo, hi) in cases {
-            let (lo, hi) = (vf(&lo), vf(&hi));
-            assert_eq!(integer_order(&lo, &hi), Some(Ordering::Less));
-            assert_eq!(integer_order(&hi, &lo), Some(Ordering::Greater));
-            assert_eq!(integer_order(&lo, &lo), Some(Ordering::Equal));
-        }
-        assert_eq!(
-            integer_order(&vf(&Tree::UInt32(1)), &vf(&Tree::UInt64(2))),
-            None
-        );
-        assert_eq!(integer_order(&vf(&text("a")), &vf(&text("b"))), None);
-        // Every width, the 128-bit edges included: a `u128` above
-        // `i128::MAX` and a negative `i128` order as the numbers do.
-        let int = |int: vitaminc_aead::plaintext::Int| {
-            ValueFrame::of(vitaminc_aead::plaintext::Raw(
-                None,
-                vitaminc_aead::plaintext::Physical::Int(int),
-            ))
-            .expect("a value")
+    /// A range whose low bound is above its high bound is not refused, as
+    /// SQL's `BETWEEN` is not: it is checked, and its terms derived, like
+    /// any other range, and matches nothing.
+    #[tokio::test]
+    async fn an_inverted_range_is_a_query_like_any_other() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        // `score` declares OPE alone, whose terms compare as bytes.
+        let inverted = Tree::Array(vec![Tree::Int64(65), Tree::Int64(18)]);
+        assert!(check_query(
+            &users(),
+            "score",
+            OpSpec::Between,
+            vf(&inverted),
+            &NoTargets
+        )
+        .is_ok());
+        let term = query(&keyset, "score", OpSpec::Between, inverted)
+            .await
+            .expect("derived");
+        let Operand::Range { lo, hi } = term.operand() else {
+            panic!("a range");
         };
-        use vitaminc_aead::plaintext::Int;
-        for (lo, hi) in [
-            (Int::I8(-1), Int::I8(1)),
-            (Int::I16(-1), Int::I16(1)),
-            (Int::I128(i128::MIN), Int::I128(i128::MAX)),
-            (Int::I128(-1), Int::I128(0)),
-            (Int::U8(1), Int::U8(2)),
-            (Int::U16(1), Int::U16(2)),
-            (Int::U128(i128::MAX as u128), Int::U128(u128::MAX)),
-        ] {
-            let (lo, hi) = (int(lo), int(hi));
-            assert_eq!(integer_order(&lo, &hi), Some(Ordering::Less));
-            assert_eq!(integer_order(&hi, &lo), Some(Ordering::Greater));
-            assert_eq!(integer_order(&lo, &lo), Some(Ordering::Equal));
-        }
-        assert_eq!(integer_order(&int(Int::I8(1)), &int(Int::I16(2))), None);
+        assert!(lo > hi, "the bounds as given, and the terms in their order");
     }
 
     #[test]

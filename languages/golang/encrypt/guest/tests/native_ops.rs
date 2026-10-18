@@ -1556,13 +1556,6 @@ fn query_term_validation_refuses_what_the_query_op_refuses() {
             "between",
             STATUS_ENCODING,
         ),
-        (
-            "inverted range",
-            Tree::Array(vec![Tree::UInt32(65), Tree::UInt32(18)]),
-            "age",
-            "between",
-            STATUS_TERM,
-        ),
         ("no token", s("al"), "name", "matches", STATUS_TERM),
     ] {
         let input = encode(input);

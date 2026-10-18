@@ -108,8 +108,9 @@ func (l Limit) FetchOr(page uint64) uint64 {
 // that answers the operator, and derives that index's term under the
 // field's context; for a field that names an EQL type it runs the type's
 // query. An operator the field does not answer, or one the engine does not
-// know, is [ErrEncoding] naming the field, as a mistyped value is; a range
-// the wrong way round, and match text that cuts no token, are [ErrTerm].
+// know, is [ErrEncoding] naming the field, as a mistyped value is; match
+// text that cuts no token is [ErrTerm]. A range the wrong way round is not
+// refused: it matches no row, as SQL's BETWEEN does.
 // No data key is minted. For generated code.
 func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, operator string, input any) (QueryTerm, error) {
 	p, err := cph.queryPlan(plan, field)

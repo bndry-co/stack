@@ -178,8 +178,8 @@ and `Matches` take the plaintext the index is declared over
 so the plan is checked against `S` either way, and the chain derives one
 term per plaintext under the one label. `check` is where a query is refused
 before any term exists: a match index whose declared case disagrees with its
-`downcase` option, a `Between` whose bounds are the wrong way round, a match
-query with no tokens. `AtPath<Op>` takes a path and `Op`'s input, and gains
+`downcase` option, a match query with no tokens. A `Between` whose bounds
+are the wrong way round is not refused: it matches no row, as SQL's does. `AtPath<Op>` takes a path and `Op`'s input, and gains
 its shape with the JSON index.
 
 The bound tightens per operator, through `TermFor<Op>`: any `QueryTerm`
@@ -572,9 +572,12 @@ the ranked loop is worth packaging; it is deferred, not refused.
 
 `cipher.query(op::Between, &(lo, hi)).on(&plan)` produces one term,
 `sem::RangeQuery`, carrying the index's term for each bound (the ORE left
-ciphertexts, once block ORE lands), inclusive at both ends, and the client
-refuses `lo > hi` (`TermError::InvertedRange`) before either term is
-derived; `(v, v)` is one value. One call derives both bounds, under one
+ciphertexts, once block ORE lands), inclusive at both ends; `(v, v)` is one
+value. The client does not refuse `lo > hi`: as SQL's `BETWEEN`, such a
+range matches nothing. Judging it would mean reproducing, before
+encryption, the order the index compares in (text by its fold, floats by
+their canonical encoding), which belongs to the ORE crates. One call
+derives both bounds, under one
 context, so a caller cannot pair a bound from one column with a bound from
 another. The ordering operators are answered over the integer types and
 text (`op::Ordered`), by the ORE index by default and by OPE through

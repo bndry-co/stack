@@ -228,9 +228,10 @@ orderings through an ORE index over an integer, or OPE when the field
 declares no ORE. A field that does not answer the operator is refused with
 the same shape of error as a mistyped field: an input error naming the field,
 with the reason `operator_not_answered` (or `unknown_operator`,
-`not_a_range`). The refusals the typed path makes before a term exists, a
-range the wrong way round and match text that cuts no token, are refused the
-same way here, before the cipher is consulted.
+`not_a_range`). The refusal the typed path makes before a term exists,
+match text that cuts no token, is made the same way here, before the cipher
+is consulted. A range the wrong way round is not refused on either path: it
+matches no row, as SQL's `BETWEEN` does.
 
 **The term comes back with its query domain.** The guest's
 `se_query_term(input, plan, field, operator, options)` returns one object:
