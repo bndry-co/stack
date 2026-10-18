@@ -529,7 +529,7 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
         ("Real", frame::<f64>(1.0), ValueKind::Float32),
         ("Text", frame::<i32>(1), ValueKind::String),
     ] {
-        let error = refused(targets::encrypt(name, &keyset, &label(), frame(value)));
+        let error = refused(targets::encrypt(name, &keyset, &label(), value));
         assert!(
             matches!(error, TargetError::Plaintext { target, expected: e, .. } if target == name && e == expected),
             "{name}: {error}"
