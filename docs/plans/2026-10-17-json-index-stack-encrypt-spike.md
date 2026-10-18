@@ -133,6 +133,10 @@ Storage: one extra encrypted copy of the document's plaintext bytes. Per-entry m
 
 The same cap can also be imposed as a client policy on the chain-from-root wire: never send a token shallower than depth 1, and fetch the whole row for anything shallower. That costs no storage, but shallow extraction then transfers the whole document and whole-document decryption keeps the walk and the index key. The option above is the one proposed; the policy is recorded as the alternative.
 
+#### Epochs: bounding a revealed token in time (recorded, not scheduled)
+
+The sealed root caps how much a token unlocks. It does nothing about how long: a token is a function of the column and the path, so the server keeps it, and every row written later is as open to it as the rows it was used on. Per-row tokens would close that entirely and are not practical, because a client cannot derive a token for a row it has not read, so multi-row extraction would need a round trip per row. Epochs sit between the two. The head derivation takes an epoch: `t_e($.a) = PRF(json/token ‖ column ‖ e, "$.a")[..16]`, with `e` a small integer recorded in the header `h`, in the clear, beside the IV. Rows written under epoch `e` have heads nobody can derive without naming `e`, and a token revealed for epoch `e` unlocks rows of that epoch only. A query reaching several epochs carries one token per epoch it wants to reach, as a small map, and the walk picks the token by the row's own `e` (`tokens ->> (doc->'h'->>'e')`), which is one more lookup per row and no change to the recursion. Selectors and value selectors are **not** epoched, because containment and `->` have to match rows from every epoch with one needle; only the chain tokens are, and `p`, `w`, `g` and `n` follow them since they derive from a token. What this buys is a bound on the forward reach of a leak: a token the server saw in epoch 3 opens nothing written in epoch 4. What it does not buy is anything backward: rows of a closed epoch stay open to the tokens that were sent for them until they are re-encrypted, and the query cost grows with the number of live epochs, so the rotation cadence has to be set against the re-encryption cadence. The wire change is one small integer in `h` and in the derivation; the SQL change is one lookup. Neither is in the spike. The field should be reserved in the header from the first version so that adding epochs later is a new value rather than a new shape.
+
 ### 3. Exact containment (#1231)
 
 **The gap, verified.** `jsonb-semantics.sql` pins PostgreSQL's own answers, and `containment-oracle.sql` runs a plaintext-selector simulation of the v3 flattening (the PRF is injective in practice, so string selectors give the same containment answers as MAC'd ones) beside it:
@@ -241,6 +245,7 @@ On a flat five-node document the proposal is about 8% larger: the two chain fiel
 | key names | hashed into `s` | hashed into `s`; also encrypted in `c` |
 | at query time, a subtree extraction | reveals the selector asked | reveals the selector or token asked; a token also reveals that subtree's shape for the rows scanned, for as long as the column lives, since tokens are column-deterministic |
 | the broadest token a legitimate query can send | none exist | with the sealed root: one top-level field's subtree. Without it: `t($)`, the whole column's shape |
+| how long a revealed token stays useful | not applicable | for as long as the column lives; epochs (recorded above, not scheduled) would bound it to rows written under the epoch it was issued for |
 
 ### 7. Performance
 
