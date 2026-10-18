@@ -246,11 +246,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `TargetResolver::encrypt` and `query` take a `ValueFrame`, and
     `decrypt` resolves to one.
 
-  `FfiValue` stays, as the tree of a binding's control data (plans,
-  contexts, options, statistics, configuration, the engine's answers).
-  Control data is not plaintext, but a configuration carries credentials
-  (a client key, a test build's seed), so its text and bytes leaves stay
-  `Protected`.
+  `FfiValue` stays for now, in the control data not yet read with serde
+  (see the next entry).
   Ciphertexts, terms and the cross-language fixtures are byte for byte what
   they were. The Go guest decodes plaintext as `ValueFrame`s and returns an
   opened record's frame as it is. Copies of an opened string that remain in
@@ -264,6 +261,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from a raw frame), the record decrypt (with a nested field), `query_term`
   and `verify` under an allocator that fails the test on any freed block
   still holding plaintext.
+
+- **A binding's control data is read from its frame with serde, not
+  decoded into an `FfiValue`** (`dynamic` feature). Each message is a typed
+  value read straight from the frame bytes by `vitaminc_aead_frame::serde`,
+  so no tree is built and every message refuses an unknown key, a repeated
+  key or a wrong type the same way:
+  - `dynamic::context` takes the context's frame bytes. An integer is read
+    at the width the frame carries, and only `i32`, `i64`, `u32` and `u64`
+    are contexts: an 8- or 16-bit integer, which was widened to 32 bits
+    before, and a 128-bit one are `Reason::ContextKind`, as are bytes that
+    are not one frame.
+  - `Stats::from_frame` replaces `Stats::from_value`.
 
 - **A match value with no tokens is stored as the empty filter, so
   `KeysetCipher::match_terms` is no longer a query.** In 0.2.0 the same call

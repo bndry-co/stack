@@ -378,10 +378,9 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
             "{} eq: the query is the stored term",
             kind.field
         );
-        let ctx = context(FfiValue::Array(vec![
-            FfiValue::String("value_kinds".into()),
-            FfiValue::String(kind.field.into()),
-        ]))
+        let ctx = context(
+            &vitaminc_aead_frame::serde::to_vec(&("value_kinds", kind.field)).expect("frames"),
+        )
         .expect("context");
         let typed_eq = keyset
             .equality_term(kind.value, ctx.clone())

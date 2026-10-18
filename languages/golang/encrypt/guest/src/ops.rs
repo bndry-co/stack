@@ -87,8 +87,8 @@ type BytesTree = Node<Vec<u8>>;
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
 /// — or an array of parts, nested as deep as the transport codec allows
-/// ([`MAX_DEPTH`](vitaminc_aead_frame::MAX_DEPTH) levels from the root of the encoded value; deeper
-/// is [`STATUS_ENCODING`] before the context is parsed), exactly as a plan
+/// ([`MAX_DEPTH`](vitaminc_aead_frame::MAX_DEPTH) levels from the root of the frame; deeper
+/// is [`STATUS_ENCODING`] before the context is read), exactly as a plan
 /// field's; [`dynamic::context`] is the one home of that grammar. Shape is identity:
 /// `[x]` is a PAE-framed list and `x` is not, so a probe takes the context
 /// in the shape the field was sealed under — a plan field's context
@@ -106,12 +106,22 @@ where
 {
     // The same proof every stack-encrypt leaf demands: an empty context is
     // `STATUS_ENCODING` here, before any derivation.
-    let context = dynamic::context(decode_value(context)?).map_err(|e| fail_dynamic(&e))?;
+    let context = parse_context(context)?;
     let value = parse_frame(value)?;
     let kind = parse_term(value, kind)?;
     dynamic::term(cipher, value, &kind, context)
         .await
         .map_err(|e| fail_dynamic(&e))
+}
+
+/// A term's context: one frame, read by [`dynamic::context`]. Bytes that
+/// are not a frame are refused as every other input's are, before the
+/// context's own grammar.
+fn parse_context(
+    context: &[u8],
+) -> Result<stack_encrypt::NonEmpty<stack_encrypt::ContextPiece<'static>>, u32> {
+    let _ = parse_frame(context)?;
+    dynamic::context(context).map_err(|e| fail_dynamic(&e))
 }
 
 /// The static half of a term: the kind is one of the ABI's table, and the
@@ -461,9 +471,7 @@ pub mod validate {
     /// non-empty, the kind is one of [`TERM_EQUALITY`] .. [`TERM_OPE`], and
     /// the value is one scalar the index takes ([`IndexSpec::defines`]).
     pub fn term(value: &[u8], context: &[u8], kind: u32) -> Result<(), u32> {
-        dynamic::context(decode_value(context)?)
-            .map(drop)
-            .map_err(|e| fail_dynamic(&e))?;
+        let _ = parse_context(context)?;
         parse_term(parse_frame(value)?, kind).map(drop)
     }
 

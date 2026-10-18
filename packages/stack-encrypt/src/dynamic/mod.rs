@@ -91,6 +91,8 @@ mod query;
 pub mod record;
 mod target;
 mod term;
+#[cfg(test)]
+mod test_frame;
 mod value_frame;
 
 use std::fmt;
@@ -484,7 +486,9 @@ reasons! {
         /// A context value is of a kind a context cannot hold: a boolean,
         /// float, null, object or passthrough.
         ContextKind => "context_kind", "a boolean, float, null, object or passthrough cannot be a context";
-        /// A context string is not UTF-8.
+        /// A context string is not UTF-8. No longer produced: a frame's
+        /// text is UTF-8 by construction. Kept so a binding that switches on
+        /// it still compiles.
         ContextNotUtf8 => "context_not_utf8", "a context string is not UTF-8";
         /// A context renders empty.
         EmptyContext => "empty_context", "the context renders empty";

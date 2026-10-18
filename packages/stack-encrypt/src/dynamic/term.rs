@@ -267,14 +267,12 @@ fn integer<T: TryFrom<u64>>(value: &FfiValue) -> Result<T, Error> {
 ///     .await?;
 /// let keyset = cipher.default_keyset();
 ///
-/// let ctx = context(FfiValue::Array(vec![
-///     FfiValue::String("users".into()),
-///     FfiValue::String("age".into()),
-/// ]))?;
+/// // `["users", "age"]`, as a binding writes it.
+/// let ctx = context(&vitaminc_aead_frame::serde::to_vec(&("users", "age"))?)?;
 /// let probe = term(&keyset, &FfiValue::UInt32(34), &IndexSpec::Equality, ctx.clone()).await?;
 /// let typed = keyset.equality_term(34u32, ctx).await?;
 /// assert_eq!(probe, typed.into_bytes().to_vec());
-/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();
 /// ```
 ///
@@ -806,7 +804,7 @@ mod tests {
     async fn match_text_with_no_tokens_is_refused_as_a_query_and_stored_empty() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let ctx = context(s("users/bio")).expect("context");
+        let ctx = ctx("users/bio");
         for text in ["", "  ", "hi"] {
             let refused = term(&keyset, &s(text), &default_match(), ctx.clone()).await;
             assert!(
@@ -842,7 +840,7 @@ mod tests {
     async fn a_match_query_under_invalid_options_is_refused_not_tokenised() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let ctx = context(s("users/bio")).expect("context");
+        let ctx = ctx("users/bio");
         let zero = IndexSpec::Match(MatchOptions {
             tokenizer: Tokenizer::Ngram { length: 0 },
             ..MatchOptions::default()
@@ -894,6 +892,11 @@ mod tests {
     /// `"match"` names.
     fn default_match() -> IndexSpec {
         IndexSpec::Match(MatchOptions::default())
+    }
+
+    /// A one-part context, read from its frame as a binding sends it.
+    fn ctx(label: &str) -> NonEmpty<crate::ContextPiece<'static>> {
+        context(&vitaminc_aead_frame::serde::to_vec(&label).expect("frames")).expect("context")
     }
 
     fn s(value: &str) -> FfiValue {
@@ -951,7 +954,7 @@ mod tests {
         async fn derives_the_bytes_the_typed_path_derives() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let ks = &keyset;
             let dynamic = |value: FfiValue, kind: IndexSpec| {
                 let ctx = ctx.clone();
@@ -1028,7 +1031,7 @@ mod tests {
         async fn equality_is_one_term_per_number_and_per_nfc_string() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let eq = |value: FfiValue| {
                 let ctx = ctx.clone();
                 let keyset = &keyset;
@@ -1078,7 +1081,7 @@ mod tests {
         async fn a_frame_derives_the_terms_its_value_does() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let derive = |frame: Vec<u8>, kind: IndexSpec| {
                 let ctx = ctx.clone();
                 let keyset = &keyset;
@@ -1186,7 +1189,7 @@ mod tests {
         async fn equality_follows_vitaminc_for_decimals_and_timestamps() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let eq = |value: ValueFrame| {
                 let ctx = ctx.clone();
                 let keyset = &keyset;
@@ -1269,7 +1272,7 @@ mod tests {
         async fn term_is_error_term_naming_the_kind() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let refused = [
                 ("a bool", FfiValue::Bool(true), IndexSpec::Equality),
                 ("a bool", FfiValue::Bool(true), default_match()),
@@ -1296,7 +1299,7 @@ mod tests {
         async fn a_decimal_date_or_timestamp_has_no_order_term_yet() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             for leaf in [decimal(150, 2), date(19_782), instant(7)] {
                 for kind in [IndexSpec::Ore, IndexSpec::Ope] {
                     assert!(!kind.defines(&leaf), "{kind}");
@@ -1318,7 +1321,7 @@ mod tests {
         async fn text_that_does_not_normalize_is_refused_when_derived() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             for kind in [IndexSpec::Equality, default_match()] {
                 let unassigned = s("a\u{378}b");
                 assert!(kind.defines(&unassigned), "{kind} takes text");
@@ -1343,7 +1346,7 @@ mod tests {
         async fn term_is_error_term_naming_the_kind() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let not_scalars = [
                 ("null", FfiValue::Null),
                 ("undefined", FfiValue::Undefined),
@@ -1626,7 +1629,7 @@ mod tests {
             }
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let text = || s("Alice Smith");
             let wide = term(
                 &keyset,

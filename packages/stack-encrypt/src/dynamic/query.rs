@@ -1021,27 +1021,9 @@ pub fn limit_to_value(limit: Limit) -> FfiValue {
 mod tests {
     use super::*;
 
-    /// Statistics as a binding sends them: `value` written as frame bytes,
-    /// objects by hand so a test can send a repeated key, which no frame
-    /// writer would.
+    /// Statistics as a binding sends them.
     fn stats_frame(value: &FfiValue) -> Result<Stats, Error> {
-        fn raw(value: &FfiValue, out: &mut Vec<u8>) {
-            match value {
-                FfiValue::Object(entries) => {
-                    out.push(vitaminc_aead::frame::OBJECT);
-                    out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
-                    for (key, value) in entries {
-                        out.extend_from_slice(&(key.len() as u32).to_le_bytes());
-                        out.extend_from_slice(key.as_bytes());
-                        raw(value, out);
-                    }
-                }
-                other => out.extend_from_slice(other.to_frame().expect("frames").risky_ref()),
-            }
-        }
-        let mut bytes = Vec::new();
-        raw(value, &mut bytes);
-        Stats::from_frame(&bytes)
+        Stats::from_frame(&crate::dynamic::test_frame::frame_of(value))
     }
     use crate::dynamic::{record, NoTargets, TargetError};
     use crate::op::{self, Probabilistic as _};
@@ -1649,8 +1631,10 @@ mod tests {
             tokenizer: crate::sem::Tokenizer::Ngram { length: 0 },
             ..MatchOptions::default()
         };
-        let context = crate::dynamic::context(FfiValue::Array(vec![text("users"), text("name")]))
-            .expect("context");
+        let context = crate::dynamic::context(
+            &vitaminc_aead_frame::serde::to_vec(&("users", "name")).expect("frames"),
+        )
+        .expect("context");
         let field = FieldPlan::new(
             "name",
             context,
@@ -1964,8 +1948,10 @@ mod tests {
 
         let stored = |value: &ValueFrame, name: &'static str| {
             let keyset = &keyset;
-            let ctx = super::super::context(FfiValue::Array(vec![text("users"), text(name)]))
-                .expect("context");
+            let ctx = super::super::context(
+                &vitaminc_aead_frame::serde::to_vec(&("users", name)).expect("frames"),
+            )
+            .expect("context");
             let value = value.clone();
             async move {
                 super::super::term(keyset, &value, &IndexSpec::Equality, ctx)

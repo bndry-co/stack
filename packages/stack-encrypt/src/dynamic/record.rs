@@ -1100,7 +1100,12 @@ pub fn plan_with(
         for (key, value) in spec {
             match key.as_str() {
                 "context" if context.is_none() => {
-                    context = Some(super::context(value).map_err(|error| error.in_field(&name))?);
+                    let frame = value
+                        .to_frame()
+                        .map_err(|_| Error::bad_context(Reason::ContextKind).in_field(&name))?;
+                    context = Some(
+                        super::context(frame.risky_ref()).map_err(|error| error.in_field(&name))?,
+                    );
                 }
                 "target" if target.is_none() => {
                     let FfiValue::String(s) = &value else {
@@ -2172,7 +2177,7 @@ mod tests {
     use vitaminc_aead::frame::MAX_DEPTH;
     use vitaminc_protected::{Controlled, Protected};
 
-    use crate::dynamic::{context, term};
+    use crate::dynamic::term;
     use crate::plan::pick;
     use crate::sem::EqualityTerm;
     use crate::target::{AeadContext, DecryptInto, EncryptFrom};
@@ -2248,6 +2253,11 @@ mod tests {
 
     fn s(value: &str) -> FfiValue {
         FfiValue::String(value.into())
+    }
+
+    /// The context `value` spells, read from its frame as a binding sends it.
+    fn context(value: FfiValue) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
+        crate::dynamic::context(&crate::dynamic::test_frame::frame_of(&value))
     }
 
     fn obj(entries: Vec<(&str, FfiValue)>) -> FfiValue {
