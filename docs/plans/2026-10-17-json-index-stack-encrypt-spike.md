@@ -13,7 +13,7 @@ Stack Encrypt has no JSON index yet. The operators exist (#1209 merged `op::Cont
 Three changes to the v3 SteVec design, taken together:
 
 1. **One entry per JSON node, encrypting only that node.** A path entry today encrypts its whole subtree, so a document's ciphertext is O(size × depth) and the root entry alone is the size of the document. Under this proposal an entry's ciphertext holds the node's edge label, its kind and, for a scalar, its value. Total ciphertext is O(size). The separate value entry is folded into the same entry as a second selector field, halving the entry count.
-2. **A token chain links a node to its children, and the server can walk it from a query key.** Each node has a secret 16-byte token. The client derives a path's token from the index key and the path alone. Each child entry stores a *parent tag* (a hash of the parent's token) and its own token *wrapped* under the parent's token. A `WITH RECURSIVE` query that is handed one start token finds that node's children by tag, unwraps their tokens, and recurses, in core SQL (`sha256`, bytea XOR). Without the token the tags and wraps are unlinkable random bytes. This is what makes node-local ciphertexts usable: `doc -> '$.a'` on an object returns the subtree's entries in one round trip, and the client reassembles the object. The prototype in `token-chain.sql` does exactly this.
+2. **A token chain links a node to its children, and the server can walk it from a query key.** Each node has a secret 16-byte token. The client derives a path's token from the index key and the path alone. Each child entry stores a *parent tag* (a hash of the parent's token) and its own token *wrapped* under the parent's token. A `WITH RECURSIVE` query that is handed one start token finds that node's children by tag, unwraps their tokens, and recurses, in core SQL (`sha256`, bytea XOR). Without the token the tags and wraps are unlinkable random bytes. This is what makes node-local ciphertexts usable: `doc -> '$.a'` on an object returns the subtree's entries in one round trip, and the client reassembles the object. The prototype in `token-chain.sql` does exactly this. By default the chain starts one level down: the root entry carries the whole document, as in v3, and the top-level fields are the chain heads, so no query can ever hand the server a token for the whole column ("The sealed root", decided 2026-10-18).
 3. **Exact containment, closing #1231.** Every entry under an array element carries the element's *group tag*. Containment stays a GIN-indexed `jsonb @>` over the selector sets, which is a necessary condition, and gains a recheck, run only on the rows the index returned and only when the needle has an array element that is a container, that requires each needle element's selectors to come from one stored element. The prototype in `containment-oracle.sql` agrees with PostgreSQL's `jsonb @>` on every case tried, including the six cross-element cases where today's selector containment is wrong. The issue's "plausible" false negative (`'["a"]' @> '"a"'`) is verified real and fixed by letting a root-scalar needle carry two selector sets.
 
 Everything here works on standard PostgreSQL, as a non-superuser, with no extension: the SQL uses `sha256(bytea)` (core since 11), `get_byte` / `set_byte`, recursive CTEs and the `jsonb_path_ops` GIN operator class.
@@ -73,7 +73,7 @@ The flattening is unchanged in what it visits: every node, with arrays indexed u
 
 The value entry and its sentinel disappear: `vs` sits on the node's own entry. The entry count halves. `a` disappears: `n` marks an array element, and the chain enumerates an array's elements.
 
-What the client gets back for a scalar path (`doc -> 'sel'` where the leaf is a string) is unchanged in shape: one entry, decryptable with the grafted `h`, its own `s` and `c`, and its ordinal `j` (grafted by the extractor, as `h` is today). For a container path the client gets the subtree's entries and rebuilds the value from each entry's decrypted `(label, kind, scalar)` and the depth the walk reports. Whole-document decryption is the same walk, run by the client over the whole `sv` with the root token it can derive itself.
+What the client gets back for a scalar path (`doc -> 'sel'` where the leaf is a string) is unchanged in shape: one entry, decryptable with the grafted `h`, its own `s` and `c`, and its ordinal `j` (grafted by the extractor, as `h` is today). For a container path the client gets the subtree's entries and rebuilds the value from each entry's decrypted `(label, kind, scalar)` and the depth the walk reports. Whole-document decryption is one AEAD on the root entry when the sealed-root option (next section, on by default) is set, and otherwise the same walk, run by the client over the whole `sv` with the root token it can derive itself.
 
 ### 2. The token chain
 
@@ -114,6 +114,24 @@ The per-document salt (`iv`) in `p`, `g` and the mask means that **at rest**, wi
 Wildcard paths. A client cannot derive `t($.a[*].b)`, because the token is positional. Extraction under a wildcard anchors at the nearest non-wildcard ancestor and gates on the selector: `subtree_at(doc, t($.a), s($.a[*].b))` walks from `$.a`, and emits an entry only once the walk has passed through an entry whose `s` matches. Scalar leaves under a wildcard need no token at all: `->` by selector returns them as today, and their nonce and AAD depend on `s` and `j`, not on `t`.
 
 Arrays. `jsonb_array_length(doc, t)` is the count of children of `t`; `jsonb_array_elements(doc, t)` is the children, each a subtree root. Positional access (`$.a[2]`) is a token, not a selector, so the item (`[@]`) and positional (`[n]`) `ArrayIndexMode`s have no reason to exist in v4: wildcard only, and the chain for positions.
+
+#### The sealed root: no root token, the document at the root (decided 2026-10-18)
+
+Two properties make a token worse than a selector. It is a capability over structure rather than a presence bit, and it is deterministic per column, so a server that has seen it once can re-walk every row for as long as the column lives. The chain as written above hands the server the **root** token in two legitimate queries: a wildcard extraction anchored at the root (`$[*].x`) and `jsonb_array_elements` on a root array. `t($)` unlocks the shape of every document in the column, once, forever. Any shallow token is nearly as broad.
+
+The fix moves the head of the chain down one level. With the option on:
+
+- The root entry's `c` encrypts the **whole document**, as the v3 root entry does, not the root's label and kind. It carries no token-derived fields.
+- The top-level fields are the chain **heads**: `t($.a) = PRF(json/token ‖ column, "$.a")[..16]`, derived from the path alone. A head carries no `p` and no `w`, since no parent token exists to link it to. Everything below a head is the chain as written.
+- There is no `t($)`. No query can send it, because nothing is derived from it.
+
+What a query can hand the server is then capped at one top-level field's subtree, in the rows it scans. A wildcard extraction anchored at the root, and the array functions on a root array, lose their server-side form and become a client-side decrypt of the root entry, which the client was going to fetch anyway. Whole-document decryption becomes one AEAD under the data key, with no walk and no index key, which is what cipherstash-client and the Go decrypt path do today. Everything else is unchanged: selectors, `vs`, group tags, the recheck, scalar `->`, and the walk for any path at depth 1 or below.
+
+This is the depth-1 case of a general threshold `d` (tokens exist only at depth `≥ d`, every node above carries its subtree as ciphertext). `d = 1` is the only setting worth exposing. Its at-rest cost is nil: the only subtree whose size it reveals is the document's, and the payload length reveals that regardless. `d = 2` would reveal every top-level field's size at rest, in every row, correlated across rows by selector, which is more than the salted sibling tags it would replace, and it doubles the storage overhead. So the option is a **boolean**, not a depth: `false` is the chain from the root (`d = 0`), `true` is the sealed root (`d = 1`), on by default. The working name is "root node obfuscation"; the final name is decision 8. The option is part of `JsonOptions`, crosses the data-plan wire with the other index options, and is recorded in the header `h`, so a reader of a stored document knows which shape the root has without consulting the column's configuration.
+
+Storage: one extra encrypted copy of the document's plaintext bytes. Per-entry metadata dominates the payload, so this is about 8% of it for a document of small scalars (around 15 bytes of plaintext per node against about 230 characters of entry) and about 50% for one of long strings (200-byte leaves). Still strictly smaller than v3, which pays this copy at every level.
+
+The same cap can also be imposed as a client policy on the chain-from-root wire: never send a token shallower than depth 1, and fetch the whole row for anything shallower. That costs no storage, but shallow extraction then transfers the whole document and whole-document decryption keeps the walk and the index key. The option above is the one proposed; the policy is recorded as the alternative.
 
 ### 3. Exact containment (#1231)
 
@@ -163,9 +181,9 @@ A document in the new domain, `public.eql_v4_json_tree` (placeholder name; a sib
   "i": { "t": "users", "c": "profile" },
   "h": "…",                       // key header, once: iv, key tag, descriptor, keyset id (opaque to SQL)
   "sv": [
-    { "s": "…", "vs": "…",                                  "c": "…" },            // $      (root: no p, w)
-    { "s": "…", "vs": "…", "p": "…", "w": "…",              "c": "…", "op": "…" }, // $.hello = "world-1"
-    { "s": "…", "vs": "…", "p": "…", "w": "…",              "c": "…" },            // $.list  (array)
+    { "s": "…", "vs": "…",                                  "c": "…" },            // $      sealed root: c is the whole document; no p, w
+    { "s": "…", "vs": "…",                                  "c": "…", "op": "…" }, // $.hello = "world-1"   a chain head: no p, w
+    { "s": "…", "vs": "…",                                  "c": "…" },            // $.list  (array)       a chain head
     { "s": "…", "vs": "…", "p": "…", "w": "…", "n": "…",    "c": "…" },            // $.list[*]  element 0 (object)
     { "s": "…", "vs": "…", "p": "…", "w": "…", "g": "…",    "c": "…", "op": "…" }  // $.list[*].x = 1, inside element 0
   ]
@@ -183,6 +201,8 @@ A `Contains` needle, `eql_v4.query_json`:
 ```
 
 An `AtPath<Eq>` needle is `{"sv": [{"vs": "…"}]}`. An `AtPath<Gte>` term is the pair the ADR-0009 appendix already shows: a selector for `->` and a leaf ordering operand. A subtree request is `(t_start, s?)`.
+
+With the sealed-root option off, the root entry's `c` is the root's label and kind only, and the top-level entries carry `p` and `w` like every other node. The header records which shape the document has.
 
 **Size.** Per 16-byte field, hex costs 32 characters plus about six of framing. Measured against the envelope RFC's fixture document (`{"hello":"world-1","nested":{"deep":"constant"},"number":1}`, 5 nodes):
 
@@ -219,7 +239,8 @@ On a flat five-node document the proposal is about 8% larger: the two chain fiel
 | equal values at two paths | hidden | hidden |
 | equal values in sibling elements | ciphertexts equal (selectors already equal) | ciphertexts differ |
 | key names | hashed into `s` | hashed into `s`; also encrypted in `c` |
-| at query time, a subtree extraction | reveals the selector asked | reveals the selector or token asked; a token also reveals that subtree's shape for the rows scanned |
+| at query time, a subtree extraction | reveals the selector asked | reveals the selector or token asked; a token also reveals that subtree's shape for the rows scanned, for as long as the column lives, since tokens are column-deterministic |
+| the broadest token a legitimate query can send | none exist | with the sealed root: one top-level field's subtree. Without it: `t($)`, the whole column's shape |
 
 ### 7. Performance
 
@@ -227,7 +248,8 @@ On a flat five-node document the proposal is about 8% larger: the two chain fiel
 - **Containment:** the GIN probe is unchanged in cost (two keys per entry instead of two entries with one key). The recheck runs per returned row, in plpgsql, only for needles with container array elements, and scans `sv` once per group.
 - **Scalar `->`:** one entry, as today.
 - **Subtree `->`:** a recursive CTE, one `jsonb_array_elements` scan of `sv` per depth level. Linear in document size times depth of the subtree. Adequate for documents of hundreds of entries; `bench-eql` should measure a 1,000-entry document before this is called settled.
-- **Decrypt a document:** the client walks the chain locally. N hashes plus N small AEADs instead of one large AEAD; the client has the index key, so no extra round trip.
+- **Decrypt a document:** with the sealed root, one AEAD on the root entry, as today. Without it, the client walks the chain locally: N hashes plus N small AEADs; the client has the index key, so no extra round trip either way.
+- **Encrypt, with the sealed root:** one more AEAD, over the whole document, beside the N small ones.
 
 ### 8. Standard PostgreSQL
 
@@ -237,7 +259,7 @@ Everything the server does: `sha256(bytea)` (core since PostgreSQL 11), `get_byt
 
 **`packages/stack-encrypt`**
 
-- `target::Json`, `Index<serde_json::Value>`, `IndexSpec::Json(JsonOptions)` with the fifth output key `"json"` the plan-builder document reserved. Options for the spike: none that change the wire (wildcard arrays only; case folding deferred).
+- `target::Json`, `Index<serde_json::Value>`, `IndexSpec::Json(JsonOptions)` with the fifth output key `"json"` the plan-builder document reserved. Options for the spike: the sealed-root boolean (on by default; it changes the root entry and the top-level entries, and is recorded in `h`); wildcard arrays only; case folding deferred.
 - A new operation beside `ciphertext()` and the term operations: one `generate_keys` request, a fulfilment that flattens, derives selectors and tokens, and seals N entries. The plan-builder table calls this "a new core operation" under `index(name, idx)`.
 - Terms: `JsonDocument` (stored; reversible with the index key and the document key), `JsonQuery` (`Contains`, `ContainedBy`, `AtPath<Eq>`), `JsonLeafQuery` (selector plus leaf ordering operand, for `AtPath<Lt | Lte | Gt | Gte | Between>`), `JsonSelector` and `JsonSubtreeKey` for extraction. `Supports<Op, In>` impls on `Json` for each; `Input<Pathed<One>>` and `Input<Pathed<Pair>>` for `(JsonPath, S)` and `(JsonPath, (S, S))`, which #1209 left unimplemented until the index existed.
 - PRF domain constants in `sem/mod.rs` beside the existing ones.
@@ -284,3 +306,4 @@ Each phase is a PR against `next`, where #1209 landed.
 5. **`c` for container nodes**: label and kind only, as proposed, or label, kind and child count (lets the client pre-size and detect a truncated subtree). Proposal: add the child count; it is two bytes and it turns a missing entry into an error instead of a silently shorter array.
 6. **Whether to fix v3 too** by porting the group tags and recheck to cipherstash-client and the v3 SQL. Separable; not proposed here.
 7. **Plain SHA-256 or HMAC-SHA256 for the token derivations.** Plain SHA-256 is sound as argued under "The token chain": truncation and prefix domain separation each defeat length extension on their own, and no derivation is used as a MAC. HMAC would be an abundance of caution. Decided 2026-10-18: keep SHA-256 for the spike, and revisit only with Phase 3 benchmarks over large documents and tables in hand, since the question is whether the extra compression per walked node is measurable, not whether the construction is safe.
+8. **The sealed root is a boolean option, on by default; its name is open.** Decided 2026-10-18, see "The sealed root" under the token chain. The two shapes are `d = 0` (chain from the root) and `d = 1` (document at the root, heads at the top-level fields); no other depth is exposed, because `d ≥ 2` leaks subtree sizes at rest and grows storage linearly. Working name "root node obfuscation", which says what it hides; alternatives that say what it stores are `sealed_root` or `root_document`. Phase 3 should measure the root copy against the three document shapes so the default is confirmed by numbers rather than by the estimate above.
