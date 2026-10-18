@@ -139,7 +139,7 @@ fn with_keyset<R>(
     opts: &[u8],
     f: impl FnOnce(&KeysetCipher<'_, GuestKms>) -> Result<R, u32>,
 ) -> Result<R, u32> {
-    let options = parse_options(decode(opts)?, Side::Mint)?;
+    let options = parse_options(opts, Side::Mint)?;
     with_cipher(|cipher| {
         let keyset = block_on(options.keyset.resolve(cipher))?;
         f(&keyset)
@@ -152,7 +152,7 @@ fn with_scope<R>(
     opts: &[u8],
     f: impl FnOnce(Scope<'_, GuestKms>) -> Result<R, u32>,
 ) -> Result<R, u32> {
-    let options = parse_options(decode(opts)?, Side::Open)?;
+    let options = parse_options(opts, Side::Open)?;
     with_cipher(|cipher| {
         let scope = block_on(scope_for(cipher, &options.keyset))?;
         f(scope)
@@ -319,7 +319,7 @@ pub unsafe extern "C" fn se_keyset(sel_ptr: *const u8, sel_len: u32) -> u64 {
     export(|| {
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns and before any wipe of an overlapping range.
-        let selector = parse_selector(decode(unsafe { input(sel_ptr, sel_len)? })?)?;
+        let selector = parse_selector(unsafe { input(sel_ptr, sel_len)? })?;
         if selector == KeysetSelector::Any {
             return Err(malformed(r#"{"any"} is not a keyset"#));
         }
@@ -440,7 +440,7 @@ pub unsafe extern "C" fn se_decrypt_record(
         let record = unsafe { input(rec_ptr, rec_len)? };
         let plan = unsafe { input(plan_ptr, plan_len)? };
         let opts = unsafe { input(opt_ptr, opt_len)? };
-        let expected = parse_options(decode(opts)?, Side::Open)?.context;
+        let expected = parse_options(opts, Side::Open)?.context;
         ops::validate::record_tree(record, plan, expected.as_ref())?;
         with_scope(opts, |scope| {
             block_on(ops::decrypt_record(scope, record, plan, expected))

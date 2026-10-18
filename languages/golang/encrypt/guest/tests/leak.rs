@@ -552,7 +552,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         (
             "options that are not an object",
             failure("options", &["stack_guest_abi::malformed_input"], || {
-                parse_options(s(CONTEXT), Side::Open)
+                parse_options(&encode(s(CONTEXT)), Side::Open)
             }),
         ),
         // -- ZeroKMS, through a key source whose answers carry the body ---
@@ -582,7 +582,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
             "a keyset ZeroKMS does not know",
             failure("keyset", &["stack_kms::keyset_not_found"], || {
                 let options = parse_options(
-                    obj(vec![("keyset", obj(vec![("name", s("tenant"))]))]),
+                    &encode(obj(vec![("keyset", obj(vec![("name", s("tenant"))]))])),
                     Side::Mint,
                 )?;
                 block_on(options.keyset.resolve(&failing)).map(drop)
@@ -832,7 +832,7 @@ fn a_keyset_not_found_carries_its_help_and_request_kind() {
     let failing = failing();
     let error = failure("keyset", &["stack_kms::keyset_not_found"], || {
         let options = parse_options(
-            obj(vec![("keyset", obj(vec![("name", s("tenant"))]))]),
+            &encode(obj(vec![("keyset", obj(vec![("name", s("tenant"))]))])),
             Side::Mint,
         )?;
         block_on(options.keyset.resolve(&failing)).map(drop)

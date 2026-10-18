@@ -66,7 +66,7 @@ zerokms-protocol = "=0.12.31"
 # against (see the comment in packages/stack-encrypt/Cargo.toml). A
 # different version here fails at the `FfiValue: Decrypt` bound, since the
 # aead crate would be duplicated.
-vitaminc-aead-frame = "0.6.1"
+vitaminc-aead-frame = { version = "0.6.1", features = ["serde"] }
 vitaminc-protected = "0.6.1"
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }

@@ -1,7 +1,7 @@
 //! The per-call options object, and the keyset selector it carries.
 //!
 //! Every export that touches a keyset takes one more codec-encoded
-//! argument: an [`FfiValue::Object`] with one required key, `keyset`, whose
+//! argument: a frame object with one required key, `keyset`, whose
 //! value is a tagged object naming the keyset the call binds to, and on
 //! `se_decrypt_record` one optional key, `context` (below):
 //!
@@ -41,15 +41,14 @@
 //! it is objects, strings, bytes and nothing else, and this module is its
 //! one home. The Go bindings plan points here.
 
-use stack_encrypt::dynamic::FfiValue;
 use stack_encrypt::dynamic::Scope;
 use stack_encrypt::{KeysetCipher, Label, StackCipher};
 use stack_kms::{IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
-use vitaminc_protected::Controlled;
 use zerokms_protocol::Name;
 
 use stack_guest_abi::last_error::malformed;
+use vitaminc_aead_frame::serde::from_slice;
 
 use crate::status::fail_error;
 #[cfg(any(doc, test))]
@@ -88,84 +87,132 @@ pub struct Options {
     pub context: Option<Label>,
 }
 
-/// Parse a decoded options object for `side`. Anything outside the shape in
-/// the [module docs](self) is [`STATUS_ENCODING`].
-pub fn parse_options(value: FfiValue, side: Side) -> Result<Options, u32> {
-    let FfiValue::Object(entries) = value else {
-        return Err(malformed("the options are not an object"));
-    };
-    let mut keyset: Option<KeysetSelector> = None;
-    let mut context: Option<Label> = None;
-    for (key, value) in entries {
-        match key.as_str() {
-            "keyset" if keyset.is_none() => keyset = Some(parse_selector(value)?),
-            "context" if context.is_none() && side == Side::Open => {
-                let FfiValue::String(text) = value else {
-                    return Err(malformed(r#"the "context" option is not a string"#));
-                };
-                // Valid UTF-8 by `Utf8String`'s construction invariant;
-                // checked rather than assumed because this is boundary
-                // code. A context is not secret, so the payload moves out
-                // of its `Protected` rather than being copied and wiped.
-                let text = String::from_utf8(text.into_inner().risky_unwrap())
-                    .map_err(|_| malformed(r#"the "context" option is not UTF-8"#))?;
-                context = Some(
-                    Label::parse(&text)
-                        .map_err(|_| malformed(r#"the "context" option is not a label"#))?,
-                );
-            }
-            _ => {
-                return Err(malformed(
-                    r#"the options have a key other than "keyset" and, when opening, "context", or give one twice"#,
-                ))
-            }
+/// Parse the options frame a host sent for `side`. Anything outside the
+/// shape in the [module docs](self) is [`STATUS_ENCODING`], with a message
+/// that names what was wrong and never a value.
+pub fn parse_options(bytes: &[u8], side: Side) -> Result<Options, u32> {
+    let wire: wire::Options =
+        from_slice(bytes).map_err(|e| malformed(format!("the options: {e}")))?;
+    let keyset = KeysetSelector::from(wire.keyset);
+    if side == Side::Mint {
+        if wire.context.is_some() {
+            return Err(malformed(
+                r#"the "context" option is for decrypting a record only"#,
+            ));
+        }
+        if keyset == KeysetSelector::Any {
+            return Err(malformed(r#"{"any"} names no keyset to encrypt under"#));
         }
     }
-    let keyset = keyset.ok_or_else(|| malformed("the options name no keyset"))?;
-    if side == Side::Mint && keyset == KeysetSelector::Any {
-        return Err(malformed(r#"{"any"} names no keyset to encrypt under"#));
-    }
-    Ok(Options { keyset, context })
+    Ok(Options {
+        keyset,
+        context: wire.context.map(|context| context.0),
+    })
 }
 
-/// Parse a keyset selector: a tagged object with exactly one key. Spelled
-/// out here rather than in [`parse_options`] so `se_keyset`, which takes a
-/// bare selector, shares the one definition.
-pub fn parse_selector(value: FfiValue) -> Result<KeysetSelector, u32> {
-    let not_one = || malformed("a keyset selector is not an object with exactly one key");
-    let FfiValue::Object(mut entries) = value else {
-        return Err(not_one());
-    };
-    if entries.len() != 1 {
-        return Err(not_one());
+/// Parse a bare keyset selector frame, as `se_keyset` takes it. One
+/// definition, `wire::Selector`, serves this and [`parse_options`].
+pub fn parse_selector(bytes: &[u8]) -> Result<KeysetSelector, u32> {
+    from_slice::<wire::Selector>(bytes)
+        .map(KeysetSelector::from)
+        .map_err(|e| malformed(format!("a keyset selector: {e}")))
+}
+
+/// The options and the selector as a host writes them, read straight from
+/// the frame by serde (`vitaminc_aead_frame::serde`). Each field type
+/// validates as it reads, through `TryFrom`, so a parsed value is already
+/// the guest's. A `TryFrom` error is the whole message serde reports, so
+/// each is a fixed string that never repeats the value.
+mod wire {
+    use serde::{Deserialize, Deserializer};
+    use stack_encrypt::Label;
+    use uuid::Uuid;
+    use zerokms_protocol::Name;
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct Options {
+        pub(super) keyset: Selector,
+        /// Absent is `None`. Present, it must be a label: a null is refused
+        /// like any other non-string, as it always has been.
+        #[serde(default, deserialize_with = "present")]
+        pub(super) context: Option<ContextLabel>,
     }
-    let (tag, value) = entries.pop().ok_or_else(not_one)?;
-    Ok(match (tag.as_str(), value) {
-        ("default", FfiValue::Object(fields)) if fields.is_empty() => KeysetSelector::Default,
-        ("any", FfiValue::Object(fields)) if fields.is_empty() => KeysetSelector::Any,
-        ("name", FfiValue::String(name)) => {
-            // Valid UTF-8 by `Utf8String`'s construction invariant; checked
-            // rather than assumed because this is boundary code. A keyset
-            // name is not secret, so the payload moves out of its
-            // `Protected` rather than being copied and wiped. ZeroKMS's
-            // naming rules apply here, at the boundary, not at resolution.
-            let name = String::from_utf8(name.into_inner().risky_unwrap())
-                .map_err(|_| malformed("a keyset name is not UTF-8"))?;
-            KeysetSelector::Name(
-                Name::try_from(name.as_str())
-                    .map_err(|_| malformed("a keyset name breaks ZeroKMS's naming rules"))?,
-            )
+
+    fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+        d: D,
+    ) -> Result<Option<T>, D::Error> {
+        T::deserialize(d).map(Some)
+    }
+
+    /// Every variant is spelled; the payload of `default` and `any` is an
+    /// empty object.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "lowercase", deny_unknown_fields)]
+    pub(super) enum Selector {
+        Default {},
+        Any {},
+        Name(KeysetName),
+        Id(KeysetId),
+    }
+
+    impl From<Selector> for super::KeysetSelector {
+        fn from(selector: Selector) -> Self {
+            match selector {
+                Selector::Default {} => Self::Default,
+                Selector::Any {} => Self::Any,
+                Selector::Name(KeysetName(name)) => Self::Name(name),
+                Selector::Id(KeysetId(id)) => Self::Id(id),
+            }
         }
-        ("id", FfiValue::Bytes(bytes)) => KeysetSelector::Id(
-            Uuid::from_slice(bytes.risky_ref())
-                .map_err(|_| malformed("a keyset id is not 16 bytes"))?,
-        ),
-        _ => {
-            return Err(malformed(
-                r#"a keyset selector is not {"default"}, {"any"}, {"name"} or {"id"}"#,
-            ))
+    }
+
+    /// A keyset name, checked against ZeroKMS's naming rules here at the
+    /// boundary, not at resolution.
+    #[derive(Deserialize)]
+    #[serde(try_from = "&str")]
+    pub(super) struct KeysetName(Name);
+
+    impl TryFrom<&str> for KeysetName {
+        type Error = &'static str;
+
+        fn try_from(name: &str) -> Result<Self, Self::Error> {
+            Name::try_from(name)
+                .map(KeysetName)
+                .map_err(|_| "a keyset name that breaks ZeroKMS's naming rules")
         }
-    })
+    }
+
+    /// A keyset id: exactly 16 bytes, a UUID's raw form.
+    #[derive(Deserialize)]
+    #[serde(try_from = "&[u8]")]
+    pub(super) struct KeysetId(Uuid);
+
+    impl TryFrom<&[u8]> for KeysetId {
+        type Error = &'static str;
+
+        fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+            Uuid::from_slice(bytes)
+                .map(KeysetId)
+                .map_err(|_| "a keyset id that is not 16 bytes")
+        }
+    }
+
+    /// The context a host expects a record's context field to hold: a
+    /// string that parses as a plain label.
+    #[derive(Deserialize)]
+    #[serde(try_from = "&str")]
+    pub(super) struct ContextLabel(pub(super) Label);
+
+    impl TryFrom<&str> for ContextLabel {
+        type Error = &'static str;
+
+        fn try_from(text: &str) -> Result<Self, Self::Error> {
+            Label::parse(text)
+                .map(ContextLabel)
+                .map_err(|_| "a context that is not a plain label")
+        }
+    }
 }
 
 impl KeysetSelector {
@@ -211,47 +258,88 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vitaminc_protected::Protected;
+    use serde::{Serialize, Serializer};
+    use vitaminc_aead_frame::serde::to_vec;
 
-    fn obj(entries: Vec<(&str, FfiValue)>) -> FfiValue {
-        FfiValue::Object(
-            entries
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect(),
-        )
+    /// A test input, written as raw frame bytes: objects by hand, so a test
+    /// can send what no writer would (a repeated key).
+    enum V {
+        Obj(Vec<(&'static str, V)>),
+        Str(String),
+        Bytes(Vec<u8>),
+        U64(u64),
+        Bool(bool),
+        Null,
     }
 
-    fn options(selector: FfiValue) -> FfiValue {
+    struct RawBytes<'a>(&'a [u8]);
+
+    impl Serialize for RawBytes<'_> {
+        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            s.serialize_bytes(self.0)
+        }
+    }
+
+    fn frame(v: &V) -> Vec<u8> {
+        let scalar = |r: Result<Vec<u8>, _>| r.expect("a scalar frames");
+        match v {
+            V::Obj(entries) => {
+                let mut out = vec![vitaminc_aead_frame::OBJECT];
+                out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+                for (key, value) in entries {
+                    out.extend_from_slice(&(key.len() as u32).to_le_bytes());
+                    out.extend_from_slice(key.as_bytes());
+                    out.extend_from_slice(&frame(value));
+                }
+                out
+            }
+            V::Str(text) => scalar(to_vec(text)),
+            V::Bytes(bytes) => scalar(to_vec(&RawBytes(bytes))),
+            V::U64(n) => scalar(to_vec(n)),
+            V::Bool(b) => scalar(to_vec(b)),
+            V::Null => scalar(to_vec(&())),
+        }
+    }
+
+    fn obj(entries: Vec<(&'static str, V)>) -> V {
+        V::Obj(entries)
+    }
+
+    fn options(selector: V) -> V {
         obj(vec![("keyset", selector)])
     }
 
-    fn empty() -> FfiValue {
-        FfiValue::Object(Vec::new())
+    fn empty() -> V {
+        V::Obj(Vec::new())
+    }
+
+    fn selector(v: V) -> Result<KeysetSelector, u32> {
+        parse_selector(&frame(&v))
+    }
+
+    fn opts(v: V, side: Side) -> Result<Options, u32> {
+        parse_options(&frame(&v), side)
     }
 
     #[test]
     fn every_selector_variant_is_spelled() {
         let id = Uuid::from_u128(7);
         assert_eq!(
-            parse_selector(obj(vec![("default", empty())])),
+            selector(obj(vec![("default", empty())])),
             Ok(KeysetSelector::Default)
         );
         assert_eq!(
-            parse_selector(obj(vec![("any", empty())])),
+            selector(obj(vec![("any", empty())])),
             Ok(KeysetSelector::Any)
         );
         assert_eq!(
-            parse_selector(obj(vec![("name", FfiValue::String("acme".into()))])),
+            selector(obj(vec![("name", V::Str("acme".into()))])),
             Ok(KeysetSelector::Name(
                 Name::try_from("acme").ok().expect("valid name")
             ))
         );
         assert_eq!(
-            parse_selector(obj(vec![(
-                "id",
-                FfiValue::Bytes(Protected::new(id.as_bytes().to_vec()))
-            )])),
+            selector(obj(vec![("id", V::Bytes(id.as_bytes().to_vec()))])),
             Ok(KeysetSelector::Id(id))
         );
     }
@@ -260,8 +348,8 @@ mod tests {
     fn a_selector_is_exactly_one_known_tag_with_the_right_payload() {
         for (label, bad) in [
             ("an empty object", empty()),
-            ("a string", FfiValue::String("default".into())),
-            ("null", FfiValue::Null),
+            ("a string", V::Str("default".into())),
+            ("null", V::Null),
             ("an unknown tag", obj(vec![("primary", empty())])),
             (
                 "two tags",
@@ -269,7 +357,7 @@ mod tests {
             ),
             (
                 "default with a payload",
-                obj(vec![("default", FfiValue::Bool(true))]),
+                obj(vec![("default", V::Bool(true))]),
             ),
             (
                 "default with fields",
@@ -277,33 +365,27 @@ mod tests {
             ),
             (
                 "a name that is not a string",
-                obj(vec![("name", FfiValue::UInt64(1))]),
+                obj(vec![("name", V::U64(1))]),
             ),
-            (
-                "an empty name",
-                obj(vec![("name", FfiValue::String("".into()))]),
-            ),
+            ("an empty name", obj(vec![("name", V::Str("".into()))])),
             (
                 "a name past ZeroKMS's 64-byte limit",
-                obj(vec![(
-                    "name",
-                    FfiValue::String("x".repeat(65).as_str().into()),
-                )]),
+                obj(vec![("name", V::Str("x".repeat(65)))]),
             ),
             (
                 "an id that is not 16 bytes",
-                obj(vec![("id", FfiValue::Bytes(Protected::new(vec![1, 2, 3])))]),
+                obj(vec![("id", V::Bytes(vec![1, 2, 3]))]),
             ),
             (
                 "an id as text",
                 obj(vec![(
                     "id",
-                    FfiValue::String("00000000-0000-0000-0000-000000000007".into()),
+                    V::Str("00000000-0000-0000-0000-000000000007".into()),
                 )]),
             ),
         ] {
             assert_eq!(
-                parse_selector(bad).err(),
+                selector(bad).err(),
                 Some(STATUS_ENCODING),
                 "{label} is not a selector and must be refused"
             );
@@ -313,7 +395,7 @@ mod tests {
     #[test]
     fn options_are_one_keyset_key() {
         assert_eq!(
-            parse_options(options(obj(vec![("default", empty())])), Side::Mint),
+            opts(options(obj(vec![("default", empty())])), Side::Mint),
             Ok(Options {
                 keyset: KeysetSelector::Default,
                 context: None,
@@ -321,12 +403,12 @@ mod tests {
         );
         for (label, bad) in [
             ("no keyset", empty()),
-            ("not an object", FfiValue::Null),
+            ("not an object", V::Null),
             (
                 "an unknown key beside it",
                 obj(vec![
                     ("keyset", obj(vec![("default", empty())])),
-                    ("mode", FfiValue::Bool(true)),
+                    ("mode", V::Bool(true)),
                 ]),
             ),
             (
@@ -338,7 +420,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                parse_options(bad, Side::Open).err(),
+                opts(bad, Side::Open).err(),
                 Some(STATUS_ENCODING),
                 "{label} must be refused"
             );
@@ -347,14 +429,14 @@ mod tests {
 
     #[test]
     fn an_expected_context_is_an_opening_option_only() {
-        let with = |context: FfiValue| {
+        let with = |context: V| {
             obj(vec![
                 ("keyset", obj(vec![("default", empty())])),
                 ("context", context),
             ])
         };
         assert_eq!(
-            parse_options(with(FfiValue::String("tenants/acme".into())), Side::Open),
+            opts(with(V::Str("tenants/acme".into())), Side::Open),
             Ok(Options {
                 keyset: KeysetSelector::Default,
                 context: Some(Label::parse("tenants/acme").expect("a label")),
@@ -363,28 +445,28 @@ mod tests {
         for (label, bad, side) in [
             (
                 "on the sealing side",
-                with(FfiValue::String("tenants/acme".into())),
+                with(V::Str("tenants/acme".into())),
                 Side::Mint,
             ),
-            ("not a string", with(FfiValue::UInt64(7)), Side::Open),
+            ("not a string", with(V::U64(7)), Side::Open),
             (
                 "not a plain label",
-                with(FfiValue::String("tenants/(acme)".into())),
+                with(V::Str("tenants/(acme)".into())),
                 Side::Open,
             ),
-            ("empty", with(FfiValue::String("".into())), Side::Open),
+            ("empty", with(V::Str("".into())), Side::Open),
             (
                 "given twice",
                 obj(vec![
                     ("keyset", obj(vec![("default", empty())])),
-                    ("context", FfiValue::String("a".into())),
-                    ("context", FfiValue::String("a".into())),
+                    ("context", V::Str("a".into())),
+                    ("context", V::Str("a".into())),
                 ]),
                 Side::Open,
             ),
         ] {
             assert_eq!(
-                parse_options(bad, side).err(),
+                opts(bad, side).err(),
                 Some(STATUS_ENCODING),
                 "{label} must be refused"
             );
@@ -395,15 +477,12 @@ mod tests {
     fn any_is_an_opening_selector_only() {
         let any = || options(obj(vec![("any", empty())]));
         assert_eq!(
-            parse_options(any(), Side::Open),
+            opts(any(), Side::Open),
             Ok(Options {
                 keyset: KeysetSelector::Any,
                 context: None,
             })
         );
-        assert_eq!(
-            parse_options(any(), Side::Mint).err(),
-            Some(STATUS_ENCODING)
-        );
+        assert_eq!(opts(any(), Side::Mint).err(), Some(STATUS_ENCODING));
     }
 }
