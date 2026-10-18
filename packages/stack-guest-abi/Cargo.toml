@@ -36,3 +36,6 @@ vitaminc-protected = { workspace = true }
 # host holds, run natively and under Miri. `std` only: the `fork` and
 # `timeout` defaults spawn processes and threads Miri cannot interpret.
 proptest = { version = "1.7", default-features = false, features = ["std"] }
+# `step`'s tests drive the loop through the combinators the ZeroKMS client
+# runs its requests with (`buffered`, `join`).
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }

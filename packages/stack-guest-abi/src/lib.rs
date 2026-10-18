@@ -104,6 +104,7 @@ pub mod call;
 pub mod headers;
 pub mod last_error;
 pub mod status;
+pub mod step;
 pub mod value;
 
 #[cfg(target_arch = "wasm32")]
