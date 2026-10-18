@@ -1,26 +1,32 @@
-//! The engine's plaintext for a value whose type is known only at run time:
-//! [`ValueFrame`], one value as a transport frame.
+//! [`ValueFrame`]: a plaintext whose type is known only at run time, held as
+//! one value in vitaminc's transport frame.
 //!
-//! vitaminc ADR 0001 removed the shared value type: a value describes itself
-//! once ([`Encrypt`]), and whatever consumes it is a sink. A binding hands the
-//! engine a transport frame, and the frame is a source that walks its own
-//! bytes in place. So the engine keeps a dynamic plaintext as its frame and
-//! nothing else: a record field split out of a source, a value opened from a
-//! ciphertext, a query's input. Each is written once, by vitaminc's
-//! [`FrameWriter`], into a [`Protected`] buffer that is wiped when it drops,
-//! and read by walking it into the next sink: the encrypting sink, a term
-//! deriver, another frame writer.
+//! A binding hands the engine frame bytes. Read them with
+//! [`ValueFrame::from_bytes`], which refuses anything outside the
+//! [value model](ValueFrame#the-value-model), or check a record source in
+//! place with [`ValueFrame::check`]. A Rust value becomes a frame with
+//! [`ValueFrame::of`]. A `ValueFrame` is a source ([`Encrypt`]), so it is
+//! sealed, indexed or written into another frame by walking it into that
+//! sink. It is also a decrypt target ([`Decrypt`]), so an opened value comes
+//! back as a frame. The bytes are kept in a [`Protected`] buffer that is
+//! wiped when it drops, and [`ValueFrame::into_inner`] hands them back to the
+//! binding still protected.
 //!
-//! [`FfiValue`](super::FfiValue) is not plaintext's type. It is the tree a
-//! binding's control data decodes into: plans, contexts, options, query
-//! statistics, and configuration, which can carry credentials, so its text
-//! and bytes leaves are wiped too.
+//! ```
+//! use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 //!
-//! The value model the engine reads every such frame through is on
-//! [`ValueFrame`].
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let frame = ValueFrame::of("alice")?;
+//! assert_eq!(frame.kind(), Some(ValueKind::String));
+//!
+//! // The same value, as a binding would hand it over.
+//! let from_host = ValueFrame::from_bytes(frame.risky_ref())?;
+//! assert_eq!(from_host.risky_ref(), frame.risky_ref());
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::BTreeSet;
-use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -29,7 +35,7 @@ use vitaminc_aead::plaintext::{
     Error as _, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use vitaminc_aead::{DecodeError, Decrypt, Encrypt};
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 
 use super::ValueKind;
 use crate::plan::IntoLabel;
@@ -47,7 +53,8 @@ use crate::{Label, LabelError};
 /// a host to the sealing sink, and from an opened leaf back to the host,
 /// with no value tree in between.
 ///
-/// `Debug` names the type and nothing more: the frame is plaintext.
+/// `Debug` ([`OpaqueDebug`]) names the type and masks the frame, which is
+/// plaintext.
 ///
 /// # The value model
 ///
@@ -61,6 +68,7 @@ use crate::{Label, LabelError};
 /// a decimal) are refused. Every [`ValueFrame`] is in the model: it is
 /// written through the sink adapter that holds these rules, so a frame from
 /// a host and a frame opened from a ciphertext are read the same way.
+#[derive(OpaqueDebug)]
 pub struct ValueFrame(Protected<Vec<u8>>);
 
 impl ValueFrame {
@@ -263,12 +271,6 @@ impl Decrypt for ValueFrame {
 impl Clone for ValueFrame {
     fn clone(&self) -> Self {
         Self(Protected::new(self.0.risky_ref().to_vec()))
-    }
-}
-
-impl fmt::Debug for ValueFrame {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("ValueFrame(<redacted>)")
     }
 }
 
@@ -1419,9 +1421,8 @@ mod tests {
 
     #[test]
     fn debug_redacts_the_frame() {
-        assert_eq!(
-            format!("{:?}", frame_of(&s("secret"))),
-            "ValueFrame(<redacted>)"
-        );
+        let shown = format!("{:?}", frame_of(&s("secret")));
+        assert!(shown.ends_with("ValueFrame(\"***\")"), "{shown}");
+        assert!(!shown.contains("secret"), "{shown}");
     }
 }
