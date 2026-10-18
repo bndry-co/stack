@@ -24,8 +24,8 @@ import (
 // eql_v4 columns and queries it.
 
 var profiles = []testusers.Profile{
-	{ID: 1, Visits: 3, Balance: 1234567890123, Active: true, Ratio: 0.5, Score: 2.25, Note: "a private note", Name: "alice", Age: 42, Rank: 7, Weight: 1.5, Price: 9.75},
-	{ID: 2, Visits: 0, Balance: -1, Active: false, Ratio: -1.5, Score: 0, Note: "", Name: "bob smith", Age: 42, Rank: -7, Weight: -1.5, Price: 0},
+	{ID: 1, Visits: 3, Balance: 1234567890123, Active: true, Ratio: 0.5, Score: 2.25, Note: "a private note", Name: "alice", Age: 42, Rank: 7, Weight: 1.5, Price: 9.75, Email: "alice@example.com"},
+	{ID: 2, Visits: 0, Balance: -1, Active: false, Ratio: -1.5, Score: 0, Note: "", Name: "bob smith", Age: 42, Rank: -7, Weight: -1.5, Price: 0, Email: "bob@example.com"},
 }
 
 func fixturePath(name string) string {
@@ -69,6 +69,7 @@ func stored(e testusers.EncryptedProfile) map[string][]byte {
 		"rank":    e.Rank,
 		"weight":  e.Weight,
 		"price":   e.Price,
+		"email":   e.Email,
 	}
 }
 
@@ -93,6 +94,7 @@ func TestV4FieldsSealToTheirEQLTypesAndOpenBack(t *testing.T) {
 		"rank":    "c,hm,i,v",
 		"weight":  "c,hm,i,v",
 		"price":   "c,hm,i,v",
+		"email":   "c,hm,i,v",
 	}
 	for i, e := range encrypted {
 		for column, value := range stored(e) {
@@ -169,6 +171,10 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 			Plaintext float64
 			Query     string
 		}
+		Email struct {
+			Plaintext string
+			Query     string
+		}
 	}
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
@@ -203,6 +209,9 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 		{"Price", func() ([]byte, error) {
 			return testusers.ProfileFields.Price.Eq(ctx, cipher, fixture.Price.Plaintext)
 		}, fixture.Price.Query},
+		{"Email", func() ([]byte, error) {
+			return testusers.ProfileFields.Email.Eq(ctx, cipher, fixture.Email.Plaintext)
+		}, fixture.Email.Query},
 	}
 	for _, eq := range equality {
 		got, err := eq.query()
@@ -308,6 +317,7 @@ type fixturePlain struct {
 	Rank    int64   `json:"rank"`
 	Weight  float32 `json:"weight"`
 	Price   float64 `json:"price"`
+	Email   string  `json:"email"`
 }
 
 // TestV4RowsMatchTheCommittedFixture checks the committed v4_rows.json
@@ -445,6 +455,7 @@ func opensToItsPlaintexts(t *testing.T, c *encrypt.Client, rows []fixtureRow) {
 			Rank:    []byte(row.Stored["rank"]),
 			Weight:  []byte(row.Stored["weight"]),
 			Price:   []byte(row.Stored["price"]),
+			Email:   []byte(row.Stored["email"]),
 		}
 	}
 	opened, err := testusers.DecryptProfile(context.Background(), c.DefaultKeyset(), sealed)
@@ -462,13 +473,13 @@ func opensToItsPlaintexts(t *testing.T, c *encrypt.Client, rows []fixtureRow) {
 func profileOf(id int64, p fixturePlain) testusers.Profile {
 	return testusers.Profile{
 		ID: id, Visits: p.Visits, Balance: p.Balance, Active: p.Active, Ratio: p.Ratio, Score: p.Score,
-		Note: p.Note, Name: p.Name, Age: p.Age, Rank: p.Rank, Weight: p.Weight, Price: p.Price,
+		Note: p.Note, Name: p.Name, Age: p.Age, Rank: p.Rank, Weight: p.Weight, Price: p.Price, Email: p.Email,
 	}
 }
 
 // plainOf is a profile's plaintext as the fixture records it.
 func plainOf(p testusers.Profile) fixturePlain {
-	return fixturePlain{p.Visits, p.Balance, p.Active, p.Ratio, p.Score, p.Note, p.Name, p.Age, p.Rank, p.Weight, p.Price}
+	return fixturePlain{p.Visits, p.Balance, p.Active, p.Ratio, p.Score, p.Note, p.Name, p.Age, p.Rank, p.Weight, p.Price, p.Email}
 }
 
 // withoutCiphertexts renders a fixture with every stored value's `c`

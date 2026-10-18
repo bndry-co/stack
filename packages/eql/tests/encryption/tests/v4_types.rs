@@ -1004,6 +1004,10 @@ async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
             "plaintext": 9.75,
             "query": query("DoubleEq", "price", FfiValue::Float64(9.75)).await,
         },
+        "email": {
+            "plaintext": "alice@example.com",
+            "query": query("TextEq", "email", FfiValue::String("alice@example.com".into())).await,
+        },
     });
     let path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_queries.json");
@@ -1053,6 +1057,7 @@ mod go_rows {
         pub rank: i64,
         pub weight: f32,
         pub price: f64,
+        pub email: String,
     }
 
     /// The committed rows, or the file `EQL_V4_ROWS` names: CI points it at
@@ -1188,6 +1193,11 @@ mod go_rows {
             .await
             .unwrap();
         assert_eq!(price.to_bits(), p.price.to_bits());
+        let email: String = cipher
+            .decrypt_as(parsed::<text::TextEq>(row, "email"), column("email").into())
+            .await
+            .unwrap();
+        assert_eq!(email, p.email);
     }
 }
 
@@ -1249,7 +1259,8 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
             age public.eql_v4_integer_eq,
             rank public.eql_v4_bigint_eq,
             weight public.eql_v4_real_eq,
-            price public.eql_v4_double_eq
+            price public.eql_v4_double_eq,
+            email public.eql_v4_text_eq
         );",
     )
     .unwrap();
@@ -1267,7 +1278,8 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
                 $9::text::jsonb::public.eql_v4_integer_eq,
                 $10::text::jsonb::public.eql_v4_bigint_eq,
                 $11::text::jsonb::public.eql_v4_real_eq,
-                $12::text::jsonb::public.eql_v4_double_eq)",
+                $12::text::jsonb::public.eql_v4_double_eq,
+                $13::text::jsonb::public.eql_v4_text_eq)",
             &[
                 &row.id,
                 &v("visits"),
@@ -1281,6 +1293,7 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
                 &v("rank"),
                 &v("weight"),
                 &v("price"),
+                &v("email"),
             ],
         )
         .unwrap();
@@ -1342,6 +1355,9 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
         }),
         equal("price", "query_double_eq", &|p| {
             p.price == plain("price").as_f64().unwrap()
+        }),
+        equal("email", "query_text_eq", &|p| {
+            serde_json::json!(p.email) == plain("email")
         }),
     ];
     for (expected, column_name, query_domain) in checks {

@@ -10,7 +10,7 @@
 ## `stored_v4_rows_v1.json` (FROZEN)
 
 `Profile` rows the Go SDK's generated code stored with the `next` build, one
-value of every producible EQL v4 type except `TextEq`. `v4_rows.json` proves
+value of every producible EQL v4 type. `v4_rows.json` proves
 the Go SDK and Rust agree *today* and is regenerated when the encoding moves.
 This file is the opposite: it is never regenerated or edited, so a change
 that breaks rows already stored fails instead of being regenerated away.

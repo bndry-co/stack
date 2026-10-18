@@ -4,6 +4,10 @@
     "plaintext": 42,
     "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"age\"},\"hm\":\"ed60c97cff62963a142f9b7762de2e2b98e3d486a178b07f6e930318770fbecb\"}"
   },
+  "email": {
+    "plaintext": "alice@example.com",
+    "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"email\"},\"hm\":\"be863e717d95eecca3f32f53c3c4d397e3e2aefbc4e7e9d2a7a8a21ed539f4eb\"}"
+  },
   "name": {
     "plaintext": "alice",
     "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"name\"},\"bf\":[80,125,212,221,348,638,664,776,1141,1322,1400,1418,1532,1704,1762,1843,1865,1970]}"

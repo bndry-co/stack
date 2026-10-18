@@ -30,14 +30,15 @@ type EncryptedProfile struct {
 	Rank    eql.BigintEq
 	Weight  eql.RealEq
 	Price   eql.DoubleEq
+	Email   eql.TextEq
 }
 
 func (e EncryptedProfile) String() string {
-	return gensupport.Redacted("EncryptedProfile", map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name", "Age", "Rank", "Weight", "Price")
+	return gensupport.Redacted("EncryptedProfile", map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name", "Age", "Rank", "Weight", "Price", "Email")
 }
 
 func (e EncryptedProfile) LogValue() slog.Value {
-	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name", "Age", "Rank", "Weight", "Price")
+	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name", "Age", "Rank", "Weight", "Price", "Email")
 }
 
 // Stops compiling when Profile gains, loses, reorders or retypes a field.
@@ -57,6 +58,7 @@ type profileShape struct {
 	Rank    int64
 	Weight  float32
 	Price   float64
+	Email   string
 }
 
 var profileDeclaration = gensupport.Declare("profiles").
@@ -71,7 +73,8 @@ var profileDeclaration = gensupport.Declare("profiles").
 	EncryptInto("age", gensupport.Int32, "IntegerEq").
 	EncryptInto("rank", gensupport.Int64, "BigintEq").
 	EncryptInto("weight", gensupport.Float32, "RealEq").
-	EncryptInto("price", gensupport.Float64, "DoubleEq")
+	EncryptInto("price", gensupport.Float64, "DoubleEq").
+	EncryptInto("email", gensupport.String, "TextEq")
 
 var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile]{
 	TypeName:        "Profile",
@@ -91,6 +94,7 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 			"rank":    v.Rank,
 			"weight":  v.Weight,
 			"price":   v.Price,
+			"email":   v.Email,
 		}
 	},
 	Seal: func(rec gensupport.Record) (EncryptedProfile, error) {
@@ -110,6 +114,7 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 		e.Rank = eql.BigintEq(rec["rank"].EQL)
 		e.Weight = eql.RealEq(rec["weight"].EQL)
 		e.Price = eql.DoubleEq(rec["price"].EQL)
+		e.Email = eql.TextEq(rec["email"].EQL)
 		return e, nil
 	},
 	Open: func(e EncryptedProfile) gensupport.Record {
@@ -126,6 +131,7 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 			"rank":    {EQL: e.Rank},
 			"weight":  {EQL: e.Weight},
 			"price":   {EQL: e.Price},
+			"email":   {EQL: e.Email},
 		}
 	},
 	Value: func(e EncryptedProfile, vals gensupport.Values) (Profile, error) {
@@ -167,6 +173,9 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 		if v.Price, err = gensupport.Get[float64](vals, "price"); err != nil {
 			return Profile{}, err
 		}
+		if v.Email, err = gensupport.Get[string](vals, "email"); err != nil {
+			return Profile{}, err
+		}
 		return v, nil
 	},
 })
@@ -196,6 +205,7 @@ var ProfileFields = struct {
 	Rank    ProfileRankField
 	Weight  ProfileWeightField
 	Price   ProfilePriceField
+	Email   ProfileEmailField
 }{
 	Visits:  ProfileVisitsField{gensupport.NewField[int32](profileDeclaration, "visits")},
 	Balance: ProfileBalanceField{gensupport.NewField[int64](profileDeclaration, "balance")},
@@ -208,6 +218,7 @@ var ProfileFields = struct {
 	Rank:    ProfileRankField{gensupport.NewField[int64](profileDeclaration, "rank")},
 	Weight:  ProfileWeightField{gensupport.NewField[float32](profileDeclaration, "weight")},
 	Price:   ProfilePriceField{gensupport.NewField[float64](profileDeclaration, "price")},
+	Email:   ProfileEmailField{gensupport.NewField[string](profileDeclaration, "email")},
 }
 
 type ProfileVisitsField struct {
@@ -333,4 +344,18 @@ func (f ProfilePriceField) Encrypt(ctx context.Context, c *encrypt.Cipher, v flo
 func (f ProfilePriceField) Eq(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleEqQuery, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
 	return eql.DoubleEqQuery(term), err
+}
+
+type ProfileEmailField struct {
+	field gensupport.Field[string]
+}
+
+func (f ProfileEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
+	out, err := f.field.Encrypt(ctx, c, v)
+	return eql.TextEq(out.EQL), err
+}
+
+func (f ProfileEmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return eql.TextEqQuery(term), err
 }
