@@ -151,18 +151,22 @@ pub enum Error {
         help("Open the value under the context it was sealed with. If the context is right, the ciphertext is damaged or was altered.")
     )]
     Aead,
-    /// A ciphertext of one leaf opened, so it is authentic and unaltered,
-    /// but it holds a value of another kind than the one it was opened as:
-    /// text opened as an integer, or an integer too wide for the target. The
-    /// value was sealed as that kind, by this or another binding, and is not
+    /// A ciphertext opened, so every leaf in it is authentic and unaltered,
+    /// but it holds a value of another type or shape than the one it was
+    /// opened as: text opened as an integer, an integer too wide for the
+    /// target, a map without a field the target needs. The value was sealed
+    /// as another type or shape, or arrived as part of one, and is not
     /// tampered with.
     ///
-    /// Only a single leaf is told apart this way. A container whose value
-    /// the target refuses is [`Aead`](Self::Aead): its leaves authenticate
-    /// one by one, but which entries and elements it holds does not.
+    /// A container's membership and order are not authenticated, by design:
+    /// a stored sequence is a set of rows and a stored map a row's columns,
+    /// and a database returns rows in any order and a query selects some
+    /// columns, not all. So a map missing a field, or a sequence of another
+    /// length, is a shape the target refuses, not a failed authentication.
     ///
-    /// `expected` names the kind the target reads, such as `i32`. The
-    /// message never names what the value held.
+    /// `expected` names what the target reads (a vitaminc kind such as
+    /// `i32`, or the Rust type). The message never names what the value
+    /// held, and never a map key.
     #[error("the ciphertext opened, but it does not hold a value of the type {expected}")]
     #[diagnostic(
         code(stack_encrypt::opened_type),
@@ -1530,33 +1534,33 @@ impl Cipher for BoundKeys {
 }
 
 /// Open a key-bound tree into `T` under `aad`. A wrong key or AAD, a
-/// tampered leaf or marker, and a malformed tree are [`Error::Aead`]. A
-/// single leaf that opens but holds a value of another kind than `T` reads
-/// is [`Error::OpenedType`]: the leaf authenticated, so it was sealed as
-/// that kind, not altered.
+/// tampered leaf or marker, and a malformed tree are [`Error::Aead`]. A tree
+/// that opens but holds a value that is not a `T` is [`Error::OpenedType`]:
+/// every leaf authenticated, so it was sealed as another type, not altered.
 ///
-/// A container is never told apart. Its leaves authenticate one by one, but
-/// its membership does not: a map entry's AAD binds its key and a sequence
-/// element's binds no index, so an entry removed or repeated, or elements
-/// reordered or dropped, still authenticate, and the target's refusal of
-/// the result is tampering as far as the caller can know.
+/// Each leaf authenticates on its own, under its context and its place's
+/// AAD (a map entry's key). Which entries a map holds and the order of a
+/// sequence are deliberately not authenticated: stored values map to rows
+/// and columns that a database returns in any order and a query selects in
+/// part. A refusal of a container's shape is therefore `OpenedType` like any
+/// other, not `Aead`. Authenticating membership may suit other uses later;
+/// it is not what this crate does.
 pub(crate) fn open_keyed<'a, T: Decrypt>(
     keyed: KeyedCipherText,
     aad: impl IntoAad<'a>,
 ) -> Result<T, Error> {
-    let single = matches!(keyed, CipherText::Single(_));
-    vitaminc_aead::decrypt(&BoundKeys, keyed, aad).map_err(|error| opened_error(single, error))
+    vitaminc_aead::decrypt(&BoundKeys, keyed, aad).map_err(opened_error::<T>)
 }
 
-/// What a failed open of a tree is to the caller: [`Error::OpenedType`] only
-/// when the tree is one leaf and the target refused its kind, naming the
-/// kind it wanted. A `DecodeError`'s other refusals can name a map key,
-/// which is not repeated, and are [`Error::Aead`] with every other failure.
-fn opened_error(single: bool, error: DecryptError<DecodeError, Unspecified>) -> Error {
+/// What a failed open is to the caller. Only the sink's refusal is told
+/// apart, and only by the type it wanted: the `DecodeError` itself can name
+/// a map key, which is not repeated.
+fn opened_error<T>(error: DecryptError<DecodeError, Unspecified>) -> Error {
     match error {
-        DecryptError::Sink(DecodeError::Expected(expected)) if single => {
-            Error::OpenedType { expected }
-        }
+        DecryptError::Sink(DecodeError::Expected(expected)) => Error::OpenedType { expected },
+        DecryptError::Sink(_) => Error::OpenedType {
+            expected: std::any::type_name::<T>(),
+        },
         _ => Error::Aead,
     }
 }
@@ -1565,45 +1569,42 @@ fn opened_error(single: bool, error: DecryptError<DecodeError, Unspecified>) -> 
 mod tests {
     use super::*;
 
-    /// A failed open is `Aead` unless the tree is one leaf, which
-    /// authenticated, and the target refused its kind: then it is
-    /// `OpenedType`, naming the kind the target wanted. A container's
-    /// refusal is `Aead`, because its membership is not authenticated.
+    /// A failed open is `Aead` unless the leaves authenticated and only the
+    /// sink refused: then it is `OpenedType`, naming the kind the sink
+    /// wanted, or the target type when the refusal names no kind (and never
+    /// the map key a refusal can carry).
     #[test]
-    fn only_a_single_leaf_of_another_kind_is_told_apart_from_aead() {
+    fn only_a_sink_refusal_is_told_apart_from_aead() {
+        let opened = |error| opened_error::<u32>(error);
         assert!(matches!(
-            opened_error(true, DecryptError::Sink(DecodeError::Expected("i32"))),
+            opened(DecryptError::Sink(DecodeError::Expected("i32"))),
             Error::OpenedType { expected: "i32" }
         ));
-        assert!(matches!(
-            opened_error(false, DecryptError::Sink(DecodeError::Expected("i32"))),
-            Error::Aead
-        ));
-        for single in [true, false] {
-            for refusal in [
-                DecodeError::MissingField("age"),
-                DecodeError::unknown_key("ssn"),
-                DecodeError::duplicate_key("ssn"),
-            ] {
-                assert!(matches!(
-                    opened_error(single, DecryptError::Sink(refusal)),
-                    Error::Aead
-                ));
-            }
-            for failure in [
-                DecryptError::Cipher(Unspecified),
-                DecryptError::Auth,
-                DecryptError::Malformed,
-            ] {
-                assert!(matches!(opened_error(single, failure), Error::Aead));
-            }
+        for refusal in [
+            DecodeError::MissingField("age"),
+            DecodeError::unknown_key("ssn"),
+            DecodeError::duplicate_key("ssn"),
+        ] {
+            assert!(matches!(
+                opened(DecryptError::Sink(refusal)),
+                Error::OpenedType { expected: "u32" }
+            ));
+        }
+        for failure in [
+            DecryptError::Cipher(Unspecified),
+            DecryptError::Auth,
+            DecryptError::Malformed,
+        ] {
+            assert!(matches!(opened(failure), Error::Aead));
         }
     }
 
-    /// Through a real open: one leaf of another kind is `OpenedType`, and a
-    /// container the target refuses is `Aead`, whatever the refusal.
+    /// Through a real open: a leaf of another kind, and a container whose
+    /// shape the target refuses, are both `OpenedType`. Membership and order
+    /// are not authenticated, by design (see `open_keyed`), so a container
+    /// the target cannot read is a shape mismatch, not tampering.
     #[tokio::test]
-    async fn a_leaf_of_another_kind_is_opened_type_and_a_container_is_aead() {
+    async fn a_leaf_or_a_container_of_another_shape_is_opened_type() {
         let cipher = StackCipher::builder()
             .kms(stack_kms::FakeDataKeySource::new())
             .init()
@@ -1613,12 +1614,15 @@ mod tests {
         let leaf = keyset.encrypt(7u32, "users/age").await.unwrap();
         let opened: Result<String, _> = cipher.decrypt(leaf, "users/age").await;
         assert!(
-            matches!(opened, Err(Error::OpenedType { expected: "string" })),
+            matches!(opened, Err(Error::OpenedType { .. })),
             "{opened:?}"
         );
         let seq = keyset.encrypt(vec![7u32, 8], "users/age").await.unwrap();
         let opened: Result<u32, _> = cipher.decrypt(seq, "users/age").await;
-        assert!(matches!(opened, Err(Error::Aead)), "{opened:?}");
+        assert!(
+            matches!(opened, Err(Error::OpenedType { .. })),
+            "{opened:?}"
+        );
     }
 
     /// A cipher's `Debug` — and a keyset handle's — names the keyset and the
