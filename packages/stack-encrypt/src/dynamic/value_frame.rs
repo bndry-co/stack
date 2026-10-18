@@ -78,8 +78,9 @@ impl ValueFrame {
     ///
     /// # Errors
     ///
-    /// [`DecodeError::Expected`] for a scalar outside the model (a 128-bit
-    /// integer, a date), [`DecodeError::DuplicateKey`] for a map with a
+    /// [`DecodeError::Expected`] for a scalar outside the model (a uuid, a
+    /// logical type this build does not know, a date, decimal or timestamp
+    /// outside vitaminc's range), [`DecodeError::DuplicateKey`] for a map with a
     /// repeated key, and [`DecodeError::Source`] for a source that fails or
     /// a value deeper or longer than a frame carries.
     pub fn of<P: Encrypt>(value: P) -> Result<Self, DecodeError> {

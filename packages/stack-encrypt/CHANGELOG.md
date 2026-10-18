@@ -184,7 +184,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was sealed; now it is sealed as itself, so a field declared `int16` seals
   an int16 leaf. A record sealed before under a 32-bit `type` does not open
   under a plan that declares the narrower kind (`Plan(FieldType)`): the
-  typed decrypt checks the leaf's kind against the plan's.
+  typed decrypt checks the leaf's kind against the plan's. The seal side
+  breaks the same way: a host that sends an 8- or 16-bit leaf for a field
+  whose plan declares a 32-bit `type` is refused (`Reason::FieldType`, naming
+  the field), where the leaf used to be widened. Send the declared width, or
+  declare the narrower kind. The Go SDK converts to the declared width itself,
+  so Go code generated before this change still seals.
 
 - **A dynamic plaintext is a frame, not a value tree** (`dynamic` feature;
   #1232, vitaminc ADR 0001). vitaminc 0.6 has no shared value type: a value
