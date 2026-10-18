@@ -5,9 +5,9 @@
 //!
 //! Each type must round-trip through both entry points (the typed
 //! `encrypt_as` and the by-name dispatch a Go plan reaches), seal exactly the
-//! leaf vitaminc's value enum seals for the same value (what the Go SDK writes
-//! for a plain field of that kind) and open the leaf the value enum sealed,
-//! and refuse a value of another kind.
+//! leaf the same value's frame seals as (what the Go SDK writes for a plain
+//! field of that kind) and open the leaf a frame sealed, and refuse a value
+//! of another kind.
 
 mod common;
 
@@ -17,18 +17,20 @@ use eql_bindings::v3::terms::Ciphertext;
 use eql_bindings::v4::{bigint, boolean, double, integer, real, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{FfiValue, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 use stack_encrypt::target::transcode::{Reader, Visitor};
-use stack_encrypt::{CipherText, Label, NonEmpty};
+use stack_encrypt::{CipherText, Encrypt, Label, NonEmpty};
 
-/// A value as the engine's runtime plaintext: its frame.
-fn frame(value: FfiValue) -> ValueFrame {
-    ValueFrame::of(&value).unwrap()
+/// A Rust value as the engine's runtime plaintext: its frame.
+fn frame<T: Encrypt>(value: T) -> ValueFrame {
+    ValueFrame::of(value).unwrap()
 }
 
-/// An opened frame read back as a value to compare.
-fn tree(value: ValueFrame) -> FfiValue {
-    FfiValue::from_frame(value.risky_ref()).unwrap()
+/// Whether two frames hold the same value of the same kind: the frame
+/// carries both, and a float's bit pattern, so `-0.0` and a NaN's payload
+/// count.
+fn same(a: &ValueFrame, b: &ValueFrame) -> bool {
+    a.risky_ref() == b.risky_ref()
 }
 
 fn column() -> NonEmpty<Identifier> {
@@ -66,21 +68,21 @@ fn assert_v4_envelope<T: Serialize>(stored: &T, keys: &[&str]) {
     assert_eq!(found, expected);
 }
 
-/// What the stored ciphertext opens to when read as vitaminc's value enum:
-/// the leaf the Go SDK would have sealed for the same value.
-async fn as_value_enum(
+/// What the stored ciphertext opens to as a frame: the leaf a plain Go
+/// field of the same kind seals, read back as the engine's runtime value.
+async fn as_frame(
     cipher: &stack_encrypt::StackCipher<common::Observed>,
     c: Ciphertext,
-) -> FfiValue {
+) -> ValueFrame {
     let native = c.read(NativeLeaf).unwrap();
     cipher.decrypt(native, column()).await.unwrap()
 }
 
-/// The other direction: the `c` a plain field of `value`'s kind gets when the
-/// value enum seals it, as a Go SDK field without an EQL type does.
-async fn sealed_by_value_enum(
+/// The other direction: the `c` a plain field of `value`'s kind gets when
+/// its frame is sealed, as a Go SDK field without an EQL type is.
+async fn sealed_from_frame(
     keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
-    value: FfiValue,
+    value: ValueFrame,
 ) -> Ciphertext {
     match keyset.encrypt(value, column()).await.unwrap() {
         CipherText::Single(leaf) => CiphertextVisitor.sealed(leaf).unwrap(),
@@ -102,43 +104,30 @@ fn stored_as<T: DeserializeOwned>(c: Ciphertext) -> T {
 async fn by_name<T: DeserializeOwned>(
     keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
     name: &str,
-    value: FfiValue,
+    value: ValueFrame,
 ) -> T {
-    let bytes = targets::encrypt(name, keyset, &label(), frame(value))
+    let bytes = targets::encrypt(name, keyset, &label(), value)
         .unwrap()
         .await
         .unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
 
-/// Whether two scalar values are the same value, bit for bit for floats.
-fn same(a: &FfiValue, b: &FfiValue) -> bool {
-    match (a, b) {
-        (FfiValue::Int32(a), FfiValue::Int32(b)) => a == b,
-        (FfiValue::Int64(a), FfiValue::Int64(b)) => a == b,
-        (FfiValue::Bool(a), FfiValue::Bool(b)) => a == b,
-        (FfiValue::Float32(a), FfiValue::Float32(b)) => a.to_bits() == b.to_bits(),
-        (FfiValue::Float64(a), FfiValue::Float64(b)) => a.to_bits() == b.to_bits(),
-        (FfiValue::String(a), FfiValue::String(b)) => a.risky_ref() == b.risky_ref(),
-        _ => false,
-    }
-}
-
 /// A sample plaintext of each kind a producible type takes.
-fn sample(kind: ValueKind) -> FfiValue {
+fn sample(kind: ValueKind) -> ValueFrame {
     match kind {
-        ValueKind::Int32 => FfiValue::Int32(-42),
-        ValueKind::Int64 => FfiValue::Int64(i64::MIN + 1),
-        ValueKind::Bool => FfiValue::Bool(true),
-        ValueKind::Float32 => FfiValue::Float32(-0.0),
-        ValueKind::Float64 => FfiValue::Float64(f64::NAN),
-        ValueKind::String => FfiValue::String("a private note".into()),
+        ValueKind::Int32 => frame::<i32>(-42),
+        ValueKind::Int64 => frame::<i64>(i64::MIN + 1),
+        ValueKind::Bool => frame::<bool>(true),
+        ValueKind::Float32 => frame::<f32>(-0.0),
+        ValueKind::Float64 => frame::<f64>(f64::NAN),
+        ValueKind::String => frame("a private note"),
         other => panic!("no sample for {other:?}: add one with the type that takes it"),
     }
 }
 
 #[tokio::test]
-async fn integers_round_trip_and_seal_the_value_enum_leaf() {
+async fn integers_round_trip_and_seal_the_leaf_their_frame_seals() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     for value in [0, 42, -7, i32::MIN, i32::MAX] {
@@ -150,13 +139,13 @@ async fn integers_round_trip_and_seal_the_value_enum_leaf() {
             .await
             .unwrap();
         assert_eq!(opened, value);
-        assert!(matches!(
-            as_value_enum(&cipher, stored.c.clone()).await,
-            FfiValue::Int32(v) if v == value
+        assert!(same(
+            &as_frame(&cipher, stored.c.clone()).await,
+            &frame(value)
         ));
 
         // The by-name dispatch runs the same plan.
-        let named: integer::Integer = by_name(&keyset, "Integer", FfiValue::Int32(value)).await;
+        let named: integer::Integer = by_name(&keyset, "Integer", frame::<i32>(value)).await;
         let opened = targets::decrypt(
             "Integer",
             &cipher,
@@ -166,7 +155,7 @@ async fn integers_round_trip_and_seal_the_value_enum_leaf() {
         .unwrap()
         .await
         .unwrap();
-        assert!(matches!(tree(opened), FfiValue::Int32(v) if v == value));
+        assert!(same(&opened, &frame(value)));
     }
 
     for value in [0i64, -1, i64::MIN, i64::MAX] {
@@ -177,9 +166,9 @@ async fn integers_round_trip_and_seal_the_value_enum_leaf() {
             .await
             .unwrap();
         assert_eq!(opened, value);
-        assert!(matches!(
-            as_value_enum(&cipher, stored.c.clone()).await,
-            FfiValue::Int64(v) if v == value
+        assert!(same(
+            &as_frame(&cipher, stored.c.clone()).await,
+            &frame(value)
         ));
     }
 }
@@ -189,10 +178,10 @@ async fn integers_round_trip_and_seal_the_value_enum_leaf() {
 async fn eq_terms(
     keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
     name: &str,
-    value: FfiValue,
+    value: ValueFrame,
 ) -> (serde_json::Value, serde_json::Value) {
     let stored: serde_json::Value = by_name(keyset, name, value.clone()).await;
-    let query = targets::query(name, keyset, &label(), frame(value))
+    let query = targets::query(name, keyset, &label(), value)
         .unwrap()
         .await
         .unwrap();
@@ -207,7 +196,7 @@ async fn eq_terms(
 async fn number_equality_terms_follow_the_semantic_baseline() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let hm = |name: &'static str, value: FfiValue| {
+    let hm = |name: &'static str, value: ValueFrame| {
         let keyset = &keyset;
         async move {
             let (stored, query) = eq_terms(keyset, name, value).await;
@@ -218,48 +207,48 @@ async fn number_equality_terms_follow_the_semantic_baseline() {
     };
 
     assert_ne!(
-        hm("IntegerEq", FfiValue::Int32(42)).await,
-        hm("IntegerEq", FfiValue::Int32(43)).await
+        hm("IntegerEq", frame::<i32>(42)).await,
+        hm("IntegerEq", frame::<i32>(43)).await
     );
     assert_eq!(
-        hm("IntegerEq", FfiValue::Int32(42)).await,
-        hm("BigintEq", FfiValue::Int64(42)).await,
+        hm("IntegerEq", frame::<i32>(42)).await,
+        hm("BigintEq", frame::<i64>(42)).await,
         "one integer domain for every width"
     );
 
     assert_eq!(
-        hm("RealEq", FfiValue::Float32(-0.0)).await,
-        hm("RealEq", FfiValue::Float32(0.0)).await
+        hm("RealEq", frame::<f32>(-0.0)).await,
+        hm("RealEq", frame::<f32>(0.0)).await
     );
     assert_eq!(
-        hm("RealEq", FfiValue::Float32(f32::from_bits(0xffc0_1234))).await,
-        hm("RealEq", FfiValue::Float32(f32::NAN)).await
+        hm("RealEq", frame::<f32>(f32::from_bits(0xffc0_1234))).await,
+        hm("RealEq", frame::<f32>(f32::NAN)).await
     );
     assert_eq!(
-        hm("DoubleEq", FfiValue::Float64(-0.0)).await,
-        hm("DoubleEq", FfiValue::Float64(0.0)).await
+        hm("DoubleEq", frame::<f64>(-0.0)).await,
+        hm("DoubleEq", frame::<f64>(0.0)).await
     );
     assert_eq!(
         hm(
             "DoubleEq",
-            FfiValue::Float64(f64::from_bits(0xfff8_0000_0000_beef))
+            frame::<f64>(f64::from_bits(0xfff8_0000_0000_beef))
         )
         .await,
-        hm("DoubleEq", FfiValue::Float64(f64::NAN)).await
+        hm("DoubleEq", frame::<f64>(f64::NAN)).await
     );
     assert_ne!(
-        hm("DoubleEq", FfiValue::Float64(1.5)).await,
-        hm("DoubleEq", FfiValue::Float64(2.5)).await
+        hm("DoubleEq", frame::<f64>(1.5)).await,
+        hm("DoubleEq", frame::<f64>(2.5)).await
     );
     assert_eq!(
-        hm("RealEq", FfiValue::Float32(1.5)).await,
-        hm("DoubleEq", FfiValue::Float64(1.5)).await,
+        hm("RealEq", frame::<f32>(1.5)).await,
+        hm("DoubleEq", frame::<f64>(1.5)).await,
         "an f32 hashes as the f64 it widens to"
     );
     // An integer and a float are different kinds, even at one value.
     assert_ne!(
-        hm("BigintEq", FfiValue::Int64(1)).await,
-        hm("DoubleEq", FfiValue::Float64(1.0)).await
+        hm("BigintEq", frame::<i64>(1)).await,
+        hm("DoubleEq", frame::<f64>(1.0)).await
     );
 }
 
@@ -272,7 +261,7 @@ async fn number_equality_types_round_trip_through_the_typed_entry_point() {
 
     let stored: integer::IntegerEq = keyset.encrypt_as(&-7i32, column()).await.unwrap();
     assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
-    let named: serde_json::Value = by_name(&keyset, "IntegerEq", FfiValue::Int32(-7)).await;
+    let named: serde_json::Value = by_name(&keyset, "IntegerEq", frame::<i32>(-7)).await;
     assert_eq!(serde_json::to_value(&stored).unwrap()["hm"], named["hm"]);
     let opened: i32 = cipher.decrypt_as(stored, column().into()).await.unwrap();
     assert_eq!(opened, -7);
@@ -305,10 +294,7 @@ async fn booleans_and_floats_round_trip_as_storage_only_types() {
             .await
             .unwrap();
         assert_eq!(opened, value);
-        assert!(matches!(
-            as_value_enum(&cipher, stored.c).await,
-            FfiValue::Bool(v) if v == value
-        ));
+        assert!(same(&as_frame(&cipher, stored.c).await, &frame(value)));
     }
     // Floats seal their bit pattern: -0.0 and a NaN's payload survive.
     for value in [1.5f32, -0.0, f32::NAN, f32::INFINITY] {
@@ -318,10 +304,7 @@ async fn booleans_and_floats_round_trip_as_storage_only_types() {
             .await
             .unwrap();
         assert_eq!(opened.to_bits(), value.to_bits());
-        assert!(matches!(
-            as_value_enum(&cipher, stored.c).await,
-            FfiValue::Float32(v) if v.to_bits() == value.to_bits()
-        ));
+        assert!(same(&as_frame(&cipher, stored.c).await, &frame(value)));
     }
     for value in [2.25f64, -0.0, f64::NAN] {
         let stored: double::Double = keyset.encrypt_as(&value, column()).await.unwrap();
@@ -330,48 +313,45 @@ async fn booleans_and_floats_round_trip_as_storage_only_types() {
             .await
             .unwrap();
         assert_eq!(opened.to_bits(), value.to_bits());
-        assert!(matches!(
-            as_value_enum(&cipher, stored.c).await,
-            FfiValue::Float64(v) if v.to_bits() == value.to_bits()
-        ));
+        assert!(same(&as_frame(&cipher, stored.c).await, &frame(value)));
     }
 }
 
-/// The direction `LeafVisitor` and `BoolVisitor` implement: a leaf the value
-/// enum sealed, as a plain Go field writes it, opens as the typed plaintext.
+/// The direction `LeafVisitor` and `BoolVisitor` implement: a leaf sealed
+/// from a frame, as a plain Go field writes it, opens as the typed plaintext.
 #[tokio::test]
-async fn a_leaf_the_value_enum_sealed_opens_as_the_typed_plaintext() {
+async fn a_leaf_sealed_from_a_frame_opens_as_the_typed_plaintext() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let c = sealed_by_value_enum(&keyset, FfiValue::Int32(-7)).await;
+    let c = sealed_from_frame(&keyset, frame::<i32>(-7)).await;
     let opened: i32 = cipher
         .decrypt_as(stored_as::<integer::Integer>(c), column().into())
         .await
         .unwrap();
     assert_eq!(opened, -7);
 
-    let c = sealed_by_value_enum(&keyset, FfiValue::Int64(i64::MAX)).await;
+    let c = sealed_from_frame(&keyset, frame::<i64>(i64::MAX)).await;
     let opened: i64 = cipher
         .decrypt_as(stored_as::<bigint::Bigint>(c), column().into())
         .await
         .unwrap();
     assert_eq!(opened, i64::MAX);
 
-    let c = sealed_by_value_enum(&keyset, FfiValue::Bool(true)).await;
+    let c = sealed_from_frame(&keyset, frame::<bool>(true)).await;
     let opened: bool = cipher
         .decrypt_as(stored_as::<boolean::Boolean>(c), column().into())
         .await
         .unwrap();
     assert!(opened);
 
-    let c = sealed_by_value_enum(&keyset, FfiValue::Float32(-0.0)).await;
+    let c = sealed_from_frame(&keyset, frame::<f32>(-0.0)).await;
     let opened: f32 = cipher
         .decrypt_as(stored_as::<real::Real>(c), column().into())
         .await
         .unwrap();
     assert_eq!(opened.to_bits(), (-0.0f32).to_bits());
 
-    let c = sealed_by_value_enum(&keyset, FfiValue::Float64(f64::NAN)).await;
+    let c = sealed_from_frame(&keyset, frame::<f64>(f64::NAN)).await;
     let opened: f64 = cipher
         .decrypt_as(stored_as::<double::Double>(c), column().into())
         .await
@@ -392,7 +372,7 @@ async fn every_producible_type_dispatches_by_name() {
         let kind = target
             .plaintext_kind()
             .expect("a producible type names its kind");
-        let stored = targets::encrypt(name, &keyset, &label(), frame(sample(kind)))
+        let stored = targets::encrypt(name, &keyset, &label(), sample(kind))
             .unwrap()
             .await
             .unwrap();
@@ -402,21 +382,18 @@ async fn every_producible_type_dispatches_by_name() {
             .unwrap()
             .await
             .unwrap();
-        assert!(
-            same(&tree(opened), &sample(kind)),
-            "{name}: opened another value"
-        );
+        assert!(same(&opened, &sample(kind)), "{name}: opened another value");
 
         match target.query {
             None => {
-                let error = refused(targets::query(name, &keyset, &label(), frame(sample(kind))));
+                let error = refused(targets::query(name, &keyset, &label(), sample(kind)));
                 assert!(
                     matches!(error, TargetError::NoQuery { .. }),
                     "{name}: {error}"
                 );
             }
             Some(_) => {
-                let query = targets::query(name, &keyset, &label(), frame(sample(kind)))
+                let query = targets::query(name, &keyset, &label(), sample(kind))
                     .unwrap()
                     .await
                     .unwrap();
@@ -448,16 +425,11 @@ async fn storage_only_text_round_trips_through_both_entry_points() {
     let opened: String = cipher.decrypt_as(stored, column().into()).await.unwrap();
     assert_eq!(opened, "a private note");
 
-    let named: text::Text = by_name(&keyset, "Text", FfiValue::String("note".into())).await;
+    let named: text::Text = by_name(&keyset, "Text", frame("note")).await;
     let opened: String = cipher.decrypt_as(named, column().into()).await.unwrap();
     assert_eq!(opened, "note");
     // A storage-only type answers no query.
-    let error = refused(targets::query(
-        "Text",
-        &keyset,
-        &label(),
-        frame(FfiValue::String("note".into())),
-    ));
+    let error = refused(targets::query("Text", &keyset, &label(), frame("note")));
     assert!(
         matches!(error, TargetError::NoQuery { name: "Text" }),
         "{error}"
@@ -512,12 +484,7 @@ async fn text_match_filters_contain_their_substrings() {
     }
 
     // The dispatch derives the same filter.
-    let named: text::TextMatch = by_name(
-        &keyset,
-        "TextMatch",
-        FfiValue::String("Alice@Example.com".into()),
-    )
-    .await;
+    let named: text::TextMatch = by_name(&keyset, "TextMatch", frame("Alice@Example.com")).await;
     assert_eq!(named.bf, stored.bf);
 
     // Text shorter than a 3-gram has no tokens. eql-bindings refuses it for a
@@ -556,13 +523,13 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     for (name, value, expected) in [
-        ("Integer", FfiValue::Int64(1), ValueKind::Int32),
-        ("Bigint", FfiValue::Int32(1), ValueKind::Int64),
-        ("Boolean", FfiValue::Int32(1), ValueKind::Bool),
-        ("Real", FfiValue::Float64(1.0), ValueKind::Float32),
-        ("Text", FfiValue::Int32(1), ValueKind::String),
+        ("Integer", frame::<i64>(1), ValueKind::Int32),
+        ("Bigint", frame::<i32>(1), ValueKind::Int64),
+        ("Boolean", frame::<i32>(1), ValueKind::Bool),
+        ("Real", frame::<f64>(1.0), ValueKind::Float32),
+        ("Text", frame::<i32>(1), ValueKind::String),
     ] {
-        let error = refused(targets::encrypt(name, &keyset, &label(), frame(value)));
+        let error = refused(targets::encrypt(name, &keyset, &label(), value));
         assert!(
             matches!(error, TargetError::Plaintext { target, expected: e, .. } if target == name && e == expected),
             "{name}: {error}"
@@ -970,11 +937,11 @@ mod erased {
 async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let query = |name: &'static str, column: &'static str, value: FfiValue| {
+    let query = |name: &'static str, column: &'static str, value: ValueFrame| {
         let keyset = &keyset;
         async move {
             let label = Label::new(["profiles", column]).unwrap();
-            let bytes = targets::query(name, keyset, &label, frame(value))
+            let bytes = targets::query(name, keyset, &label, value)
                 .unwrap()
                 .await
                 .unwrap();
@@ -986,23 +953,23 @@ async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
         "table": "profiles",
         "name": {
             "plaintext": "alice",
-            "query": query("TextMatch", "name", FfiValue::String("alice".into())).await,
+            "query": query("TextMatch", "name", frame("alice")).await,
         },
         "age": {
             "plaintext": 42,
-            "query": query("IntegerEq", "age", FfiValue::Int32(42)).await,
+            "query": query("IntegerEq", "age", frame::<i32>(42)).await,
         },
         "rank": {
             "plaintext": 7,
-            "query": query("BigintEq", "rank", FfiValue::Int64(7)).await,
+            "query": query("BigintEq", "rank", frame::<i64>(7)).await,
         },
         "weight": {
             "plaintext": 1.5,
-            "query": query("RealEq", "weight", FfiValue::Float32(1.5)).await,
+            "query": query("RealEq", "weight", frame::<f32>(1.5)).await,
         },
         "price": {
             "plaintext": 9.75,
-            "query": query("DoubleEq", "price", FfiValue::Float64(9.75)).await,
+            "query": query("DoubleEq", "price", frame::<f64>(9.75)).await,
         },
         "email": {
             "plaintext": "alice@example.com",

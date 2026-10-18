@@ -26,7 +26,7 @@ use std::ffi::c_void;
 use std::sync::Mutex;
 
 use eql_bindings::encryption::targets;
-use stack_encrypt::dynamic::{FfiValue, ValueFrame};
+use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::{Label, StackCipher};
 use stack_kms::FakeDataKeySource;
 
@@ -133,7 +133,7 @@ fn marked(tail: &str) -> String {
 }
 
 fn text(value: &str) -> ValueFrame {
-    ValueFrame::of(FfiValue::String(value.into())).unwrap()
+    ValueFrame::of(value).unwrap()
 }
 
 fn runtime() -> tokio::runtime::Runtime {

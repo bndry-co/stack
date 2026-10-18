@@ -118,8 +118,8 @@ plaintext:
 | `Real`, `RealEq` | `f32` |
 | `Double`, `DoubleEq` | `f64` |
 
-Each seals the leaf the value enum (`FfiValue`) seals for the same value, so
-values written here and by the Go SDK open each other. On the equality
+Each seals the same leaf the Go SDK seals for the same value, so values
+written here and by the Go SDK open each other. On the equality
 types, `=` behaves as Postgres's own does: an integer has one term whatever
 its width, and for floats `-0.0 = 0.0` and `NaN = NaN`. The ciphertext keeps
 the exact value.
@@ -192,7 +192,7 @@ assumed. Outcomes against today's sources:
 
 | Writer | Reader and query producer | Outcome |
 | --- | --- | --- |
-| Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. `tests/encryption/tests/v4_types.rs`: the same for the other producible v4 types, in both directions between the typed plaintexts and the value enum. |
+| Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. `tests/encryption/tests/v4_types.rs`: the same for the other producible v4 types, in both directions between the typed plaintexts and the by-name dispatch's value frames. |
 | JS / FFI (`cipherstash-client` profile) | Rust | **Not supported.** `c` lacks the `stack-encrypt:1:` prefix and is refused loudly on decryption. A Rust probe against such a column is accepted by SQL and matches nothing. |
 | Rust (`stack-encrypt` profile) | JS / FFI | **Not supported.** The JS reader does not know the `stack-encrypt:1:` prefix and the two profiles' equality terms never match. |
 
@@ -225,12 +225,13 @@ unknown one with "no such EQL type".
 ```rust,ignore
 use eql_bindings::encryption::targets;
 use stack_encrypt::Label;
-use stack_encrypt::dynamic::FfiValue;
+use stack_encrypt::dynamic::ValueFrame;
 
 let column = Label::new(["users", "email"])?; // the field's context: table/column
-let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, FfiValue::String("alice@example.com".into()))?.await?;
-let probe: Vec<u8> = targets::query("TextEq", &keyset, &column, FfiValue::String("alice@example.com".into()))?.await?;
-let opened: FfiValue = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
+let email = ValueFrame::of("alice@example.com")?; // the plaintext as its transport frame
+let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, email.clone())?.await?;
+let probe: Vec<u8> = targets::query("TextEq", &keyset, &column, email)?.await?;
+let opened: ValueFrame = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
 ```
 
 The table and the dispatch are generated into `src/v4/targets.rs` beside

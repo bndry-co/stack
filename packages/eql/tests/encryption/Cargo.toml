@@ -17,7 +17,7 @@ eql-bindings = { path = "../../crates/eql-bindings", features = ["stack-encrypt"
 # The parity oracle for the generated target table (tests/targets.rs): the
 # table must name every stored catalog domain, in catalog order.
 eql-domains = { path = "../../crates/eql-domains" }
-# `dynamic`: `FfiValue`, the runtime plaintext the target dispatch takes,
+# `dynamic`: `ValueFrame`, the runtime plaintext the target dispatch takes,
 # as eql-bindings names it.
 stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic"] }
 # `plaintext::Sink`, for a plaintext type with its own `Encrypt` impl.

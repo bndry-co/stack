@@ -70,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PrfValue`, and the feature no longer depends on `vitaminc-prf`.
 
 - **The `stack-encrypt` feature builds on vitaminc ADR 0001.**
-  `encryption::targets` takes `FfiValue` and `ValueKind` from
+  `encryption::targets` takes `ValueFrame` and `ValueKind` from
   `stack_encrypt::dynamic` (the feature turns on stack-encrypt's `dynamic`
   feature) in place of `vitaminc-aead-value`, which is gone, and the
   `Ciphertext` target takes any vitaminc `Encrypt` plaintext and opens into any
