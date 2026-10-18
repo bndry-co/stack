@@ -90,11 +90,12 @@ impl TargetResolver for Eql {
     fn query<'a, K: 'static>(
         &self,
         name: &str,
+        index: &stack_encrypt::target::IndexSpec,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::query(name, keyset, label, plaintext).map_err(convert)
+        eql_targets::query(name, index, keyset, label, plaintext).map_err(convert)
     }
 }
 

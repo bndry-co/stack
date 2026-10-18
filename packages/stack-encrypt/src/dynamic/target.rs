@@ -31,6 +31,7 @@ use super::query::target_operators;
 use super::{OpSpec, ValueFrame, ValueKind};
 
 use crate::sem::MatchOptions;
+use crate::target::IndexSpec;
 use crate::{KeysetCipher, Label, Pending, StackCipher};
 
 /// One EQL type a plan may name as a target, as the host describes it.
@@ -518,12 +519,23 @@ pub trait TargetResolver {
     /// Run the named type's query twin over one value: the operand that
     /// matches stored values under `label`'s column, as JSON bytes.
     ///
+    /// `index` is the type's index that answers the query's operator, one of
+    /// the descriptor's [`indexes`](TargetDescriptor::indexes):
+    /// [`query_term`](super::query_term()) passes the one
+    /// [`OpSpec::answered_by`] picks. A twin that carries every term of the
+    /// type may ignore it. A twin whose terms are optional (EQL v4's
+    /// `TextSearchQuery`) carries that index's term alone, so a query whose
+    /// operator needs one term is not refused for want of another: a match
+    /// term, which text shorter than one token cannot make, is derived only
+    /// for `matches`.
+    ///
     /// # Errors
     ///
     /// As [`encrypt`](Self::encrypt).
     fn query<'a, K: 'static>(
         &self,
         name: &str,
+        index: &IndexSpec,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         plaintext: ValueFrame,
@@ -573,6 +585,7 @@ impl TargetResolver for NoTargets {
     fn query<'a, K: 'static>(
         &self,
         name: &str,
+        _: &IndexSpec,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: ValueFrame,
@@ -650,6 +663,7 @@ mod tests {
         fn query<'a, K: 'static>(
             &self,
             _: &str,
+            _: &IndexSpec,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: ValueFrame,

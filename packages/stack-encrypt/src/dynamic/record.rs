@@ -1447,6 +1447,12 @@ pub fn encrypt_with<'a, K: 'static>(
 /// settles without I/O; it is a [`Pending`] all the same, for one shape at
 /// the call site.
 ///
+/// `index` is the type's index that answers the query's operator, handed to
+/// the resolver ([`TargetResolver::query`]): a type whose query carries only
+/// the term its operator reads derives that index's term alone.
+/// [`query_term`](super::query_term()) passes the index
+/// [`OpSpec::answered_by`](super::OpSpec::answered_by) picks.
+///
 /// # Errors
 ///
 /// [`Error::Plan`] if the plan has no field `field` or it is not a target
@@ -1457,6 +1463,7 @@ pub fn query<'a, K: 'static>(
     cipher: &'a KeysetCipher<'_, K>,
     plan: &Plan,
     field: &str,
+    index: &IndexSpec,
     value: impl Encrypt,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, Vec<u8>, K>, Error> {
@@ -1478,7 +1485,7 @@ pub fn query<'a, K: 'static>(
     })?;
     check_field(&value, field)?;
     resolver
-        .query(name, cipher, field.label(), value)
+        .query(name, index, cipher, field.label(), value)
         .map_err(|error| Error::Target(name_target(error, &field.name)))
 }
 
@@ -5533,6 +5540,7 @@ mod tests {
             fn query<'a, K: 'static>(
                 &self,
                 name: &str,
+                _: &IndexSpec,
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
                 plaintext: ValueFrame,
@@ -6249,16 +6257,30 @@ mod tests {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let plan = mixed_plan();
-            let probe = query(&keyset, &plan, "email", s("a@x"), &FakeEql)
-                .expect("a target field")
-                .await
-                .expect("derives");
+            let probe = query(
+                &keyset,
+                &plan,
+                "email",
+                &IndexSpec::Equality,
+                s("a@x"),
+                &FakeEql,
+            )
+            .expect("a target field")
+            .await
+            .expect("derives");
             let probe: serde_json::Value = serde_json::from_slice(&probe).unwrap();
             assert_eq!(probe["i"], "users/email");
-            let again = query(&keyset, &plan, "email", s("a@x"), &FakeEql)
-                .unwrap()
-                .await
-                .unwrap();
+            let again = query(
+                &keyset,
+                &plan,
+                "email",
+                &IndexSpec::Equality,
+                s("a@x"),
+                &FakeEql,
+            )
+            .unwrap()
+            .await
+            .unwrap();
             assert_eq!(
                 serde_json::from_slice::<serde_json::Value>(&again).unwrap()["hm"],
                 probe["hm"],
@@ -6269,17 +6291,38 @@ mod tests {
             // bare build: each refused before the resolver runs. The first
             // two name the field asked for and why.
             for (field, reason) in [("age", Reason::NotATarget), ("nope", Reason::NoSuchField)] {
-                let error = refused(query(&keyset, &plan, field, s("x"), &FakeEql));
+                let error = refused(query(
+                    &keyset,
+                    &plan,
+                    field,
+                    &IndexSpec::Equality,
+                    s("x"),
+                    &FakeEql,
+                ));
                 assert!(matches!(error, Error::Plan { .. }), "{error:?}");
                 assert_eq!(error.field(), Some(field), "{error}");
                 assert_eq!(error.reason(), Some(reason), "{error}");
             }
             assert!(matches!(
-                refused(query(&keyset, &plan, "email", Tree::UInt32(1), &FakeEql)),
+                refused(query(
+                    &keyset,
+                    &plan,
+                    "email",
+                    &IndexSpec::Equality,
+                    Tree::UInt32(1),
+                    &FakeEql
+                )),
                 Error::Source { .. }
             ));
             assert!(matches!(
-                refused(query(&keyset, &plan, "email", s("x"), &NoTargets)),
+                refused(query(
+                    &keyset,
+                    &plan,
+                    "email",
+                    &IndexSpec::Equality,
+                    s("x"),
+                    &NoTargets
+                )),
                 Error::Target(TargetError::NoTargets { .. })
             ));
         }

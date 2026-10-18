@@ -767,8 +767,12 @@ where
             return Err(Error::Internal);
         };
         let domain = target.query_sql_domain;
-        return Ok(super::record::query(cipher, plan, field, value, resolver)?
-            .map(move |json| made(domain, Operand::One(json))));
+        // The answering index goes to the resolver: a type whose query
+        // carries only its operator's term derives that index's alone.
+        return Ok(
+            super::record::query(cipher, plan, field, &answer.index, value, resolver)?
+                .map(move |json| made(domain, Operand::One(json))),
+        );
     }
     let context = answer.field.context();
     let term = |value: &ValueFrame| {
@@ -2362,6 +2366,7 @@ mod tests {
         fn query<'a, K: 'static>(
             &self,
             _: &str,
+            _: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: ValueFrame,
@@ -2538,6 +2543,7 @@ mod tests {
         fn query<'a, K: 'static>(
             &self,
             _: &str,
+            _: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: ValueFrame,

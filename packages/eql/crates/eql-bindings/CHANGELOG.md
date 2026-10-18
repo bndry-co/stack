@@ -101,6 +101,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   orderable plaintext. Their query twins carry one bound, so the engine
   answers `<`, `<=`, `>` and `>=` (and `=` on text) through them, not
   `BETWEEN`.
+- **`encryption::targets::query` takes the index that answers the query's
+  operator** (`targets` feature), an `&IndexSpec` after the name, as Stack
+  Encrypt's `TargetResolver::query` hands it over. An index the type does
+  not carry is refused with `TargetError::NoIndex`, before anything is
+  derived.
 - **`Target::match_options`** (`targets` feature): the options a type's
   match index is built under, `EqlMatch`'s, for a type that carries one
   (`TextMatch`), and `None` otherwise. Stack Encrypt answers `matches`
