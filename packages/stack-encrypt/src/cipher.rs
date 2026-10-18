@@ -105,8 +105,8 @@ use stack_kms::{FallbackKeyProvider, KeyProvider, KeyProviderError, ProfileStore
 use uuid::Uuid;
 use vitaminc_aead::seal::seal_all;
 use vitaminc_aead::{
-    Cipher, CipherText, Context, Decrypt, Encrypt, IntoAad, IntoContext, LocalCipherText, Node,
-    Pending, Unspecified,
+    Cipher, CipherText, Context, DecodeError, Decrypt, DecryptError, Encrypt, IntoAad, IntoContext,
+    LocalCipherText, Node, Pending, Unspecified,
 };
 use vitaminc_encrypt::{Aes256Cipher, Key as AesKey};
 use vitaminc_protected::Protected;
@@ -141,15 +141,31 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Kms(#[from] stack_kms::Error),
-    /// AEAD sealing/opening failed, or the ciphertext shape did not match the
-    /// requested type. On decrypt this is the expected outcome for a wrong key,
-    /// wrong AAD, or tampered ciphertext.
+    /// AEAD sealing/opening failed, or the ciphertext tree is malformed. On
+    /// decrypt this is the expected outcome for a wrong key, wrong AAD, or
+    /// tampered ciphertext. A ciphertext that opens but holds a value of
+    /// another type is [`OpenedType`](Self::OpenedType), not this.
     #[error("AEAD operation failed (wrong key, AAD mismatch, or malformed ciphertext)")]
     #[diagnostic(
         code(stack_encrypt::aead),
         help("Open the value under the context it was sealed with. If the context is right, the ciphertext is damaged or was altered.")
     )]
     Aead,
+    /// A ciphertext opened, so it is authentic and unaltered, but it holds a
+    /// value of another type than the one it was opened as: text opened as
+    /// an integer, an integer too wide for the target, a map without a field
+    /// the target needs. The value was sealed as another type, by this or
+    /// another binding, and is not tampered with.
+    ///
+    /// `expected` names what the target reads (a vitaminc kind such as
+    /// `i32`, or the Rust type). The message never names what the value
+    /// held, and never a map key.
+    #[error("the ciphertext opened, but it does not hold a value of the type {expected}")]
+    #[diagnostic(
+        code(stack_encrypt::opened_type),
+        help("Open the value as the type it was sealed as. The ciphertext is authentic: it was sealed as another type, not altered.")
+    )]
+    OpenedType { expected: &'static str },
     /// ZeroKMS returned a different number of keys than were requested.
     #[error("expected {expected} data keys from ZeroKMS but received {received}")]
     #[diagnostic(code(stack_encrypt::key_count_mismatch))]
@@ -320,6 +336,7 @@ impl crate::ErrorPayload for Error {
                 ("expected", (*expected).into()),
                 ("received", (*received).into()),
             ]),
+            Self::OpenedType { expected } => payload([("expected", (*expected).into())]),
             Self::DescriptorTooLong { len } => payload([
                 ("len", (*len).into()),
                 ("limit", Descriptor::MAX_LEN.into()),
@@ -1509,20 +1526,63 @@ impl Cipher for BoundKeys {
     }
 }
 
-/// Open a key-bound tree into `T` under `aad`. Every failure is
-/// [`Error::Aead`]: a wrong key or AAD, a tampered leaf or marker, a
-/// malformed tree, and a value that is not a `T` all read the same to the
-/// caller, as they did before vitaminc split them.
+/// Open a key-bound tree into `T` under `aad`. A wrong key or AAD, a
+/// tampered leaf or marker, and a malformed tree are [`Error::Aead`]. A tree
+/// that opens but holds a value that is not a `T` is [`Error::OpenedType`]:
+/// every leaf authenticated, so it was sealed as another type, not altered.
 pub(crate) fn open_keyed<'a, T: Decrypt>(
     keyed: KeyedCipherText,
     aad: impl IntoAad<'a>,
 ) -> Result<T, Error> {
-    vitaminc_aead::decrypt(&BoundKeys, keyed, aad).map_err(|_| Error::Aead)
+    vitaminc_aead::decrypt(&BoundKeys, keyed, aad).map_err(opened_error::<T>)
+}
+
+/// What a failed open is to the caller. Only the sink's refusal is told
+/// apart, and only by the type it wanted: the `DecodeError` itself can name
+/// a map key, which is not repeated.
+fn opened_error<T>(error: DecryptError<DecodeError, Unspecified>) -> Error {
+    match error {
+        DecryptError::Sink(DecodeError::Expected(expected)) => Error::OpenedType { expected },
+        DecryptError::Sink(_) => Error::OpenedType {
+            expected: std::any::type_name::<T>(),
+        },
+        _ => Error::Aead,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failed open is `Aead` unless the leaves authenticated and only the
+    /// sink refused: then it is `OpenedType`, naming the kind the sink
+    /// wanted, or the target type when the refusal names no kind (and never
+    /// the map key a refusal can carry).
+    #[test]
+    fn only_a_sink_refusal_is_told_apart_from_aead() {
+        let opened = |error| opened_error::<u32>(error);
+        assert!(matches!(
+            opened(DecryptError::Sink(DecodeError::Expected("i32"))),
+            Error::OpenedType { expected: "i32" }
+        ));
+        for refusal in [
+            DecodeError::MissingField("age"),
+            DecodeError::unknown_key("ssn"),
+            DecodeError::duplicate_key("ssn"),
+        ] {
+            assert!(matches!(
+                opened(DecryptError::Sink(refusal)),
+                Error::OpenedType { expected: "u32" }
+            ));
+        }
+        for failure in [
+            DecryptError::Cipher(Unspecified),
+            DecryptError::Auth,
+            DecryptError::Malformed,
+        ] {
+            assert!(matches!(opened(failure), Error::Aead));
+        }
+    }
 
     /// A cipher's `Debug` — and a keyset handle's — names the keyset and the
     /// source's type and stops there: the cache behind a cipher holds every
