@@ -36,6 +36,14 @@ func NewField[T any](d Declaration, name string) Field[T] {
 	return f
 }
 
+// kind is the field's declared kind, as its plan holds it.
+func (f Field[T]) kind() Kind {
+	if pf := f.plan.Field(f.name); pf != nil {
+		return Kind(pf.Kind)
+	}
+	return Untyped
+}
+
 // Encrypt seals one value of the field: its ciphertext and every term it
 // declares, in one request.
 func (f Field[T]) Encrypt(ctx context.Context, c *encrypt.Cipher, v T) (Output, error) {
@@ -45,7 +53,11 @@ func (f Field[T]) Encrypt(ctx context.Context, c *encrypt.Cipher, v T) (Output, 
 	if c == nil {
 		return Output{}, fmt.Errorf("gensupport: %s: Encrypt needs a cipher", f.name)
 	}
-	row := record.Source{f.name: v}
+	value, err := asKind(f.kind(), v)
+	if err != nil {
+		return Output{}, fmt.Errorf("gensupport: %s: %w", f.name, err)
+	}
+	row := record.Source{f.name: value}
 	if f.plan.ContextField != "" {
 		// One value of one field has no record to take its context from:
 		// the cipher names it, as it does for a query.
@@ -90,7 +102,8 @@ func (f Field[T]) Range(ctx context.Context, c *encrypt.Cipher, operator string,
 
 // query derives an exact operator's terms, and refuses an answer of another
 // shape than the generated method's: a probabilistic term has a query type
-// of its own (Matches).
+// of its own (Matches). Each operand is converted to the field's kind as a
+// written value is ([asKind]), so the query finds what a write stored.
 func (f Field[T]) query(ctx context.Context, c *encrypt.Cipher, operator string, input any, parts int) ([][]byte, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -98,7 +111,24 @@ func (f Field[T]) query(ctx context.Context, c *encrypt.Cipher, operator string,
 	if c == nil {
 		return nil, fmt.Errorf("%w: gensupport: %s: a query needs a cipher", encrypt.ErrEncoding, f.name)
 	}
-	term, err := c.QueryTerm(ctx, f.plan, f.name, operator, input)
+	pair, isPair := input.([]any)
+	values := []any{input}
+	if isPair {
+		values = pair
+	}
+	converted := make([]any, len(values))
+	for i, v := range values {
+		value, err := asKind(f.kind(), v)
+		if err != nil {
+			return nil, fmt.Errorf("gensupport: %s: %w", f.name, err)
+		}
+		converted[i] = value
+	}
+	operand := converted[0]
+	if isPair {
+		operand = converted
+	}
+	term, err := c.QueryTerm(ctx, f.plan, f.name, operator, operand)
 	if err != nil {
 		return nil, err
 	}
