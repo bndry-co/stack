@@ -443,6 +443,35 @@ without loss, and refuses it otherwise.
 - **During the overlap**, expected to last a quarter or more, cipherstash-client
   takes fixes only. New kinds and domains are produced through Stack Encrypt
   and v4. An exception is a decision written down in its issue.
+- *Amended 2026-10-19:* **a v4 search query carries only the terms its
+  operator reads.** The text search query domains (`eql_v4.query_text_search`
+  and `eql_v4.query_text_search_ore`, whose terms include the match term
+  `bf` beside others) require at least one of their terms rather than all
+  of them. Text shorter than one 3-gram has no match term, so a query that
+  had to carry every term could not express `=` or `<` on short text.
+  Stack Encrypt emits only the term of the index that answers the query's
+  operator. Every extractor over such an operand raises wherever it reads
+  the operand when the term it reads is absent, JSON `null` or an empty
+  array, naming the domain, the term and the operators that compare it, and
+  never the operand's contents, rather than reading it as `NULL` (no row) or
+  as an empty filter. The raise is at evaluation: a literal operand is
+  folded and raises at plan time, while a bound parameter under a generic
+  plan whose predicate is never reached returns no row and no error. A
+  stored search value carries every term, and text too short for a match
+  term stores the empty filter (`"bf": []`), the stored side's answer in
+  Stack Encrypt: `=` and `<` find it, and no `@@` query does, because a
+  query's filter is never empty (the extractor refuses `"bf": []`). That is
+  a claim about queries: `@@` between two stored values (a self-join
+  `a.name @@ b.name`, or `matches(col, <a stored value as jsonb>)`) keeps
+  the shared guard, so two stored empty filters match each other there, as
+  they do in v3. No producer builds that predicate. A match
+  query of such text is refused, as it is for `TextMatch`, whose stored
+  value still refuses it too. The v3 domains are cipherstash-client's format
+  and keep requiring every term, byte for byte, so here the v4 SQL differs
+  from the v3 SQL. The one source holds both forms between version-block directive lines (`-- {{#v3}}` … `-- {{/v3}}`,
+  `-- {{#v4}}` … `-- {{/v4}}`), which the renderer keeps for their own
+  version and drops from the other, so the v3 bundle renders exactly as it
+  did before the block was written.
 
 ### Review
 

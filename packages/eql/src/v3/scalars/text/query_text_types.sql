@@ -119,12 +119,23 @@ BEGIN
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
         AND VALUE ? 'i'
+-- {{#v3}}
         AND VALUE ? 'hm'
         AND VALUE ? 'ob'
         AND VALUE ? 'bf'
+-- {{/v3}}
+-- {{#v4}}
+        AND (VALUE ? 'hm' OR VALUE ? 'ob' OR VALUE ? 'bf')
+-- {{/v4}}
         AND NOT (VALUE ? 'c')
+-- {{#v3}}
         AND jsonb_typeof(VALUE -> 'ob') = 'array'
         AND jsonb_array_length(VALUE -> 'ob') > 0
+-- {{/v3}}
+-- {{#v4}}
+        AND (NOT (VALUE ? 'ob') OR (jsonb_typeof(VALUE -> 'ob') = 'array'
+          AND jsonb_array_length(VALUE -> 'ob') > 0))
+-- {{/v4}}
         AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
@@ -141,9 +152,14 @@ BEGIN
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
         AND VALUE ? 'i'
+-- {{#v3}}
         AND VALUE ? 'hm'
         AND VALUE ? 'op'
         AND VALUE ? 'bf'
+-- {{/v3}}
+-- {{#v4}}
+        AND (VALUE ? 'hm' OR VALUE ? 'op' OR VALUE ? 'bf')
+-- {{/v4}}
         AND NOT (VALUE ? 'c')
         AND VALUE->>'v' = '{{eql_version}}'
       );
