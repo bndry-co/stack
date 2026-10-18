@@ -1065,6 +1065,161 @@ fn postgres_stores_and_finds_smallint_rows() {
     );
 }
 
+/// `fixtures/v4_smallint_rows.json`: `Tally` rows the Go SDK's generated
+/// code sealed over the deterministic EQL guest
+/// (`TestV4SmallintRowsMatchTheCommittedFixture` writes it).
+mod go_tally {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[derive(serde::Deserialize)]
+    pub struct Fixture {
+        pub seed: String,
+        pub table: String,
+        pub rows: Vec<Row>,
+    }
+    #[derive(serde::Deserialize)]
+    pub struct Row {
+        pub id: i32,
+        pub plaintext: Plain,
+        pub stored: BTreeMap<String, serde_json::Value>,
+    }
+    #[derive(serde::Deserialize)]
+    pub struct Plain {
+        pub small: i16,
+        pub tally: i16,
+        pub wide: i32,
+    }
+
+    /// The committed rows, or the file `EQL_V4_SMALLINT_ROWS` names: CI
+    /// points it at rows the Go SDK sealed in the same job, so today's Go
+    /// ciphertexts reach Rust, not only the committed ones.
+    pub fn fixture() -> Fixture {
+        let path = std::env::var_os("EQL_V4_SMALLINT_ROWS").map_or_else(
+            || {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("fixtures/v4_smallint_rows.json")
+            },
+            std::path::PathBuf::from,
+        );
+        let raw = std::fs::read_to_string(path).expect(
+            "fixtures/v4_smallint_rows.json is written by the Go SDK's \
+             TestV4SmallintRowsMatchTheCommittedFixture",
+        );
+        serde_json::from_str(&raw).unwrap()
+    }
+
+    /// Open every field of `row` as its v4 type and check it against what
+    /// Go sealed. The `int32` field `wide` was sealed at 16 bits, so it
+    /// opens as an `i16` here.
+    pub async fn open_row(
+        cipher: &stack_encrypt::StackCipher<stack_kms::DeterministicSource>,
+        row: &Row,
+    ) {
+        let column = |name: &str| Identifier::for_column("profiles", name).unwrap();
+        let parsed = |name: &str| row.stored[name].clone();
+        let small: i16 = cipher
+            .decrypt_as(
+                serde_json::from_value::<smallint::Smallint>(parsed("small")).unwrap(),
+                column("small").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(small, row.plaintext.small, "row {} small", row.id);
+        let tally: i16 = cipher
+            .decrypt_as(
+                serde_json::from_value::<smallint::SmallintEq>(parsed("tally")).unwrap(),
+                column("tally").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(tally, row.plaintext.tally, "row {} tally", row.id);
+        let wide: i16 = cipher
+            .decrypt_as(
+                serde_json::from_value::<smallint::SmallintEq>(parsed("wide")).unwrap(),
+                column("wide").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(i32::from(wide), row.plaintext.wide, "row {} wide", row.id);
+    }
+}
+
+/// What the Go SDK sealed as `Smallint` and `SmallintEq` parses as each
+/// type and opens in Rust, at 16 bits, field by field.
+#[tokio::test]
+async fn smallint_rows_the_go_sdk_sealed_open_in_rust() {
+    let fixture = go_tally::fixture();
+    assert_eq!(fixture.table, "profiles");
+    assert!(fixture.rows.len() > 1);
+    let cipher = go_rows::cipher(&fixture.seed).await;
+    for row in &fixture.rows {
+        go_tally::open_row(&cipher, row).await;
+    }
+}
+
+/// The Go-sealed smallint rows in PostgreSQL: each value passes its domain
+/// check, and `=` with the fixture's `SmallintEq` query (which the Go SDK's
+/// test derives byte for byte) finds the rows holding that value.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_stores_and_queries_smallint_rows_the_go_sdk_sealed() {
+    let fixture = go_tally::fixture();
+    let mut db = postgres::Client::connect(
+        &std::env::var("EQL_TEST_DATABASE_URL").expect("EQL_TEST_DATABASE_URL"),
+        postgres::NoTls,
+    )
+    .unwrap();
+    db.batch_execute(
+        "CREATE TEMP TABLE go_tallies (
+            id int PRIMARY KEY,
+            small public.eql_v4_smallint,
+            tally public.eql_v4_smallint_eq,
+            wide public.eql_v4_smallint_eq
+        );",
+    )
+    .unwrap();
+    for row in &fixture.rows {
+        let v = |column: &str| row.stored[column].to_string();
+        db.execute(
+            "INSERT INTO go_tallies VALUES ($1,
+                $2::text::jsonb::public.eql_v4_smallint,
+                $3::text::jsonb::public.eql_v4_smallint_eq,
+                $4::text::jsonb::public.eql_v4_smallint_eq)",
+            &[&row.id, &v("small"), &v("tally"), &v("wide")],
+        )
+        .unwrap();
+    }
+    let queries: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_queries.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let plaintext = queries["tally"]["plaintext"].as_i64().unwrap();
+    let expected: Vec<i32> = fixture
+        .rows
+        .iter()
+        .filter(|r| i64::from(r.plaintext.tally) == plaintext)
+        .map(|r| r.id)
+        .collect();
+    assert!(
+        !expected.is_empty() && expected.len() < fixture.rows.len(),
+        "the fixture splits the rows"
+    );
+    let ids: Vec<i32> = db
+        .query(
+            "SELECT id FROM go_tallies WHERE tally = $1::text::jsonb::eql_v4.query_smallint_eq ORDER BY id",
+            &[&queries["tally"]["query"].as_str().unwrap()],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(ids, expected, "= over Go-sealed tally");
+}
+
 /// A stored value's JSON text, for binding as `$n::text::jsonb`.
 mod erased {
     pub trait Json {
