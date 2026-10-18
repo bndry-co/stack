@@ -3299,6 +3299,7 @@ dependencies = [
  "trybuild",
  "uuid",
  "vitaminc-aead 0.6.1",
+ "vitaminc-aead-frame",
  "vitaminc-encrypt 0.6.1",
  "vitaminc-hmac",
  "vitaminc-normalize",
@@ -4200,7 +4201,9 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35992a269bcaa5b201f1938e54bfbf167bfa6fe975d83cbdbdb54c2a363c5ef"
 dependencies = [
+ "serde",
  "vitaminc-aead 0.6.1",
+ "zeroize",
 ]
 
 [[package]]

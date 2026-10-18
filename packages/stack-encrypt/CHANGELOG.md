@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Reason::OperatorNotAnswered`; `check_query` refuses the same without a
   cipher. `dynamic::verify` checks a page of decrypted values against a
   probabilistic query and `dynamic::target_limit` sizes its fetch from the
-  term's bytes and `Stats` (`Stats::from_value` reads their wire form), by
+  term's bytes and `Stats` (`Stats::from_frame` reads their wire form), by
   the code the typed `MatchQuery` runs, with the field's own match options;
   neither uses a key. The catalog entry of an EQL type
   (`TargetDescriptor::to_value`) lists the operators the engine answers for

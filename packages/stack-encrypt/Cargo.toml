@@ -39,6 +39,9 @@ vitaminc-hmac = { workspace = true }
 vitaminc-normalize = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
+# `dynamic` only: serde over the transport frame, which reads a binding's
+# control data (statistics, options, a plan) into typed messages.
+vitaminc-aead-frame = { workspace = true, optional = true, features = ["serde"] }
 serde = { workspace = true }
 # `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
 base64ct = { version = "1.7", features = ["alloc"] }
@@ -64,7 +67,7 @@ http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # `stack_encrypt::dynamic`: encrypt and decrypt values whose types are known
 # only at runtime, as an FFI binding's are. Off by default — it is only of
 # use to a binding author. Its transport frames are vitaminc-aead's own.
-dynamic = []
+dynamic = ["dep:vitaminc-aead-frame"]
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.

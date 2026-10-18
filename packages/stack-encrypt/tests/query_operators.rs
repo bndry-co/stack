@@ -276,7 +276,10 @@ async fn derived() -> Json {
         };
         let typed = typed_match(&cipher, input).await;
         for (stats_json, stats) in stats_cases() {
-            let read = Stats::from_value(&ffi_of_json(&stats_json)).expect("stats read");
+            let read = Stats::from_frame(vitaminc_protected::Controlled::risky_ref(
+                &ffi_of_json(&stats_json).to_frame().expect("frames"),
+            ))
+            .expect("stats read");
             assert_eq!(read, stats, "the wire form reads as the typed stats");
             let limit =
                 dynamic::target_limit(&plan, "name", OpSpec::Matches, bytes, 10, &read, &NoTargets)

@@ -58,8 +58,8 @@
 //! # Wire format
 //!
 //! An operator is its [`name`](OpSpec::name). A query term is the object
-//! [`QueryTerm::to_value`] writes, the statistics the object
-//! [`Stats::from_value`] reads, and a limit the value
+//! [`QueryTerm::to_value`] writes, the statistics the frame object
+//! [`Stats::from_frame`] reads, and a limit the value
 //! [`limit_to_value`] writes; each is documented where it is written.
 //!
 //! [`Probabilistic::verify`]: crate::op::Probabilistic::verify
@@ -946,7 +946,7 @@ fn twin_query_bits(term: &[u8], options: &MatchOptions) -> Option<usize> {
 }
 
 impl Stats {
-    /// Read statistics from their wire form, an object:
+    /// Read statistics from their wire form, a frame object:
     ///
     /// | key | value |
     /// |---|---|
@@ -954,71 +954,60 @@ impl Stats {
     /// | `histogram` | optional, or null: a list of `[bits, rows]` pairs of integers, a measured histogram of the stored filters' set-bit counts ([`Stats::measured`]); absent, the declared prior ([`Stats::declared`]) |
     /// | `confidence` | optional, or null: a float, the confidence to target instead of 99% ([`Stats::with_confidence`]) |
     ///
-    /// Integers are read at any width and must not be negative.
+    /// Integers are read at any width up to 64 bits and must not be
+    /// negative; `bits` must fit a `u32`. A confidence is a float of either
+    /// width, never an integer.
     ///
     /// # Errors
     ///
-    /// [`Error::Source`] with [`Reason::NotStats`] for anything else: not an
-    /// object, no `rows`, a key given twice or not one of the three, or a
-    /// value of another type.
-    pub fn from_value(value: &FfiValue) -> Result<Self, Error> {
-        let refused = || Error::bad_source(Reason::NotStats);
-        let FfiValue::Object(entries) = value else {
-            return Err(refused());
+    /// [`Error::Source`] with [`Reason::NotStats`] for anything else: not a
+    /// frame, not an object, no `rows`, a key given twice or not one of the
+    /// three, or a value of another type.
+    pub fn from_frame(bytes: &[u8]) -> Result<Self, Error> {
+        let wire: StatsWire = vitaminc_aead_frame::serde::from_slice(bytes)
+            .map_err(|_| Error::bad_source(Reason::NotStats))?;
+        let stats = match wire.histogram {
+            Some(histogram) => Stats::measured(wire.rows, histogram),
+            None => Stats::declared(wire.rows),
         };
-        let mut seen: Vec<&str> = Vec::with_capacity(entries.len());
-        let (mut rows, mut histogram, mut confidence) = (None, None, None);
-        for (key, value) in entries {
-            if seen.contains(&key.as_str()) {
-                return Err(refused());
-            }
-            seen.push(key);
-            match (key.as_str(), value) {
-                ("histogram" | "confidence", FfiValue::Null) => {}
-                ("rows", rows_value) => rows = Some(unsigned(rows_value).ok_or_else(refused)?),
-                ("histogram", FfiValue::Array(buckets)) => {
-                    histogram = Some(
-                        buckets
-                            .iter()
-                            .map(|bucket| match bucket {
-                                FfiValue::Array(pair) => match pair.as_slice() {
-                                    [bits, rows] => Some((
-                                        u32::try_from(unsigned(bits)?).ok()?,
-                                        unsigned(rows)?,
-                                    )),
-                                    _ => None,
-                                },
-                                _ => None,
-                            })
-                            .collect::<Option<Vec<(u32, u64)>>>()
-                            .ok_or_else(refused)?,
-                    );
-                }
-                ("confidence", FfiValue::Float64(c)) => confidence = Some(*c),
-                ("confidence", FfiValue::Float32(c)) => confidence = Some(f64::from(*c)),
-                _ => return Err(refused()),
-            }
-        }
-        let rows = rows.ok_or_else(refused)?;
-        let stats = match histogram {
-            Some(histogram) => Stats::measured(rows, histogram),
-            None => Stats::declared(rows),
-        };
-        Ok(match confidence {
-            Some(confidence) => stats.with_confidence(confidence),
+        Ok(match wire.confidence {
+            Some(Confidence(confidence)) => stats.with_confidence(confidence),
             None => stats,
         })
     }
 }
 
-/// A non-negative integer of any width.
-fn unsigned(value: &FfiValue) -> Option<u64> {
-    match value {
-        FfiValue::Int32(v) => u64::try_from(*v).ok(),
-        FfiValue::Int64(v) => u64::try_from(*v).ok(),
-        FfiValue::UInt32(v) => Some(u64::from(*v)),
-        FfiValue::UInt64(v) => Some(*v),
-        _ => None,
+/// [`Stats`] as a binding writes it ([`Stats::from_frame`]).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatsWire {
+    rows: u64,
+    #[serde(default)]
+    histogram: Option<Vec<(u32, u64)>>,
+    #[serde(default)]
+    confidence: Option<Confidence>,
+}
+
+/// A confidence: a float of either width. serde's own `f64` would also take
+/// an integer, which the wire form refuses.
+struct Confidence(f64);
+
+impl<'de> serde::Deserialize<'de> for Confidence {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl serde::de::Visitor<'_> for V {
+            type Value = Confidence;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a float")
+            }
+            fn visit_f32<E>(self, v: f32) -> Result<Confidence, E> {
+                Ok(Confidence(f64::from(v)))
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<Confidence, E> {
+                Ok(Confidence(v))
+            }
+        }
+        d.deserialize_any(V)
     }
 }
 
@@ -1031,6 +1020,29 @@ pub fn limit_to_value(limit: Limit) -> FfiValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Statistics as a binding sends them: `value` written as frame bytes,
+    /// objects by hand so a test can send a repeated key, which no frame
+    /// writer would.
+    fn stats_frame(value: &FfiValue) -> Result<Stats, Error> {
+        fn raw(value: &FfiValue, out: &mut Vec<u8>) {
+            match value {
+                FfiValue::Object(entries) => {
+                    out.push(vitaminc_aead::frame::OBJECT);
+                    out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+                    for (key, value) in entries {
+                        out.extend_from_slice(&(key.len() as u32).to_le_bytes());
+                        out.extend_from_slice(key.as_bytes());
+                        raw(value, out);
+                    }
+                }
+                other => out.extend_from_slice(other.to_frame().expect("frames").risky_ref()),
+            }
+        }
+        let mut bytes = Vec::new();
+        raw(value, &mut bytes);
+        Stats::from_frame(&bytes)
+    }
     use crate::dynamic::{record, NoTargets, TargetError};
     use crate::op::{self, Probabilistic as _};
     use crate::sem::MatchTerms;
@@ -1772,11 +1784,11 @@ mod tests {
             FfiValue::Array(vec![FfiValue::UInt32(bits), FfiValue::UInt64(rows)])
         };
         assert_eq!(
-            Stats::from_value(&object(vec![("rows", FfiValue::UInt64(9))])).unwrap(),
+            stats_frame(&object(vec![("rows", FfiValue::UInt64(9))])).unwrap(),
             Stats::declared(9)
         );
         assert_eq!(
-            Stats::from_value(&object(vec![
+            stats_frame(&object(vec![
                 ("rows", FfiValue::Int64(9)),
                 ("histogram", FfiValue::Null),
                 ("confidence", FfiValue::Null),
@@ -1785,7 +1797,7 @@ mod tests {
             Stats::declared(9)
         );
         assert_eq!(
-            Stats::from_value(&object(vec![
+            stats_frame(&object(vec![
                 ("histogram", FfiValue::Array(vec![pair(3, 4), pair(5, 6)])),
                 ("confidence", FfiValue::Float64(0.9)),
                 ("rows", FfiValue::UInt32(10)),
@@ -1795,6 +1807,18 @@ mod tests {
         );
         for (what, bad) in [
             ("not an object", FfiValue::UInt64(9)),
+            (
+                "an array by position",
+                FfiValue::Array(vec![FfiValue::UInt64(9)]),
+            ),
+            (
+                "every key by position",
+                FfiValue::Array(vec![
+                    FfiValue::UInt64(9),
+                    FfiValue::Array(vec![pair(3, 4)]),
+                    FfiValue::Float64(0.5),
+                ]),
+            ),
             ("no rows", object(vec![])),
             ("null rows", object(vec![("rows", FfiValue::Null)])),
             ("negative rows", object(vec![("rows", FfiValue::Int64(-1))])),
@@ -1840,8 +1864,15 @@ mod tests {
                     ("confidence", text("high")),
                 ]),
             ),
+            (
+                "confidence as an integer",
+                object(vec![
+                    ("rows", FfiValue::UInt64(1)),
+                    ("confidence", FfiValue::UInt64(1)),
+                ]),
+            ),
         ] {
-            let error = Stats::from_value(&bad).unwrap_err();
+            let error = stats_frame(&bad).unwrap_err();
             assert_eq!(reason_of(&error), (None, Some(Reason::NotStats)), "{what}");
         }
     }
@@ -2054,14 +2085,23 @@ mod tests {
 
     #[test]
     fn a_count_is_read_at_any_width_and_never_negative() {
-        assert_eq!(unsigned(&FfiValue::Int32(7)), Some(7));
-        assert_eq!(unsigned(&FfiValue::Int64(7)), Some(7));
-        assert_eq!(unsigned(&FfiValue::UInt32(7)), Some(7));
-        assert_eq!(unsigned(&FfiValue::UInt64(7)), Some(7));
-        assert_eq!(unsigned(&FfiValue::Int32(-7)), None);
-        assert_eq!(unsigned(&FfiValue::Int64(-7)), None);
-        assert_eq!(unsigned(&FfiValue::Float64(7.0)), None);
-        let confidence = Stats::from_value(&FfiValue::Object(vec![
+        let rows = |value: FfiValue| stats_frame(&FfiValue::Object(vec![("rows".into(), value)]));
+        for value in [
+            FfiValue::Int32(7),
+            FfiValue::Int64(7),
+            FfiValue::UInt32(7),
+            FfiValue::UInt64(7),
+        ] {
+            assert_eq!(rows(value).unwrap(), Stats::declared(7));
+        }
+        for value in [
+            FfiValue::Int32(-7),
+            FfiValue::Int64(-7),
+            FfiValue::Float64(7.0),
+        ] {
+            assert!(rows(value).is_err());
+        }
+        let confidence = stats_frame(&FfiValue::Object(vec![
             ("rows".into(), FfiValue::Int32(3)),
             ("confidence".into(), FfiValue::Float32(0.5)),
         ]))

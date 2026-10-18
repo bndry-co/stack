@@ -301,7 +301,7 @@ pub fn verify(
 /// How many rows a probabilistic query should fetch for `want` of them to
 /// verify: the term's bytes as [`query_term`] returned them (not a frame),
 /// the codec-encoded statistics
-/// ([`Stats::from_value`](stack_encrypt::op::Stats::from_value)), the plan,
+/// ([`Stats::from_frame`](stack_encrypt::op::Stats::from_frame)), the plan,
 /// the field's name and the operator's name in; the codec-encoded limit out,
 /// an unsigned 64-bit integer or null for no finite fetch
 /// ([`dynamic::limit_to_value`]). Needs no cipher and no key.
@@ -316,7 +316,7 @@ pub fn target_limit(
     let (plan, field, operator) = parse_query(plan, field, operator)?;
     // Statistics are read without a field to hand; the error names the
     // query's, as every other refusal of a query does.
-    let stats = stack_encrypt::op::Stats::from_value(&decode_value(stats)?)
+    let stats = stack_encrypt::op::Stats::from_frame(stats)
         .map_err(|e| fail_dynamic(&e.in_field(field)))?;
     let limit = dynamic::target_limit(&plan, field, operator, term, want, &stats, &resolver())
         .map_err(|e| fail_dynamic(&e))?;

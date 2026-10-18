@@ -135,7 +135,7 @@ file changes only when a derivation does: regenerate it with
   boolean `verify` answers for each, which is what the typed `MatchQuery`
   answers.
 - **`target_limit`.** A match term's bytes, the statistics in the wire form
-  `Stats::from_value` reads (an absent histogram is the declared prior), and
+  `Stats::from_frame` reads (an absent histogram is the declared prior), and
   the limit, null when no finite fetch can be promised, which is what the
   typed `MatchQuery` answers.
 

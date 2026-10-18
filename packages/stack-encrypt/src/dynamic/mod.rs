@@ -588,7 +588,7 @@ reasons! {
         /// The term is not one the field's index derives for the operator.
         NotAQueryTerm => "not_a_query_term", "the term is not one the field's index derives for the operator";
         /// Statistics are not a row count with an optional histogram and
-        /// confidence ([`Stats::from_value`](crate::op::Stats::from_value)).
+        /// confidence ([`Stats::from_frame`](crate::op::Stats::from_frame)).
         NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
     }
 }
