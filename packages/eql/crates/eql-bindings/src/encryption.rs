@@ -45,9 +45,9 @@
 //! credentials. The encryption and decryption calls are identical.
 //!
 //! A binding that holds no Rust type to name reaches the same plans by the
-//! type's *name* through [`targets`]: the catalog-generated table of EQL
-//! types a data plan may name as a field target, and `encrypt` / `decrypt` /
-//! `query` dispatching on that name.
+//! type's *name* through `targets`, with the `targets` feature: the
+//! catalog-generated table of EQL types a data plan may name as a field
+//! target, and `encrypt` / `decrypt` / `query` dispatching on that name.
 //!
 //! Use the same table and column identifier for writes and queries. Passing
 //! `column.into()` on decryption also checks that the stored identifier matches
@@ -80,6 +80,10 @@
 //! require::<TextEq>();
 //! ```
 
+// The by-name dispatch over the EQL v4 types (`targets` feature). A plain
+// comment: a doc comment here would resolve the module's own links from
+// this scope.
+#[cfg(feature = "targets")]
 pub mod targets;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};

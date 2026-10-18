@@ -310,7 +310,10 @@ run = """
 # on purpose. `--locked`: this is a CHECK, and the EQL lockfile is the one the
 # lockstep bump moves (see "Working on EQL" in the root AGENTS.md).
 set -euo pipefail
+# Both feature sets: the typed types alone, as a Rust program builds them,
+# and with the by-name dispatch, as the Go guest does.
 cargo test --locked -p eql-bindings --features stack-encrypt
+cargo test --locked -p eql-bindings --features targets
 cargo test --locked -p eql-encryption-tests
 cargo clippy --locked -p eql-bindings -p eql-encryption-tests --all-features --all-targets -- -D warnings
 """
@@ -342,13 +345,13 @@ done
 """
 
 [tasks."check:encryption:wasi"]
-description = "Compile eql-bindings with the stack-encrypt feature for wasm32-wasip1 (no HTTP), as the Go guest builds it"
+description = "Compile eql-bindings with the targets feature for wasm32-wasip1 (no HTTP), as the Go guest builds it"
 dir = "{{config_root}}"
 run = """
 #!/usr/bin/env bash
 set -euo pipefail
 rustup target add wasm32-wasip1
-cargo check --locked -p eql-bindings --features stack-encrypt --target wasm32-wasip1
+cargo check --locked -p eql-bindings --features targets --target wasm32-wasip1
 """
 
 [tasks."types:generate"]

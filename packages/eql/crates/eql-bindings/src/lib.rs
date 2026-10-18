@@ -33,8 +33,8 @@
     doc = "See the [complete encryption example](encryption#example), including cipher setup, table/column identifiers, and decryption."
 )]
 #![cfg_attr(
-    feature = "stack-encrypt",
-    doc = "A binding that names an EQL type as a string reaches the same plans through [`encryption::targets`]: the catalog-generated table of types a data plan may name as a field target, and the by-name `encrypt` / `decrypt` / `query` dispatch."
+    feature = "targets",
+    doc = "A binding that names an EQL type as a string reaches the same plans through [`encryption::targets`] (`targets` feature): the catalog-generated table of types a data plan may name as a field target, and the by-name `encrypt` / `decrypt` / `query` dispatch."
 )]
 
 use schemars::JsonSchema;
