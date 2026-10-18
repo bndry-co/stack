@@ -91,7 +91,6 @@ use stack_encrypt::{
     DecryptInto, EncryptFrom, Error, KeysetCipher, Label, NonEmpty, Pending, StackCipher,
 };
 
-use super::plaintext;
 use crate::v4::targets::{decrypt_named, encrypt_named, query_named, TARGETS};
 use crate::Identifier;
 
@@ -402,15 +401,13 @@ pub(crate) fn refuse(name: &str) -> TargetError {
 }
 
 mod sealed {
-    use super::plaintext::{Bool, Float32, Float64, Int32, Int64};
-
     pub trait Sealed {}
     impl Sealed for String {}
-    impl Sealed for Int32 {}
-    impl Sealed for Int64 {}
-    impl Sealed for Bool {}
-    impl Sealed for Float32 {}
-    impl Sealed for Float64 {}
+    impl Sealed for i32 {}
+    impl Sealed for i64 {}
+    impl Sealed for bool {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
 }
 
 /// A Rust plaintext an EQL type is produced from, read out of and written
@@ -460,12 +457,12 @@ impl Plaintext for String {
 /// the declared kind's.
 macro_rules! scalar_plaintext {
     ($($ty:ident => $variant:ident),+ $(,)?) => {$(
-        impl Plaintext for plaintext::$ty {
+        impl Plaintext for $ty {
             const KIND: ValueKind = ValueKind::$variant;
 
             fn from_value(target: &'static str, value: FfiValue) -> Result<Self, TargetError> {
                 match value {
-                    FfiValue::$variant(v) => Ok(plaintext::$ty(v)),
+                    FfiValue::$variant(v) => Ok(v),
                     other => Err(TargetError::Plaintext {
                         target,
                         expected: Self::KIND,
@@ -475,17 +472,17 @@ macro_rules! scalar_plaintext {
             }
 
             fn into_value(self) -> FfiValue {
-                FfiValue::$variant(self.0)
+                FfiValue::$variant(self)
             }
         }
     )+};
 }
 scalar_plaintext!(
-    Int32 => Int32,
-    Int64 => Int64,
-    Bool => Bool,
-    Float32 => Float32,
-    Float64 => Float64,
+    i32 => Int32,
+    i64 => Int64,
+    bool => Bool,
+    f32 => Float32,
+    f64 => Float64,
 );
 
 /// Run a target's own plan over one runtime value and resolve to the EQL
@@ -629,7 +626,7 @@ mod tests {
         assert!(matches!(refuse("Nope"), TargetError::Unknown { name } if name == "Nope"));
         assert!(matches!(
             refuse("TextOrdOre"),
-            TargetError::Unproducible { name: "TextOrdOre", reason } if reason.contains("vitaminc-ore")
+            TargetError::Unproducible { name: "TextOrdOre", reason } if reason.contains("block ORE")
         ));
         assert!(producible("TextEq").is_ok());
     }
