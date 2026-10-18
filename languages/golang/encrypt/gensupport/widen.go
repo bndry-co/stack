@@ -93,9 +93,9 @@ func isInteger(k Kind) bool {
 // integerAs is the integer, given as exactly one of a signed or an unsigned
 // value, as the Go type of kind, if it fits. A 128-bit kind has no arm: its
 // only Go types are encrypt.Int128 and Uint128, which asKind passes through,
-// and stashgen declares no 128-bit kind for a built-in integer field (no
-// producible EQL type has one), so a built-in integer never reaches one here;
-// if one did, it is refused as not fitting.
+// and stashgen refuses a built-in integer field stored as a 128-bit kind, so a
+// built-in integer never reaches one here; if one did, it is refused as not
+// fitting.
 func integerAs(kind Kind, signed *int64, unsigned *uint64) (any, bool) {
 	inSigned := func(lo, hi int64) (int64, bool) {
 		if signed != nil {

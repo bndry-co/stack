@@ -221,6 +221,10 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 				rf.Kind = wire
 			} else if _, _, integer := integerRange(eqlType.wire); integer && wireKind(f.GoType) != eqlType.wire && (f.GoType.Kind == KindInt128 || f.GoType.Kind == KindUint128) {
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and an %s is not converted to it", f.EQLType, eqlType.wire, f.GoType)}
+			} else if integer && (f.GoType.Kind == KindInt || f.GoType.Kind == KindUint) {
+				// intoKind takes every built-in integer except into a
+				// 128-bit kind, which gensupport does not convert to.
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and the built-in integer %s is not converted to it", f.EQLType, eqlType.wire, f.GoType)}
 			} else {
 				// The engine checks the kind too (se_plan_check refuses a
 				// "type" other than the EQL type's plaintext); saying it
@@ -393,10 +397,13 @@ func integerRange(k record.Kind) (signed bool, bits int, ok bool) {
 // integer) always converts; a wider one (an int64 into an integer) is range
 // checked when a value is sealed, and a value that does not fit is refused
 // with encrypt.ErrEncoding. False when t is not a built-in integer: an
-// encrypt.Int128 or Uint128 has no conversion to a narrower kind.
+// encrypt.Int128 or Uint128 has no conversion to a narrower kind. False for a
+// 128-bit target too: gensupport converts a built-in integer to a kind of 64
+// bits or fewer only, so such a field is refused here, when the code is
+// generated, and not on every Encrypt.
 func intoKind(t GoType, target record.Kind) (record.Kind, bool) {
-	_, _, toInt := integerRange(target)
-	if !toInt || (t.Kind != KindInt && t.Kind != KindUint) {
+	_, bits, toInt := integerRange(target)
+	if !toInt || bits > 64 || (t.Kind != KindInt && t.Kind != KindUint) {
 		return record.Untyped, false
 	}
 	return target, true

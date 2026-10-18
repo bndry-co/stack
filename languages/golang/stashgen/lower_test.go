@@ -42,6 +42,9 @@ func TestLoweringWidensIntoAnEQLTypeAndRefusesWhatDoesNotConvert(t *testing.T) {
 		{Name: "Bigint", Plaintext: KindInt, Producible: true, wire: record.Int64},
 		{Name: "Real", Plaintext: KindFloat, Producible: true, wire: record.Float32},
 		{Name: "Double", Plaintext: KindFloat, Producible: true, wire: record.Float64},
+		// No producible EQL type seals a 128-bit integer today; this one
+		// holds what a built-in integer field would meet if one did.
+		{Name: "Hugeint", Plaintext: KindInt128, Producible: true, wire: record.Int128},
 	}
 	field := func(goType GoType, eqlType string) Declaration {
 		return Declaration{Type: "Row", Context: "rows", Fields: []Field{
@@ -57,6 +60,8 @@ func TestLoweringWidensIntoAnEQLTypeAndRefusesWhatDoesNotConvert(t *testing.T) {
 		{GoType{Name: "encrypt.Uint128", Kind: KindUint128}, "Integer", "Integer seals int32, and an encrypt.Uint128 is not converted to it"},
 		{basic("float64", KindFloat), "Real", "Real seals float32, and float64 seals as float64"},
 		{basic("float32", KindFloat), "Double", "Double seals float64, and float32 seals as float32"},
+		{basic("int64", KindInt), "Hugeint", "Hugeint seals int128, and the built-in integer int64 is not converted to it"},
+		{basic("uint8", KindUint), "Hugeint", "Hugeint seals int128, and the built-in integer uint8 is not converted to it"},
 	} {
 		_, err := lowerDeclaration(field(c.goType, c.eqlType), eql)
 		fe, ok := err.(*FieldError)
