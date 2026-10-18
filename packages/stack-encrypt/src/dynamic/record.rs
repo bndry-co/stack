@@ -1402,6 +1402,11 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
 /// into its entry of the record's frame and wiped; no value tree holds the
 /// plaintext.
 ///
+/// A passthrough field comes back exactly as the store holds it, beside the
+/// decrypted fields in the same map. It is not authenticated: anyone who can
+/// write to the store can change it, and `decrypt` does not detect the
+/// change. Only the fields a plan seals (`"c"`) are checked.
+///
 /// `expected` is the context the caller expects, for a plan with a
 /// [context field](Plan::with_context_field): the chain's
 /// `open(record).context(expected)`. Each record's stored context field is
