@@ -45,14 +45,13 @@
 //! the output. Control data (a plan, a context, an options object, query
 //! statistics) carries no secret and is read from its frame with serde.
 
-use stack_encrypt::dynamic::{self, FfiValue, Scope, ValueFrame};
+use stack_encrypt::dynamic::{self, Scope, ValueFrame};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::ErrorPayload;
-use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, Node, SealedValue, StackCipherText};
+use stack_encrypt::{CipherText, KeysetCipher, Label, Node, SealedValue, StackCipherText};
 use stack_kms::DataKeySource;
-use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext, Frame, FrameWriter};
-use vitaminc_protected::Controlled;
+use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext, Frame};
 use zeroize::Zeroizing;
 
 use stack_guest_abi::last_error;
@@ -232,7 +231,8 @@ where
 /// Derive the query term for one plan field, an operator and its input
 /// (ADR-0009; ADR-0007, amended 2026-10-16): a codec-encoded input, the
 /// codec-encoded plan, the field's name and the operator's name (both UTF-8)
-/// in, the term's codec-encoded object out ([`dynamic::QueryTerm::to_value`]):
+/// in, the term's codec-encoded object out (the `Serialize` form of
+/// [`dynamic::QueryTerm`]):
 ///
 /// ```text
 /// { "operator": "matches", "fidelity": "probabilistic", "index": "match",
@@ -269,7 +269,7 @@ where
     .map_err(|e| fail_dynamic(&e))?
     .await
     .map_err(|e| fail_error(&e))?;
-    encode_value(term.to_value())
+    encode_answer(&term)
 }
 
 /// Verify a page of decrypted values against a probabilistic query: the
@@ -303,9 +303,7 @@ pub fn verify(
         &resolver(),
     )
     .map_err(|e| fail_dynamic(&e))?;
-    encode_value(FfiValue::Array(
-        verified.into_iter().map(FfiValue::Bool).collect(),
-    ))
+    encode_answer(&verified)
 }
 
 /// How many rows a probabilistic query should fetch for `want` of them to
@@ -314,7 +312,8 @@ pub fn verify(
 /// ([`Stats::from_frame`](stack_encrypt::op::Stats::from_frame)), the plan,
 /// the field's name and the operator's name in; the codec-encoded limit out,
 /// an unsigned 64-bit integer or null for no finite fetch
-/// ([`dynamic::limit_to_value`]). Needs no cipher and no key.
+/// ([`Limit::rows`](stack_encrypt::op::Limit::rows)). Needs no cipher and
+/// no key.
 pub fn target_limit(
     term: &[u8],
     stats: &[u8],
@@ -330,7 +329,7 @@ pub fn target_limit(
         .map_err(|e| fail_dynamic(&e.in_field(field)))?;
     let limit = dynamic::target_limit(&plan, field, operator, term, want, &stats, &resolver())
         .map_err(|e| fail_dynamic(&e))?;
-    encode_value(dynamic::limit_to_value(limit))
+    encode_answer(&limit.rows())
 }
 
 /// The plan, field name and operator a query names: the plan parsed against
@@ -383,8 +382,8 @@ pub fn plan_check(plan: &[u8]) -> Result<(), u32> {
 
 /// The EQL types this build of the engine knows, as a codec-encoded
 /// `{"targets": [...]}`: one entry per type in
-/// [`TargetDescriptor::to_value`](stack_encrypt::dynamic::TargetDescriptor::to_value)'s
-/// wire form, producible or not, with the reason when not. The build
+/// [`TargetDescriptor`](stack_encrypt::dynamic::TargetDescriptor)'s
+/// `Serialize` form, producible or not, with the reason when not. The build
 /// without EQL types lists none, which a generator reads as "no
 /// `encrypt_into` type is available" and refuses the tag; the `eql` build
 /// lists the catalog, and a generator writes `encrypt_into` only for an
@@ -413,22 +412,19 @@ pub fn plan_check(plan: &[u8]) -> Result<(), u32> {
 /// type answers and how far each answer can be trusted.
 pub fn targets() -> Result<Vec<u8>, u32> {
     use stack_encrypt::dynamic::TargetResolver as _;
-    encode_value(FfiValue::Object(vec![(
-        "targets".to_string(),
-        FfiValue::Array(
-            resolver()
-                .targets()
-                .iter()
-                .map(|target| target.to_value())
-                .collect(),
-        ),
-    )]))
+    #[derive(serde::Serialize)]
+    struct Targets {
+        targets: Vec<dynamic::TargetDescriptor>,
+    }
+    encode_answer(&Targets {
+        targets: resolver().targets(),
+    })
 }
 
 /// The operators one field of a codec-encoded plan answers, as a
 /// codec-encoded list: one object per operator, in the order the engine
-/// lists them, each written by
-/// [`dynamic::operator_to_value`]:
+/// lists them, each the `Serialize` form of a
+/// [`dynamic::OperatorEntry`]:
 ///
 /// ```text
 /// [ { "operator": "eq", "fidelity": "exact", "arity": "one", "index": "eq" }, ... ]
@@ -447,12 +443,12 @@ pub fn operators(plan: &[u8], field: &[u8]) -> Result<Vec<u8>, u32> {
         .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
     let operators =
         dynamic::field_operators(&plan, field, &resolver()).map_err(|e| fail_dynamic(&e))?;
-    encode_value(FfiValue::Array(
-        operators
+    encode_answer(
+        &operators
             .iter()
-            .map(|(operator, index)| dynamic::operator_to_value(*operator, index))
-            .collect(),
-    ))
+            .map(|(operator, index)| dynamic::OperatorEntry::new(*operator, index))
+            .collect::<Vec<_>>(),
+    )
 }
 
 // =============================================================================
@@ -538,7 +534,7 @@ fn checked_plaintext(bytes: &[u8]) -> Result<Frame<'_>, u32> {
 }
 
 /// An opened value as the output buffer: its frame, copied into a buffer
-/// whose capacity is exactly its length (see [`encode_value`]); the frame
+/// whose capacity is exactly its length (see [`encode_tree`]); the frame
 /// is wiped when it drops.
 fn encode_frame(frame: ValueFrame) -> Result<Vec<u8>, u32> {
     let mut out = exact_buffer(Some(frame.risky_ref().len()))?;
@@ -556,23 +552,17 @@ fn not_a_frame() -> u32 {
     last_error::malformed("an input is not a value in the transport frame")
 }
 
-/// Encode a value tree into a buffer whose capacity is exactly its length.
-///
-/// This buffer is plaintext on the decrypt path, and the registry wipes only
-/// the buffer it holds: `register`'s `into_boxed_slice` reallocates a `Vec`
-/// whose capacity exceeds its length, leaving the old allocation unwiped.
-/// The frame writer reserves an upper bound per leaf (a six-byte string
-/// reserves 14 for 11), so writing straight into the exactly sized buffer
-/// can still grow it. It writes into a `Zeroizing` staging buffer instead
-/// (the writer wipes any allocation it replaces), which is copied into an
-/// exactly sized output and then wiped.
-fn encode_value(value: FfiValue) -> Result<Vec<u8>, u32> {
-    let mut staging = Zeroizing::new(exact_buffer(value_encoded_len(&value))?);
-    (&value)
-        .visit(FrameWriter::new(&mut staging))
-        .map_err(|_| STATUS_ENCODING)?;
-    let mut out = exact_buffer(Some(staging.len()))?;
-    out.extend_from_slice(&staging);
+/// One of the engine's answers (a query term, a page of verdicts, a limit, a
+/// catalog), written to its frame by serde, in a buffer whose capacity is
+/// exactly its length. An answer is not plaintext, but the registry's
+/// `into_boxed_slice` would reallocate a buffer with spare capacity, so it
+/// is sized as every other output is. A query term's search tokens are
+/// derived from plaintext, so the staging buffer is wiped once copied.
+fn encode_answer<T: serde::Serialize>(answer: &T) -> Result<Vec<u8>, u32> {
+    let frame =
+        Zeroizing::new(vitaminc_aead_frame::serde::to_vec(answer).map_err(|_| STATUS_ENCODING)?);
+    let mut out = exact_buffer(Some(frame.len()))?;
+    out.extend_from_slice(&frame);
     Ok(out)
 }
 
@@ -589,8 +579,9 @@ fn decode_tree(bytes: &[u8]) -> Result<StackCipherText, u32> {
 }
 
 /// The encode twin of [`decode_tree`]. Passthrough nodes can carry caller
-/// plaintext, so this is sized up front for the same reason
-/// [`encode_value`] is.
+/// plaintext, so this is sized up front: the registry wipes only the buffer
+/// it holds, and `register`'s `into_boxed_slice` reallocates a `Vec` whose
+/// capacity exceeds its length, leaving the old allocation unwiped.
 fn encode_tree(tree: StackCipherText) -> Result<Vec<u8>, u32> {
     let tree = map_leaves(tree, &mut |l: SealedValue| Ok::<_, u32>(l.to_bytes()))?;
     let mut out = exact_buffer(tree_encoded_len(&tree))?;
@@ -640,29 +631,6 @@ fn exact_buffer(len: Option<usize>) -> Result<Vec<u8>, u32> {
     Ok(out)
 }
 
-/// Exact byte length of the frame of `value`. `None` on overflow or on a
-/// length the frame's `u32` lengths cannot express — the encode would fail
-/// on those anyway, so the caller reports an encoding error.
-fn value_encoded_len(value: &FfiValue) -> Option<usize> {
-    // tag byte + fixed payload, or tag + u32 length prefix + payload.
-    let framed = |len: usize| u32::try_from(len).ok().and_then(|_| len.checked_add(5));
-    match value {
-        FfiValue::Null | FfiValue::Undefined | FfiValue::Bool(_) => Some(1),
-        FfiValue::Int32(_) | FfiValue::UInt32(_) | FfiValue::Float32(_) => Some(5),
-        FfiValue::Int64(_) | FfiValue::UInt64(_) | FfiValue::Float64(_) => Some(9),
-        FfiValue::String(s) => framed(s.risky_ref().len()),
-        FfiValue::Bytes(b) => framed(b.risky_ref().len()),
-        FfiValue::Array(items) => items.iter().try_fold(5usize, |acc, item| {
-            acc.checked_add(value_encoded_len(item)?)
-        }),
-        FfiValue::Object(entries) => entries.iter().try_fold(5usize, |acc, (key, value)| {
-            acc.checked_add(framed(key.len())?.checked_sub(1)?)?
-                .checked_add(value_encoded_len(value)?)
-        }),
-        FfiValue::Passthrough(inner) => value_encoded_len(inner)?.checked_add(1),
-    }
-}
-
 /// Exact byte length of the codec's encoding of a ciphertext tree. A
 /// passthrough is its node byte and its frame, written as it is.
 fn tree_encoded_len(tree: &BytesTree) -> Option<usize> {
@@ -685,65 +653,32 @@ fn tree_encoded_len(tree: &BytesTree) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vitaminc_protected::Protected;
+    use stack_encrypt::dynamic::FfiValue;
+    use vitaminc_protected::{Controlled, Protected};
 
-    // `value_encoded_len` / `tree_encoded_len` re-derive the frame's and the
-    // codec's arithmetic; neither exports an `encoded_len` of its own, so these
-    // pins are the only thing that fails if the two drift. Drift is not a
-    // cosmetic bug: an undersized reservation makes `encode_value`
-    // reallocate mid-encode, leaving unwiped partial plaintext in the
-    // abandoned allocation — silently.
-
-    fn every_value_shape() -> Vec<FfiValue> {
-        vec![
-            FfiValue::Null,
-            FfiValue::Undefined,
-            FfiValue::Bool(true),
-            FfiValue::Int32(-5),
-            FfiValue::UInt32(5),
-            FfiValue::Float32(1.5),
-            FfiValue::Int64(-9),
-            FfiValue::UInt64(9),
-            FfiValue::Float64(2.5),
-            FfiValue::String("".into()),
-            FfiValue::String("héllo".into()),
-            FfiValue::Bytes(Protected::new(Vec::new())),
-            FfiValue::Bytes(Protected::new(vec![0u8; 300])),
-            FfiValue::Array(Vec::new()),
-            FfiValue::Array(vec![FfiValue::Bool(false), FfiValue::String("x".into())]),
-            FfiValue::Object(Vec::new()),
-            FfiValue::Object(vec![
-                ("a".to_string(), FfiValue::Int32(1)),
-                (
-                    "nested".to_string(),
-                    FfiValue::Object(vec![("b".to_string(), FfiValue::Null)]),
-                ),
-            ]),
-            FfiValue::Passthrough(Box::new(FfiValue::Int64(7))),
-            FfiValue::Passthrough(Box::new(FfiValue::Array(vec![FfiValue::String(
-                "deep".into(),
-            )]))),
-        ]
-    }
+    // `tree_encoded_len` re-derives the codec's arithmetic; the codec exports
+    // no `encoded_len` of its own, so this pin is the only thing that fails if
+    // the two drift. Drift is not a cosmetic bug: an undersized reservation
+    // makes `encode_tree` reallocate mid-encode, leaving unwiped partial
+    // plaintext in the abandoned allocation — silently.
 
     /// The registry wipes the buffer it is handed, and `into_boxed_slice`
-    /// reallocates one whose capacity exceeds its length, leaving the old
-    /// allocation unwiped. So every encoded output's capacity is its length,
-    /// not only its length the frame's.
+    /// reallocates one whose capacity exceeds its length. So every answer's
+    /// capacity is its length.
     #[test]
-    fn an_encoded_value_has_no_spare_capacity() {
-        for (i, value) in every_value_shape().into_iter().enumerate() {
-            let out = encode_value(value).expect("encodes");
-            assert_eq!(out.capacity(), out.len(), "shape {i}");
-        }
-    }
-
-    #[test]
-    fn value_encoded_len_matches_the_codec_exactly() {
-        for (i, value) in every_value_shape().into_iter().enumerate() {
-            let expected = value_encoded_len(&value).expect("encodable shape");
-            let out = value.to_frame().expect("frame encode");
-            assert_eq!(out.risky_ref().len(), expected, "shape {i}");
+    fn an_encoded_answer_has_no_spare_capacity() {
+        let entries = [
+            dynamic::OperatorEntry::new(dynamic::OpSpec::Eq, &IndexSpec::Equality),
+            dynamic::OperatorEntry::new(dynamic::OpSpec::Between, &IndexSpec::Ope),
+        ];
+        for out in [
+            encode_answer(&vec![true, false, true]),
+            encode_answer(&Some(11u64)),
+            encode_answer(&None::<u64>),
+            encode_answer(&entries),
+        ] {
+            let out = out.expect("encodes");
+            assert_eq!(out.capacity(), out.len());
         }
     }
 

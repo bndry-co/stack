@@ -967,7 +967,7 @@ pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
 /// a power of two in `32..=65536`, a zero n-gram length), is refused. The
 /// other three indexes have no options and no object form. A field names
 /// each output key at most once, so it carries at most one match index.
-/// [`IndexSpec::to_value`] writes this form and [`IndexSpec::from_frame`]
+/// [`IndexSpec`] serializes to this form and [`IndexSpec::from_frame`]
 /// reads it. `"passthrough"` is a field's only output when it has it.
 ///
 /// [`MatchOptions::default`]: crate::sem::MatchOptions::default
@@ -3194,11 +3194,10 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         fn wide() -> FfiValue {
-            IndexSpec::Match(crate::sem::MatchOptions {
+            crate::dynamic::test_frame::value_of(&IndexSpec::Match(crate::sem::MatchOptions {
                 k: 6,
                 ..crate::sem::MatchOptions::default()
-            })
-            .to_value()
+            }))
         }
         // Each case is refused for the missing type and nothing else: the
         // refusal is the variant that names the field, and the same spec
@@ -3628,7 +3627,9 @@ mod tests {
                     ("context", label("nick")),
                     (
                         "outputs",
-                        FfiValue::Array(vec![IndexSpec::Match(options.clone()).to_value()]),
+                        FfiValue::Array(vec![crate::dynamic::test_frame::value_of(
+                            &IndexSpec::Match(options.clone()),
+                        )]),
                     ),
                     ("type", s("string")),
                 ]),
@@ -5369,7 +5370,13 @@ mod tests {
                     "f",
                     obj(vec![
                         ("context", label("f")),
-                        ("outputs", FfiValue::Array(vec![s("c"), kind.to_value()])),
+                        (
+                            "outputs",
+                            FfiValue::Array(vec![
+                                s("c"),
+                                crate::dynamic::test_frame::value_of(&kind),
+                            ]),
+                        ),
                         ("type", s(ty)),
                     ]),
                 )]))

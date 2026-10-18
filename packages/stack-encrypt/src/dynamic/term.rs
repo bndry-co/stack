@@ -33,7 +33,7 @@
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-use super::{FfiValue, ValueFrame};
+use super::ValueFrame;
 use stack_kms::DataKeySource;
 use vitaminc_aead::plaintext::{
     Error as SinkError, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
@@ -41,7 +41,7 @@ use vitaminc_aead::plaintext::{
 use vitaminc_normalize::{domain_of, normalize, NormalizeError};
 use zeroize::Zeroizing;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Error, Reason};
 use crate::sem::{
@@ -74,9 +74,10 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 /// `[32, 65536]`, a non-zero n-gram length) are refused. The other three
 /// indexes have no options and no object form.
 ///
-/// [`to_value`](Self::to_value) writes the string whenever the options are
-/// the defaults and the object, with all four options, otherwise, so a
-/// default plan is byte-for-byte what it was before options had a wire form.
+/// Serialized (it is `Serialize`), an index writes the string whenever the
+/// options are the defaults and the object, with all four options,
+/// otherwise, so a default plan is byte-for-byte what it was before options
+/// had a wire form.
 impl IndexSpec {
     /// The index a bare key names, under default options, or `None` for a
     /// string that is not an index key.
@@ -104,34 +105,6 @@ impl IndexSpec {
         vitaminc_aead_frame::serde::from_slice::<IndexWire>(frame)
             .map(IndexSpec::from)
             .map_err(|_| Error::bad_plan(Reason::UnknownOutput))
-    }
-
-    /// Write this index in its wire form (see the [type docs](Self#wire-form)):
-    /// the key, or for a match index under non-default options, the object
-    /// carrying all four of them. [`from_frame`](Self::from_frame) reads it
-    /// back to an equal index.
-    pub fn to_value(&self) -> FfiValue {
-        match self {
-            IndexSpec::Match(options) if *options != MatchOptions::default() => {
-                let tokenizer = match options.tokenizer {
-                    Tokenizer::Standard => FfiValue::String("standard".into()),
-                    Tokenizer::Ngram { length } => FfiValue::Object(vec![(
-                        "ngram".to_string(),
-                        FfiValue::UInt64(length as u64),
-                    )]),
-                };
-                FfiValue::Object(vec![(
-                    "match".to_string(),
-                    FfiValue::Object(vec![
-                        ("tokenizer".to_string(), tokenizer),
-                        ("downcase".to_string(), FfiValue::Bool(options.downcase)),
-                        ("k".to_string(), FfiValue::UInt64(options.k as u64)),
-                        ("m".to_string(), FfiValue::UInt64(u64::from(options.m))),
-                    ]),
-                )])
-            }
-            _ => FfiValue::String(self.key().into()),
-        }
     }
 
     /// Whether the scheme defines this index's term for `value`: whether it
@@ -191,6 +164,53 @@ fn ordered(value: &Physical<'_>) -> bool {
     match value {
         Physical::Int(_) | Physical::Float(_) | Physical::Text(_) | Physical::Bytes(_) => true,
         Physical::Null | Physical::Bool(_) => false,
+    }
+}
+
+/// An index in its wire form: its key, or for a match index under options
+/// other than the defaults, a one-entry object mapping `"match"` to all four
+/// of them (see [`IndexSpec`'s docs](IndexSpec#wire-form)).
+impl Serialize for IndexSpec {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "lowercase")]
+        enum Out {
+            Eq,
+            #[serde(rename = "match")]
+            DefaultMatch,
+            Match(MatchOut),
+            Ore,
+            Ope,
+        }
+        #[derive(Serialize)]
+        struct MatchOut {
+            tokenizer: TokenizerOut,
+            downcase: bool,
+            k: u64,
+            m: u64,
+        }
+        #[derive(Serialize)]
+        #[serde(rename_all = "lowercase")]
+        enum TokenizerOut {
+            Standard,
+            Ngram(u64),
+        }
+        match self {
+            IndexSpec::Equality => Out::Eq,
+            IndexSpec::Match(options) if *options == MatchOptions::default() => Out::DefaultMatch,
+            IndexSpec::Match(options) => Out::Match(MatchOut {
+                tokenizer: match options.tokenizer {
+                    Tokenizer::Standard => TokenizerOut::Standard,
+                    Tokenizer::Ngram { length } => TokenizerOut::Ngram(length as u64),
+                },
+                downcase: options.downcase,
+                k: options.k as u64,
+                m: u64::from(options.m),
+            }),
+            IndexSpec::Ore => Out::Ore,
+            IndexSpec::Ope => Out::Ope,
+        }
+        .serialize(s)
     }
 }
 
@@ -739,6 +759,7 @@ impl Index<ValueFrame> for IndexSpec {
 mod tests {
     use super::*;
     use crate::dynamic::utf8;
+    use crate::dynamic::FfiValue;
     use crate::dynamic::{context, Output};
     use crate::sem::TermError;
     use crate::{nonempty, StackCipher};
@@ -1463,7 +1484,7 @@ mod tests {
                 IndexSpec::Ore,
                 IndexSpec::Ope,
             ] {
-                let wire = spec.to_value();
+                let wire = crate::dynamic::test_frame::value_of(&spec);
                 assert!(
                     matches!(&wire, FfiValue::String(k) if utf8(k) == Some(spec.key())),
                     "{spec} writes as its bare key"
@@ -1509,7 +1530,7 @@ mod tests {
             ];
             for options in cases {
                 let spec = IndexSpec::Match(options.clone());
-                let wire = spec.to_value();
+                let wire = crate::dynamic::test_frame::value_of(&spec);
                 assert!(
                     matches!(&wire, FfiValue::Object(_)),
                     "{options:?} is not the default, so it writes as an object"
@@ -1696,6 +1717,7 @@ mod tests {
 #[cfg(test)]
 mod wire_form {
     use super::*;
+    use crate::dynamic::FfiValue;
 
     fn index_of(value: &FfiValue) -> Result<IndexSpec, Error> {
         IndexSpec::from_frame(&crate::dynamic::test_frame::frame_of(value))
@@ -1727,7 +1749,7 @@ mod wire_form {
         ];
         for spec in specs {
             assert_eq!(
-                index_of(&spec.to_value()).expect("reads back"),
+                index_of(&crate::dynamic::test_frame::value_of(&spec)).expect("reads back"),
                 spec,
                 "{spec:?} survives the data form"
             );
@@ -1738,7 +1760,7 @@ mod wire_form {
     fn a_default_match_index_is_the_bare_match_key() {
         let spec = Index::<String>::spec(&Match);
         assert!(matches!(
-            spec.to_value(),
+            crate::dynamic::test_frame::value_of(&spec),
             FfiValue::String(key) if crate::dynamic::utf8(&key) == Some("match")
         ));
     }
@@ -1748,7 +1770,10 @@ mod wire_form {
         let spec = Index::<String>::spec(&Match::<Words>::new());
         assert_eq!(spec, IndexSpec::Match(Words::options()));
         assert!(
-            matches!(spec.to_value(), FfiValue::Object(_)),
+            matches!(
+                crate::dynamic::test_frame::value_of(&spec),
+                FfiValue::Object(_)
+            ),
             "non-default options are written, not dropped"
         );
     }

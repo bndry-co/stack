@@ -111,8 +111,8 @@ pub use ffi_value::{
 };
 pub use kind::{admits, not_admitted, read};
 pub use query::{
-    check_query, field_operators, limit_to_value, operator_to_value, query_term, target_limit,
-    verify, Fidelity, OpSpec, Operand, QueryTerm,
+    check_query, field_operators, query_term, target_limit, verify, Fidelity, OpSpec, Operand,
+    OperatorEntry, QueryTerm,
 };
 pub use record::{FieldPlan, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
@@ -165,6 +165,15 @@ impl<K> fmt::Debug for Scope<'_, K> {
 #[cfg(test)]
 fn utf8(s: &Utf8String) -> Option<&str> {
     std::str::from_utf8(s.risky_ref()).ok()
+}
+
+/// Bytes, written as a frame's bytes leaf rather than a list of integers.
+struct WireBytes<'a>(&'a [u8]);
+
+impl serde::Serialize for WireBytes<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_bytes(self.0)
+    }
 }
 
 /// What went wrong in a dynamic operation.

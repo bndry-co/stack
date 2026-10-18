@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   term's bytes and `Stats` (`Stats::from_frame` reads their wire form), by
   the code the typed `MatchQuery` runs, with the field's own match options;
   neither uses a key. The catalog entry of an EQL type
-  (`TargetDescriptor::to_value`) lists the operators the engine answers for
+  (a serialized `TargetDescriptor`) lists the operators the engine answers for
   it, each with its fidelity (`dynamic::Fidelity`), arity and index
   (`TargetDescriptor::operators`).
 - **An EQL type with a match index answers `matches` through its twin.**
@@ -62,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field of a data plan answers, each with the index that answers it: what
   `query_term` derives a term for on that field and nothing else, for a
   field declared with indexes as for one that names an EQL type.
-  `dynamic::operator_to_value` writes one entry in the catalog's wire form.
+  `dynamic::OperatorEntry` is one entry in the catalog's wire form.
   A generator asks this before the program runs, so it writes one query
   method per operator and holds no copy of the table.
 - **A query names an operator, not an index.**
@@ -160,8 +160,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output form, `dynamic::record::plan_with` reads `{"context": [...],
   "target": "TextEq", "type"?: ...}` — the two forms are exclusive — and
   resolves the name through a `dynamic::TargetResolver` the host installs:
-  the EQL types a build holds (`targets()`, serializable as
-  `TargetDescriptor::to_value()` for a guest's `se_targets` export) and how
+  the EQL types a build holds (`targets()`, each a `Serialize`
+  `TargetDescriptor` for a guest's `se_targets` export) and how
   to run one. `encrypt_with` zips the type's own `Pending` into the record's,
   so a record with target fields is still one ZeroKMS request, and stores
   the EQL value's JSON bytes under the field's `"eql"` key
@@ -282,6 +282,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     payload may be missing or null alike: `{"match": null}` is a bare
     `"match"`, and `{"eq": null}` a bare `"eq"`.
   - `Stats::from_frame` replaces `Stats::from_value`.
+  - The engine's answers are `Serialize`, written to a frame by serde,
+    byte for byte what the `FfiValue` encoders wrote (pinned in the tests):
+    `QueryTerm`, `TargetDescriptor` and `IndexSpec` replace their
+    `to_value`, `OperatorEntry::new` replaces `operator_to_value`, and
+    `Limit::rows` replaces `limit_to_value` (`None` writes null).
 
 - **A match value with no tokens is stored as the empty filter, so
   `KeysetCipher::match_terms` is no longer a query.** In 0.2.0 the same call

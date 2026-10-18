@@ -6,6 +6,13 @@ use vitaminc_protected::Controlled;
 
 use super::FfiValue;
 
+/// What a binding reads back from an answer the engine writes: its frame,
+/// decoded.
+pub(crate) fn value_of<T: serde::Serialize>(answer: &T) -> FfiValue {
+    let frame = vitaminc_aead_frame::serde::to_vec(answer).expect("frames");
+    FfiValue::from_frame(&frame).expect("a value")
+}
+
 /// The frame bytes of `value`.
 pub(crate) fn frame_of(value: &FfiValue) -> Vec<u8> {
     let mut out = Vec::new();

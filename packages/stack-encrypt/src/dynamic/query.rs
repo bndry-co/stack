@@ -17,7 +17,7 @@
 //!   the field does not answer as it refuses a value of the wrong type, with
 //!   [`Error::Source`] naming the field.
 //! - [`field_operators`] lists the operators a plan field answers, each with
-//!   the index that answers it ([`operator_to_value`] writes one): what a
+//!   the index that answers it ([`OperatorEntry`] is one's wire form): what a
 //!   generator asks before the program runs, so it writes one query method
 //!   per operator the engine answers and holds no copy of the table.
 //! - [`verify`] and [`target_limit`] are a probabilistic term's two
@@ -58,13 +58,18 @@
 //! # Wire format
 //!
 //! An operator is its [`name`](OpSpec::name). A query term is the object
-//! [`QueryTerm::to_value`] writes, the statistics the frame object
-//! [`Stats::from_frame`] reads, and a limit the value
-//! [`limit_to_value`] writes; each is documented where it is written.
+//! [`QueryTerm`] serializes to, the statistics the frame object
+//! [`Stats::from_frame`] reads, and a limit [`Limit::rows`]: an unsigned
+//! 64-bit integer, or null for no finite fetch. Each answer is written to a
+//! frame by serde (`vitaminc_aead_frame::serde`) and documented on its
+//! type.
 //!
 //! [`Probabilistic::verify`]: crate::op::Probabilistic::verify
 //! [`Probabilistic::target_limit`]: crate::op::Probabilistic::target_limit
 
+use serde::{Serialize, Serializer};
+
+use super::WireBytes;
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -75,7 +80,7 @@ use super::term::OneScalar;
 use super::term::{derive, Use};
 use super::value_frame::Parts;
 use super::ValueKind;
-use super::{admits, read, Error, FfiValue, Reason, TargetDescriptor, TargetResolver, ValueFrame};
+use super::{admits, read, Error, Reason, TargetDescriptor, TargetResolver, ValueFrame};
 use crate::op::{Limit, Stats};
 use crate::sem::{match_limit, MatchOptions, QueryTokens, TermError};
 use crate::target::IndexSpec;
@@ -304,6 +309,46 @@ pub enum Operand {
     },
 }
 
+/// The term in its wire form: an object with every key present, an
+/// absent value null.
+///
+/// | key | value |
+/// |---|---|
+/// | `operator` | string: the [operator's name](OpSpec::name), `"matches"` |
+/// | `fidelity` | string: `"exact"` or `"probabilistic"` ([`Fidelity::name`]) |
+/// | `index` | string: the [key](IndexSpec::key) of the index that answers, `"match"` |
+/// | `domain` | string or null: the query value's PostgreSQL domain, for a field that names an EQL type |
+/// | `term` | bytes: the term, or for `between` a list of two byte strings, the low bound's term then the high's |
+impl Serialize for QueryTerm {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Wire<'a> {
+            operator: &'static str,
+            fidelity: &'static str,
+            index: &'static str,
+            domain: Option<&'a str>,
+            term: Term<'a>,
+        }
+        #[derive(Serialize)]
+        #[serde(untagged)]
+        enum Term<'a> {
+            One(WireBytes<'a>),
+            Range([WireBytes<'a>; 2]),
+        }
+        Wire {
+            operator: self.operator.name(),
+            fidelity: self.fidelity().name(),
+            index: self.index.key(),
+            domain: self.domain.as_deref(),
+            term: match &self.operand {
+                Operand::One(term) => Term::One(WireBytes(term)),
+                Operand::Range { lo, hi } => Term::Range([WireBytes(lo), WireBytes(hi)]),
+            },
+        }
+        .serialize(s)
+    }
+}
+
 impl QueryTerm {
     /// The operator the term answers.
     pub fn operator(&self) -> OpSpec {
@@ -329,45 +374,6 @@ impl QueryTerm {
     /// What the term binds.
     pub fn operand(&self) -> &Operand {
         &self.operand
-    }
-
-    /// The term in its wire form: an object with every key present, an
-    /// absent value null.
-    ///
-    /// | key | value |
-    /// |---|---|
-    /// | `operator` | string: the [operator's name](OpSpec::name), `"matches"` |
-    /// | `fidelity` | string: `"exact"` or `"probabilistic"` ([`Fidelity::name`]) |
-    /// | `index` | string: the [key](IndexSpec::key) of the index that answers, `"match"` |
-    /// | `domain` | string or null: the query value's PostgreSQL domain, for a field that names an EQL type |
-    /// | `term` | bytes: the term, or for `between` a list of two byte strings, the low bound's term then the high's |
-    pub fn to_value(&self) -> FfiValue {
-        let bytes = |b: &[u8]| FfiValue::Bytes(vitaminc_protected::Protected::new(b.to_vec()));
-        let term = match &self.operand {
-            Operand::One(term) => bytes(term),
-            Operand::Range { lo, hi } => FfiValue::Array(vec![bytes(lo), bytes(hi)]),
-        };
-        FfiValue::Object(vec![
-            (
-                "operator".to_owned(),
-                FfiValue::String(self.operator.name().into()),
-            ),
-            (
-                "fidelity".to_owned(),
-                FfiValue::String(self.fidelity().name().into()),
-            ),
-            (
-                "index".to_owned(),
-                FfiValue::String(self.index.key().into()),
-            ),
-            (
-                "domain".to_owned(),
-                self.domain
-                    .as_deref()
-                    .map_or(FfiValue::Null, |domain| FfiValue::String(domain.into())),
-            ),
-            ("term".to_owned(), term),
-        ])
     }
 }
 
@@ -470,7 +476,7 @@ fn answers(
 /// answers what the type's [`TargetDescriptor::operators`] lists; a field
 /// with no declared kind answers none. The context does not matter, so a
 /// plan whose context is a field of each record is taken. Write each entry
-/// with [`operator_to_value`].
+/// as an [`OperatorEntry`].
 ///
 /// ```
 /// use stack_encrypt::dynamic::{field_operators, record, NoTargets, OpSpec};
@@ -509,17 +515,24 @@ pub fn field_operators(
 /// | `fidelity` | string: `exact` or `probabilistic` ([`Fidelity::name`]) |
 /// | `arity` | string: `one`, or `pair` for an operator whose input is two values, low then high |
 /// | `index` | string: the [key](IndexSpec::key) of the index that answers it, `eq` |
-pub fn operator_to_value(operator: OpSpec, index: &IndexSpec) -> FfiValue {
-    let text = |s: &str| FfiValue::String(s.into());
-    FfiValue::Object(vec![
-        ("operator".to_owned(), text(operator.name())),
-        ("fidelity".to_owned(), text(operator.fidelity().name())),
-        (
-            "arity".to_owned(),
-            text(if operator.takes_pair() { "pair" } else { "one" }),
-        ),
-        ("index".to_owned(), text(index.key())),
-    ])
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct OperatorEntry {
+    operator: &'static str,
+    fidelity: &'static str,
+    arity: &'static str,
+    index: &'static str,
+}
+
+impl OperatorEntry {
+    /// The entry for `operator`, answered by `index`.
+    pub fn new(operator: OpSpec, index: &IndexSpec) -> Self {
+        Self {
+            operator: operator.name(),
+            fidelity: operator.fidelity().name(),
+            arity: if operator.takes_pair() { "pair" } else { "one" },
+            index: index.key(),
+        }
+    }
 }
 
 /// Refuse a plan whose context is a field of each record: a term derives
@@ -999,16 +1012,15 @@ impl<'de> serde::Deserialize<'de> for Confidence {
     }
 }
 
-/// A limit in its wire form: the rows to fetch as an unsigned 64-bit
-/// integer, or null for [`Limit::Unbounded`].
-pub fn limit_to_value(limit: Limit) -> FfiValue {
-    limit.rows().map_or(FfiValue::Null, FfiValue::UInt64)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dynamic::test_frame::frame_of;
+    use crate::dynamic::test_frame::{frame_of, value_of};
+    use crate::dynamic::FfiValue;
+
+    fn operator_value(operator: OpSpec, index: &IndexSpec) -> FfiValue {
+        value_of(&OperatorEntry::new(operator, index))
+    }
 
     /// Statistics as a binding sends them.
     fn stats_frame(value: &FfiValue) -> Result<Stats, Error> {
@@ -2087,10 +2099,10 @@ mod tests {
     #[test]
     fn a_limit_is_its_rows_or_null() {
         assert!(matches!(
-            limit_to_value(Limit::Rows(11)),
+            value_of(&Limit::Rows(11).rows()),
             FfiValue::UInt64(11)
         ));
-        assert!(matches!(limit_to_value(Limit::Unbounded), FfiValue::Null));
+        assert!(matches!(value_of(&Limit::Unbounded.rows()), FfiValue::Null));
     }
 
     #[tokio::test]
@@ -2105,7 +2117,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let FfiValue::Object(entries) = term.to_value() else {
+        let FfiValue::Object(entries) = value_of(&term) else {
             panic!("an object");
         };
         let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
@@ -2191,7 +2203,7 @@ mod tests {
     #[test]
     fn a_targets_operators_are_listed_in_its_wire_form() {
         let FfiValue::Object(entries) =
-            descriptor(Some(ValueKind::Int64), &["ore"], true, true).to_value()
+            value_of(&descriptor(Some(ValueKind::Int64), &["ore"], true, true))
         else {
             panic!("an object");
         };
@@ -2291,7 +2303,7 @@ mod tests {
 
     #[test]
     fn an_operator_is_written_with_every_key_in_order() {
-        let FfiValue::Object(entries) = operator_to_value(OpSpec::Between, &IndexSpec::Ope) else {
+        let FfiValue::Object(entries) = operator_value(OpSpec::Between, &IndexSpec::Ope) else {
             panic!("an object");
         };
         let entries: Vec<(&str, &[u8])> = entries
@@ -2311,7 +2323,7 @@ mod tests {
             ]
         );
         let FfiValue::Object(entries) =
-            operator_to_value(OpSpec::Matches, &IndexSpec::Match(MatchOptions::default()))
+            operator_value(OpSpec::Matches, &IndexSpec::Match(MatchOptions::default()))
         else {
             panic!("an object");
         };
@@ -2597,4 +2609,186 @@ mod tests {
             (Some("email"), Some(Reason::ExactOperator))
         );
     }
+}
+
+/// The engine's answers, pinned byte for byte: these are the frames the
+/// FfiValue encoders wrote before the answers were written by serde, and a
+/// binding reads them.
+#[cfg(test)]
+mod wire_bytes {
+    use super::*;
+    use crate::sem::{MatchOptions, Tokenizer};
+    use vitaminc_aead_frame::serde::to_vec;
+
+    fn hex<T: Serialize>(value: &T) -> String {
+        to_vec(value)
+            .expect("frames")
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    fn indexes() -> Vec<IndexSpec> {
+        vec![
+            IndexSpec::Equality,
+            IndexSpec::Match(MatchOptions::default()),
+            IndexSpec::Match(MatchOptions {
+                tokenizer: Tokenizer::Standard,
+                downcase: false,
+                k: 4,
+                m: 512,
+            }),
+            IndexSpec::Match(MatchOptions {
+                tokenizer: Tokenizer::Ngram { length: 4 },
+                ..MatchOptions::default()
+            }),
+            IndexSpec::Ore,
+            IndexSpec::Ope,
+        ]
+    }
+
+    fn descriptor(
+        kind: Option<ValueKind>,
+        indexes: &[&str],
+        query: bool,
+        producible: bool,
+    ) -> TargetDescriptor {
+        TargetDescriptor::new(
+            "Some",
+            "some",
+            "",
+            kind,
+            "public.some",
+            indexes.iter().map(|i| (*i).to_owned()).collect(),
+            query.then(|| "SomeQuery".to_owned()),
+            query.then(|| "eql_v3.query_some".to_owned()),
+            producible,
+            (!producible).then(|| "not yet".to_owned()),
+        )
+    }
+
+    /// Every index, and every operator entry under it; three query terms,
+    /// one a range and one with a domain; four limits; three pages of
+    /// verdicts; four catalog entries.
+    #[test]
+    fn every_answer_writes_its_pinned_bytes() {
+        let mut written = Vec::new();
+        for index in indexes() {
+            written.push(hex(&index));
+            for op in OpSpec::ALL {
+                written.push(hex(&OperatorEntry::new(op, &index)));
+            }
+        }
+        for term in [
+            QueryTerm {
+                operator: OpSpec::Eq,
+                index: IndexSpec::Equality,
+                domain: None,
+                operand: Operand::One(vec![1, 2, 3]),
+            },
+            QueryTerm {
+                operator: OpSpec::Between,
+                index: IndexSpec::Ope,
+                domain: Some("eql_v4.query_int".to_owned()),
+                operand: Operand::Range {
+                    lo: vec![4],
+                    hi: vec![5, 6],
+                },
+            },
+            QueryTerm {
+                operator: OpSpec::Matches,
+                index: IndexSpec::Match(MatchOptions::default()),
+                domain: None,
+                operand: Operand::One(Vec::new()),
+            },
+        ] {
+            written.push(hex(&term));
+        }
+        for limit in [
+            Limit::Rows(0),
+            Limit::Rows(11),
+            Limit::Rows(u64::MAX),
+            Limit::Unbounded,
+        ] {
+            written.push(hex(&limit.rows()));
+        }
+        for page in [vec![], vec![true], vec![true, false, true]] {
+            written.push(hex(&page));
+        }
+        for target in [
+            descriptor(Some(ValueKind::String), &["eq", "match"], true, true),
+            descriptor(Some(ValueKind::String), &["eq", "match"], true, true)
+                .with_match_options(MatchOptions::default()),
+            descriptor(Some(ValueKind::Int64), &["ore"], true, true),
+            descriptor(None, &[], false, false),
+        ] {
+            written.push(hex(&target));
+        }
+        assert_eq!(written, PINNED);
+    }
+
+    const PINNED: [&str; 62] = [
+        "0a020000006571",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "0a050000006d61746368",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f101000000050000006d61746368f10400000009000000746f6b656e697a65720a080000007374616e6461726408000000646f776e6361736502010000006b070400000000000000010000006d070002000000000000",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f101000000050000006d61746368f10400000009000000746f6b656e697a6572f101000000050000006e6772616d07040000000000000008000000646f776e6361736503010000006b070300000000000000010000006d070001000000000000",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "0a030000006f7265",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "0a030000006f7065",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a05000000657861637405000000696e6465780a02000000657106000000646f6d61696e00040000007465726d0b03000000010203",
+        "f105000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a05000000657861637405000000696e6465780a030000006f706506000000646f6d61696e0a1000000065716c5f76342e71756572795f696e74040000007465726df0020000000b01000000040b020000000506",
+        "f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c697374696305000000696e6465780a050000006d6174636806000000646f6d61696e00040000007465726d0b00000000",
+        "070000000000000000",
+        "070b00000000000000",
+        "07ffffffffffffffff",
+        "00",
+        "f000000000",
+        "f00100000003",
+        "f003000000030203",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a06000000737472696e670a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0020000000a0200000065710a050000006d617463680500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f001000000f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a06000000737472696e670a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0020000000a0200000065710a050000006d617463680500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f002000000f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a05000000696e7436340a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0010000000a030000006f72650500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f004000000f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e74657874000a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f000000000050000007175657279001000000071756572795f73716c5f646f6d61696e000a00000070726f64756369626c650206000000726561736f6e0a070000006e6f7420796574090000006f70657261746f7273f000000000",
+    ];
 }
