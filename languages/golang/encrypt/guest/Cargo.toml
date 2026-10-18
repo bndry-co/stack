@@ -51,7 +51,7 @@ stack-auth = { path = "../../../../packages/stack-auth", default-features = fals
 stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
 # The guest ABI every guest under bindings/go shares: the allocator and
 # buffer registry (and with them the `se_alloc`/`se_dealloc` exports), the
-# packed-result helpers, the status table and the `transport_send` import.
+# packed-result helpers, the status table and the step loop.
 # This crate defines only the exports that are its own.
 stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
 stack-kms = { path = "../../../../packages/stack-kms", default-features = false }

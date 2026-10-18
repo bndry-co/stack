@@ -17,8 +17,10 @@ import (
 
 // Client is one wasm instance holding one ZeroKMS client: its key, its
 // default keyset, and the keysets it has loaded since. It is safe for
-// concurrent use; calls are serialised internally, because a wasm instance
-// is single-threaded. Close it when done, as with any resource.
+// concurrent use; the guest runs one call's step at a time, because a wasm
+// instance is single-threaded, but never waits on the network inside one:
+// a ZeroKMS request is performed between steps, with the client free for
+// other callers (see step.go). Close it when done, as with any resource.
 //
 // A call whose context ends fails with the context's error, and only that
 // call: one request's cancellation or deadline never closes the client for
@@ -188,7 +190,7 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	c.releaseCredentials = resolved.Close
 	c.credentialsLockErr = resolved.MemoryLockError
 	owned = true
-	out, err := c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+	out, err := c.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.cipherInit, buf(encoded))
 	})
 	if err != nil {
@@ -381,7 +383,7 @@ func (c *Client) resolveKeyset(ctx context.Context, sel KeysetSelector) (KeysetI
 	if err != nil {
 		return KeysetID{}, err
 	}
-	out, err := c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+	out, err := c.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.keyset, buf(encoded))
 	})
 	if err != nil {
@@ -395,15 +397,142 @@ func (c *Client) resolveKeyset(ctx context.Context, sel KeysetSelector) (KeysetI
 	return id, nil
 }
 
-// call runs f on the instance under the client's lock. f must run its
-// guest call under the context it is given, never the caller's.
+// call runs an operation that never reaches ZeroKMS (a plan check, the
+// catalog, a verify): the step loop with no token to fetch.
+func (c *Client) call(ctx context.Context, f stepFunc) ([]byte, error) {
+	return c.drive(ctx, false, f)
+}
+
+// callKMS runs an operation that can reach ZeroKMS: the step loop, with a
+// token fetched before its first step.
+func (c *Client) callKMS(ctx context.Context, f stepFunc) ([]byte, error) {
+	return c.drive(ctx, true, f)
+}
+
+// drive runs an operation to its end, a step at a time (see step.go): its
+// first step is f, and each later one resumes it with the responses to the
+// requests the step before asked for. The client's lock is held for each
+// step and released while the requests run, so callers share the client
+// between steps rather than queue behind a round trip. When kms is set,
+// the token is fetched once, before the operation's first step and outside
+// the lock, and every step of the operation hands it over, so the guest's
+// token_get never waits and the token source is asked once per operation.
+//
+// The caller's context governs everything the host waits on: the token
+// fetch, the wait for the lock and the requests, which run under it. It
+// never reaches the guest, which runs each step under guest.Detach (see
+// step). An operation whose caller gives up between steps is aborted,
+// which drops it in the guest with everything it held, and the call fails
+// with the context's error; one abandoned while it waited on ZeroKMS
+// matches ErrTransport too.
+func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	token, tokenErr := "", error(nil)
+	if kms && c.transport != nil {
+		token, tokenErr = c.transport.fetchToken(ctx)
+		// A caller that gave up waiting on its token never starts the
+		// operation.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	step, resumed := f, false
+	var handle uint32
+	var responses []byte
+	for {
+		out, io, err := c.step(ctx, token, tokenErr, step)
+		if errors.Is(err, errLockWait) {
+			// The step never ran: a paused operation is still the
+			// guest's to drop, and its responses still the host's to
+			// wipe.
+			if resumed {
+				wipe(responses)
+				c.abort(handle)
+			}
+			return nil, ctx.Err()
+		}
+		if io == nil {
+			return settle(ctx, out, err)
+		}
+		// A caller that gave up while the guest ran sends no request.
+		if err := ctx.Err(); err != nil {
+			io.wipe()
+			c.abort(io.handle)
+			return nil, fmt.Errorf("%w: %w", err, ErrTransport)
+		}
+		responses, err = c.transport.performStep(ctx, io)
+		if err != nil {
+			c.abort(io.handle)
+			return nil, err
+		}
+		// The requests ran under the caller's context, so one it cancelled
+		// came back a transport failure: the guest is not resumed with it.
+		if err := ctx.Err(); err != nil {
+			wipe(responses)
+			c.abort(io.handle)
+			return nil, fmt.Errorf("%w: %w", err, ErrTransport)
+		}
+		h, pending := io.handle, responses
+		handle, resumed = h, true
+		step = func(ctx context.Context, inst *instance) ([]byte, error) {
+			defer wipe(pending)
+			return inst.call(ctx, inst.resume, scalar(uint64(h)), buf(pending))
+		}
+	}
+}
+
+// settle is how an operation ends for its caller. A call that failed after
+// its context ended failed because of it, or as good as: the caller asks
+// errors.Is(err, context.Canceled) or DeadlineExceeded, and the cause
+// stays matchable too. A call that succeeded after its context ended fails
+// as well: work the guest does without the network (a query term, a batch
+// under a cached key) runs on through a cancellation, and the caller was
+// promised the context's error. The output nobody will read is wiped.
+func settle(ctx context.Context, out []byte, err error) ([]byte, error) {
+	ctxErr := ctx.Err()
+	if err != nil {
+		if ctxErr != nil && !errors.Is(err, ctxErr) {
+			err = fmt.Errorf("%w: %w", ctxErr, err)
+		}
+		return nil, err
+	}
+	if ctxErr != nil {
+		wipe(out)
+		return nil, ctxErr
+	}
+	return out, nil
+}
+
+// abort drops a paused operation in the guest, for a caller that gave up
+// on it between steps. It waits for the lock however long that takes, and
+// runs under no deadline: the operation's plaintext and keys are wiped
+// only when it is dropped.
+func (c *Client) abort(handle uint32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.inst.module.IsClosed() {
+		return
+	}
+	ctx := context.Background()
+	_, _ = c.inst.call(ctx, c.inst.abort, scalar(uint64(handle)))
+}
+
+// errLockWait marks a step that never ran because its caller's context
+// ended while it waited for the client.
+var errLockWait = errors.New("encrypt: the caller's context ended waiting for the client")
+
+// step runs one step of an operation on the instance under the client's
+// lock: the operation's output when it finishes, or its next step when it
+// pauses, taken from the guest before the lock is released (a host reads a
+// step before it runs any other).
 //
 // The caller's context bounds the wait for the lock, and is refused if it
-// has already ended, so a request that timed out in the queue never
-// reaches the guest. The guest then runs under guest.Detach: the caller's
-// context reaches the host functions, where it cancels a ZeroKMS request
-// or a token fetch, and the guest returns through its ordinary error path
-// with the client intact. The error matches the context's error too.
+// has already ended, so a step whose caller timed out in the queue never
+// reaches the guest. The guest then runs under guest.Detach, never the
+// caller's context: the runtime closes a module whose call context ends,
+// and one caller giving up must not close the client for the others.
 //
 // The client is closed, so later calls are ErrState rather than a runtime
 // error, when the guest's state is unknown. A guest that trapped is one:
@@ -412,21 +541,28 @@ func (c *Client) resolveKeyset(ctx context.Context, sel KeysetSelector) (KeysetI
 // c.stuck after its caller's context ended is the other: Detach's context
 // ends, the runtime closes the module (WithCloseOnContextDone, see
 // newInstance), and its key material goes with its memory.
-func (c *Client) call(ctx context.Context, f func(context.Context, *instance) ([]byte, error)) ([]byte, error) {
+func (c *Client) step(ctx context.Context, token string, tokenErr error, f stepFunc) ([]byte, *ioStep, error) {
 	if err := c.mu.Acquire(ctx); err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("%w: %w", errLockWait, err)
 	}
 	defer c.mu.Unlock()
 	if c.closed || c.inst.module.IsClosed() {
 		c.closed = true
-		return nil, ErrState
+		return nil, nil, ErrState
 	}
 	growth := c.inst.mem.GrowthRefusal()
 	if c.transport != nil {
-		c.transport.tokenErr = nil
+		c.transport.held, c.transport.fetchErr, c.transport.tokenErr = token, tokenErr, nil
+		defer func() { c.transport.held, c.transport.fetchErr = "", nil }()
 	}
 	run, done := guest.Detach(ctx, c.stuck)
 	out, err := f(run, c.inst)
+	var io *ioStep
+	if errors.Is(err, guest.ErrNeedsIO) {
+		// A step that cannot be read cannot be resumed; the guest drops
+		// the operation at shutdown, and refuses new pauses past its cap.
+		io, err = c.inst.takeIO(run)
+	}
 	done()
 	switch {
 	case c.inst.module.IsClosed():
@@ -462,23 +598,8 @@ func (c *Client) call(ctx context.Context, f func(context.Context, *instance) ([
 			err = fmt.Errorf("%w (token source: %w)", err, c.transport.tokenErr)
 		}
 	}
-	// A call that failed after its context ended failed because of it, or
-	// as good as: the caller asks errors.Is(err, context.Canceled) or
-	// DeadlineExceeded, and the cause (ErrTransport for a cancelled
-	// request) stays matchable too.
 	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
-			err = fmt.Errorf("%w: %w", ctxErr, err)
-		}
-		return nil, err
+		return nil, nil, err
 	}
-	// A call that succeeded after its context ended fails too: work the
-	// guest does without the network (a query term, a batch under a
-	// cached key) runs on through a cancellation, and the caller was
-	// promised the context's error. The output nobody will read is wiped.
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		wipe(out)
-		return nil, ctxErr
-	}
-	return out, nil
+	return out, io, nil
 }

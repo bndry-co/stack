@@ -131,7 +131,7 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 	if err != nil {
 		return QueryTerm{}, err
 	}
-	out, err := cph.client.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+	out, err := cph.client.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.queryTerm, buf(encodedInput), buf(encodedPlan), buf([]byte(field)), buf([]byte(operator)), buf(opts))
 	})
 	if err != nil {

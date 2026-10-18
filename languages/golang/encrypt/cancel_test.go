@@ -57,7 +57,8 @@ func (s *switchable) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // cancelClient is a guest not yet given a key, whose ZeroKMS requests go to
 // rt and whose token comes from token. Its se_cipher_init is the call the
-// tests drive: it makes a load-keyset request, so it reaches the network.
+// tests drive: it pauses on a load-keyset request, so it reaches the
+// network between two steps.
 func cancelClient(t *testing.T, rt http.RoundTripper, token tokenSource) *Client {
 	t.Helper()
 	tr := &transport{rt: rt, token: token}
@@ -77,7 +78,7 @@ func cipherInit(ctx context.Context, c *Client) error {
 		return err
 	}
 	defer wipe(encoded)
-	_, err = c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+	_, err = c.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.cipherInit, buf(encoded))
 	})
 	return err
@@ -96,21 +97,28 @@ func wantOpen(t *testing.T, c *Client, rt *switchable) {
 	}
 }
 
-func TestACallCancelledDuringARequestFailsOnlyItself(t *testing.T) {
+// The request runs between two steps, under the caller's context, with the
+// guest paused: cancelling it ends the call and aborts the paused
+// operation, and the client stays open.
+func TestACallCancelledBetweenStepsFailsOnlyItself(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	rt := &switchable{rt: func(r *http.Request) (*http.Response, error) {
+		// The caller gives up once its request is in flight.
+		cancel()
 		<-r.Context().Done()
 		return nil, r.Context().Err()
 	}}
 	c := cancelClient(t, rt, staticToken("t"))
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
 	err := cipherInit(ctx, c)
-	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrTransport) {
-		t.Fatalf("cancelled call: %v, want the deadline and ErrTransport", err)
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrTransport) {
+		t.Fatalf("cancelled call: %v, want context.Canceled and ErrTransport", err)
 	}
 	wantOpen(t, c, rt)
 }
 
+// The token is fetched before the operation's first step: a caller that
+// gives up waiting on it never starts the operation.
 func TestACallCancelledDuringATokenFetchFailsOnlyItself(t *testing.T) {
 	rt := &switchable{rt: unauthorized}
 	var blocking atomic.Bool
@@ -126,8 +134,8 @@ func TestACallCancelledDuringATokenFetchFailsOnlyItself(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
 	err := cipherInit(ctx, c)
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrTransport) {
-		t.Fatalf("cancelled call: %v, want context.Canceled and ErrTransport", err)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrState) {
+		t.Fatalf("cancelled call: %v, want context.Canceled", err)
 	}
 	if n := rt.sent.Load(); n != 0 {
 		t.Fatalf("%d request(s) sent without a token", n)
@@ -175,29 +183,51 @@ func TestACallWhoseContextEndsInTheQueueNeverReachesTheGuest(t *testing.T) {
 	wantOpen(t, c, rt)
 }
 
-// The backstop: a call still running long after its caller gave up is a
+// The backstop: a step still running long after its caller gave up is a
 // guest or host function that ignores cancellation. Its state is unknown,
-// so the client closes, and says so.
-func TestACallThatRunsOnAfterItsContextEndsClosesTheClient(t *testing.T) {
-	rt := &switchable{rt: func(*http.Request) (*http.Response, error) {
-		// A RoundTripper that ignores the request's context.
-		time.Sleep(300 * time.Millisecond)
-		return unauthorized(nil)
-	}}
+// so the client closes, and says so. The step here waits out its caller's
+// context and the backstop and only then enters the guest, as a guest
+// stuck in a loop would still be running when the backstop fired.
+func TestAStepThatRunsOnAfterItsContextEndsClosesTheClient(t *testing.T) {
+	rt := &switchable{rt: unauthorized}
 	c := cancelClient(t, rt, staticToken("t"))
 	c.stuck = 20 * time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	err := cipherInit(ctx, c)
+	_, err := c.call(ctx, func(run context.Context, inst *instance) ([]byte, error) {
+		cancel()
+		<-run.Done()
+		return inst.call(run, inst.targets)
+	})
 	if err == nil || !strings.Contains(err.Error(), "the client is closed") {
 		t.Fatalf("stuck call: %v, want the client closed", err)
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("stuck call: %v, want it to match the deadline", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("stuck call: %v, want it to match context.Canceled", err)
 	}
 	if err := cipherInit(context.Background(), c); !errors.Is(err, ErrState) {
 		t.Fatalf("a call after the close: %v, want ErrState", err)
 	}
+}
+
+// A request that ignores its context holds up only its own call: the guest
+// is paused while it runs, so nothing is stuck, and the client stays open.
+func TestARequestThatIgnoresItsContextLeavesTheClientOpen(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &switchable{rt: func(*http.Request) (*http.Response, error) {
+		// The caller gives up once its request is in flight, and the
+		// request runs on past the backstop regardless.
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+		return unauthorized(nil)
+	}}
+	c := cancelClient(t, rt, staticToken("t"))
+	c.stuck = 20 * time.Millisecond
+	if err := cipherInit(ctx, c); !errors.Is(err, context.Canceled) || !errors.Is(err, ErrTransport) {
+		t.Fatalf("call: %v, want context.Canceled and ErrTransport", err)
+	}
+	wantOpen(t, c, rt)
 }
 
 // A call that finishes in time stops the backstop: the client stays open
@@ -234,6 +264,67 @@ func TestACallThatSucceedsAfterItsContextEndsFailsWithIt(t *testing.T) {
 		t.Error("the discarded output was not wiped")
 	}
 	wantOpen(t, c, rt)
+}
+
+// A step that pauses after its caller gave up sends no request: the
+// operation is aborted in the guest, so its handle is spent, and the call
+// fails with the context's error.
+func TestAStepThatPausesAfterItsContextEndsSendsNothing(t *testing.T) {
+	rt := &switchable{rt: unauthorized}
+	c := cancelClient(t, rt, staticToken("t"))
+	encoded, err := encodeConfig(testInit("http://zerokms.invalid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err = c.callKMS(ctx, func(run context.Context, inst *instance) ([]byte, error) {
+		cancel()
+		return inst.call(run, inst.cipherInit, buf(encoded))
+	})
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrTransport) {
+		t.Fatalf("call: %v, want context.Canceled and ErrTransport", err)
+	}
+	if n := rt.sent.Load(); n != 0 {
+		t.Fatalf("%d request(s) sent for a caller that had given up", n)
+	}
+	if _, err := c.inst.call(context.Background(), c.inst.abort, scalar(1)); !errors.Is(err, ErrState) {
+		t.Fatalf("the paused operation's handle: %v, want ErrState (already dropped)", err)
+	}
+	wantOpen(t, c, rt)
+}
+
+// A caller whose context ends while its resume waits for the client never
+// resumes: the paused operation is still aborted in the guest once the
+// client is free.
+func TestAResumeWhoseContextEndsInTheQueueAbortsTheOperation(t *testing.T) {
+	stub := newHeldStub(t)
+	c := stepClient(t, staticToken("stub-token"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.callKMS(ctx, initStep(t, stub.URL))
+		done <- err
+	}()
+	waitFor(t, stub.arrived, "the init's request")
+	// Another call holds the client when the response comes back.
+	if err := c.mu.Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	close(stub.release)
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+	c.mu.Unlock()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("call: %v, want context.Canceled", err)
+	}
+	if _, err := c.inst.call(context.Background(), c.inst.abort, scalar(1)); !errors.Is(err, ErrState) {
+		t.Fatalf("the paused operation's handle: %v, want ErrState (already dropped)", err)
+	}
+	if c.closed || c.inst.module.IsClosed() {
+		t.Fatal("giving up closed the client")
+	}
 }
 
 // A closed module is ErrState, and Close still releases the runtime.
@@ -382,8 +473,8 @@ func TestACallCancelledDuringATokenExchangeLeavesTheProfileOpen(t *testing.T) {
 	hold.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if err := cipherInit(ctx, c); !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrTransport) {
-		t.Fatalf("call cancelled during the exchange: %v, want the deadline and ErrTransport", err)
+	if err := cipherInit(ctx, c); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrState) {
+		t.Fatalf("call cancelled during the exchange: %v, want the deadline", err)
 	}
 	hold.Store(false)
 	wantOpen(t, c, rt)

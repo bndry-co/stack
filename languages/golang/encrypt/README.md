@@ -102,7 +102,11 @@ that stores separate byte columns (`index=`) against real ZeroKMS.
 
 A `Client` is one ZeroKMS client: its client key, its default keyset, and the
 keysets it has loaded since. Make one per process and share it; it is safe
-for concurrent use.
+for concurrent use. The guest runs one call at a time, but never holds the
+client across a ZeroKMS round trip: a call that needs ZeroKMS hands its
+request to the client, which performs it with the client free for other
+callers, and then carries on. A call whose context ends while its request
+is in flight returns the context's error and leaves the client open.
 
 ```go
 client, err := encrypt.NewClient(ctx)

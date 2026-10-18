@@ -10,6 +10,7 @@ pub(crate) enum V {
     Arr(Vec<V>),
     Str(String),
     Bytes(Vec<u8>),
+    I32(i32),
     U32(u32),
     U64(u64),
     Bool(bool),
@@ -51,6 +52,7 @@ pub(crate) fn frame(v: &V) -> Vec<u8> {
         }
         V::Str(text) => scalar(to_vec(text)),
         V::Bytes(bytes) => scalar(to_vec(&RawBytes(bytes))),
+        V::I32(n) => scalar(to_vec(n)),
         V::U32(n) => scalar(to_vec(n)),
         V::U64(n) => scalar(to_vec(n)),
         V::Bool(b) => scalar(to_vec(b)),

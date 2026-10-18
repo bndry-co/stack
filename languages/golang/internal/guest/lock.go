@@ -71,6 +71,17 @@ func (l *Lock) Acquire(ctx context.Context) error {
 // skippable.
 func (l *Lock) Lock() { l.slot() <- struct{}{} }
 
+// TryLock takes the lock if it is free, without waiting, and reports
+// whether it did.
+func (l *Lock) TryLock() bool {
+	select {
+	case l.slot() <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
 // Unlock releases the lock.
 func (l *Lock) Unlock() { <-l.slot() }
 
