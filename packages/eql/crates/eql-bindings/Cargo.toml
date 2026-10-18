@@ -43,7 +43,7 @@ schemars = "1"
 # from the PACKAGED crate against the registry stack-encrypt instead:
 # `cargo publish --dry-run --all-features` in test-eql.yml at PR time, and
 # `publish_all_features` in ../../release-plz.toml at release time.
-# `dynamic`: `FfiValue` / `ValueKind`, the runtime plaintext a plan field
+# `dynamic`: `ValueFrame` / `ValueKind`, the runtime plaintext a plan field
 # target takes and the kind names a plan's `"type"` key spells
 # (`encryption::targets`).
 stack-encrypt = { path = "../../../stack-encrypt", version = "0.3.0", optional = true, default-features = false, features = ["dynamic"] }

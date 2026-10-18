@@ -118,8 +118,8 @@ plaintext:
 | `Real`, `RealEq` | `f32` |
 | `Double`, `DoubleEq` | `f64` |
 
-Each seals the leaf the value enum (`FfiValue`) seals for the same value, so
-values written here and by the Go SDK open each other. On the equality
+Each seals the leaf the same value's frame (`stack_encrypt::dynamic::ValueFrame`)
+seals as, so values written here and by the Go SDK open each other. On the equality
 types, `=` behaves as Postgres's own does: an integer has one term whatever
 its width, and for floats `-0.0 = 0.0` and `NaN = NaN`. The ciphertext keeps
 the exact value.
@@ -225,12 +225,13 @@ unknown one with "no such EQL type".
 ```rust,ignore
 use eql_bindings::encryption::targets;
 use stack_encrypt::Label;
-use stack_encrypt::dynamic::FfiValue;
+use stack_encrypt::dynamic::ValueFrame;
 
 let column = Label::new(["users", "email"])?; // the field's context: table/column
-let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, FfiValue::String("alice@example.com".into()))?.await?;
-let probe: Vec<u8> = targets::query("TextEq", &keyset, &column, FfiValue::String("alice@example.com".into()))?.await?;
-let opened: FfiValue = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
+let email = ValueFrame::of("alice@example.com")?; // the plaintext as its transport frame
+let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, email.clone())?.await?;
+let probe: Vec<u8> = targets::query("TextEq", &keyset, &column, email)?.await?;
+let opened: ValueFrame = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
 ```
 
 The table and the dispatch are generated into `src/v4/targets.rs` beside

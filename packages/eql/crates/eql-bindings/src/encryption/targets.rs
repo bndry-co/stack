@@ -635,24 +635,23 @@ mod tests {
         assert!(producible("TextEq").is_ok());
     }
 
-    fn frame(value: stack_encrypt::dynamic::FfiValue) -> ValueFrame {
-        ValueFrame::of(&value).unwrap()
+    fn frame<T: Encrypt>(value: T) -> ValueFrame {
+        ValueFrame::of(value).unwrap()
     }
 
     #[test]
     fn a_string_plaintext_is_read_exactly_and_nothing_else_is_converted() {
-        use stack_encrypt::dynamic::FfiValue;
-        let text = String::from_frame("TextEq", &frame(FfiValue::String("café".into()))).unwrap();
+        let text = String::from_frame("TextEq", &frame("café")).unwrap();
         assert_eq!(text, "café");
         assert!(matches!(
-            String::from_frame("TextEq", &frame(FfiValue::UInt64(34))),
+            String::from_frame("TextEq", &frame(34u64)),
             Err(TargetError::Plaintext {
                 target: "TextEq",
                 expected: ValueKind::String,
                 found: Some(ValueKind::UInt64)
             })
         ));
-        let error = String::from_frame("TextEq", &frame(FfiValue::Null)).unwrap_err();
+        let error = String::from_frame("TextEq", &frame(None::<i32>)).unwrap_err();
         assert!(matches!(error, TargetError::Plaintext { found: None, .. }));
         assert_eq!(
             error.to_string(),
@@ -660,7 +659,7 @@ mod tests {
         );
         assert_eq!(
             String::from("x").into_frame().unwrap().risky_ref(),
-            frame(FfiValue::String("x".into())).risky_ref()
+            frame("x").risky_ref()
         );
     }
 
@@ -668,11 +667,10 @@ mod tests {
     /// frame of the value it holds.
     #[test]
     fn a_scalar_plaintext_is_read_at_its_own_width() {
-        use stack_encrypt::dynamic::FfiValue;
-        let read = i32::from_frame("IntegerEq", &frame(FfiValue::Int32(-7))).unwrap();
+        let read = i32::from_frame("IntegerEq", &frame(-7i32)).unwrap();
         assert_eq!(read, -7);
         assert!(matches!(
-            i32::from_frame("IntegerEq", &frame(FfiValue::Int64(-7))),
+            i32::from_frame("IntegerEq", &frame(-7i64)),
             Err(TargetError::Plaintext {
                 found: Some(ValueKind::Int64),
                 ..
@@ -680,7 +678,7 @@ mod tests {
         ));
         assert_eq!(
             9i64.into_frame().unwrap().risky_ref(),
-            frame(FfiValue::Int64(9)).risky_ref()
+            frame(9i64).risky_ref()
         );
     }
 }
