@@ -375,15 +375,15 @@ mod given_a_name_the_engine_cannot_produce {
                 name,
             );
         }
-        let error = refused(targets::encrypt("TextOrdOre", &keyset, &email(), text("x")));
+        let error = refused(targets::encrypt("DateOrdOre", &keyset, &email(), text("x")));
         assert_eq!(
             error.to_string(),
-            "the engine cannot produce TextOrdOre yet: EQL stores block ORE terms and the engine \
-             derives CLLW ORE (#1132)"
+            "the engine cannot produce DateOrdOre yet: the engine derives no order term for a date, \
+             timestamp or decimal yet: how they are ordered is not decided (#1236)"
         );
         // Refused by name before the label or the value is looked at.
         let error = refused(targets::encrypt(
-            "TextOrdOre",
+            "DateOrdOre",
             &keyset,
             &Label::new(["one"]).unwrap(),
             frame(None::<i32>),
@@ -453,7 +453,7 @@ mod the_table {
         match term {
             Term::Hm => "eq",
             Term::Bloom => "match",
-            Term::Ore => "ore",
+            Term::Ore => "ore_block",
             Term::Ope => "ope",
         }
     }
@@ -584,10 +584,10 @@ mod the_table {
 
     /// The types the engine produces in EQL v4 today: the storage and
     /// equality domains of every family whose plaintext eql-bindings names,
-    /// the OPE-ordered domains of those the engine derives an order term
-    /// for, and text match and search.
+    /// the ordered domains (OPE and block ORE) of those the engine derives
+    /// an order term for, and text match and search.
     #[test]
-    fn the_producible_types_are_the_ones_with_no_ore_and_a_rust_plaintext() {
+    fn the_producible_types_are_the_ones_with_a_rust_plaintext() {
         let producible: Vec<&str> = targets::targets()
             .iter()
             .filter(|t| t.producible)
@@ -598,14 +598,17 @@ mod the_table {
             [
                 "Integer",
                 "IntegerEq",
+                "IntegerOrdOre",
                 "IntegerOrd",
                 "IntegerOrdOpe",
                 "Smallint",
                 "SmallintEq",
+                "SmallintOrdOre",
                 "SmallintOrd",
                 "SmallintOrdOpe",
                 "Bigint",
                 "BigintEq",
+                "BigintOrdOre",
                 "BigintOrd",
                 "BigintOrdOpe",
                 "Date",
@@ -617,16 +620,20 @@ mod the_table {
                 "Text",
                 "TextEq",
                 "TextMatch",
+                "TextOrdOre",
                 "TextOrd",
                 "TextOrdOpe",
+                "TextSearchOre",
                 "TextSearch",
                 "Boolean",
                 "Real",
                 "RealEq",
+                "RealOrdOre",
                 "RealOrd",
                 "RealOrdOpe",
                 "Double",
                 "DoubleEq",
+                "DoubleOrdOre",
                 "DoubleOrd",
                 "DoubleOrdOpe"
             ],
@@ -639,7 +646,6 @@ mod the_table {
                 ("date" | "timestamp" | "numeric", "Ord" | "OrdOpe" | "OrdOre") => {
                     "no order term for a date, timestamp or decimal yet"
                 }
-                (_, "OrdOre" | "SearchOre") => "derives CLLW ORE (#1132)",
                 (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };
             assert!(reason.contains(expected), "{}: {reason}", row.name);

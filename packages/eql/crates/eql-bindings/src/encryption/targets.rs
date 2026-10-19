@@ -731,10 +731,11 @@ mod tests {
     fn refusals_name_the_type_and_its_reason() {
         assert!(matches!(refuse("Nope"), TargetError::Unknown { name } if name == "Nope"));
         assert!(matches!(
-            refuse("TextOrdOre"),
-            TargetError::Unproducible { name: "TextOrdOre", reason } if reason.contains("block ORE")
+            refuse("DateOrdOre"),
+            TargetError::Unproducible { name: "DateOrdOre", reason } if reason.contains("no order term for a date, timestamp or decimal")
         ));
         assert!(producible("TextEq").is_ok());
+        assert!(producible("TextOrdOre").is_ok());
     }
 
     fn frame<T: Encrypt>(value: T) -> ValueFrame {

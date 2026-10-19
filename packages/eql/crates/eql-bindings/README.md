@@ -112,13 +112,13 @@ plaintext, or, for a date, a timestamp or a decimal, one of
 
 | v4 type | Plaintext |
 | --- | --- |
-| `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe` | `String` |
-| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe` | `i16` |
-| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe` | `i32` |
-| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe` | `i64` |
+| `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe`, `TextOrdOre`, `TextSearch`, `TextSearchOre` | `String` |
+| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe`, `SmallintOrdOre` | `i16` |
+| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe`, `IntegerOrdOre` | `i32` |
+| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe`, `BigintOrdOre` | `i64` |
 | `Boolean` | `bool` |
-| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe` | `f32` |
-| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe` | `f64` |
+| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe`, `RealOrdOre` | `f32` |
+| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe`, `DoubleOrdOre` | `f64` |
 | `Date`, `DateEq` | `v4::plaintext::Date`: an `i32` of days since 1970-01-01 |
 | `Timestamp`, `TimestampEq` | `v4::plaintext::Timestamp`: `i64` Unix seconds and `u32` nanoseconds, UTC, no leap seconds |
 | `Numeric`, `NumericEq` | `v4::plaintext::Decimal`: an `i128` mantissa (below 2^96) and a `u8` scale (at most 28) |
@@ -175,9 +175,18 @@ through `TextSearchEqualityQuery` (`=`, `<>`), `TextSearchOrderQuery` (`<`,
 answers the operator. So `=` and `<` work on short text, a match query on it
 is refused, and EQL v4 raises on an operator whose term the query lacks (or
 holds as `null`, or as an empty filter).
-The ORE types (`*OrdOre`, `TextSearchOre`) wait for block ORE, `Date`,
-`Timestamp` and `Numeric` for a choice of their Rust plaintext types, and
-`Json` for a decision on sealing a document as one leaf.
+The ORE types (`*OrdOre`, `TextSearchOre`) store a block ORE term (`ob`):
+one element, the hex of a whole ore-rs 6-bit block ORE ciphertext (the
+fixed-width scheme for numbers, the chained scheme for text, padded to a
+power-of-two bucket of at least 16 bytes). They order by the same key as the
+`Ord` types, but EQL v4 compares them with its own comparator,
+`eql_v4_internal.compare_ore_block_v2_term`, and `ORDER BY` reads
+`eql_v4.ord_term_ore(col)`. Every term carries a random nonce, so a query's
+`ob` never equals the stored bytes; the comparator orders them. Text whose
+fold is longer than 1023 bytes or ends in NUL has no block ORE term and is
+refused. `TextSearchOre` follows `TextSearch`, with `ob` in place of `op`.
+`Date`, `Timestamp` and `Numeric` wait for a choice of their Rust plaintext
+types, and `Json` for a decision on sealing a document as one leaf.
 
 Each ordered v4 family also has two range query types, one per order term:
 `IntegerRangeOreQuery` and `IntegerRangeOpeQuery`, and so on

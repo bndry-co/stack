@@ -574,22 +574,29 @@ fn render_query_projections(
 
 /// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
 /// `stack-encrypt` derives: the storage and equality domains of every family
-/// whose plaintext eql-bindings names (`plaintext_of`), the OPE-ordered
-/// domains (`ord`, `ord_ope`) of those whose order terms the engine derives,
-/// and text match and search. Every other stored domain has a reason in
-/// [`encryption_gap`], and a test holds the two together so a new domain
+/// whose plaintext eql-bindings names (`plaintext_of`), the ordered domains
+/// (`ord` and `ord_ope` with an OPE term, `ord_ore` with a block ORE term) of
+/// those whose order terms the engine derives, and text match and search
+/// (`search` and `search_ore`). Every other stored domain has a reason
+/// in [`encryption_gap`], and a test holds the two together so a new domain
 /// cannot arrive without either a derive or a reason.
+///
+/// Listed in catalog order, which is the order the generated target table
+/// lists them in.
 pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("integer", ""),
     ("integer", "eq"),
+    ("integer", "ord_ore"),
     ("integer", "ord"),
     ("integer", "ord_ope"),
     ("smallint", ""),
     ("smallint", "eq"),
+    ("smallint", "ord_ore"),
     ("smallint", "ord"),
     ("smallint", "ord_ope"),
     ("bigint", ""),
     ("bigint", "eq"),
+    ("bigint", "ord_ore"),
     ("bigint", "ord"),
     ("bigint", "ord_ope"),
     ("date", ""),
@@ -601,16 +608,20 @@ pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("text", ""),
     ("text", "eq"),
     ("text", "match"),
+    ("text", "ord_ore"),
     ("text", "ord"),
     ("text", "ord_ope"),
+    ("text", "search_ore"),
     ("text", "search"),
     ("boolean", ""),
     ("real", ""),
     ("real", "eq"),
+    ("real", "ord_ore"),
     ("real", "ord"),
     ("real", "ord_ope"),
     ("double", ""),
     ("double", "eq"),
+    ("double", "ord_ore"),
     ("double", "ord"),
     ("double", "ord_ope"),
 ];
@@ -673,17 +684,12 @@ pub fn encryption_gap(
     } else if ORDER_PENDING_FAMILIES.contains(&family.name)
         && (domain.terms.contains(&Term::Ope) || domain.terms.contains(&Term::Ore))
     {
-        // Before the ORE branch: the engine derives no order term of either
-        // scheme for these kinds, so block ORE is not the first thing a
-        // `*OrdOre` type of these families waits for.
+        // The engine derives no order term of either scheme for these kinds.
         "the engine derives no order term for a date, timestamp or decimal yet: how they are \
          ordered is not decided (#1236)"
-    } else if domain.terms.contains(&Term::Ore) {
-        "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"
     } else {
         // Reached by any unlisted domain of a family whose plaintext is
-        // specified and whose terms are not ORE (an equality or OPE-ordered
-        // domain of a family that gains a plaintext, say): nothing in the
+        // specified (a domain added to such a family, say): nothing in the
         // catalog today.
         "this domain derives the way its family's other domains do; it is not listed in \
          ENCRYPTION_DOMAINS yet"
@@ -713,7 +719,7 @@ fn encryption_attrs(
             let terms = match (
                 domain.terms.contains(&Term::Bloom),
                 domain.terms.contains(&Term::Hm),
-                domain.terms.contains(&Term::Ope),
+                domain.terms.contains(&Term::Ope) || domain.terms.contains(&Term::Ore),
             ) {
                 (true, _, _) => "match",
                 (false, true, true) => "equality and order",
@@ -2084,10 +2090,8 @@ mod tests {
                         "no Rust plaintext type for this family"
                     } else if ORDER_PENDING_FAMILIES.contains(&family.name) {
                         "no order term for a date, timestamp or decimal"
-                    } else if domain.terms.contains(&Term::Ore) {
-                        "block ORE terms"
                     } else {
-                        panic!("{full}: every specified domain without ORE is derived: {reason}")
+                        panic!("{full}: every domain of a specified family is derived: {reason}")
                     };
                     assert!(reason.contains(expected), "{full}: {reason}");
                 }

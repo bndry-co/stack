@@ -31,9 +31,8 @@
 //!
 //! The reasons a type is not producible: eql-bindings names no Rust
 //! plaintext type for the family; the engine derives no order term for a
-//! date, timestamp or decimal; EQL's ORE term is block ORE where the
-//! engine derives CLLW ORE; and the JSON index is a new engine operation.
-//! Each reason string names the issue that tracks it.
+//! date, timestamp or decimal; and the JSON index is a new engine
+//! operation. Each reason string names the issue that tracks it.
 //!
 //! The query dispatch takes the index that answers the query's operator. A
 //! twin whose terms are optional in EQL v4 (`TextSearchQuery`) is built
@@ -54,15 +53,19 @@ use crate::render::EqlVersion;
 const TARGET_VERSION: EqlVersion = EqlVersion::V4;
 
 /// The `IndexSpec::key()` a catalog term rides under in a plan — the
-/// `"eq"` / `"match"` / `"ore"` / `"ope"` strings of stack-encrypt's data
-/// grammar — so a Go generator can match a target's indexes against the
+/// `"eq"` / `"match"` / `"ore_block"` / `"ope"` strings of stack-encrypt's
+/// data grammar — so a Go generator can match a target's indexes against the
 /// indexes a plan field may ask for by the same names. Exhaustive on
 /// purpose: a new catalog term must say which engine index it is.
+///
+/// EQL's `ob` term is block ORE, the engine's `ore_block` index (ore-rs's
+/// 6-bit schemes), not its `ore` index, which is CLLW ORE and has no EQL
+/// domain.
 pub fn index_key(term: Term) -> &'static str {
     match term {
         Term::Hm => "eq",
         Term::Bloom => "match",
-        Term::Ore => "ore",
+        Term::Ore => "ore_block",
         Term::Ope => "ope",
     }
 }
@@ -104,11 +107,14 @@ impl Answer {
 /// Why the typed query chain has no answer yet for a type carrying these
 /// indexes, by [`index_key`] name, or `None` when it answers: a query twin
 /// is assembled from the one term its type's index derived, so a twin that
-/// needs an order term (`"ore"` or `"ope"`), or more than one term, is not
+/// needs an order term (`"ore"`, `"ore_block"` or `"ope"`), or more than one term, is not
 /// built by it. The reason is the generator's, for its tests and docs; the
 /// generated file simply leaves the type out.
 pub(crate) fn typed_gap(indexes: &[&str]) -> Option<&'static str> {
-    if indexes.iter().any(|key| matches!(*key, "ore" | "ope")) {
+    if indexes
+        .iter()
+        .any(|key| matches!(*key, "ore" | "ore_block" | "ope"))
+    {
         Some("its twin carries an order term, which the typed query chain does not derive yet")
     } else if indexes.len() > 1 {
         Some("its twin carries more than one term, which the typed query chain does not assemble yet")
@@ -711,14 +717,17 @@ mod tests {
             target_gap(family, family.domain_by_name(name).expect("domain"))
         };
         let text = eql_domains::TEXT;
-        for producible in ["", "eq", "match", "ord", "ord_ope", "search"] {
+        for producible in [
+            "",
+            "eq",
+            "match",
+            "ord",
+            "ord_ope",
+            "ord_ore",
+            "search",
+            "search_ore",
+        ] {
             assert!(gap(&text, producible).is_none(), "text {producible:?}");
-        }
-        for block_ore in ["ord_ore", "search_ore"] {
-            assert!(
-                gap(&text, block_ore).unwrap().contains("block ORE"),
-                "{block_ore}"
-            );
         }
         assert!(gap(&text, "match").is_none(), "TextMatch is producible");
         let family = |name: &str| {
@@ -730,20 +739,16 @@ mod tests {
         for family_name in ["integer", "smallint", "bigint", "real", "double"] {
             let family = family(family_name);
             assert!(gap(family, "").is_none(), "{family_name}");
-            for producible in ["eq", "ord", "ord_ope"] {
+            for producible in ["eq", "ord", "ord_ope", "ord_ore"] {
                 assert!(
                     gap(family, producible).is_none(),
                     "{family_name} {producible}"
                 );
             }
-            assert!(
-                gap(family, "ord_ore").unwrap().contains("block ORE"),
-                "{family_name}"
-            );
         }
         // A date, a timestamp and a decimal are stored and compared for
-        // equality; every ordered domain of theirs waits for an order term,
-        // block ORE included, which waits for that first.
+        // equality; every ordered domain of theirs, block ORE included,
+        // waits for an order term.
         for family_name in ["date", "timestamp", "numeric"] {
             let family = family(family_name);
             assert!(gap(family, "").is_none(), "{family_name}");
@@ -766,7 +771,7 @@ mod tests {
         // a plan field spells an index by exactly these.
         assert_eq!(index_key(Term::Hm), "eq");
         assert_eq!(index_key(Term::Bloom), "match");
-        assert_eq!(index_key(Term::Ore), "ore");
+        assert_eq!(index_key(Term::Ore), "ore_block");
         assert_eq!(index_key(Term::Ope), "ope");
     }
 

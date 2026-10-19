@@ -163,10 +163,18 @@ impl DomainType for TextMatch {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextOrdOre {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
     pub hm: Hmac256,
@@ -308,10 +316,18 @@ impl DomainType for TextOrdOpe {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextSearchOre {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
     pub hm: Hmac256,
@@ -502,10 +518,18 @@ impl DomainType for TextMatchQuery {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input: [`String`](String). Implements `EncryptFrom<String>` to build equality and order query terms. Query operands do not decrypt.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom)]
+#[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextOrdOreQuery {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub hm: Hmac256,
     pub ob: OreBlock256,
@@ -644,6 +668,8 @@ impl DomainType for TextOrdOpeQuery {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input: [`String`](String), through one projection per index — [`TextSearchOreEqualityQuery`], [`TextSearchOreOrderQuery`], [`TextSearchOreMatchQuery`] — each `EncryptFrom<String>` and `Into<Self>`: a query carries the term of the index that answers its operator. Query operands do not decrypt.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextSearchOreQuery {
@@ -680,6 +706,81 @@ impl DomainType for TextSearchOreQuery {
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
+    }
+}
+/// The `eql_v4.query_text_search_ore` query operand for `=` `<>`: the `hm` term alone.
+///
+/// Implements `EncryptFrom<String>`, deriving only this term, and converts into [`TextSearchOreQuery`], which is what is bound in SQL.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+#[derive(stack_encrypt::EncryptFrom)]
+#[stash(plaintext = String)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextSearchOreEqualityQuery {
+    #[stash(default)]
+    pub v: SchemaVersion,
+    #[stash(context_field)]
+    pub i: Identifier,
+    pub hm: Hmac256,
+}
+impl From<TextSearchOreEqualityQuery> for TextSearchOreQuery {
+    fn from(query: TextSearchOreEqualityQuery) -> Self {
+        TextSearchOreQuery {
+            v: query.v,
+            i: query.i,
+            hm: Some(query.hm),
+            ob: None,
+            bf: None,
+        }
+    }
+}
+/// The `eql_v4.query_text_search_ore` query operand for `<` `<=` `>` `>=`: the `ob` term alone.
+///
+/// Implements `EncryptFrom<String>`, deriving only this term, and converts into [`TextSearchOreQuery`], which is what is bound in SQL.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+#[derive(stack_encrypt::EncryptFrom)]
+#[stash(plaintext = String)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextSearchOreOrderQuery {
+    #[stash(default)]
+    pub v: SchemaVersion,
+    #[stash(context_field)]
+    pub i: Identifier,
+    pub ob: OreBlock256,
+}
+impl From<TextSearchOreOrderQuery> for TextSearchOreQuery {
+    fn from(query: TextSearchOreOrderQuery) -> Self {
+        TextSearchOreQuery {
+            v: query.v,
+            i: query.i,
+            ob: Some(query.ob),
+            hm: None,
+            bf: None,
+        }
+    }
+}
+/// The `eql_v4.query_text_search_ore` query operand for `@@`: the `bf` term alone.
+///
+/// Implements `EncryptFrom<String>`, deriving only this term, and converts into [`TextSearchOreQuery`], which is what is bound in SQL.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+#[derive(stack_encrypt::EncryptFrom)]
+#[stash(plaintext = String)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextSearchOreMatchQuery {
+    #[stash(default)]
+    pub v: SchemaVersion,
+    #[stash(context_field)]
+    pub i: Identifier,
+    pub bf: BloomFilter,
+}
+impl From<TextSearchOreMatchQuery> for TextSearchOreQuery {
+    fn from(query: TextSearchOreMatchQuery) -> Self {
+        TextSearchOreQuery {
+            v: query.v,
+            i: query.i,
+            bf: Some(query.bf),
+            hm: None,
+            ob: None,
+        }
     }
 }
 /// `eql_v4.query_text_search` — search domain query operand.

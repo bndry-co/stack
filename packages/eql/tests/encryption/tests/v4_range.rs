@@ -6,70 +6,75 @@
 //! value the single-bound query domain for the same term holds under its term
 //! key (`ob` for block ORE, `op` for CLLW OPE).
 //!
-//! EQL v4's ordered types are not producible yet: EQL compares block-ORE and
-//! CLLW-OPE terms, and Stack Encrypt does not derive those for EQL (#1132,
-//! #1236). So the order terms here come from cipherstash-client's ORE and OPE
-//! indexers, the code that writes the terms EQL's comparators are built for,
-//! run offline over `FakeDataKeySource`'s index key as
-//! `ste_vec_selectors.rs` does. The rest of each stored value (`v`, `i`, `c`,
-//! and `hm` for text) is a real Stack Encrypt `Integer` or `TextEq`. Nothing
-//! here derives an order term itself.
+//! The order terms, stored and in each bound, are the engine's: Stack Encrypt
+//! derives the block ORE (`ob`) and CLLW OPE (`op`) terms of EQL v4's ordered
+//! types, so a row is a real `IntegerOrdOre`, `TextOrdOpe`, …, and a bound is
+//! the term the single-bound query of that type carries. Nothing here derives
+//! an order term itself. The ordered date, timestamp and numeric types are
+//! not producible (the engine derives no order term for those kinds), so the
+//! smoke test ranges over the families whose ordered types are.
 //!
 //! The PostgreSQL tests need an EQL v4 installation (`mise run
 //! test:encryption:postgres`); the others need no database.
 
 mod common;
 
-use cipherstash_client::encryption::{IndexTerm, OpeIndexer, OreIndexer, Plaintext};
-use cipherstash_client::zerokms;
+use eql_bindings::encryption::targets;
 use eql_bindings::v4::{self, integer, text, DomainType};
-use eql_bindings::Identifier;
 use serde_json::{json, Value};
-use stack_encrypt::NonEmpty;
-use stack_kms::{FakeDataKeySource, IndexKeySource};
-
-fn column() -> NonEmpty<Identifier> {
-    Identifier::for_column("users", "age").unwrap()
-}
+use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::target::IndexSpec;
+use stack_encrypt::{Encrypt, KeysetCipher, Label};
 
 fn identifier() -> Value {
     json!({"t": "users", "c": "age"})
 }
 
-/// `FakeDataKeySource`'s index key for the default keyset, as the key type
-/// cipherstash-client's indexers take.
-async fn index_key() -> zerokms::IndexKey {
-    let (_, key) = FakeDataKeySource::new().load_index_key(None).await.unwrap();
-    zerokms::IndexKey::from(*key.key())
+fn label() -> Label {
+    Label::new(["users", "age"]).unwrap()
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+fn frame<T: Encrypt>(value: T) -> ValueFrame {
+    ValueFrame::of(value).unwrap()
 }
 
-/// The `ob` value cipherstash-client writes for `plaintext`: one hex block
-/// for a number, one per block for text. `query` asks for the query form.
-fn ob(key: &zerokms::IndexKey, plaintext: Plaintext, query: bool) -> Value {
-    let term = if query {
-        OreIndexer.encrypt_for_query(&plaintext, key)
-    } else {
-        OreIndexer.encrypt(&plaintext, key)
+/// The value the engine seals for `value` as the EQL type `name`, as the
+/// JSON text a driver binds: its order term (`ob` or `op`) is what `between`
+/// compares a bound against.
+async fn stored(
+    keyset: &KeysetCipher<'_, common::Observed>,
+    name: &str,
+    value: ValueFrame,
+) -> String {
+    let bytes = targets::encrypt(name, keyset, &label(), value)
+        .unwrap()
+        .await
+        .unwrap();
+    String::from_utf8(bytes).unwrap()
+}
+
+/// The order term the engine derives for `value` queried as the EQL type
+/// `name` through `index` (`"ore_block"` for a block ORE bound, `"ope"` for a
+/// CLLW OPE one): what a range holds under `lo` and `hi`, the same value the
+/// single-bound query domain holds under `ob` or `op`.
+async fn bound(
+    keyset: &KeysetCipher<'_, common::Observed>,
+    name: &str,
+    index: &str,
+    value: ValueFrame,
+) -> Value {
+    let spec = IndexSpec::parse(index).unwrap();
+    let bytes = targets::query(name, &spec, keyset, &label(), value)
+        .unwrap()
+        .await
+        .unwrap();
+    let mut query: Value = serde_json::from_slice(&bytes).unwrap();
+    let term = match index {
+        "ore_block" => "ob",
+        "ope" => "op",
+        other => panic!("no range over the {other} index"),
     };
-    match term.unwrap() {
-        IndexTerm::OreFull(bytes) => json!([hex(&bytes)]),
-        IndexTerm::OreArray(blocks) => {
-            Value::Array(blocks.iter().map(|b| Value::String(hex(b))).collect())
-        }
-        other => panic!("not an ORE term: {other:?}"),
-    }
-}
-
-/// The `op` value cipherstash-client writes for `plaintext`.
-fn op(key: &zerokms::IndexKey, plaintext: Plaintext) -> Value {
-    match OpeIndexer.encrypt(&plaintext, key).unwrap() {
-        IndexTerm::OpeFixed(bytes) | IndexTerm::OpeVariable(bytes) => Value::String(hex(&bytes)),
-        other => panic!("not an OPE term: {other:?}"),
-    }
+    query[term].take()
 }
 
 /// A range over the bounds `lo` and `hi`, read through the binding `T` (so
@@ -85,15 +90,18 @@ fn range<T: DomainType + serde::Serialize + serde::de::DeserializeOwned>(
 
 #[tokio::test]
 async fn range_bindings_hold_two_bounds_of_their_term_and_refuse_anything_else() {
-    let key = index_key().await;
-    let (lo, hi) = (Plaintext::Int(Some(10)), Plaintext::Int(Some(30)));
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let lo_ob = bound(&keyset, "IntegerOrdOre", "ore_block", frame(10i32)).await;
+    let hi_ob = bound(&keyset, "IntegerOrdOre", "ore_block", frame(30i32)).await;
+    let lo_op = bound(&keyset, "IntegerOrd", "ope", frame(10i32)).await;
+    let hi_op = bound(&keyset, "IntegerOrd", "ope", frame(30i32)).await;
 
     // Each bound is what the single-bound query operand holds as `ob`: the
     // same value reads as either. (A block-ORE term carries a nonce, so two
     // derivations of one value differ; one derivation is used for both.)
-    let lo_ob = ob(&key, lo.clone(), true);
     let ore: integer::IntegerRangeOreQuery = serde_json::from_value(json!({
-        "v": 4, "i": identifier(), "lo": lo_ob, "hi": ob(&key, hi.clone(), true),
+        "v": 4, "i": identifier(), "lo": lo_ob, "hi": hi_ob,
     }))
     .unwrap();
     let single: integer::IntegerOrdOreQuery =
@@ -120,16 +128,16 @@ async fn range_bindings_hold_two_bounds_of_their_term_and_refuse_anything_else()
 
     let ope: integer::IntegerRangeOpeQuery = serde_json::from_value(json!({
         "v": 4, "i": identifier(),
-        "lo": op(&key, lo.clone()), "hi": op(&key, hi.clone()),
+        "lo": lo_op.clone(), "hi": hi_op.clone(),
     }))
     .unwrap();
     let single: integer::IntegerOrdOpeQuery = serde_json::from_value(json!({
-        "v": 4, "i": identifier(), "op": op(&key, lo.clone()),
+        "v": 4, "i": identifier(), "op": lo_op.clone(),
     }))
     .unwrap();
     assert_eq!(ope.lo, single.op);
 
-    let good = json!({"v": 4, "i": identifier(), "lo": op(&key, lo.clone()), "hi": op(&key, hi)});
+    let good = json!({"v": 4, "i": identifier(), "lo": lo_op, "hi": hi_op});
     let refused = |change: &dyn Fn(&mut Value)| {
         let mut value = good.clone();
         change(&mut value);
@@ -252,13 +260,9 @@ fn sqlstate(error: &postgres::Error) -> String {
 const INTEGERS: [i32; 12] = [-1000, -5, -1, 0, 1, 7, 10, 20, 29, 30, 31, 1000];
 
 /// Integer rows in all three ordered column domains, each value's real
-/// Stack Encrypt `Integer` (`v`, `i`, `c`) with cipherstash-client's order
-/// term added: `ob` for `_ord_ore`, `op` for `_ord` and `_ord_ope`.
-fn integer_table(
-    runtime: &tokio::runtime::Runtime,
-    db: &mut postgres::Client,
-    key: &zerokms::IndexKey,
-) {
+/// The engine's `IntegerOrdOre`, `IntegerOrd` and `IntegerOrdOpe` values of
+/// each of `INTEGERS`: `ob` for `_ord_ore`, `op` for `_ord` and `_ord_ope`.
+fn integer_table(runtime: &tokio::runtime::Runtime, db: &mut postgres::Client) {
     let (cipher, _) = runtime.block_on(common::cipher());
     let keyset = cipher.default_keyset();
     db.batch_execute(
@@ -271,15 +275,7 @@ fn integer_table(
     )
     .unwrap();
     for n in INTEGERS {
-        let stored: integer::Integer = runtime
-            .block_on(async { keyset.encrypt_as(&n, column()).await })
-            .unwrap();
-        let base = serde_json::to_value(&stored).unwrap();
-        let with = |k: &str, term: Value| {
-            let mut v = base.clone();
-            v[k] = term;
-            v.to_string()
-        };
+        let row = |name: &str| runtime.block_on(stored(&keyset, name, frame(n)));
         db.execute(
             "INSERT INTO v4_int_range VALUES ($1,
                 $2::text::jsonb::public.eql_v4_integer_ord_ore,
@@ -287,9 +283,9 @@ fn integer_table(
                 $4::text::jsonb::public.eql_v4_integer_ord_ope)",
             &[
                 &n,
-                &with("ob", ob(key, Plaintext::Int(Some(n)), false)),
-                &with("op", op(key, Plaintext::Int(Some(n)))),
-                &with("op", op(key, Plaintext::Int(Some(n)))),
+                &row("IntegerOrdOre"),
+                &row("IntegerOrd"),
+                &row("IntegerOrdOpe"),
             ],
         )
         .unwrap();
@@ -302,21 +298,22 @@ fn integer_table(
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_between_finds_integers_in_an_inclusive_range() {
     let runtime = runtime();
-    let key = runtime.block_on(index_key());
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
     {
         let mut db = connect();
-        integer_table(&runtime, &mut db, &key);
+        integer_table(&runtime, &mut db);
 
         let ore = |lo: i32, hi: i32| {
             range::<integer::IntegerRangeOreQuery>(
-                ob(&key, Plaintext::Int(Some(lo)), true),
-                ob(&key, Plaintext::Int(Some(hi)), true),
+                runtime.block_on(bound(&keyset, "IntegerOrdOre", "ore_block", frame(lo))),
+                runtime.block_on(bound(&keyset, "IntegerOrdOre", "ore_block", frame(hi))),
             )
         };
         let ope = |lo: i32, hi: i32| {
             range::<integer::IntegerRangeOpeQuery>(
-                op(&key, Plaintext::Int(Some(lo))),
-                op(&key, Plaintext::Int(Some(hi))),
+                runtime.block_on(bound(&keyset, "IntegerOrd", "ope", frame(lo))),
+                runtime.block_on(bound(&keyset, "IntegerOrd", "ope", frame(hi))),
             )
         };
         let mut found = |column: &str, domain: &str, range: &str| -> Vec<i32> {
@@ -405,7 +402,6 @@ fn postgres_between_finds_integers_in_an_inclusive_range() {
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_between_finds_text_in_an_inclusive_range() {
     let runtime = runtime();
-    let key = runtime.block_on(index_key());
     let (cipher, _) = runtime.block_on(common::cipher());
     let keyset = cipher.default_keyset();
     let words = [
@@ -419,15 +415,9 @@ fn postgres_between_finds_text_in_an_inclusive_range() {
     ];
     let mut rows = Vec::new();
     for (id, word) in words.iter().enumerate() {
-        let stored: text::TextEq = runtime
-            .block_on(async { keyset.encrypt_as(&word.to_string(), column()).await })
-            .unwrap();
-        let base = serde_json::to_value(&stored).unwrap();
-        let mut ore = base.clone();
-        ore["ob"] = ob(&key, Plaintext::Text(Some(word.to_string())), false);
-        let mut ope = base;
-        ope["op"] = op(&key, Plaintext::Text(Some(word.to_string())));
-        rows.push((id as i32, ore.to_string(), ope.to_string()));
+        let ore = runtime.block_on(stored(&keyset, "TextOrdOre", frame(word.to_string())));
+        let ope = runtime.block_on(stored(&keyset, "TextOrdOpe", frame(word.to_string())));
+        rows.push((id as i32, ore, ope));
     }
     {
         let mut db = connect();
@@ -448,7 +438,6 @@ fn postgres_between_finds_text_in_an_inclusive_range() {
             )
             .unwrap();
         }
-        let text = |s: &str| Plaintext::Text(Some(s.to_owned()));
         let mut found = |column: &str, domain: &str, range: &str| -> Vec<String> {
             db.query(
                 &format!(
@@ -472,15 +461,28 @@ fn postgres_between_finds_text_in_an_inclusive_range() {
         ];
         for (lo, hi, want) in cases {
             let ore = range::<text::TextRangeOreQuery>(
-                ob(&key, text(lo), true),
-                ob(&key, text(hi), true),
+                runtime.block_on(bound(
+                    &keyset,
+                    "TextOrdOre",
+                    "ore_block",
+                    frame(lo.to_string()),
+                )),
+                runtime.block_on(bound(
+                    &keyset,
+                    "TextOrdOre",
+                    "ore_block",
+                    frame(hi.to_string()),
+                )),
             );
             assert_eq!(
                 found("ore", "query_text_range_ore", &ore),
                 want,
                 "ORE [{lo}, {hi}]"
             );
-            let ope = range::<text::TextRangeOpeQuery>(op(&key, text(lo)), op(&key, text(hi)));
+            let ope = range::<text::TextRangeOpeQuery>(
+                runtime.block_on(bound(&keyset, "TextOrd", "ope", frame(lo.to_string()))),
+                runtime.block_on(bound(&keyset, "TextOrd", "ope", frame(hi.to_string()))),
+            );
             assert_eq!(
                 found("ope", "query_text_range_ope", &ope),
                 want,
@@ -507,10 +509,11 @@ fn postgres_between_finds_text_in_an_inclusive_range() {
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_between_uses_the_order_term_index() {
     let runtime = runtime();
-    let key = runtime.block_on(index_key());
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
     {
         let mut db = connect();
-        integer_table(&runtime, &mut db, &key);
+        integer_table(&runtime, &mut db);
         db.batch_execute(
             "CREATE INDEX v4_int_range_ore ON v4_int_range USING btree (eql_v4.ord_term_ore(ore));
              CREATE INDEX v4_int_range_ope ON v4_int_range USING btree (eql_v4.ord_term(ope));
@@ -519,12 +522,12 @@ fn postgres_between_uses_the_order_term_index() {
         )
         .unwrap();
         let ore = range::<integer::IntegerRangeOreQuery>(
-            ob(&key, Plaintext::Int(Some(10)), true),
-            ob(&key, Plaintext::Int(Some(30)), true),
+            runtime.block_on(bound(&keyset, "IntegerOrdOre", "ore_block", frame(10i32))),
+            runtime.block_on(bound(&keyset, "IntegerOrdOre", "ore_block", frame(30i32))),
         );
         let ope = range::<integer::IntegerRangeOpeQuery>(
-            op(&key, Plaintext::Int(Some(10))),
-            op(&key, Plaintext::Int(Some(30))),
+            runtime.block_on(bound(&keyset, "IntegerOrd", "ope", frame(10i32))),
+            runtime.block_on(bound(&keyset, "IntegerOrd", "ope", frame(30i32))),
         );
         for (column, domain, index, range) in [
             ("ore", "query_integer_range_ore", "v4_int_range_ore", &ore),
@@ -597,10 +600,13 @@ fn postgres_between_uses_the_order_term_index() {
 #[test]
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_range_domains_check_their_shape() {
-    let key = runtime().block_on(index_key());
-    let (lo, hi) = (Plaintext::Int(Some(1)), Plaintext::Int(Some(2)));
-    let ore = json!({"v": 4, "i": identifier(), "lo": ob(&key, lo.clone(), true), "hi": ob(&key, hi.clone(), true)});
-    let ope = json!({"v": 4, "i": identifier(), "lo": op(&key, lo), "hi": op(&key, hi)});
+    let runtime = runtime();
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
+    let term =
+        |name: &str, index: &str, n: i32| runtime.block_on(bound(&keyset, name, index, frame(n)));
+    let ore = json!({"v": 4, "i": identifier(), "lo": term("IntegerOrdOre", "ore_block", 1), "hi": term("IntegerOrdOre", "ore_block", 2)});
+    let ope = json!({"v": 4, "i": identifier(), "lo": term("IntegerOrd", "ope", 1), "hi": term("IntegerOrd", "ope", 2)});
     {
         let mut db = connect();
         let cast = |db: &mut postgres::Client, value: &Value, domain: &str| {
@@ -667,50 +673,34 @@ fn postgres_range_domains_check_their_shape() {
     }
 }
 
-/// Five plaintexts of `family`, strictly ascending, as cipherstash-client's
-/// indexers take them: what the smoke test stores and ranges over. A new
-/// ordered family must add a row here, or the test fails naming it.
-fn ascending(family: &str) -> [Plaintext; 5] {
-    use chrono::{DateTime, NaiveDate};
-    use rust_decimal::Decimal;
-    let date = |y, m, d| Plaintext::NaiveDate(NaiveDate::from_ymd_opt(y, m, d));
-    let at = |secs| Plaintext::Timestamp(DateTime::from_timestamp(secs, 0));
-    let dec = |n, scale| Plaintext::Decimal(Some(Decimal::new(n, scale)));
-    let text = |s: &str| Plaintext::Text(Some(s.to_owned()));
-    match family {
-        "integer" => [-20, -1, 0, 7, 100].map(|n| Plaintext::Int(Some(n))),
-        "smallint" => [-300, -1, 0, 5, 300].map(|n| Plaintext::SmallInt(Some(n))),
-        "bigint" => [i64::MIN + 1, -1, 0, 1 << 40, i64::MAX].map(|n| Plaintext::BigInt(Some(n))),
-        "date" => [
-            date(1969, 12, 31),
-            date(1970, 1, 1),
-            date(2000, 2, 29),
-            date(2024, 6, 1),
-            date(2099, 12, 31),
-        ],
-        "timestamp" => [-86_400, 0, 951_782_400, 1_717_200_000, 4_102_444_800].map(at),
-        "numeric" => [
-            dec(-15, 1),
-            dec(0, 0),
-            dec(25, 2),
-            dec(314_159, 5),
-            dec(1000, 0),
-        ],
-        "text" => ["apple", "banana", "cherry", "damson", "elderberry"].map(text),
-        // `real` values are exact in f32; both float widths encrypt as f64.
-        "real" => [-2.5, -0.5, 0.0, 1.25, 1e10].map(|f| Plaintext::Float(Some(f))),
-        "double" => [-1e300, -1.0, 0.0, 2.5, 1e300].map(|f| Plaintext::Float(Some(f))),
+/// Five values of `family`, strictly ascending: what the smoke test stores
+/// and ranges over. `None` for a family whose ordered types the engine does
+/// not produce. A new ordered family must add a row here, or the test fails
+/// naming it.
+fn ascending(family: &str) -> Option<[Value; 5]> {
+    Some(match family {
+        "integer" => [-20, -1, 0, 7, 100].map(Value::from),
+        "smallint" => [-300, -1, 0, 5, 300].map(Value::from),
+        "bigint" => [i64::MIN + 1, -1, 0, 1 << 40, i64::MAX].map(Value::from),
+        "text" => ["apple", "banana", "cherry", "damson", "elderberry"].map(Value::from),
+        // `real` values are exact in f32; both float widths order as f64.
+        "real" => [-2.5, -0.5, 0.0, 1.25, 1e10].map(Value::from),
+        "double" => [-1e300, -1.0, 0.0, 2.5, 1e300].map(Value::from),
+        "date" | "timestamp" | "numeric" => return None,
         other => panic!("no smoke-test values for the ordered family {other:?}: add them here"),
-    }
+    })
 }
 
-/// The text a smoke-test value seals as for its `c` (and, for text, its
-/// `hm` and `bf`): `between` never reads them, and most ordered families
-/// have no producible type to seal the value itself.
-fn display(plaintext: &Plaintext) -> String {
-    match plaintext {
-        Plaintext::Text(Some(s)) => s.clone(),
-        other => format!("{other:?}"),
+/// `value` as the plaintext `family`'s types seal.
+fn frame_of(family: &str, value: &Value) -> ValueFrame {
+    match family {
+        "integer" => frame(i32::try_from(value.as_i64().unwrap()).unwrap()),
+        "smallint" => frame(i16::try_from(value.as_i64().unwrap()).unwrap()),
+        "bigint" => frame(value.as_i64().unwrap()),
+        "real" => frame(value.as_f64().unwrap() as f32),
+        "double" => frame(value.as_f64().unwrap()),
+        "text" => frame(value.as_str().unwrap().to_owned()),
+        other => panic!("no plaintext for the ordered family {other:?}"),
     }
 }
 
@@ -725,24 +715,48 @@ fn display(plaintext: &Plaintext) -> String {
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_between_smoke_test_over_every_ordered_family() {
     let runtime = runtime();
-    let key = runtime.block_on(index_key());
     let (cipher, _) = runtime.block_on(common::cipher());
     let keyset = cipher.default_keyset();
     let mut db = connect();
     let ranges = v4::all_range_query();
     let mut checked = 0;
+    let mut skipped = Vec::new();
 
     for family in eql_domains::CATALOG
         .iter()
         .filter(|f| !f.range_terms().is_empty())
     {
-        let values = ascending(family.name);
         let table = format!("v4_smoke_{}", family.name);
         let columns: Vec<&eql_domains::Domain> = family
             .domains
             .iter()
             .filter(|d| d.terms.iter().any(|t| t.range_suffix().is_some()))
             .collect();
+        // A family's ordered types are producible together or not at all:
+        // the engine derives no order term for a date, a timestamp or a
+        // decimal, so there is no row of those to range over.
+        let producible: Vec<bool> = columns
+            .iter()
+            .map(|d| {
+                targets::target(&d.rust_struct_name(family.name)).is_some_and(|t| t.producible)
+            })
+            .collect();
+        if producible.iter().all(|p| !p) {
+            assert!(ascending(family.name).is_none(), "{}", family.name);
+            skipped.push(family.name);
+            continue;
+        }
+        assert!(producible.iter().all(|p| *p), "{}", family.name);
+        let values = ascending(family.name)
+            .unwrap_or_else(|| panic!("{}: its ordered types are producible", family.name));
+        let type_of = |suffix: &str| {
+            family
+                .domains
+                .iter()
+                .find(|d| d.name == suffix)
+                .unwrap_or_else(|| panic!("{} has no {suffix} domain", family.name))
+                .rust_struct_name(family.name)
+        };
         db.batch_execute(&format!(
             "CREATE TEMP TABLE {table} (id int PRIMARY KEY, {})",
             columns
@@ -754,37 +768,14 @@ fn postgres_between_smoke_test_over_every_ordered_family() {
         .unwrap();
 
         for (id, value) in values.iter().enumerate() {
-            let text = display(value);
-            let (eq, matched) = runtime.block_on(async {
-                let eq: text::TextEq = keyset.encrypt_as(&text, column()).await.unwrap();
-                let matched = match family.name {
-                    "text" => Some(
-                        keyset
-                            .encrypt_as::<_, text::TextMatch>(&text, column())
-                            .await
-                            .unwrap(),
-                    ),
-                    _ => None,
-                };
-                (eq, matched)
-            });
-            let eq = serde_json::to_value(&eq).unwrap();
             let payloads: Vec<String> = columns
                 .iter()
                 .map(|d| {
-                    let mut p = json!({"v": eq["v"], "i": eq["i"], "c": eq["c"]});
-                    for term in d.terms {
-                        match term {
-                            eql_domains::Term::Hm => p["hm"] = eq["hm"].clone(),
-                            eql_domains::Term::Bloom => {
-                                let m = matched.as_ref().expect("only text has a match term");
-                                p["bf"] = serde_json::to_value(m).unwrap()["bf"].clone();
-                            }
-                            eql_domains::Term::Ore => p["ob"] = ob(&key, value.clone(), false),
-                            eql_domains::Term::Ope => p["op"] = op(&key, value.clone()),
-                        }
-                    }
-                    p.to_string()
+                    runtime.block_on(stored(
+                        &keyset,
+                        &d.rust_struct_name(family.name),
+                        frame_of(family.name, value),
+                    ))
                 })
                 .collect();
             let placeholders: Vec<String> = columns
@@ -816,13 +807,16 @@ fn postgres_between_smoke_test_over_every_ordered_family() {
         }
 
         for term in family.range_terms() {
-            let bound = |v: &Plaintext| match term {
-                eql_domains::Term::Ore => ob(&key, v.clone(), true),
-                eql_domains::Term::Ope => op(&key, v.clone()),
+            let (name, index) = match term {
+                eql_domains::Term::Ore => (type_of("ord_ore"), "ore_block"),
+                eql_domains::Term::Ope => (type_of("ord"), "ope"),
                 other => unreachable!("{other:?} has no range"),
             };
+            let bound_of = |v: &Value| {
+                runtime.block_on(bound(&keyset, &name, index, frame_of(family.name, v)))
+            };
             let domain = family.range_query_name(term);
-            let range = json!({"v": 4, "i": identifier(), "lo": bound(&values[1]), "hi": bound(&values[3])});
+            let range = json!({"v": 4, "i": identifier(), "lo": bound_of(&values[1]), "hi": bound_of(&values[3])});
             // The binding for the domain accepts the range.
             ranges
                 .iter()
@@ -857,11 +851,13 @@ fn postgres_between_smoke_test_over_every_ordered_family() {
 
         if family.name == "text" {
             let range = |term: eql_domains::Term| {
-                let bound = |v: &Plaintext| match term {
-                    eql_domains::Term::Ore => ob(&key, v.clone(), true),
-                    _ => op(&key, v.clone()),
+                let (name, index) = match term {
+                    eql_domains::Term::Ore => ("TextOrdOre", "ore_block"),
+                    _ => ("TextOrd", "ope"),
                 };
-                json!({"v": 4, "i": identifier(), "lo": bound(&values[1]), "hi": bound(&values[3])})
+                let bound_of =
+                    |v: &Value| runtime.block_on(bound(&keyset, name, index, frame_of("text", v)));
+                json!({"v": 4, "i": identifier(), "lo": bound_of(&values[1]), "hi": bound_of(&values[3])})
                     .to_string()
             };
             db.batch_execute(&format!(
@@ -908,8 +904,13 @@ fn postgres_between_smoke_test_over_every_ordered_family() {
             db.batch_execute("RESET enable_seqscan;").unwrap();
         }
     }
-    // 8 numeric and temporal families with 3 overloads each, and text's 5.
-    assert_eq!(checked, 29, "every between overload was exercised");
+    // The 5 numeric families with 3 overloads each, and text's 5.
+    assert_eq!(
+        checked, 20,
+        "every between overload of a producible type was exercised"
+    );
+    skipped.sort_unstable();
+    assert_eq!(skipped, ["date", "numeric", "timestamp"]);
 }
 
 /// Needs an EQL v4 installation. The range parameter must be cast to its

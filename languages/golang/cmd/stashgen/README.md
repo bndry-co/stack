@@ -158,18 +158,18 @@ The engine produces these EQL types today, each from one Go field type:
 
 | `encrypt_into` | Go field |
 |---|---|
-| `TextEq`, `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe`, `TextSearch` | `string` |
-| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe` | `int16`, or any Go integer type |
-| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe` | `int32`, or any Go integer type |
-| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe` | `int64`, or any Go integer type |
+| `TextEq`, `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe`, `TextOrdOre`, `TextSearch`, `TextSearchOre` | `string` |
+| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe`, `SmallintOrdOre` | `int16`, or any Go integer type |
+| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe`, `IntegerOrdOre` | `int32`, or any Go integer type |
+| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe`, `BigintOrdOre` | `int64`, or any Go integer type |
 | `Boolean` | `bool` |
-| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe` | `float32` |
-| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe` | `float64` |
+| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe`, `RealOrdOre` | `float32` |
+| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe`, `DoubleOrdOre` | `float64` |
 | `Date`, `DateEq` | `encrypt.Date` |
 | `Timestamp`, `TimestampEq` | `time.Time` |
 | `Numeric`, `NumericEq` | `encrypt.Decimal` |
 
-The `Eq` types answer `Eq`; the `Ord` and `OrdOpe` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `TextMatch` answers `Matches`, and `TextSearch` all of `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, each query carrying only the term its operator reads; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp` and `Numeric` are stored and read only, with no query method.
+The `Eq` types answer `Eq`; the `Ord`, `OrdOpe` and `OrdOre` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `TextMatch` answers `Matches`, and `TextSearch` and `TextSearchOre` all of `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, each query carrying only the term its operator reads; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp` and `Numeric` are stored and read only, with no query method.
 The ordered date, timestamp and numeric types are refused: the engine derives no order term for these kinds yet.
 An ordered type has no `Between` method yet, because a `BETWEEN` operand needs EQL v4's range query domains.
 
