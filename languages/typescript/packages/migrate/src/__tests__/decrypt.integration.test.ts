@@ -21,11 +21,11 @@
 import 'dotenv/config'
 import pg from 'pg'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { ColumnMigration, ColumnMigrationError } from '../column-migration.js'
 import { columnHasValues, countUndecrypted } from '../cursor.js'
 import {
   type BulkDecryptItem,
   type DecryptionClientLike,
-  forceObligationOpen,
   MAX_DECRYPT_CHUNK_SIZE,
   PlaintextWriteError,
   runDecryptBackfill,
@@ -334,32 +334,175 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     expect(rows[0]?.n).toBe('0')
   })
 
-  it('a stale twin acknowledged with --force at dual-write confirmation is overwritten by a plain run', async () => {
+  /** The reverse column migration of `email_encrypted`, freshly loaded. */
+  async function migration(): Promise<ColumnMigration> {
+    const db = await pool.connect()
+    try {
+      return await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email_encrypted',
+        direction: 'reverse',
+        twin: 'email',
+        manifest: null,
+      })
+    } finally {
+      db.release()
+    }
+  }
+
+  /** Confirm dual-writes on a connection held for the call. */
+  async function confirm(waiver?: 'plaintext-current') {
+    const db = await pool.connect()
+    try {
+      const loaded = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email_encrypted',
+        direction: 'reverse',
+        twin: 'email',
+        manifest: null,
+      })
+      return await loaded.confirmDualWrites({ waiver })
+    } finally {
+      db.release()
+    }
+  }
+
+  async function staleCount(): Promise<string | undefined> {
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ${TABLE} WHERE email = 'stale@example.com'`,
+    )
+    return rows[0]?.n
+  }
+
+  it('dual-writes confirmed over a twin that already holds values: a plain run overwrites it', async () => {
     await seed(300)
     await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
-    // What `stash decrypt backfill --force` records before its first run.
+    const confirmed = await confirm()
+    expect(confirmed.obligations).toMatchObject([
+      { reason: 'existing-values', waivable: true },
+    ])
+
+    const result = await run()
+    expect(result).toMatchObject({ force: true, forcedBy: 'existing-values' })
+    expect(await staleCount()).toBe('0')
+    expect((await migration()).obligations).toEqual([])
+  })
+
+  it('a pass with no column migration on record treats a twin with values as owed', async () => {
+    // An embedded worker that never confirmed dual-writes.
+    await seed(50)
+    await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
+    expect(await run()).toMatchObject({
+      force: true,
+      forcedBy: 'existing-values',
+    })
+    expect(await staleCount()).toBe('0')
+  })
+
+  it('a waiver recorded at confirmation keeps the existing values', async () => {
+    await seed(50)
+    await pool.query(
+      `UPDATE ${TABLE} SET email = 'current@example.com' WHERE id <= 10`,
+    )
+    const confirmed = await confirm('plaintext-current')
+    expect(confirmed.obligations).toEqual([])
+
+    expect(await run()).toMatchObject({ force: false, forcedBy: null })
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ${TABLE} WHERE email = 'current@example.com'`,
+    )
+    expect(rows[0]?.n).toBe('10')
+  })
+
+  it('a waiver given later still closes an up-front obligation no pass has started on', async () => {
+    await seed(20)
+    await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
+    expect((await confirm()).obligations).toHaveLength(1)
+    expect((await confirm('plaintext-current')).obligations).toEqual([])
+  })
+
+  it('refuses a waiver once a forced pass has started', async () => {
+    await seed(20)
+    await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
+    await confirm()
+    const controller = new AbortController()
+    controller.abort()
+    await run({ signal: controller.signal })
+
+    const error = await confirm('plaintext-current').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ColumnMigrationError)
+    expect((error as ColumnMigrationError).code).toBe('waiver-refused')
+    expect((await migration()).obligations).toMatchObject([
+      { reason: 'forced-pass', waivable: false },
+    ])
+  })
+
+  it('refuses a reverse column migration while the forward one of the twin is open', async () => {
+    await seed(10)
     const db = await pool.connect()
     try {
       await appendEvent(db, {
         tableName: TABLE,
-        columnName: 'email_encrypted',
-        event: 'decrypt_dual_writing',
-        phase: 'decrypt-dual-writing',
-        details: {
-          plaintextColumn: 'email',
-          existingPlaintext: 'prepopulated',
-          acknowledgedWith: 'force',
-        },
+        columnName: 'email',
+        event: 'backfilled',
+        phase: 'backfilled',
       })
     } finally {
       db.release()
     }
 
+    expect((await migration()).blockedBy).toEqual({
+      direction: 'forward',
+      column: 'email',
+      phase: 'backfilled',
+    })
+    await expect(confirm()).rejects.toMatchObject({ code: 'counterpart-open' })
+    await expect(run()).rejects.toMatchObject({ code: 'counterpart-open' })
+    expect(await plaintextCount()).toBe(0)
+  })
+
+  it('refuses a run into a different plaintext column than the one recorded', async () => {
+    await seed(10)
+    await confirm()
+    await pool.query(`ALTER TABLE ${TABLE} ADD COLUMN other text`)
+    await expect(run({ plaintextColumn: 'other' })).rejects.toMatchObject({
+      code: 'twin-mismatch',
+    })
+  })
+
+  it('generates the drop only once the backfill completed', async () => {
+    await seed(10)
+    await confirm()
+    const db = await pool.connect()
+    try {
+      const before = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email_encrypted',
+        direction: 'reverse',
+        manifest: null,
+      })
+      await expect(before.recordDropGenerated()).rejects.toMatchObject({
+        code: 'wrong-phase',
+      })
+    } finally {
+      db.release()
+    }
     await run()
-    const { rows } = await pool.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM ${TABLE} WHERE email = 'stale@example.com'`,
-    )
-    expect(rows[0]?.n).toBe('0')
+    const db2 = await pool.connect()
+    try {
+      const done = await ColumnMigration.load(db2, {
+        table: TABLE,
+        column: 'email_encrypted',
+        direction: 'reverse',
+        manifest: null,
+      })
+      const dropped = await done.recordDropGenerated({ migrationFile: 'x.sql' })
+      expect(dropped.phase).toBe('encrypted-dropped')
+      expect(dropped.open).toBe(false)
+      expect(dropped.twin).toEqual({ column: 'email', via: 'recorded' })
+    } finally {
+      db2.release()
+    }
   })
 
   it('a completed forced pass meets the obligation: later plain runs are unforced again', async () => {
@@ -448,6 +591,8 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     await pool.query(
       `UPDATE ${TABLE} SET email = 'stale@example.com' WHERE id <= 50`,
     )
+    // Kept, so the first pass is unforced.
+    await confirm('plaintext-current')
 
     const controller = new AbortController()
     await run({
@@ -499,6 +644,12 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
       expect(JSON.stringify(rows)).not.toContain('secret-not-a-number')
       const state = await progress(db, TABLE, 'email_encrypted')
       expect(state?.event).toBe('error')
+      expect(state?.details).toMatchObject({
+        errorName: 'PlaintextWriteError',
+        sqlState: '22P02',
+        plaintextSqlType: 'integer',
+      })
+      expect(state?.details).not.toHaveProperty('message')
     } finally {
       db.release()
     }
@@ -629,6 +780,8 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
 
   it('never overwrites plaintext already written by a dual-writing app, unless forced', async () => {
     await seed(10)
+    // Dual-writes are live, so the app writes the plaintext column itself.
+    await confirm()
     await pool.query(
       `UPDATE ${TABLE} SET email = 'newer@example.com' WHERE id = 3`,
     )
@@ -704,68 +857,6 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
       nullPlaintextPks: ['1', '2'],
       rowsDecrypted: 1,
     })
-  })
-
-  // F8: behaviour-preservation pin for forceObligationOpen. The obligation is
-  // scoped to the latest decrypt_dual_writing; a forced pass left open in an
-  // earlier lifecycle does not carry into the next one.
-  it('a forced pass left open in an earlier lifecycle does not force the next one', async () => {
-    await seed(5)
-    const db = await pool.connect()
-    try {
-      const base = { tableName: TABLE, columnName: 'email_encrypted' }
-      // Lifecycle 1: acknowledged with force, a forced pass starts and never
-      // completes.
-      await appendEvent(db, {
-        ...base,
-        event: 'decrypt_dual_writing',
-        phase: 'decrypt-dual-writing',
-        details: { plaintextColumn: 'email', acknowledgedWith: 'force' },
-      })
-      await appendEvent(db, {
-        ...base,
-        event: 'decrypt_started',
-        phase: 'decrypting',
-        details: { plaintextColumn: 'email', force: true },
-      })
-      expect(await forceObligationOpen(db, TABLE, 'email_encrypted')).toBe(true)
-      // Lifecycle 2: a fresh dual-write confirmation over an empty twin.
-      await appendEvent(db, {
-        ...base,
-        event: 'decrypt_dual_writing',
-        phase: 'decrypt-dual-writing',
-        details: { plaintextColumn: 'email' },
-      })
-      expect(await forceObligationOpen(db, TABLE, 'email_encrypted')).toBe(
-        false,
-      )
-      // An unforced completed event does not close a forced obligation.
-      await appendEvent(db, {
-        ...base,
-        event: 'decrypt_started',
-        phase: 'decrypting',
-        details: { plaintextColumn: 'email', force: true },
-      })
-      await appendEvent(db, {
-        ...base,
-        event: 'decrypted',
-        phase: 'decrypted',
-        details: { plaintextColumn: 'email' },
-      })
-      expect(await forceObligationOpen(db, TABLE, 'email_encrypted')).toBe(true)
-      // A forced completed event does.
-      await appendEvent(db, {
-        ...base,
-        event: 'decrypted',
-        phase: 'decrypted',
-        details: { plaintextColumn: 'email', force: true },
-      })
-      expect(await forceObligationOpen(db, TABLE, 'email_encrypted')).toBe(
-        false,
-      )
-    } finally {
-      db.release()
-    }
   })
 
   it('ignores a forward checkpoint recorded under the same key — no cross-direction resume', async () => {

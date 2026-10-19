@@ -1,15 +1,12 @@
 import { isEncryptedPayload } from '@cipherstash/stack'
 import type { ClientBase, PoolClient } from 'pg'
+import type { ForcedBy } from './column-migration.js'
 import {
   countUndecrypted,
   fetchUndecryptedPage,
   qualifyTable,
 } from './cursor.js'
-import {
-  type ChunkedRunEvents,
-  type ChunkedRunProgress,
-  runChunkedMigration,
-} from './engine.js'
+import { type ChunkedRunProgress, runChunkedMigration } from './engine.js'
 import { quoteIdent } from './sql.js'
 
 /**
@@ -102,9 +99,9 @@ export class PlaintextWriteError extends Error {
 /**
  * The largest chunk one write can carry. Each decrypted row binds TWO
  * parameters in the chunk's `UPDATE … FROM (VALUES ($1, $2), …)` (the primary
- * key, and the value packed with the ciphertext it was decrypted from), and Postgres's wire protocol caps a statement at 65535
- * parameters, so 32767 rows is the most that can ever be written in one
- * statement. A larger chunk would fail only after its ZeroKMS request.
+ * key, and the value packed with the ciphertext it was decrypted from), and
+ * Postgres's wire protocol caps a statement at 65535 parameters, so 32767
+ * rows is the most that can ever be written in one statement. A larger chunk would fail only after its ZeroKMS request.
  */
 export const MAX_DECRYPT_CHUNK_SIZE = Math.floor(65535 / 2)
 
@@ -149,6 +146,10 @@ export interface DecryptBackfillOptions {
    * over whatever the plaintext column holds, so any row the application
    * wrote to the plaintext column alone (a newer value, or a value cleared on
    * purpose) gets the older ciphertext's value back.
+   *
+   * The column migration can force a run this does not: while a forced pass
+   * is owed (see {@link ColumnMigration}), every run is one, and
+   * {@link DecryptBackfillResult.forcedBy} says why.
    */
   force?: boolean
   /**
@@ -198,80 +199,19 @@ export interface DecryptBackfillResult {
    */
   nullPlaintextPks: string[]
   completed: boolean
-}
-
-/**
- * Whether this column migration owes a forced pass, and so every run must be
- * one whatever the caller passes. It is owed from the moment a forced pass
- * starts, or from the `decrypt_dual_writing` event when a twin that already
- * held values was acknowledged with `force` (`details.acknowledgedWith`), and
- * stops being owed when a forced pass completes. Reads at most two events:
- * the latest `decrypt_dual_writing`, which starts the column migration, and
- * the latest forced pass or completion event after it (after the first event
- * when there is no `decrypt_dual_writing`). Unforced events neither open nor
- * close the obligation, so they are not read.
- */
-export async function forceObligationOpen(
-  db: ClientBase,
-  tableName: string,
-  encryptedColumn: string,
-): Promise<boolean> {
-  // `scope` is the latest `decrypt_dual_writing` (absent for a pass run
-  // without one, when every event counts). `latest` is the newest forced
-  // event after it that opens or closes the obligation.
-  const { rows } = await db.query<{
-    acknowledged_with: string | null
-    latest_event: string | null
-  }>(
-    `WITH scope AS (
-       SELECT id, details->>'acknowledgedWith' AS acknowledged_with
-       FROM cipherstash.cs_migrations
-       WHERE table_name = $1 AND column_name = $2
-         AND event = 'decrypt_dual_writing'
-       ORDER BY id DESC
-       LIMIT 1
-     ), latest AS (
-       SELECT event
-       FROM cipherstash.cs_migrations
-       WHERE table_name = $1 AND column_name = $2
-         AND id > COALESCE((SELECT id FROM scope), 0)
-         AND details->>'force' = 'true'
-         AND (event = $3 OR phase = $4)
-       ORDER BY id DESC
-       LIMIT 1
-     )
-     SELECT (SELECT acknowledged_with FROM scope) AS acknowledged_with,
-            (SELECT event FROM latest) AS latest_event`,
-    [
-      tableName,
-      encryptedColumn,
-      REVERSE_EVENTS.completed,
-      REVERSE_EVENTS.runningPhase,
-    ],
-  )
-  const row = rows[0]
-  if (row === undefined) return false
-  // The latest forced event decides: a completed forced pass closes the
-  // obligation, a started, checkpointed or failed one opens it.
-  if (row.latest_event !== null) {
-    return row.latest_event !== REVERSE_EVENTS.completed
-  }
-  // No forced event yet. A twin that already held values and was
-  // acknowledged with `force` owes a forced pass before any has run.
-  return row.acknowledged_with === 'force'
+  /** Whether this run was a forced pass. */
+  force: boolean
+  /**
+   * Why: `caller` (`force` was passed), `forced-pass` (an earlier forced pass
+   * had not completed), `existing-values` (the plaintext column held values
+   * before the column migration began, with no waiver recorded), or `null`
+   * when unforced.
+   */
+  forcedBy: ForcedBy
 }
 
 /** How many `NULL_PLAINTEXT` primary keys a result carries. */
 export const NULL_PLAINTEXT_SAMPLE_SIZE = 20
-
-/** The reverse lifecycle's `cs_migrations` vocabulary. */
-const REVERSE_EVENTS = {
-  started: 'decrypt_started',
-  checkpoint: 'decrypt_checkpoint',
-  completed: 'decrypted',
-  runningPhase: 'decrypting',
-  completedPhase: 'decrypted',
-} as const satisfies ChunkedRunEvents
 
 /**
  * Run a chunked, resumable, idempotent backfill of ciphertext → plaintext —
@@ -305,13 +245,19 @@ const REVERSE_EVENTS = {
  * `details.plaintextColumn` on every event, so later commands recover the
  * pairing from state alone.
  *
- * **Resume.** A run resumes from its last checkpoint, and also from an
- * `error` event, which records the last committed cursor; a failed run does
- * not throw away the progress before it. A forced pass, once started, opens
- * an obligation ({@link forceObligationOpen}): until a forced pass completes,
- * every run is forced whether or not `force` is passed, so an interrupted
- * forced pass is always finished as one. A `force` run over an unforced pass
- * starts from the first row.
+ * **Resume and obligations.** A run resumes from its last checkpoint, and
+ * also from an `error` event, which records the last committed cursor; a
+ * failed run does not throw away the progress before it. Whether the run is
+ * forced is decided by the column migration ({@link ColumnMigration}), not
+ * only by `force`: a forced pass, once started, is owed until one completes,
+ * and so is one over a plaintext column that held values before the column
+ * migration began (unless a waiver was recorded with
+ * {@link ColumnMigration.confirmDualWrites}). A `force` run over an unforced
+ * pass starts from the first row.
+ *
+ * **Refused** while a forward column migration of `plaintextColumn` into
+ * this column is still open, and when `plaintextColumn` is not the column the
+ * column migration in progress recorded.
  *
  * **Write errors.** A failed chunk write throws {@link PlaintextWriteError},
  * never the database's own message, which can contain the decrypted value.
@@ -337,9 +283,6 @@ export async function runDecryptBackfill(
     plaintextColumn,
     plaintextSqlType,
   } = options
-  const force =
-    (options.force ?? false) ||
-    (await forceObligationOpen(db, tableName, encryptedColumn))
   const serialize = plaintextSerializer(plaintextSqlType)
   const skippedByCode: Record<string, number> = {}
   const nullPlaintextPks: string[] = []
@@ -348,17 +291,14 @@ export async function runDecryptBackfill(
     db,
     tableName,
     stateColumn: encryptedColumn,
+    twinColumn: plaintextColumn,
+    direction: 'reverse',
     chunkSize,
     signal: options.signal,
-    events: REVERSE_EVENTS,
-    trackSkipped: true,
-    resumeFromError: true,
-    // `force` on every event, so a resume knows which mode the pass ran in.
-    baseDetails: force ? { plaintextColumn, force: true } : { plaintextColumn },
-    // A forced run never resumes an unforced pass: the rows before its
-    // cursor were never overwritten. It starts over from the first row.
-    canResume: (last) => (last.details?.force === true) === force,
-    countPending: (after) =>
+    force: options.force,
+    baseDetails: { plaintextColumn },
+    errorDetails: safeErrorDetails,
+    countPending: (after, { force }) =>
       countUndecrypted(
         db,
         tableName,
@@ -367,7 +307,7 @@ export async function runDecryptBackfill(
         force,
         after === null ? null : { pkColumn, pk: after },
       ),
-    fetchPage: (after, limit) =>
+    fetchPage: (after, limit, { force }) =>
       fetchUndecryptedPage(db, {
         tableName,
         pkColumn,
@@ -377,7 +317,7 @@ export async function runDecryptBackfill(
         limit,
         force,
       }),
-    prepareChunk: async (rows, { chunkIndex }) => {
+    prepareChunk: async (rows, { chunkIndex, force }) => {
       const payloads = rows.map((row) => ({
         id: row.pk,
         data: asPayload(row.ciphertext),
@@ -490,7 +430,27 @@ export async function runDecryptBackfill(
     skippedByCode,
     nullPlaintextPks,
     completed: result.completed,
+    force: result.force,
+    forcedBy: result.forcedBy,
   }
+}
+
+/**
+ * What the `error` event may store about this direction's own failures:
+ * names, codes and counts, never a value or a database message.
+ */
+function safeErrorDetails(error: unknown): Record<string, unknown> | undefined {
+  if (error instanceof PlaintextWriteError) {
+    return {
+      sqlState: error.sqlState ?? null,
+      constraint: error.constraint ?? null,
+      plaintextSqlType: error.plaintextSqlType,
+    }
+  }
+  if (error instanceof UndecryptableBatchError) {
+    return { batchRows: error.rows, batchCodes: { ...error.codes } }
+  }
+  return undefined
 }
 
 /**

@@ -1,11 +1,12 @@
 import { isEncryptedPayload } from '@cipherstash/stack'
 import type { ClientBase, PoolClient } from 'pg'
+import type { ForcedBy } from './column-migration.js'
 import {
   countUnencrypted,
   fetchUnencryptedPage,
   qualifyTable,
 } from './cursor.js'
-import { type ChunkedRunEvents, runChunkedMigration } from './engine.js'
+import { runChunkedMigration } from './engine.js'
 import { quoteIdent } from './sql.js'
 
 // Loose structural types — keep this library decoupled from @cipherstash/stack
@@ -212,9 +213,12 @@ export interface BackfillOptions {
    * Not destructive (overwriting a correctly-encrypted value with a
    * fresh encryption of the same plaintext is wasted work, not data
    * loss), but expensive: every row is re-encrypted even if it didn't
-   * need to be. The CLI also appends `details: { force: true }` to the
-   * `backfill_started` event so audit queries can spot the recovery
-   * runs in `cs_migrations` history.
+   * need to be. Every event of the run records `details.force`, so audit
+   * queries can spot the recovery runs in `cs_migrations` history.
+   *
+   * Once a forced pass has started it is owed: until one completes, every
+   * run is forced whatever this says, and {@link BackfillResult.forcedBy}
+   * says why. An interrupted forced pass is therefore always finished as one.
    */
   force?: boolean
 }
@@ -225,8 +229,9 @@ export interface BackfillOptions {
 export interface BackfillResult {
   /**
    * `true` if the run began from a previously-recorded checkpoint rather
-   * than starting fresh. Determined by the most recent event for this
-   * column being a `backfill_checkpoint`.
+   * than starting fresh: the most recent event for this column is a
+   * `backfill_checkpoint`, or an `error` carrying the last committed cursor,
+   * of a pass in the same mode.
    */
   resumed: boolean
   /**
@@ -245,6 +250,13 @@ export interface BackfillResult {
    * paused and should be resumed by re-invoking with the same options.
    */
   completed: boolean
+  /** Whether this run was a forced pass. */
+  force: boolean
+  /**
+   * Why: `caller` (`force` was passed), `forced-pass` (an earlier forced pass
+   * had not completed, so this one finishes it), or `null` when unforced.
+   */
+  forcedBy: ForcedBy
 }
 
 /**
@@ -297,20 +309,28 @@ export async function runBackfill(
 ): Promise<BackfillResult> {
   const chunkSize = options.chunkSize ?? 1000
   const { db, tableName, pkColumn, plaintextColumn, encryptedColumn } = options
-  const force = options.force ?? false
   const coerce = options.transformPlaintext ?? ((v: unknown) => v)
 
   const result = await runChunkedMigration({
     db,
     tableName,
     stateColumn: plaintextColumn,
+    twinColumn: encryptedColumn,
+    direction: 'forward',
     chunkSize,
     signal: options.signal,
-    events: FORWARD_EVENTS,
-    startedDetails: force ? { force: true } : {},
-    countPending: () =>
-      countUnencrypted(db, tableName, plaintextColumn, encryptedColumn, force),
-    fetchPage: (after, limit) =>
+    force: options.force,
+    baseDetails: { encryptedColumn },
+    countPending: (after, { force }) =>
+      countUnencrypted(
+        db,
+        tableName,
+        plaintextColumn,
+        encryptedColumn,
+        force,
+        after === null ? null : { pkColumn, pk: after },
+      ),
+    fetchPage: (after, limit, { force }) =>
       fetchUnencryptedPage(db, {
         tableName,
         pkColumn,
@@ -320,7 +340,7 @@ export async function runBackfill(
         limit,
         force,
       }),
-    prepareChunk: async (rows) => {
+    prepareChunk: async (rows, { force }) => {
       const models = rows.map((row) => ({
         __pk: row.pk,
         [options.schemaColumnKey]: coerce(row.plaintext),
@@ -390,17 +410,10 @@ export async function runBackfill(
     rowsProcessed: result.rowsProcessed,
     rowsTotal: result.rowsTotal,
     completed: result.completed,
+    force: result.force,
+    forcedBy: result.forcedBy,
   }
 }
-
-/** The forward lifecycle's `cs_migrations` vocabulary. */
-const FORWARD_EVENTS = {
-  started: 'backfill_started',
-  checkpoint: 'backfill_checkpoint',
-  completed: 'backfilled',
-  runningPhase: 'backfilling',
-  completedPhase: 'backfilled',
-} as const satisfies ChunkedRunEvents
 
 interface WriteChunkOptions {
   tableName: string

@@ -247,7 +247,8 @@ export async function progress(
   return rowToState(result.rows[0])
 }
 
-function rowToState(row: {
+/** Decode one `cs_migrations` row. Internal to this package. */
+export function rowToState(row: {
   id: string | number
   table_name: string
   column_name: string

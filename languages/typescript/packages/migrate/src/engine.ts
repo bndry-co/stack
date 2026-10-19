@@ -1,28 +1,13 @@
 import type { ClientBase, PoolClient } from 'pg'
-import type { KeysetPage } from './cursor.js'
 import {
-  appendEvent,
-  type MigrationEvent,
-  type MigrationPhase,
-  type MigrationStateRow,
-  progress,
-} from './state.js'
-
-/**
- * The `cs_migrations` vocabulary one direction of the lifecycle writes. The
- * forward backfill and the reverse (decrypt) backfill run the same engine and
- * differ here, so their histories stay distinguishable and neither resumes
- * from the other's cursor.
- */
-export interface ChunkedRunEvents {
-  started: MigrationEvent
-  /** The event a resume looks for. Its `cursorValue` is the restart point. */
-  checkpoint: MigrationEvent
-  completed: MigrationEvent
-  /** Phase recorded on `started`, every `checkpoint`, and any `error`. */
-  runningPhase: MigrationPhase
-  completedPhase: MigrationPhase
-}
+  ColumnMigration,
+  ColumnMigrationError,
+  DIRECTION_VOCABULARY,
+  type ForcedBy,
+  type MigrationDirection,
+} from './column-migration.js'
+import type { KeysetPage } from './cursor.js'
+import { appendEvent } from './state.js'
 
 /**
  * A chunk whose network work (encrypt or decrypt) is done and whose database
@@ -33,8 +18,7 @@ export interface PreparedChunk {
   write(db: ClientBase): Promise<void>
   /**
    * Rows in this chunk that were visited but deliberately not written — for
-   * the reverse direction, values that could not be decrypted. Counted only
-   * when {@link ChunkedRunOptions.trackSkipped} is set.
+   * the reverse direction, values that could not be decrypted. Default `0`.
    */
   skipped?: number
   /** Extra fields merged into this chunk's checkpoint event `details`. */
@@ -47,6 +31,14 @@ export interface ChunkContext {
   chunkIndex: number
   /** True when this run resumed from a recorded checkpoint. */
   resumed: boolean
+  /** Whether this run is a forced pass (see {@link ChunkedRunResult.force}). */
+  force: boolean
+}
+
+/** The pass mode handed to the page and count callbacks. */
+export interface PassMode {
+  /** Overwrite values already in the target instead of skipping them. */
+  force: boolean
 }
 
 /** Progress snapshot, emitted after every committed chunk. */
@@ -56,18 +48,28 @@ export interface ChunkedRunProgress {
   lastPk: string | null
   chunkSize: number
   chunkIndex: number
-  /** Cumulative skipped rows; always `0` unless skipping is tracked. */
+  /** Cumulative skipped rows, including a resumed pass's. */
   rowsSkipped: number
 }
 
 export interface ChunkedRunOptions<Row extends { pk: string }> {
   db: PoolClient
   tableName: string
-  /** The `column_name` this run's events are recorded under. */
+  /**
+   * The SOURCE column, which this run's events are recorded under: the
+   * plaintext column forward, the encrypted column reverse.
+   */
   stateColumn: string
+  /** The TARGET column this run fills: the column migration's twin. */
+  twinColumn: string
+  direction: MigrationDirection
   chunkSize: number
   signal?: AbortSignal
-  events: ChunkedRunEvents
+  /**
+   * Ask for a forced pass. An open obligation on the column migration forces
+   * the run whatever this says; {@link ChunkedRunResult.forcedBy} says why.
+   */
+  force?: boolean
   /**
    * Rows still to process, for `rowsTotal`. Evaluated once, at start, after
    * the resume point is known: `after` is the cursor the run restarts from
@@ -75,9 +77,13 @@ export interface ChunkedRunOptions<Row extends { pk: string }> {
    * already visited and are in the resumed `rowsProcessed`, including any the
    * previous run skipped, which still match the pending predicate.
    */
-  countPending(after: string | null): Promise<number>
+  countPending(after: string | null, mode: PassMode): Promise<number>
   /** The next keyset page after `after` (exclusive). */
-  fetchPage(after: string | null, limit: number): Promise<KeysetPage<Row>>
+  fetchPage(
+    after: string | null,
+    limit: number,
+    mode: PassMode,
+  ): Promise<KeysetPage<Row>>
   /**
    * Do the chunk's network work BEFORE the transaction opens, so a slow
    * ZeroKMS round trip never holds row locks. Throwing aborts the run (an
@@ -94,25 +100,12 @@ export interface ChunkedRunOptions<Row extends { pk: string }> {
    */
   baseDetails?: Record<string, unknown>
   /**
-   * Maintain a cumulative `rowsSkipped` (restored from the resumed checkpoint)
-   * and record it on checkpoint/completed events. Off for the forward
-   * backfill, whose event details are pinned by existing history readers.
+   * Fields of a failure that are safe to store in the `error` event: names,
+   * codes and counts, never a value. The event never stores the error's
+   * message, which a database or client may fill with row data; it stores
+   * `err.name` and whatever this returns.
    */
-  trackSkipped?: boolean
-  /**
-   * Also resume from this direction's `error` event, which records the last
-   * COMMITTED cursor and counters. Without it an error hides the previous
-   * checkpoint and the next run starts a fresh pass from the first primary
-   * key. Off for the forward backfill, whose resume behaviour is pinned.
-   */
-  resumeFromError?: boolean
-  /**
-   * Called with the event a run is about to resume from. Return `false` to
-   * start a fresh pass instead; throw to refuse the run before anything is
-   * recorded. Lets a direction refuse to resume a pass that ran in a
-   * different mode (the reverse backfill's `force`).
-   */
-  canResume?: (last: MigrationStateRow) => boolean
+  errorDetails?: (error: unknown) => Record<string, unknown> | undefined
   onProgress?: (progress: ChunkedRunProgress) => void
 }
 
@@ -122,6 +115,15 @@ export interface ChunkedRunResult {
   rowsTotal: number
   completed: boolean
   rowsSkipped: number
+  /** Whether this run was a forced pass. */
+  force: boolean
+  /**
+   * Why it was: the caller asked (`caller`), or the column migration owed a
+   * forced pass (`forced-pass`: an earlier forced pass has not completed;
+   * `existing-values`: the reverse twin held values before the column
+   * migration began). `null` for an unforced run.
+   */
+  forcedBy: ForcedBy
 }
 
 /**
@@ -134,12 +136,17 @@ export interface ChunkedRunResult {
  * the `target IS NULL` guard in every page query makes a lost cursor
  * harmless: a re-run simply re-selects whatever is still pending.
  *
- * Resume: when the column's latest event is this direction's checkpoint, the
- * run restarts from its cursor and carries its counters forward. With
- * `resumeFromError`, an `error` event recorded in this direction's running
- * phase resumes the same way: it carries the last committed cursor. Any other
- * latest event (a completed run, the other direction's history) starts a
- * fresh pass from the beginning, which the idempotency guard keeps cheap.
+ * Mode and resume come from the column migration ({@link ColumnMigration}):
+ * an open obligation forces the run, and the run resumes from this
+ * direction's latest checkpoint, or from an `error` event carrying the last
+ * committed cursor, when that pass ran in the same mode. Anything else starts
+ * a fresh pass from the beginning, which the idempotency guard keeps cheap.
+ * Every event records the mode (`details.force`), which is what lets a later
+ * run tell a forced pass from an unforced one.
+ *
+ * Refused, before anything is recorded, while the other direction's column
+ * migration on the same pair is open, or when `twinColumn` contradicts the
+ * twin the column migration in progress recorded.
  *
  * Abort: `signal` is checked between chunks; the in-flight chunk always
  * finishes and checkpoints first.
@@ -147,27 +154,32 @@ export interface ChunkedRunResult {
 export async function runChunkedMigration<Row extends { pk: string }>(
   options: ChunkedRunOptions<Row>,
 ): Promise<ChunkedRunResult> {
-  const { db, tableName, stateColumn, chunkSize, events } = options
-  const base = options.baseDetails ?? {}
-  const trackSkipped = options.trackSkipped ?? false
+  const { db, tableName, stateColumn, chunkSize, direction } = options
+  const events = DIRECTION_VOCABULARY[direction]
 
-  const last = await progress(db, tableName, stateColumn)
-  const resumable =
-    last !== null &&
-    (last.event === events.checkpoint ||
-      (options.resumeFromError === true &&
-        last.event === 'error' &&
-        last.phase === events.runningPhase &&
-        last.cursorValue !== null))
-  const resumedFrom =
-    resumable && (options.canResume?.(last) ?? true) ? last : null
+  const migration = await ColumnMigration.load(db, {
+    table: tableName,
+    column: stateColumn,
+    direction,
+    twin: options.twinColumn,
+    manifest: null,
+  })
+  const counterpart = migration.counterpartMessage()
+  if (counterpart !== null) {
+    throw new ColumnMigrationError('counterpart-open', counterpart)
+  }
+  const plan = await migration.planPass({ force: options.force ?? false })
+  const { force, forcedBy } = plan
+  const mode: PassMode = { force }
+  const base = { ...options.baseDetails, force }
+
+  const resumedFrom = plan.resumeFrom
   const resumeCursor = resumedFrom ? resumedFrom.cursorValue : null
   const resumed = resumeCursor !== null
   const priorProcessed = resumedFrom ? (resumedFrom.rowsProcessed ?? 0) : 0
-  const priorSkipped =
-    trackSkipped && resumedFrom ? readSkipped(resumedFrom.details) : 0
+  const priorSkipped = resumedFrom ? readSkipped(resumedFrom.details) : 0
 
-  const pending = await options.countPending(resumeCursor)
+  const pending = await options.countPending(resumeCursor, mode)
   const rowsTotal = priorProcessed + pending
 
   await appendEvent(db, {
@@ -180,6 +192,7 @@ export async function runChunkedMigration<Row extends { pk: string }>(
     rowsTotal,
     details: {
       ...base,
+      ...(forcedBy !== null ? { forcedBy } : {}),
       chunkSize,
       resumed,
       ...options.startedDetails,
@@ -191,13 +204,12 @@ export async function runChunkedMigration<Row extends { pk: string }>(
   let rowsSkipped = priorSkipped
   let chunkIndex = 0
   let completed = false
-  const skippedDetails = () => (trackSkipped ? { rowsSkipped } : {})
 
   try {
     while (true) {
       if (options.signal?.aborted) break
 
-      const page = await options.fetchPage(cursor, chunkSize)
+      const page = await options.fetchPage(cursor, chunkSize, mode)
       if (page.rows.length === 0) {
         completed = true
         break
@@ -206,8 +218,9 @@ export async function runChunkedMigration<Row extends { pk: string }>(
       const prepared = await options.prepareChunk(page.rows, {
         chunkIndex,
         resumed,
+        force,
       })
-      const chunkSkipped = trackSkipped ? (prepared.skipped ?? 0) : 0
+      const chunkSkipped = prepared.skipped ?? 0
 
       // The counters and cursor advance only once the chunk has COMMITTED:
       // an `error` event records them, and a resumed run trusts them.
@@ -228,7 +241,8 @@ export async function runChunkedMigration<Row extends { pk: string }>(
             ...base,
             chunkIndex,
             chunkRows: page.rows.length,
-            ...(trackSkipped ? { chunkSkipped, rowsSkipped: nextSkipped } : {}),
+            chunkSkipped,
+            rowsSkipped: nextSkipped,
             ...prepared.checkpointDetails,
           },
         })
@@ -261,7 +275,7 @@ export async function runChunkedMigration<Row extends { pk: string }>(
         cursorValue: cursor,
         rowsProcessed,
         rowsTotal,
-        details: { ...base, chunkCount: chunkIndex, ...skippedDetails() },
+        details: { ...base, chunkCount: chunkIndex, rowsSkipped },
       })
     }
   } catch (err) {
@@ -275,15 +289,35 @@ export async function runChunkedMigration<Row extends { pk: string }>(
       rowsTotal,
       details: {
         ...base,
-        message: err instanceof Error ? err.message : String(err),
+        ...options.errorDetails?.(err),
+        errorName: safeErrorName(err),
         chunkIndex,
-        ...skippedDetails(),
+        rowsSkipped,
       },
     })
     throw err
   }
 
-  return { resumed, rowsProcessed, rowsTotal, completed, rowsSkipped }
+  return {
+    resumed,
+    rowsProcessed,
+    rowsTotal,
+    completed,
+    rowsSkipped,
+    force,
+    forcedBy,
+  }
+}
+
+/**
+ * The error's `name` when it looks like a class name, else `Error`. Never its
+ * message: a database or client error can carry row data there.
+ */
+function safeErrorName(error: unknown): string {
+  const name = error instanceof Error ? error.name : undefined
+  return name !== undefined && /^[A-Za-z_$][\w$.]{0,63}$/.test(name)
+    ? name
+    : 'Error'
 }
 
 /** Cumulative skipped count from a checkpoint's details; `0` when absent. */

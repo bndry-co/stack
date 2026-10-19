@@ -1,0 +1,423 @@
+/**
+ * Table tests for the column-migration rules: event history in, the column
+ * migration's `{ phase, obligations }` out. No database — the histories are
+ * the `cs_migrations` rows `ColumnMigration.load` would read.
+ */
+
+import { describe, expect, it } from 'vitest'
+import {
+  type ColumnMigrationState,
+  deriveColumnMigration,
+  openCounterpart,
+  planPassFor,
+} from '../column-migration.js'
+import type {
+  MigrationEvent,
+  MigrationPhase,
+  MigrationStateRow,
+} from '../state.js'
+
+let nextId = 1
+function ev(
+  event: MigrationEvent,
+  phase: MigrationPhase,
+  details: Record<string, unknown> | null = null,
+  extra: Partial<MigrationStateRow> = {},
+): MigrationStateRow {
+  return {
+    id: String(nextId++),
+    tableName: 'users',
+    columnName: 'email_encrypted',
+    event,
+    phase,
+    cursorValue: null,
+    rowsProcessed: null,
+    rowsTotal: null,
+    details,
+    createdAt: new Date(0),
+    ...extra,
+  }
+}
+
+const twin = { plaintextColumn: 'email' }
+const forced = { ...twin, force: true }
+const unforced = { ...twin, force: false }
+
+// Reverse events, named for the table below.
+const confirm = () =>
+  ev('decrypt_dual_writing', 'decrypt-dual-writing', { ...twin })
+const confirmOverValues = () =>
+  ev('decrypt_dual_writing', 'decrypt-dual-writing', {
+    ...twin,
+    existingTwinValues: true,
+  })
+const confirmWaived = () =>
+  ev('decrypt_dual_writing', 'decrypt-dual-writing', {
+    ...twin,
+    existingTwinValues: true,
+    waiver: 'plaintext-current',
+  })
+const started = (details: Record<string, unknown>) =>
+  ev('decrypt_started', 'decrypting', details)
+const checkpoint = (details: Record<string, unknown>, cursor = '100') =>
+  ev('decrypt_checkpoint', 'decrypting', details, { cursorValue: cursor })
+const failed = (details: Record<string, unknown>, cursor: string | null) =>
+  ev('error', 'decrypting', details, { cursorValue: cursor })
+const completed = (details: Record<string, unknown>) =>
+  ev('decrypted', 'decrypted', details)
+const dropGenerated = () =>
+  ev('encrypted_dropped', 'encrypted-dropped', { ...twin })
+
+type Expected = Pick<ColumnMigrationState, 'phase' | 'open'> & {
+  obligation: null | { reason: string; waivable: boolean }
+}
+
+const REVERSE_CASES: Array<{
+  name: string
+  history: () => MigrationStateRow[]
+  expected: Expected
+}> = [
+  {
+    name: 'no history: no column migration',
+    history: () => [],
+    expected: { phase: null, open: false, obligation: null },
+  },
+  {
+    name: 'dual-writes confirmed over an empty twin: nothing owed',
+    history: () => [confirm()],
+    expected: { phase: 'decrypt-dual-writing', open: true, obligation: null },
+  },
+  {
+    name: 'opened up front: confirmed over a twin that already held values',
+    history: () => [confirmOverValues()],
+    expected: {
+      phase: 'decrypt-dual-writing',
+      open: true,
+      obligation: { reason: 'existing-values', waivable: true },
+    },
+  },
+  {
+    name: 'closed by a waiver recorded at confirmation',
+    history: () => [confirmWaived()],
+    expected: { phase: 'decrypt-dual-writing', open: true, obligation: null },
+  },
+  {
+    name: 'closed by a waiver recorded on a later confirmation, before any pass',
+    history: () => [confirmOverValues(), confirmWaived()],
+    expected: { phase: 'decrypt-dual-writing', open: true, obligation: null },
+  },
+  {
+    name: 'opened by a forced pass that started',
+    history: () => [confirm(), started(forced)],
+    expected: {
+      phase: 'decrypting',
+      open: true,
+      obligation: { reason: 'forced-pass', waivable: false },
+    },
+  },
+  {
+    name: 'opened by a forced pass that failed before its first commit',
+    history: () => [confirm(), started(forced), failed(forced, null)],
+    expected: {
+      phase: 'decrypting',
+      open: true,
+      obligation: { reason: 'forced-pass', waivable: false },
+    },
+  },
+  {
+    name: 'a forced pass started over an up-front obligation is no longer waivable',
+    history: () => [confirmOverValues(), started(forced)],
+    expected: {
+      phase: 'decrypting',
+      open: true,
+      obligation: { reason: 'forced-pass', waivable: false },
+    },
+  },
+  {
+    name: 'closed by a completed forced pass',
+    history: () => [
+      confirmOverValues(),
+      started(forced),
+      checkpoint(forced),
+      completed(forced),
+    ],
+    expected: { phase: 'decrypted', open: true, obligation: null },
+  },
+  {
+    name: 'an unforced completion does not close it',
+    history: () => [confirm(), started(forced), completed(unforced)],
+    expected: {
+      phase: 'decrypted',
+      open: true,
+      obligation: { reason: 'forced-pass', waivable: false },
+    },
+  },
+  {
+    name: 'unforced passes neither open nor close anything',
+    history: () => [confirm(), started(unforced), completed(unforced)],
+    expected: { phase: 'decrypted', open: true, obligation: null },
+  },
+  {
+    name: 'a pass run with no dual-write confirmation is still scoped',
+    history: () => [started(forced), checkpoint(forced)],
+    expected: {
+      phase: 'decrypting',
+      open: true,
+      obligation: { reason: 'forced-pass', waivable: false },
+    },
+  },
+  {
+    name: 'an obligation left open by an earlier column migration does not carry over',
+    history: () => [confirmOverValues(), started(forced), confirm()],
+    expected: { phase: 'decrypt-dual-writing', open: true, obligation: null },
+  },
+  {
+    name: 'a generated drop is the current column migration, but no longer open',
+    history: () => [
+      confirm(),
+      started(unforced),
+      completed(unforced),
+      dropGenerated(),
+    ],
+    expected: { phase: 'encrypted-dropped', open: false, obligation: null },
+  },
+  {
+    name: 'forward events under the same key are not reverse history',
+    history: () => [
+      ev('backfill_checkpoint', 'backfilling', null, { cursorValue: '40' }),
+    ],
+    expected: { phase: null, open: false, obligation: null },
+  },
+]
+
+describe('deriveColumnMigration (reverse)', () => {
+  it.each(REVERSE_CASES)('$name', ({ history, expected }) => {
+    const state = deriveColumnMigration({
+      direction: 'reverse',
+      history: history(),
+    })
+    expect(state.phase).toBe(expected.phase)
+    expect(state.open).toBe(expected.open)
+    const [obligation] = state.obligations
+    expect(
+      obligation === undefined
+        ? null
+        : { reason: obligation.reason, waivable: obligation.waivable },
+    ).toEqual(expected.obligation)
+    expect(state.obligations.length).toBeLessThanOrEqual(1)
+  })
+
+  it('records the twin the latest reverse event names', () => {
+    const state = deriveColumnMigration({
+      direction: 'reverse',
+      history: [confirm(), started(unforced)],
+    })
+    expect(state.recordedTwin).toBe('email')
+  })
+
+  it('a generated drop superseded by a later forward column migration of the twin is history', () => {
+    const history = [confirm(), completed(unforced), dropGenerated()]
+    const forwardOfTwin = [
+      ev('dual_writing', 'dual-writing', null, { columnName: 'email' }),
+    ]
+    const state = deriveColumnMigration({
+      direction: 'reverse',
+      history,
+      recordedTwinHistory: forwardOfTwin,
+    })
+    expect(state.phase).toBeNull()
+    expect(state.open).toBe(false)
+    expect(state.recordedTwin).toBeUndefined()
+    // …while forward events from BEFORE the drop leave it current.
+    const before = [
+      ev('dropped', 'dropped', null, { columnName: 'email', id: '0' }),
+    ]
+    expect(
+      deriveColumnMigration({
+        direction: 'reverse',
+        history,
+        recordedTwinHistory: before,
+      }).phase,
+    ).toBe('encrypted-dropped')
+  })
+})
+
+describe('deriveColumnMigration (forward)', () => {
+  const fwd = (
+    event: MigrationEvent,
+    phase: MigrationPhase,
+    details: Record<string, unknown> | null = null,
+  ) => ev(event, phase, details, { columnName: 'email' })
+
+  it('a forced pass interrupted by an older release (force only on started) stays owed', () => {
+    const state = deriveColumnMigration({
+      direction: 'forward',
+      history: [
+        fwd('dual_writing', 'dual-writing'),
+        fwd('backfill_started', 'backfilling', { force: true }),
+        fwd('backfill_checkpoint', 'backfilling', { chunkIndex: 0 }),
+      ],
+    })
+    expect(state.obligations.map((o) => o.reason)).toEqual(['forced-pass'])
+  })
+
+  it('a dropped forward column migration is finished', () => {
+    const state = deriveColumnMigration({
+      direction: 'forward',
+      history: [fwd('dual_writing', 'dual-writing'), fwd('dropped', 'dropped')],
+    })
+    expect(state.phase).toBe('dropped')
+    expect(state.open).toBe(false)
+  })
+
+  it('ignores reverse events', () => {
+    const state = deriveColumnMigration({
+      direction: 'forward',
+      history: [confirm()],
+    })
+    expect(state.phase).toBeNull()
+  })
+})
+
+describe('openCounterpart', () => {
+  it('refuses a forward-source twin: a forward column migration not yet dropped', () => {
+    const blocking = openCounterpart({
+      direction: 'reverse',
+      twin: 'email',
+      twinHistory: [
+        ev('dual_writing', 'dual-writing', null, { columnName: 'email' }),
+        ev('backfilled', 'backfilled', null, { columnName: 'email' }),
+      ],
+    })
+    expect(blocking).toEqual({
+      direction: 'forward',
+      column: 'email',
+      phase: 'backfilled',
+    })
+  })
+
+  it('a dropped forward column migration does not block the reverse one', () => {
+    expect(
+      openCounterpart({
+        direction: 'reverse',
+        twin: 'email',
+        twinHistory: [ev('dropped', 'dropped', null, { columnName: 'email' })],
+      }),
+    ).toBeNull()
+  })
+
+  it('an open reverse column migration blocks a forward one on the same pair', () => {
+    expect(
+      openCounterpart({
+        direction: 'forward',
+        twin: 'email_encrypted',
+        twinHistory: [started(unforced)],
+      }),
+    ).toEqual({
+      direction: 'reverse',
+      column: 'email_encrypted',
+      phase: 'decrypting',
+    })
+  })
+
+  it('a generated reverse drop does not block a forward one', () => {
+    expect(
+      openCounterpart({
+        direction: 'forward',
+        twin: 'email_encrypted',
+        twinHistory: [completed(unforced), dropGenerated()],
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('planPassFor', () => {
+  const state = (history: MigrationStateRow[]) =>
+    deriveColumnMigration({ direction: 'reverse', history })
+
+  it('an open obligation forces a run the caller did not force, and says why', () => {
+    const plan = planPassFor(state([confirm(), started(forced)]), {
+      force: false,
+    })
+    expect(plan).toMatchObject({ force: true, forcedBy: 'forced-pass' })
+  })
+
+  it('an up-front obligation forces the first run', () => {
+    expect(
+      planPassFor(state([confirmOverValues()]), { force: false }),
+    ).toMatchObject({ force: true, forcedBy: 'existing-values' })
+  })
+
+  it('a caller-forced run says so', () => {
+    expect(planPassFor(state([confirm()]), { force: true })).toMatchObject({
+      force: true,
+      forcedBy: 'caller',
+    })
+  })
+
+  it('nothing owed and nothing asked: unforced', () => {
+    expect(planPassFor(state([confirm()]), { force: false })).toMatchObject({
+      force: false,
+      forcedBy: null,
+      resumeFrom: null,
+    })
+  })
+
+  /** The history, and its last event (ids are assigned in call order). */
+  const ending = (...rows: MigrationStateRow[]) =>
+    [rows, rows[rows.length - 1]] as const
+
+  it('resumes a checkpoint of the same mode', () => {
+    const [history, last] = ending(
+      confirm(),
+      started(unforced),
+      checkpoint(unforced, '200'),
+    )
+    expect(planPassFor(state(history), { force: false }).resumeFrom).toBe(last)
+  })
+
+  it('resumes an interrupted forced pass even when the caller did not force', () => {
+    const [history, last] = ending(
+      confirm(),
+      started(forced),
+      checkpoint(forced, '200'),
+    )
+    const plan = planPassFor(state(history), { force: false })
+    expect(plan.force).toBe(true)
+    expect(plan.resumeFrom).toBe(last)
+  })
+
+  it('resumes after a failed run from its committed cursor', () => {
+    const [history, last] = ending(
+      confirm(),
+      started(unforced),
+      failed(unforced, '300'),
+    )
+    expect(planPassFor(state(history), { force: false }).resumeFrom).toBe(last)
+  })
+
+  it('a failure before the first commit has no cursor to resume from', () => {
+    expect(
+      planPassFor(
+        state([confirm(), started(unforced), failed(unforced, null)]),
+        { force: false },
+      ).resumeFrom,
+    ).toBeNull()
+  })
+
+  it('a forced run never resumes an unforced pass', () => {
+    expect(
+      planPassFor(state([confirm(), started(unforced), checkpoint(unforced)]), {
+        force: true,
+      }).resumeFrom,
+    ).toBeNull()
+  })
+
+  it('a completed pass is not resumed', () => {
+    expect(
+      planPassFor(state([confirm(), started(unforced), completed(unforced)]), {
+        force: false,
+      }).resumeFrom,
+    ).toBeNull()
+  })
+})

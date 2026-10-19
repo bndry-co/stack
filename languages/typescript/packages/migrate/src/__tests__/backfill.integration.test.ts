@@ -21,8 +21,9 @@ import 'dotenv/config'
 import pg from 'pg'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { type EncryptionClientLike, runBackfill } from '../backfill.js'
+import { ColumnMigrationError } from '../column-migration.js'
 import { installMigrationsSchema } from '../install.js'
-import { latestByColumn, progress } from '../state.js'
+import { appendEvent, latestByColumn, progress } from '../state.js'
 
 const PG_URL = process.env.PG_TEST_URL
 
@@ -289,9 +290,10 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
     try {
       const state = await progress(readDb, 'migrate_test.users', 'email')
       expect(state?.event).toBe('error')
-      expect((state?.details as { message?: string } | null)?.message).toMatch(
-        /ZeroKMS exploded/,
-      )
+      // The error's name, never its message: a client or database message
+      // can carry row data.
+      expect(state?.details).toMatchObject({ errorName: 'Error' })
+      expect(JSON.stringify(state?.details)).not.toContain('ZeroKMS exploded')
     } finally {
       readDb.release()
     }
@@ -427,5 +429,131 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
     } finally {
       readDb.release()
     }
+  })
+
+  /** One forward run over `migrate_test.users` with the stub client. */
+  async function forward(
+    overrides: Partial<Parameters<typeof runBackfill>[0]> = {},
+  ) {
+    const db = await pool.connect()
+    try {
+      return await runBackfill({
+        db,
+        encryptionClient: stubClient,
+        tableSchema: { tableName: 'users', build: () => ({}) },
+        tableName: 'migrate_test.users',
+        schemaColumnKey: 'email',
+        plaintextColumn: 'email',
+        encryptedColumn: 'email_encrypted',
+        pkColumn: 'id',
+        chunkSize: 50,
+        ...overrides,
+      })
+    } finally {
+      db.release()
+    }
+  }
+
+  async function staleCount(): Promise<number> {
+    const result = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM migrate_test.users WHERE email_encrypted->>'c' = 'stale'`,
+    )
+    return Number(result.rows[0]?.n ?? 0)
+  }
+
+  it('a resumed run counts its total once, so progress ends at 100%', async () => {
+    await seed(300)
+    const controller = new AbortController()
+    await forward({
+      signal: controller.signal,
+      onProgress: (p) => {
+        if (p.rowsProcessed >= 100) controller.abort()
+      },
+    })
+    const resumed = await forward()
+    expect(resumed.resumed).toBe(true)
+    expect(resumed.rowsTotal).toBe(300)
+    expect(resumed.rowsProcessed).toBe(300)
+  })
+
+  it('resumes after a failed run from its last committed cursor', async () => {
+    await seed(150)
+    let calls = 0
+    const failSecond: EncryptionClientLike = {
+      bulkEncryptModels(input, table) {
+        calls += 1
+        return calls === 2
+          ? Promise.resolve({ failure: { message: 'boom' } })
+          : stubClient.bulkEncryptModels(input, table)
+      },
+    }
+    await expect(forward({ encryptionClient: failSecond })).rejects.toThrow()
+    const fixed = await forward()
+    expect(fixed.resumed).toBe(true)
+    expect(fixed.rowsProcessed).toBe(150)
+    expect(await countEncrypted()).toBe(150)
+  })
+
+  it('a plain run finishes an interrupted --force pass as a forced pass', async () => {
+    await seed(300)
+    await pool.query(
+      `UPDATE migrate_test.users SET email_encrypted = '{"v":2,"c":"stale"}'::jsonb`,
+    )
+    const controller = new AbortController()
+    await forward({
+      force: true,
+      signal: controller.signal,
+      onProgress: (p) => {
+        if (p.rowsProcessed >= 100) controller.abort()
+      },
+    })
+
+    // Unforced, this run would find nothing pending and leave rows 101-300
+    // stale. The open obligation makes it forced, and it resumes the pass.
+    const finished = await forward()
+    expect(finished).toMatchObject({
+      resumed: true,
+      completed: true,
+      force: true,
+      forcedBy: 'forced-pass',
+    })
+    expect(await staleCount()).toBe(0)
+
+    // The completed forced pass met the obligation.
+    expect(await forward()).toMatchObject({ force: false, forcedBy: null })
+  })
+
+  it('records the pass mode on every event', async () => {
+    await seed(120)
+    await forward({ force: true })
+    const { rows } = await pool.query<{ event: string; force: unknown }>(
+      `SELECT event, details->'force' AS force FROM cipherstash.cs_migrations ORDER BY id`,
+    )
+    expect(rows.map((r) => r.event)).toEqual([
+      'backfill_started',
+      'backfill_checkpoint',
+      'backfill_checkpoint',
+      'backfill_checkpoint',
+      'backfilled',
+    ])
+    expect(rows.every((r) => r.force === true)).toBe(true)
+  })
+
+  it('refuses to start while a reverse column migration of the pair is open', async () => {
+    await seed(10)
+    const db = await pool.connect()
+    try {
+      await appendEvent(db, {
+        tableName: 'migrate_test.users',
+        columnName: 'email_encrypted',
+        event: 'decrypt_started',
+        phase: 'decrypting',
+        details: { plaintextColumn: 'email' },
+      })
+    } finally {
+      db.release()
+    }
+    await expect(forward()).rejects.toBeInstanceOf(ColumnMigrationError)
+    expect(await countEncrypted()).toBe(0)
   })
 })
