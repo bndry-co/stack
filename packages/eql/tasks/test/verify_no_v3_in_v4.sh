@@ -3,7 +3,8 @@
 #
 # ADR-0002 installs one SQL source under two names, so a column's domain says
 # which engine produced its terms. That holds only while the v4 bundle is v3's
-# SQL with EVERY name and version changed. A stray eql_v3 reference installs
+# SQL with EVERY name and version changed, plus the files confined to v4 by
+# `-- ONLY EQL VERSION: 4`, which name only v4. A stray eql_v3 reference installs
 # cleanly and then quietly compares v4 data with v3 terms, or casts a v4 payload
 # to a v3 domain.
 #
