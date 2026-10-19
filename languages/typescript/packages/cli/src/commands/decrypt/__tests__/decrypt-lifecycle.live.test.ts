@@ -129,21 +129,35 @@ describeLive('decrypt lifecycle — live Postgres', () => {
   let client: pg.Client
   let cwd: string
   let originalCwd: string
+  /** Whether `cipherstash` existed before this suite created it. */
+  let trackingSchemaExisted = true
 
   beforeAll(async () => {
     const { default: pgModule } = await import('pg')
     client = new pgModule.Client({ connectionString: SCOPED_URL })
     await client.connect()
     originalCwd = process.cwd()
+    const { rows } = await client.query(
+      `SELECT 1 FROM pg_namespace WHERE nspname = 'cipherstash'`,
+    )
+    trackingSchemaExisted = rows.length > 0
   })
 
   afterAll(async () => {
     await client.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`)
-    await client
-      .query('DELETE FROM cipherstash.cs_migrations WHERE table_name = $1', [
-        TABLE,
-      ])
-      .catch(() => undefined)
+    if (trackingSchemaExisted) {
+      await client
+        .query('DELETE FROM cipherstash.cs_migrations WHERE table_name = $1', [
+          TABLE,
+        ])
+        .catch(() => undefined)
+    } else {
+      // Leave the database as found. A role named `cipherstash` has
+      // `"$user"` first on its default search_path, so a `cipherstash` schema
+      // left behind would receive the unqualified objects a later suite's EQL
+      // install creates, and the installer would then refuse to reinstall.
+      await client.query('DROP SCHEMA IF EXISTS cipherstash CASCADE')
+    }
     await client.end().catch(() => undefined)
   })
 
