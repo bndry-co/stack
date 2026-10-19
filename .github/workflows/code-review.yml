@@ -19,10 +19,12 @@ permissions: {}
 
 jobs:
   request:
+    # The fork guard as workflow-dispatch-job-conditions.test.mjs requires it spelled.
     if: >-
-      ${{ !github.event.pull_request.draft
+      (github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository)
+      && github.event.pull_request.draft != true
       && github.event.pull_request.user.type != 'Bot'
-      && github.event.pull_request.head.repo.full_name == github.repository }}
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
