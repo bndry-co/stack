@@ -76,7 +76,9 @@ const OPPOSITE: Record<MigrationDirection, MigrationDirection> = {
 
 /**
  * An open obligation to complete a forced pass. While one is open, every run
- * is a forced pass, whatever the caller passes. See ADR 0001.
+ * is a forced pass, whatever the caller passes. See this package's ADR 0001,
+ * "A forced pass is an obligation"
+ * (`docs/adr/0001-forced-pass-is-an-obligation.md`).
  *
  * - `existing-values`: a reverse column migration began on a twin that
  *   already held values. A {@link Waiver} can close it until a forced pass

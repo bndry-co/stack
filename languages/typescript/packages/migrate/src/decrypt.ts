@@ -101,7 +101,8 @@ export class PlaintextWriteError extends Error {
  * parameters in the chunk's `UPDATE … FROM (VALUES ($1, $2), …)` (the primary
  * key, and the value packed with the ciphertext it was decrypted from), and
  * Postgres's wire protocol caps a statement at 65535 parameters, so 32767
- * rows is the most that can ever be written in one statement. A larger chunk would fail only after its ZeroKMS request.
+ * rows is the most that can ever be written in one statement. A larger chunk
+ * would fail only after its ZeroKMS request.
  */
 export const MAX_DECRYPT_CHUNK_SIZE = Math.floor(65535 / 2)
 

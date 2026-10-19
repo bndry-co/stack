@@ -91,8 +91,6 @@ export interface ChunkedRunOptions<Row extends { pk: string }> {
    * for this chunk and the cursor where it was.
    */
   prepareChunk(rows: Row[], context: ChunkContext): Promise<PreparedChunk>
-  /** Extra fields merged into the `started` event's `details`. */
-  startedDetails?: Record<string, unknown>
   /**
    * Fields merged into EVERY event's `details` (started, checkpoint,
    * completed, error) — e.g. the reverse run records which plaintext column
@@ -195,7 +193,6 @@ export async function runChunkedMigration<Row extends { pk: string }>(
       ...(forcedBy !== null ? { forcedBy } : {}),
       chunkSize,
       resumed,
-      ...options.startedDetails,
     },
   })
 
