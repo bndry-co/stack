@@ -475,18 +475,24 @@ The EQL types the engine produces, and the Go field types each takes:
 |---|---|---|
 | `TextEq` | `string` | `=`, `<>` |
 | `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
+| `TextOrd`, `TextOrdOpe` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Text` | `string` | none: stored and read only |
 | `Smallint` | `int16`, or any Go integer type (see below) | none |
 | `SmallintEq` | the same | `=`, `<>` |
+| `SmallintOrd`, `SmallintOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Integer` | `int32`, or any Go integer type (see below) | none |
 | `IntegerEq` | the same | `=`, `<>` |
+| `IntegerOrd`, `IntegerOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Bigint` | `int64`, or any Go integer type | none |
 | `BigintEq` | the same | `=`, `<>` |
+| `BigintOrd`, `BigintOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Boolean` | `bool` | none |
 | `Real` | `float32` | none |
 | `RealEq` | `float32` | `=`, `<>` |
+| `RealOrd`, `RealOrdOpe` | `float32` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Double` | `float64` | none |
 | `DoubleEq` | `float64` | `=`, `<>` |
+| `DoubleOrd`, `DoubleOrdOpe` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 
 Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
 is sealed at the type's width, and opens back into the field's type. A type
@@ -502,8 +508,25 @@ A `TextMatch` value must be at least three characters long: shorter text has
 no 3-grams to index and is refused. The number equality types compare as
 PostgreSQL compares the plain types: an integer equals itself whatever its
 width, and for floats `-0.0 = 0.0` and `NaN = NaN`; the stored value still
-decrypts to exactly what was written. The rest of
-the catalog (ordering, dates, decimals, JSON) is listed in
+decrypts to exactly what was written.
+
+The `Ord` and `OrdOpe` types store an OPE term, which EQL compares as bytes,
+and order by ADR-0002's order key: integers by value, floats as PostgreSQL's
+`float8` sorts them (`-0.0` ties `0.0`, every NaN is one value after
+`+Infinity`), text by its fold (case and accents folded, under Unicode 16).
+A field gets `Lt`, `Lte`, `Gt` and `Gte`, and a text field `Eq` too; sort
+with `ORDER BY eql_v4.ord_term(col)`. `ord_term` returns a `bytea` domain, so
+a plain functional btree index, `CREATE INDEX ON t (eql_v4.ord_term(col))`,
+serves `<`, `>` and `ORDER BY` with no operator class. That is why these
+types work on an install without superuser rights, where the ORE operator
+class is skipped. On a number column SQL's `=` compares
+the order term; stashgen writes no `Eq` method for one yet, since the engine
+answers `Eq` through an equality term only. A text order type also stores
+`TextEq`'s equality term, and `=` reads that, so `Café` and `cafe` are
+neither `<` nor `>` each other and not `=` either. Text holding a code point
+Unicode 16 does not assign has no order term and is refused. There is no
+`Between` method yet: a `BETWEEN` needs EQL v4's range query domains. The rest of
+the catalog (ORE ordering, dates, decimals, JSON) is listed in
 `eql.Types` with the reason it is not produced yet, and `stashgen` refuses it
 with that reason. The guest builds the value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the

@@ -560,11 +560,11 @@ mod the_table {
         }
     }
 
-    /// The types the engine produces in EQL v4 today: the storage and
-    /// equality domains of every family whose plaintext eql-bindings names,
-    /// and text match.
+    /// The types the engine produces in EQL v4 today: the storage, equality
+    /// and OPE-ordered domains of the families eql-bindings names a plaintext
+    /// for, and text match.
     #[test]
-    fn the_producible_types_are_the_unordered_ones_with_a_rust_plaintext() {
+    fn the_producible_types_are_the_ones_with_no_ore_and_a_rust_plaintext() {
         let producible: Vec<&str> = targets::targets()
             .iter()
             .filter(|t| t.producible)
@@ -575,18 +575,30 @@ mod the_table {
             [
                 "Integer",
                 "IntegerEq",
+                "IntegerOrd",
+                "IntegerOrdOpe",
                 "Smallint",
                 "SmallintEq",
+                "SmallintOrd",
+                "SmallintOrdOpe",
                 "Bigint",
                 "BigintEq",
+                "BigintOrd",
+                "BigintOrdOpe",
                 "Text",
                 "TextEq",
                 "TextMatch",
+                "TextOrd",
+                "TextOrdOpe",
                 "Boolean",
                 "Real",
                 "RealEq",
+                "RealOrd",
+                "RealOrdOpe",
                 "Double",
-                "DoubleEq"
+                "DoubleEq",
+                "DoubleOrd",
+                "DoubleOrdOpe"
             ],
         );
         for row in targets::targets().iter().filter(|t| !t.producible) {
@@ -596,8 +608,7 @@ mod the_table {
                 ("json", "") => "tree of leaves",
                 ("date" | "timestamp" | "numeric", _) => "no Rust plaintext type for this family",
                 (_, "OrdOre" | "SearchOre") => "derives CLLW ORE (#1132)",
-                ("text", "Ord" | "OrdOpe" | "Search") => "text order terms yet (#1131)",
-                (_, "Ord" | "OrdOpe") => "order keys (#1236)",
+                ("text", "Search") => "carries a match term",
                 (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };
             assert!(reason.contains(expected), "{}: {reason}", row.name);

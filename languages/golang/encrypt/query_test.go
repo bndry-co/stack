@@ -382,7 +382,10 @@ func TestVerifyAndTargetLimitNeedNoCipher(t *testing.T) {
 }
 
 // The catalog reports, per EQL type, the operators the engine answers:
-// TextEq answers eq, exactly, through its equality index.
+// TextEq answers eq, exactly, through its equality index, and an OPE-ordered
+// type the four orderings of one value through its ope index (Between takes
+// a pair, which a type's one query value does not carry), and eq too when it
+// also stores an equality term.
 func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	wasm, err := encrypt.EmbeddedGuest()
 	if errors.Is(err, encrypt.ErrGuestNotBuilt) {
@@ -409,6 +412,17 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 		case slices.Contains([]string{"TextEq", "IntegerEq", "SmallintEq", "BigintEq", "RealEq", "DoubleEq"}, target.Name):
 			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
 			if len(target.Operators) != 1 || target.Operators[0] != want[0] {
+				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
+			}
+		case slices.Contains([]string{"IntegerOrd", "IntegerOrdOpe", "SmallintOrd", "SmallintOrdOpe", "BigintOrd", "BigintOrdOpe", "RealOrd", "RealOrdOpe", "DoubleOrd", "DoubleOrdOpe", "TextOrd", "TextOrdOpe"}, target.Name):
+			var want []record.Operator
+			if strings.HasPrefix(target.Name, "Text") {
+				want = append(want, record.Operator{Name: "eq", Fidelity: record.Exact, Index: record.Equality})
+			}
+			for _, name := range []string{"lt", "lte", "gt", "gte"} {
+				want = append(want, record.Operator{Name: name, Fidelity: record.Exact, Index: record.Ope})
+			}
+			if !slices.Equal(target.Operators, want) {
 				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
 			}
 		case target.Name == "TextMatch":

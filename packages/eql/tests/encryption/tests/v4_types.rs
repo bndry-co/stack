@@ -450,6 +450,13 @@ async fn every_producible_type_dispatches_by_name() {
                         "{name}: the query probes the stored term"
                     );
                 }
+                if target.indexes.contains(&"ope") {
+                    assert!(json["op"].is_string(), "{name} stores an op");
+                    assert_eq!(
+                        query["op"], json["op"],
+                        "{name}: the query compares the stored order term"
+                    );
+                }
             }
         }
     }

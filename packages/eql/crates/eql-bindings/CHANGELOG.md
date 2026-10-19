@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The `date`, `timestamp` and `numeric` families say why they are still
   unproducible: the engine has their kinds, and their Rust plaintext types
   are not chosen yet.
+- **The OPE-ordered types are producible** (`stack-encrypt` feature):
+  `IntegerOrd`, `IntegerOrdOpe`, `SmallintOrd`, `SmallintOrdOpe`,
+  `BigintOrd`, `BigintOrdOpe`, `RealOrd`, `RealOrdOpe`, `DoubleOrd`,
+  `DoubleOrdOpe`, `TextOrd` and `TextOrdOpe`, from `i32`, `i16`, `i64`,
+  `f32`, `f64` and `String`. Their `op` term is Stack
+  Encrypt's OPE term over ADR-0002's order key, hex encoded, which EQL
+  compares as bytes: floats order as PostgreSQL's `float8` does, and text by
+  its fold (case and accents folded), so text order types keep `TextEq`'s
+  equality term for `=`. `OpeCllw` implements `EncryptFrom` for any
+  orderable plaintext. Their query twins carry one bound, so the engine
+  answers `<`, `<=`, `>` and `>=` (and `=` on text) through them, not
+  `BETWEEN`.
 - **`Target::match_options`** (`targets` feature): the options a type's
   match index is built under, `EqlMatch`'s, for a type that carries one
   (`TextMatch`), and `None` otherwise. Stack Encrypt answers `matches`

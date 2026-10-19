@@ -127,7 +127,15 @@ pub fn render_go_eql() -> String {
             )
         };
         let status = match (row.reason, row.plaintext) {
-            (None, Some(kind)) => format!("The engine produces it from a {kind}."),
+            (None, Some(kind)) => {
+                // The Go kinds are read as words: "an int32", "a float64".
+                let article = if kind.starts_with(['a', 'e', 'i', 'o', 'u']) {
+                    "an"
+                } else {
+                    "a"
+                };
+                format!("The engine produces it from {article} {kind}.")
+            }
             (None, None) => "The engine produces it.".to_owned(),
             (Some(reason), _) => format!("The engine cannot produce it yet: {reason}."),
         };
@@ -211,6 +219,14 @@ mod tests {
         for line in out.lines().filter(|l| l.starts_with("\t{Name: ")) {
             assert!(line.ends_with("},"), "{line}");
         }
+    }
+
+    #[test]
+    fn the_plaintext_kind_takes_the_article_it_is_read_with() {
+        let out = render_go_eql();
+        assert!(out.contains("The engine produces it from an int32."));
+        assert!(out.contains("The engine produces it from a float64."));
+        assert!(!out.contains("from a int"), "a int32 or a int64");
     }
 
     #[test]

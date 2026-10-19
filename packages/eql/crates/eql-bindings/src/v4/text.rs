@@ -206,10 +206,18 @@ impl DomainType for TextOrdOre {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextOrd {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
     pub hm: Hmac256,
@@ -249,10 +257,18 @@ impl DomainType for TextOrd {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextOrdOpe {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
     pub hm: Hmac256,
@@ -520,10 +536,18 @@ impl DomainType for TextOrdOreQuery {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input: [`String`](String). Implements `EncryptFrom<String>` to build equality and order query terms. Query operands do not decrypt.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom)]
+#[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextOrdQuery {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub hm: Hmac256,
     pub op: OpeCllw,
@@ -562,10 +586,18 @@ impl DomainType for TextOrdQuery {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input: [`String`](String). Implements `EncryptFrom<String>` to build equality and order query terms. Query operands do not decrypt.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom)]
+#[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextOrdOpeQuery {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub hm: Hmac256,
     pub op: OpeCllw,

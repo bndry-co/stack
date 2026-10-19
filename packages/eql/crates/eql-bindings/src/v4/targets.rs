@@ -58,10 +58,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("IntegerOrdQuery"),
         query_sql_domain: Some("eql_v4.query_integer_ord"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "IntegerOrdOpe",
@@ -72,10 +70,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("IntegerOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_integer_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Smallint",
@@ -124,10 +120,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("SmallintOrdQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_ord"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "SmallintOrdOpe",
@@ -138,10 +132,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("SmallintOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Bigint",
@@ -190,10 +182,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("BigintOrdQuery"),
         query_sql_domain: Some("eql_v4.query_bigint_ord"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "BigintOrdOpe",
@@ -204,10 +194,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("BigintOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_bigint_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Date",
@@ -478,10 +466,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["eq", "ope"],
         query: Some("TextOrdQuery"),
         query_sql_domain: Some("eql_v4.query_text_ord"),
-        producible: false,
-        reason: Some(
-            "no EQL type is built from the engine's text order terms yet (#1131)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TextOrdOpe",
@@ -492,10 +478,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["eq", "ope"],
         query: Some("TextOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_text_ord_ope"),
-        producible: false,
-        reason: Some(
-            "no EQL type is built from the engine's text order terms yet (#1131)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TextSearchOre",
@@ -522,7 +506,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_text_search"),
         producible: false,
         reason: Some(
-            "no EQL type is built from the engine's text order terms yet (#1131)",
+            "every query of this type carries a match term, which text shorter than one 3-gram cannot make, so `=` or `<` on short text would be refused; how a query that is not a match leaves it out is not decided (#1131)",
         ),
     },
     Target {
@@ -584,10 +568,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("RealOrdQuery"),
         query_sql_domain: Some("eql_v4.query_real_ord"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "RealOrdOpe",
@@ -598,10 +580,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("RealOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_real_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Double",
@@ -650,10 +630,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("DoubleOrdQuery"),
         query_sql_domain: Some("eql_v4.query_double_ord"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "DoubleOrdOpe",
@@ -664,10 +642,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("DoubleOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_double_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "SteVecDocument",
@@ -712,11 +688,35 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "IntegerEq" => {
             run_target::<super::integer::IntegerEq, i32, K>("IntegerEq", keyset, column, plaintext)
         }
+        "IntegerOrd" => run_target::<super::integer::IntegerOrd, i32, K>(
+            "IntegerOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "IntegerOrdOpe" => run_target::<super::integer::IntegerOrdOpe, i32, K>(
+            "IntegerOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "Smallint" => {
             run_target::<super::smallint::Smallint, i16, K>("Smallint", keyset, column, plaintext)
         }
         "SmallintEq" => run_target::<super::smallint::SmallintEq, i16, K>(
             "SmallintEq",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "SmallintOrd" => run_target::<super::smallint::SmallintOrd, i16, K>(
+            "SmallintOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "SmallintOrdOpe" => run_target::<super::smallint::SmallintOrdOpe, i16, K>(
+            "SmallintOrdOpe",
             keyset,
             column,
             plaintext,
@@ -727,6 +727,15 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "BigintEq" => {
             run_target::<super::bigint::BigintEq, i64, K>("BigintEq", keyset, column, plaintext)
         }
+        "BigintOrd" => {
+            run_target::<super::bigint::BigintOrd, i64, K>("BigintOrd", keyset, column, plaintext)
+        }
+        "BigintOrdOpe" => run_target::<super::bigint::BigintOrdOpe, i64, K>(
+            "BigintOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "Text" => run_target::<super::text::Text, String, K>("Text", keyset, column, plaintext),
         "TextEq" => {
             run_target::<super::text::TextEq, String, K>("TextEq", keyset, column, plaintext)
@@ -734,17 +743,41 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "TextMatch" => {
             run_target::<super::text::TextMatch, String, K>("TextMatch", keyset, column, plaintext)
         }
+        "TextOrd" => {
+            run_target::<super::text::TextOrd, String, K>("TextOrd", keyset, column, plaintext)
+        }
+        "TextOrdOpe" => run_target::<super::text::TextOrdOpe, String, K>(
+            "TextOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "Boolean" => {
             run_target::<super::boolean::Boolean, bool, K>("Boolean", keyset, column, plaintext)
         }
         "Real" => run_target::<super::real::Real, f32, K>("Real", keyset, column, plaintext),
         "RealEq" => run_target::<super::real::RealEq, f32, K>("RealEq", keyset, column, plaintext),
+        "RealOrd" => {
+            run_target::<super::real::RealOrd, f32, K>("RealOrd", keyset, column, plaintext)
+        }
+        "RealOrdOpe" => {
+            run_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", keyset, column, plaintext)
+        }
         "Double" => {
             run_target::<super::double::Double, f64, K>("Double", keyset, column, plaintext)
         }
         "DoubleEq" => {
             run_target::<super::double::DoubleEq, f64, K>("DoubleEq", keyset, column, plaintext)
         }
+        "DoubleOrd" => {
+            run_target::<super::double::DoubleOrd, f64, K>("DoubleOrd", keyset, column, plaintext)
+        }
+        "DoubleOrdOpe" => run_target::<super::double::DoubleOrdOpe, f64, K>(
+            "DoubleOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         _ => Err(refuse(name)),
     }
 }
@@ -763,30 +796,79 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "IntegerEq" => {
             open_target::<super::integer::IntegerEq, i32, K>("IntegerEq", opener, column, stored)
         }
+        "IntegerOrd" => {
+            open_target::<super::integer::IntegerOrd, i32, K>("IntegerOrd", opener, column, stored)
+        }
+        "IntegerOrdOpe" => open_target::<super::integer::IntegerOrdOpe, i32, K>(
+            "IntegerOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
         "Smallint" => {
             open_target::<super::smallint::Smallint, i16, K>("Smallint", opener, column, stored)
         }
         "SmallintEq" => {
             open_target::<super::smallint::SmallintEq, i16, K>("SmallintEq", opener, column, stored)
         }
+        "SmallintOrd" => open_target::<super::smallint::SmallintOrd, i16, K>(
+            "SmallintOrd",
+            opener,
+            column,
+            stored,
+        ),
+        "SmallintOrdOpe" => open_target::<super::smallint::SmallintOrdOpe, i16, K>(
+            "SmallintOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
         "Bigint" => open_target::<super::bigint::Bigint, i64, K>("Bigint", opener, column, stored),
         "BigintEq" => {
             open_target::<super::bigint::BigintEq, i64, K>("BigintEq", opener, column, stored)
         }
+        "BigintOrd" => {
+            open_target::<super::bigint::BigintOrd, i64, K>("BigintOrd", opener, column, stored)
+        }
+        "BigintOrdOpe" => open_target::<super::bigint::BigintOrdOpe, i64, K>(
+            "BigintOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
         "Text" => open_target::<super::text::Text, String, K>("Text", opener, column, stored),
         "TextEq" => open_target::<super::text::TextEq, String, K>("TextEq", opener, column, stored),
         "TextMatch" => {
             open_target::<super::text::TextMatch, String, K>("TextMatch", opener, column, stored)
+        }
+        "TextOrd" => {
+            open_target::<super::text::TextOrd, String, K>("TextOrd", opener, column, stored)
+        }
+        "TextOrdOpe" => {
+            open_target::<super::text::TextOrdOpe, String, K>("TextOrdOpe", opener, column, stored)
         }
         "Boolean" => {
             open_target::<super::boolean::Boolean, bool, K>("Boolean", opener, column, stored)
         }
         "Real" => open_target::<super::real::Real, f32, K>("Real", opener, column, stored),
         "RealEq" => open_target::<super::real::RealEq, f32, K>("RealEq", opener, column, stored),
+        "RealOrd" => open_target::<super::real::RealOrd, f32, K>("RealOrd", opener, column, stored),
+        "RealOrdOpe" => {
+            open_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", opener, column, stored)
+        }
         "Double" => open_target::<super::double::Double, f64, K>("Double", opener, column, stored),
         "DoubleEq" => {
             open_target::<super::double::DoubleEq, f64, K>("DoubleEq", opener, column, stored)
         }
+        "DoubleOrd" => {
+            open_target::<super::double::DoubleOrd, f64, K>("DoubleOrd", opener, column, stored)
+        }
+        "DoubleOrdOpe" => open_target::<super::double::DoubleOrdOpe, f64, K>(
+            "DoubleOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
         _ => Err(refuse(name)),
     }
 }
@@ -806,14 +888,50 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
+        "IntegerOrd" => run_target::<super::integer::IntegerOrdQuery, i32, K>(
+            "IntegerOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "IntegerOrdOpe" => run_target::<super::integer::IntegerOrdOpeQuery, i32, K>(
+            "IntegerOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "SmallintEq" => run_target::<super::smallint::SmallintEqQuery, i16, K>(
             "SmallintEq",
             keyset,
             column,
             plaintext,
         ),
+        "SmallintOrd" => run_target::<super::smallint::SmallintOrdQuery, i16, K>(
+            "SmallintOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "SmallintOrdOpe" => run_target::<super::smallint::SmallintOrdOpeQuery, i16, K>(
+            "SmallintOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "BigintEq" => run_target::<super::bigint::BigintEqQuery, i64, K>(
             "BigintEq", keyset, column, plaintext,
+        ),
+        "BigintOrd" => run_target::<super::bigint::BigintOrdQuery, i64, K>(
+            "BigintOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "BigintOrdOpe" => run_target::<super::bigint::BigintOrdOpeQuery, i64, K>(
+            "BigintOrdOpe",
+            keyset,
+            column,
+            plaintext,
         ),
         "TextEq" => {
             run_target::<super::text::TextEqQuery, String, K>("TextEq", keyset, column, plaintext)
@@ -824,11 +942,41 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
+        "TextOrd" => {
+            run_target::<super::text::TextOrdQuery, String, K>("TextOrd", keyset, column, plaintext)
+        }
+        "TextOrdOpe" => run_target::<super::text::TextOrdOpeQuery, String, K>(
+            "TextOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "RealEq" => {
             run_target::<super::real::RealEqQuery, f32, K>("RealEq", keyset, column, plaintext)
         }
+        "RealOrd" => {
+            run_target::<super::real::RealOrdQuery, f32, K>("RealOrd", keyset, column, plaintext)
+        }
+        "RealOrdOpe" => run_target::<super::real::RealOrdOpeQuery, f32, K>(
+            "RealOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "DoubleEq" => run_target::<super::double::DoubleEqQuery, f64, K>(
             "DoubleEq", keyset, column, plaintext,
+        ),
+        "DoubleOrd" => run_target::<super::double::DoubleOrdQuery, f64, K>(
+            "DoubleOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "DoubleOrdOpe" => run_target::<super::double::DoubleOrdOpeQuery, f64, K>(
+            "DoubleOrdOpe",
+            keyset,
+            column,
+            plaintext,
         ),
         _ => Err(refuse_query(name)),
     }

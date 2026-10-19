@@ -191,18 +191,30 @@ mod tests {
             [
                 "Integer",
                 "IntegerEq",
+                "IntegerOrd",
+                "IntegerOrdOpe",
                 "Smallint",
                 "SmallintEq",
+                "SmallintOrd",
+                "SmallintOrdOpe",
                 "Bigint",
                 "BigintEq",
+                "BigintOrd",
+                "BigintOrdOpe",
                 "Text",
                 "TextEq",
                 "TextMatch",
+                "TextOrd",
+                "TextOrdOpe",
                 "Boolean",
                 "Real",
                 "RealEq",
+                "RealOrd",
+                "RealOrdOpe",
                 "Double",
-                "DoubleEq"
+                "DoubleEq",
+                "DoubleOrd",
+                "DoubleOrdOpe"
             ],
             "the engine's producible types, in catalog order"
         );
