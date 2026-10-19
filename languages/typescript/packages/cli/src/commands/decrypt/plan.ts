@@ -1,6 +1,7 @@
 import {
-  appendEvent,
+  ColumnMigration,
   classifyEqlDomain,
+  DIRECTION_VOCABULARY,
   listEncryptedColumns,
   type PlaintextSqlType,
   qualifyTable,
@@ -19,12 +20,10 @@ import { loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
 import { drizzleColumnLine, drizzleImports } from './lib/orm-hints.js'
 import {
-  assessExistingTwin,
   type DecryptPair,
   openForwardMigrationMessage,
   resolveDecryptPair,
   TWIN_HAZARD_FLAGS,
-  type TwinHazard,
   twinHazardMessage,
 } from './lib/resolve-pair.js'
 
@@ -75,7 +74,7 @@ export interface DecryptPlanOptions {
  * A twin that already exists is checked the way `decrypt backfill`'s first
  * run checks it: when it is the source of a forward encryption that was never
  * dropped ({@link openForwardMigrationMessage}), or holds values
- * ({@link assessExistingTwin}), plan warns with the same text the backfill
+ * (`ColumnMigration.existingTwinValues`), plan warns with the same text the backfill
  * refuses with. Plan writes nothing for such a twin, so it warns rather than
  * fails.
  */
@@ -131,7 +130,7 @@ export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
     }
 
     const existing = pairs.filter((pair) => pair.plaintextSqlType !== null)
-    const hazards = new Map<DecryptPair, TwinHazard>()
+    const hazards = new Set<DecryptPair>()
     for (const pair of existing) {
       const openForward = openForwardMigrationMessage(pair)
       if (openForward !== null) {
@@ -140,14 +139,13 @@ export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
         )
         continue
       }
-      const hazard = await assessExistingTwin(client, pair)
-      if (hazard === null) {
+      if (!(await pair.migration.existingTwinValues())) {
         p.log.info(
           `${options.table}.${pair.plaintextColumn} already exists (${pair.plaintextSqlType}) — nothing to add for ${pair.encryptedColumn}.`,
         )
         continue
       }
-      hazards.set(pair, hazard)
+      hazards.add(pair)
       p.log.warn(
         `${options.table}.${pair.plaintextColumn} already exists (${pair.plaintextSqlType}), but it cannot be trusted as the plaintext twin of ${pair.encryptedColumn} as it stands. \`stash decrypt backfill\` will refuse it until you choose:\n${twinHazardMessage(pair)}`,
       )
@@ -165,21 +163,24 @@ export async function decryptPlanCommand(options: DecryptPlanOptions = {}) {
     // dropped, which `decrypt backfill` refuses. So the forward lifecycle is
     // closed here, recorded as observed rather than as a drop stash generated.
     for (const pair of toAdd) {
-      const openForward = openForwardMigrationMessage(pair)
-      if (openForward === null || pair.forwardState === null) continue
-      const what = `${options.table}.${pair.plaintextColumn} does not exist, but the forward encryption into ${pair.encryptedColumn} is still open at '${pair.forwardState.phase}' in cipherstash.cs_migrations: the column was removed outside stash.`
+      const forward = pair.migration.blockedBy
+      if (forward === null) continue
+      const what = `${options.table}.${pair.plaintextColumn} does not exist, but the forward encryption into ${pair.encryptedColumn} is still open at '${forward.phase}' in cipherstash.cs_migrations: the column was removed outside stash.`
       if (options.dryRun) {
         p.log.info(
           `${what} Without --dry-run, plan would record that forward migration as dropped so \`stash decrypt backfill\` can start.`,
         )
         continue
       }
-      await appendEvent(client, {
-        tableName: options.table,
-        columnName: pair.plaintextColumn,
-        event: 'dropped',
-        phase: 'dropped',
-        details: { observedAbsent: true, recordedBy: 'stash decrypt plan' },
+      const forwardMigration = await ColumnMigration.load(client, {
+        table: options.table,
+        column: pair.plaintextColumn,
+        direction: 'forward',
+        twin: pair.encryptedColumn,
+        manifest: null,
+      })
+      await forwardMigration.recordSourceRemoved({
+        recordedBy: 'stash decrypt plan',
       })
       p.log.info(`${what} Recorded it as dropped.`)
     }
@@ -313,7 +314,7 @@ function describeVia(pair: DecryptPair): string {
 function nextSteps(
   table: string,
   pairs: readonly DecryptPair[],
-  hazards: ReadonlyMap<DecryptPair, TwinHazard> = new Map(),
+  hazards: ReadonlySet<DecryptPair> = new Set(),
 ): string {
   const runner = (command: string) =>
     runnerCommand(detectPackageManager(), command)
@@ -369,15 +370,16 @@ async function renderOverview(
         continue
       }
       const target = `${pair.plaintextColumn} ${pair.plaintextSqlType ?? pair.mapping?.sqlType ?? '(unknown type)'}`
-      // An `encrypted-dropped` from an earlier, finished lifecycle is history,
+      // `phase` is null for a finished, earlier column migration: history,
       // not where this column stands now.
-      const phase = pair.lifecycleActive ? pair.state?.phase : undefined
+      const { migration } = pair
+      const phase = migration.phase ?? undefined
 
-      if (phase === 'encrypted-dropped') {
+      if (migration.dropGenerated) {
         lines.push(
           `  ✓ ${key}: encrypted-dropped (apply the generated drop migration)`,
         )
-      } else if (phase === 'decrypted') {
+      } else if (phase === DIRECTION_VOCABULARY.reverse.completedPhase) {
         lines.push(
           `  → ${key} → ${pair.plaintextColumn}: decrypted → switch reads to ${pair.plaintextColumn}, then ${runner(`stash decrypt drop --table ${table} --column ${column}`)}`,
         )
@@ -385,17 +387,14 @@ async function renderOverview(
         lines.push(
           `  → ${key} → ${pair.plaintextColumn}: ${phase} → ${runner(`stash decrypt backfill --table ${table} --column ${column}`)}`,
         )
-      } else if (
-        pair.forwardState !== null &&
-        pair.forwardState.phase !== 'dropped'
-      ) {
+      } else if (migration.blockedBy !== null) {
         lines.push(
-          `  ! ${key} → ${target}: forward encryption still open at '${pair.forwardState.phase}' — finish or abandon it first, see ${runner(`stash decrypt plan --table ${table} --column ${column}`)}`,
+          `  ! ${key} → ${target}: forward encryption still open at '${migration.blockedBy.phase}' — finish or abandon it first, see ${runner(`stash decrypt plan --table ${table} --column ${column}`)}`,
         )
       } else if (pair.plaintextSqlType !== null) {
-        const hazard = await assessExistingTwin(client, pair)
+        const hasValues = await migration.existingTwinValues()
         lines.push(
-          hazard === null
+          !hasValues
             ? `  → ${key} → ${target}: twin exists → ${runner(`stash decrypt backfill --table ${table} --column ${column}`)}`
             : `  ! ${key} → ${target}: twin already holds values; the backfill needs ${TWIN_HAZARD_FLAGS.overwrite} or ${TWIN_HAZARD_FLAGS.keep} — see ${runner(`stash decrypt plan --table ${table} --column ${column}`)}`,
         )

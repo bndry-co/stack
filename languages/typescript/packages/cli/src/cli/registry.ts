@@ -699,9 +699,11 @@ export const registry: CommandGroup[] = [
           'and never dropped: finish or abandon that migration first. The first',
           'run also refuses a plaintext column that already holds values: the',
           'backfill only fills NULLs, so stale values would survive. Pass --force',
-          'to overwrite them from the ciphertext (every later run is then forced',
-          'until a forced pass completes), or --confirm-plaintext-current to keep',
-          'them. Keep writing both columns until the drop is applied.',
+          'to overwrite them from the ciphertext, or --confirm-plaintext-current',
+          'to keep them. A forced pass, once started, is owed: every later run is',
+          'forced until one completes, and the waiver is refused from then on.',
+          '`decrypt status` flags a column that owes one (forced-pass-owed).',
+          'Keep writing both columns until the drop is applied.',
         ].join('\n'),
         examples: [
           'decrypt backfill --table users --column email_encrypted',
@@ -739,7 +741,7 @@ export const registry: CommandGroup[] = [
           {
             name: '--confirm-plaintext-current',
             description:
-              'First run only: keep the values a plaintext column already holds, asserting they are current.',
+              'Keep the values a plaintext column already holds, asserting they are current. Refused once a forced pass has started.',
           },
           {
             name: '--continue-on-undecryptable',

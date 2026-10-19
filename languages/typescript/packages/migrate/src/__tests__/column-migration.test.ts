@@ -8,9 +8,13 @@ import { describe, expect, it } from 'vitest'
 import {
   type ColumnMigrationState,
   deriveColumnMigration,
+  deriveTwinName,
+  manifestTwin,
   openCounterpart,
+  passProgress,
   planPassFor,
 } from '../column-migration.js'
+import type { Manifest } from '../manifest.js'
 import type {
   MigrationEvent,
   MigrationPhase,
@@ -419,5 +423,149 @@ describe('planPassFor', () => {
         force: false,
       }).resumeFrom,
     ).toBeNull()
+  })
+})
+
+describe('passProgress', () => {
+  const progressOf = (history: MigrationStateRow[]) =>
+    passProgress(deriveColumnMigration({ direction: 'reverse', history }))
+
+  it.each([
+    { name: 'nothing on record', history: () => [], expected: null },
+    {
+      name: 'awaiting the first run',
+      history: () => [confirm()],
+      expected: null,
+    },
+    {
+      name: 'mid-pass, with the undecryptable rows skipped so far',
+      history: () => [
+        confirm(),
+        ev(
+          'decrypt_checkpoint',
+          'decrypting',
+          { ...unforced, rowsSkipped: 2 },
+          { rowsProcessed: 40, rowsTotal: 100 },
+        ),
+      ],
+      expected: {
+        rowsProcessed: 40,
+        rowsTotal: 100,
+        rowsSkipped: 2,
+        failed: false,
+        completed: false,
+      },
+    },
+    {
+      name: 'a failed run shows where it stopped',
+      history: () => [
+        confirm(),
+        ev('error', 'decrypting', unforced, {
+          rowsProcessed: 10,
+          rowsTotal: 100,
+        }),
+      ],
+      expected: {
+        rowsProcessed: 10,
+        rowsTotal: 100,
+        rowsSkipped: null,
+        failed: true,
+        completed: false,
+      },
+    },
+    {
+      name: 'complete',
+      history: () => [
+        confirm(),
+        ev('decrypted', 'decrypted', unforced, {
+          rowsProcessed: 100,
+          rowsTotal: 100,
+        }),
+      ],
+      expected: {
+        rowsProcessed: 100,
+        rowsTotal: 100,
+        rowsSkipped: null,
+        failed: false,
+        completed: true,
+      },
+    },
+    {
+      name: 'a generated drop is past the pass',
+      history: () => [confirm(), completed(unforced), dropGenerated()],
+      expected: null,
+    },
+  ])('$name', ({ history, expected }) => {
+    expect(progressOf(history())).toEqual(expected)
+  })
+})
+
+describe('deriveTwinName', () => {
+  it.each([
+    {
+      direction: 'reverse',
+      column: 'email_encrypted',
+      twin: 'email',
+      via: 'convention',
+    },
+    {
+      direction: 'reverse',
+      column: '_encrypted',
+      twin: '_encrypted_plaintext',
+      via: 'fallback',
+    },
+    {
+      direction: 'reverse',
+      column: 'email_ct',
+      twin: 'email_ct_plaintext',
+      via: 'fallback',
+    },
+    {
+      direction: 'forward',
+      column: 'email',
+      twin: 'email_encrypted',
+      via: 'convention',
+    },
+  ] as const)(
+    '$direction $column → $twin',
+    ({ direction, column, twin, via }) => {
+      expect(deriveTwinName(direction, column)).toEqual({ column: twin, via })
+    },
+  )
+})
+
+describe('manifestTwin', () => {
+  const entry = (column: string, encryptedColumn?: string) => ({
+    column,
+    encryptedColumn,
+    castAs: 'text' as const,
+    indexes: [],
+    targetPhase: 'cut-over' as const,
+  })
+  const manifest: Manifest = {
+    version: 1,
+    tables: {
+      users: [entry('contact', 'email_encrypted'), entry('phone')],
+    },
+  }
+
+  it.each([
+    { direction: 'reverse', column: 'email_encrypted', twin: 'contact' },
+    // An entry from before `encryptedColumn` was recorded: the convention.
+    { direction: 'reverse', column: 'phone_encrypted', twin: 'phone' },
+    { direction: 'reverse', column: 'contact_encrypted', twin: undefined },
+    { direction: 'forward', column: 'contact', twin: 'email_encrypted' },
+    { direction: 'forward', column: 'phone', twin: undefined },
+  ] as const)('$direction $column → $twin', ({ direction, column, twin }) => {
+    expect(manifestTwin(direction, manifest, 'users', column)).toBe(twin)
+  })
+
+  it('no manifest, or no entry for the table, names nothing', () => {
+    expect(
+      manifestTwin('reverse', null, 'users', 'email_encrypted'),
+    ).toBeUndefined()
+    expect(
+      manifestTwin('reverse', manifest, 'orders', 'email_encrypted'),
+    ).toBeUndefined()
   })
 })

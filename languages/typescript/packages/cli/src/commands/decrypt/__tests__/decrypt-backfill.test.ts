@@ -12,7 +12,13 @@ import {
   UndecryptableBatchError,
 } from '@cipherstash/migrate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DecryptPair, TwinHazard } from '../lib/resolve-pair.js'
+import type { DecryptPair } from '../lib/resolve-pair.js'
+import {
+  type FakeMigration,
+  fakeMigration,
+  inFlight,
+  reverseEvent,
+} from './fake-migration.js'
 
 const releaseMock = vi.hoisted(() => vi.fn())
 vi.mock('pg', () => ({
@@ -26,7 +32,6 @@ vi.mock('pg', () => ({
 
 const migrateMocks = vi.hoisted(() => ({
   installMigrationsSchema: vi.fn(async () => {}),
-  appendEvent: vi.fn(async () => {}),
   runDecryptBackfill: vi.fn(
     async (): Promise<DecryptBackfillResult> => ({
       resumed: false,
@@ -37,6 +42,8 @@ const migrateMocks = vi.hoisted(() => ({
       skippedByCode: {},
       nullPlaintextPks: [],
       completed: true,
+      force: false,
+      forcedBy: null,
     }),
   ),
 }))
@@ -46,13 +53,9 @@ vi.mock('@cipherstash/migrate', async (importOriginal) => ({
 }))
 
 const resolveMock = vi.hoisted(() => vi.fn())
-const hazardMock = vi.hoisted(() =>
-  vi.fn(async (): Promise<TwinHazard | null> => null),
-)
 vi.mock('../lib/resolve-pair.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/resolve-pair.js')>()),
   resolveDecryptPair: resolveMock,
-  assessExistingTwin: hazardMock,
 }))
 
 const decryptionClient = vi.hoisted(() => ({ bulkDecrypt: vi.fn() }))
@@ -91,7 +94,11 @@ vi.mock('@/commands/init/utils.js', () => ({
 import * as p from '@clack/prompts'
 import { decryptBackfillCommand, skippedReport } from '../backfill.js'
 
-function pair(overrides: Partial<DecryptPair> = {}): DecryptPair {
+function pair(
+  overrides: Partial<Omit<DecryptPair, 'migration'>> & {
+    migration?: FakeMigration
+  } = {},
+): DecryptPair & { migration: FakeMigration } {
   return {
     table: 'users',
     encryptedColumn: 'email_encrypted',
@@ -100,27 +107,14 @@ function pair(overrides: Partial<DecryptPair> = {}): DecryptPair {
     plaintextColumn: 'email',
     via: 'convention',
     plaintextSqlType: 'text',
-    state: null,
-    // A recorded reverse event means a lifecycle in progress, unless a test
-    // says otherwise.
-    lifecycleActive: overrides.state !== undefined && overrides.state !== null,
-    forwardState: null,
+    migration: fakeMigration(),
     ...overrides,
   }
 }
 
-const reverseInFlight = {
-  id: '1',
-  tableName: 'users',
-  columnName: 'email_encrypted',
-  event: 'decrypt_checkpoint' as const,
-  phase: 'decrypting' as const,
-  cursorValue: '5',
-  rowsProcessed: 5,
-  rowsTotal: 10,
-  details: { plaintextColumn: 'email' },
-  createdAt: new Date(0),
-}
+/** A pair whose reverse column migration is mid-pass. */
+const midPass = (overrides: Parameters<typeof pair>[0] = {}) =>
+  pair({ migration: fakeMigration({ history: inFlight() }), ...overrides })
 
 function spyExit() {
   return vi
@@ -131,17 +125,13 @@ function spyExit() {
 describe('decrypt backfill', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    resolveMock.mockResolvedValue(pair({ state: reverseInFlight }))
-    hazardMock.mockResolvedValue(null)
+    resolveMock.mockResolvedValue(midPass())
     vi.mocked(p.confirm).mockResolvedValue(true)
   })
 
   it('decrypts into the twin with its declared type, 500 rows per ZeroKMS request by default', async () => {
     resolveMock.mockResolvedValue(
-      pair({
-        state: reverseInFlight,
-        plaintextSqlType: 'character varying(64)',
-      }),
+      midPass({ plaintextSqlType: 'character varying(64)' }),
     )
 
     await decryptBackfillCommand({ table: 'users', column: 'email_encrypted' })
@@ -176,19 +166,21 @@ describe('decrypt backfill', () => {
   })
 
   it('non-interactive first run: refuses without --confirm-dual-writes-deployed', async () => {
-    resolveMock.mockResolvedValue(pair({ state: null }))
+    const fresh = pair()
+    resolveMock.mockResolvedValue(fresh)
 
     await decryptBackfillCommand({ table: 'users', column: 'email_encrypted' })
 
     expect(p.log.error).toHaveBeenCalledWith(
       expect.stringContaining('--confirm-dual-writes-deployed'),
     )
-    expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
+    expect(fresh.migration.confirmDualWrites).not.toHaveBeenCalled()
     expect(migrateMocks.runDecryptBackfill).not.toHaveBeenCalled()
   })
 
-  it('records the reverse dual-write gate, with the pairing, on first acceptance', async () => {
-    resolveMock.mockResolvedValue(pair({ state: null }))
+  it('records the reverse dual-write gate on first acceptance', async () => {
+    const fresh = pair()
+    resolveMock.mockResolvedValue(fresh)
 
     await decryptBackfillCommand({
       table: 'users',
@@ -196,13 +188,12 @@ describe('decrypt backfill', () => {
       confirmDualWritesDeployed: true,
     })
 
-    expect(migrateMocks.appendEvent).toHaveBeenCalledWith(expect.anything(), {
-      tableName: 'users',
-      columnName: 'email_encrypted',
-      event: 'decrypt_dual_writing',
-      phase: 'decrypt-dual-writing',
-      details: { plaintextColumn: 'email' },
+    expect(fresh.migration.confirmDualWrites).toHaveBeenCalledWith({
+      waiver: undefined,
     })
+    expect(p.log.success).toHaveBeenCalledWith(
+      "users.email_encrypted marked as 'decrypt-dual-writing' in cs_migrations.",
+    )
     expect(migrateMocks.runDecryptBackfill).toHaveBeenCalled()
   })
 
@@ -216,6 +207,8 @@ describe('decrypt backfill', () => {
       skippedByCode: { UNKNOWN: 3 },
       nullPlaintextPks: [],
       completed: true,
+      force: false,
+      forcedBy: null,
     })
 
     await decryptBackfillCommand({ table: 'users', column: 'email_encrypted' })
@@ -268,18 +261,16 @@ describe('decrypt backfill', () => {
   })
 
   it('refuses a twin whose forward migration was never dropped, even with --force, recording nothing', async () => {
-    resolveMock.mockResolvedValue(
-      pair({
-        state: null,
-        forwardState: {
-          ...reverseInFlight,
-          columnName: 'email',
-          event: 'backfilled',
+    const blocked = pair({
+      migration: fakeMigration({
+        blockedBy: {
+          direction: 'forward',
+          column: 'email',
           phase: 'backfilled',
-          details: null,
         },
       }),
-    )
+    })
+    resolveMock.mockResolvedValue(blocked)
     const exitSpy = spyExit()
 
     await decryptBackfillCommand({
@@ -292,21 +283,21 @@ describe('decrypt backfill', () => {
     expect(p.log.error).toHaveBeenCalledWith(
       expect.stringContaining("still open at 'backfilled'"),
     )
-    expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
+    expect(blocked.migration.confirmDualWrites).not.toHaveBeenCalled()
     expect(migrateMocks.runDecryptBackfill).not.toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(1)
     exitSpy.mockRestore()
   })
 
   describe('a plaintext twin that already holds values (first run)', () => {
-    const prepopulated: TwinHazard = { kind: 'prepopulated' }
+    let held: ReturnType<typeof pair>
 
     beforeEach(() => {
-      resolveMock.mockResolvedValue(pair({ state: null }))
+      held = pair({ migration: fakeMigration({ twinHasValues: true }) })
+      resolveMock.mockResolvedValue(held)
     })
 
     it('refuses it, recording nothing and decrypting nothing', async () => {
-      hazardMock.mockResolvedValue(prepopulated)
       const exitSpy = spyExit()
 
       await decryptBackfillCommand({
@@ -319,15 +310,13 @@ describe('decrypt backfill', () => {
       expect(message).toContain('users.email already holds values')
       expect(message).toContain('--force')
       expect(message).toContain('--confirm-plaintext-current')
-      expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
+      expect(held.migration.confirmDualWrites).not.toHaveBeenCalled()
       expect(migrateMocks.runDecryptBackfill).not.toHaveBeenCalled()
       expect(exitSpy).toHaveBeenCalledWith(1)
       exitSpy.mockRestore()
     })
 
-    it('--force overwrites it from the ciphertext, and the gate records the choice', async () => {
-      hazardMock.mockResolvedValue(prepopulated)
-
+    it('--force overwrites it from the ciphertext, recording no waiver', async () => {
       await decryptBackfillCommand({
         table: 'users',
         column: 'email_encrypted',
@@ -335,25 +324,15 @@ describe('decrypt backfill', () => {
         force: true,
       })
 
-      expect(migrateMocks.appendEvent).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          event: 'decrypt_dual_writing',
-          details: {
-            plaintextColumn: 'email',
-            existingPlaintext: 'prepopulated',
-            acknowledgedWith: 'force',
-          },
-        }),
-      )
+      expect(held.migration.confirmDualWrites).toHaveBeenCalledWith({
+        waiver: undefined,
+      })
       expect(migrateMocks.runDecryptBackfill).toHaveBeenCalledWith(
         expect.objectContaining({ force: true }),
       )
     })
 
-    it('--confirm-plaintext-current keeps it and fills only the NULLs', async () => {
-      hazardMock.mockResolvedValue(prepopulated)
-
+    it('--confirm-plaintext-current keeps it, recorded as the waiver', async () => {
       await decryptBackfillCommand({
         table: 'users',
         column: 'email_encrypted',
@@ -364,22 +343,15 @@ describe('decrypt backfill', () => {
       expect(p.log.warn).toHaveBeenCalledWith(
         expect.stringContaining('Proceeding under --confirm-plaintext-current'),
       )
-      expect(migrateMocks.appendEvent).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          details: expect.objectContaining({
-            existingPlaintext: 'prepopulated',
-            acknowledgedWith: 'confirm-plaintext-current',
-          }),
-        }),
-      )
+      expect(held.migration.confirmDualWrites).toHaveBeenCalledWith({
+        waiver: 'plaintext-current',
+      })
       expect(migrateMocks.runDecryptBackfill).toHaveBeenCalledWith(
         expect.not.objectContaining({ force: true }),
       )
     })
 
     it('checks the twin before the --force prompt, so cancelling it records nothing', async () => {
-      hazardMock.mockResolvedValue(prepopulated)
       vi.mocked(p.confirm).mockResolvedValueOnce(false)
 
       await decryptBackfillCommand({
@@ -390,9 +362,9 @@ describe('decrypt backfill', () => {
       })
 
       // Had the gate's event been recorded first, the next run would treat
-      // the twin's values as this lifecycle's own and skip the check.
-      expect(hazardMock).toHaveBeenCalled()
-      expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
+      // the twin's values as this column migration's own.
+      expect(held.migration.existingTwinValues).toHaveBeenCalled()
+      expect(held.migration.confirmDualWrites).not.toHaveBeenCalled()
       expect(migrateMocks.runDecryptBackfill).not.toHaveBeenCalled()
     })
 
@@ -414,17 +386,48 @@ describe('decrypt backfill', () => {
     })
   })
 
-  it('a finished earlier lifecycle does not pass the dual-write gate', async () => {
+  it('says why a run it did not ask to force is a forced pass', async () => {
     resolveMock.mockResolvedValue(
       pair({
-        state: {
-          ...reverseInFlight,
-          event: 'encrypted_dropped',
-          phase: 'encrypted-dropped',
-        },
-        lifecycleActive: false,
+        migration: fakeMigration({
+          history: [
+            reverseEvent('decrypt_dual_writing', 'decrypt-dual-writing'),
+            reverseEvent('decrypt_started', 'decrypting', {
+              details: { plaintextColumn: 'email', force: true },
+            }),
+          ],
+        }),
       }),
     )
+
+    await decryptBackfillCommand({ table: 'users', column: 'email_encrypted' })
+
+    expect(p.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'This run is a forced pass: a forced pass over users.email started earlier',
+      ),
+    )
+  })
+
+  it('a waiver on a column migration in progress goes to the column migration, which may refuse it', async () => {
+    const running = midPass()
+    resolveMock.mockResolvedValue(running)
+
+    await decryptBackfillCommand({
+      table: 'users',
+      column: 'email_encrypted',
+      confirmPlaintextCurrent: true,
+    })
+
+    expect(running.migration.confirmDualWrites).toHaveBeenCalledWith({
+      waiver: 'plaintext-current',
+    })
+  })
+
+  it('a finished earlier column migration does not pass the dual-write gate', async () => {
+    // A drop generated, applied, and the column encrypted again: the forward
+    // events of the twin after the drop make the reverse history finished.
+    resolveMock.mockResolvedValue(pair())
 
     await decryptBackfillCommand({ table: 'users', column: 'email_encrypted' })
 
@@ -486,6 +489,8 @@ describe('decrypt backfill', () => {
       skippedByCode: { UNKNOWN: 1, NULL_PLAINTEXT: 2 },
       nullPlaintextPks: ['4', '9'],
       completed: true,
+      force: false,
+      forcedBy: null,
     })
 
     await decryptBackfillCommand({ table: 'users', column: 'email_encrypted' })

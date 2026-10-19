@@ -1,6 +1,8 @@
 import {
-  appendEvent,
+  type ColumnMigration,
+  ColumnMigrationError,
   type DecryptBackfillResult,
+  type ForcedBy,
   formatCodes,
   installMigrationsSchema,
   PlaintextWriteError,
@@ -18,11 +20,9 @@ import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { buildPgClientConfig, explainTlsError } from '@/db/client.js'
 import {
-  assessExistingTwin,
   type DecryptPair,
   openForwardMigrationMessage,
   resolveDecryptPair,
-  type TwinHazard,
   twinHazardMessage,
 } from './lib/resolve-pair.js'
 
@@ -73,8 +73,9 @@ export interface DecryptBackfillCommandOptions {
   force?: boolean
   /**
    * Assert that a plaintext twin which already holds values before the first
-   * reverse run is current, and keep those values. Without it (or `force`)
-   * the first run refuses such a twin; see {@link TwinHazard}.
+   * reverse run is current, and keep those values: recorded as the column
+   * migration's waiver. Without it (or `force`) the first run refuses such a
+   * twin. Refused once a forced pass has started.
    */
   confirmPlaintextCurrent?: boolean
   /**
@@ -100,12 +101,12 @@ export interface DecryptBackfillCommandOptions {
  * skipped, counted, left NULL, and reported. There is deliberately no bypass;
  * see the lock-context limitation in the `stash-cli` docs.
  *
- * On the first run, a twin that already holds values (or is the source of a
- * forward encryption that was never dropped) is refused unless the operator
- * passes `--force` (overwrite it from the ciphertext) or
- * `--confirm-plaintext-current` (keep it). The backfill only fills NULLs, so
- * trusting stale values silently would let `decrypt drop` destroy the only
- * current copy.
+ * A twin that is the source of a forward encryption never dropped is refused
+ * whatever the flags. On the first run, a twin that already holds values is
+ * refused unless the operator passes `--force` (overwrite it from the
+ * ciphertext, an obligation `@cipherstash/migrate` then enforces on every
+ * run until a forced pass completes) or `--confirm-plaintext-current` (keep
+ * it, recorded as a waiver). The rules themselves live in `ColumnMigration`.
  */
 export async function decryptBackfillCommand(
   options: DecryptBackfillCommandOptions,
@@ -171,9 +172,9 @@ export async function decryptBackfillCommand(
     if (openForward !== null) throw new BackfillConfigError(openForward)
 
     // Before anything is recorded: once the dual-write gate writes its event,
-    // later runs treat the twin's values as this lifecycle's own.
-    const hazard = await assessExistingTwin(db, pair)
-    if (hazard !== null) {
+    // later runs treat the twin's values as this column migration's own.
+    const twinHasValues = await pair.migration.existingTwinValues()
+    if (twinHasValues) {
       if (!options.force && !options.confirmPlaintextCurrent) {
         throw new BackfillConfigError(twinHazardMessage(pair))
       }
@@ -202,21 +203,19 @@ export async function decryptBackfillCommand(
       }
     }
 
-    const okToProceed = await ensureReverseDualWritesDeployed(db, {
+    const migration = await ensureReverseDualWritesDeployed({
       pair,
       confirmFlag: options.confirmDualWritesDeployed === true,
-      acknowledgedHazard:
-        hazard === null
-          ? undefined
-          : {
-              hazard,
-              via: options.force ? 'force' : 'confirm-plaintext-current',
-            },
+      waive: options.confirmPlaintextCurrent === true && !options.force,
     })
-    if (!okToProceed) {
+    if (migration === null) {
       p.outro('Aborted.')
       return
     }
+
+    const plan = await migration.planPass({ force: options.force === true })
+    const why = forcedReason(plan.forcedBy, options.table, pair)
+    if (why !== null) p.log.warn(why)
 
     p.log.info(
       `Decrypting ${options.table}.${pair.encryptedColumn} → ${pair.plaintextColumn} (pk: ${pkColumn}, chunk: ${chunkSize} rows = one ZeroKMS request).`,
@@ -278,6 +277,7 @@ export async function decryptBackfillCommand(
   } catch (error) {
     if (
       error instanceof BackfillConfigError ||
+      error instanceof ColumnMigrationError ||
       error instanceof UndecryptableBatchError ||
       error instanceof PlaintextWriteError
     ) {
@@ -319,26 +319,30 @@ function requirePlaintextTwin(pair: DecryptPair): string {
 /**
  * The reverse dual-write gate — the mirror of `encrypt backfill`'s. Rows the
  * application writes DURING the backfill must land in both columns, or they
- * end up encrypted-only and the drop coverage check later refuses. Records a
- * `decrypt_dual_writing` event on first acceptance so re-runs skip the prompt.
+ * end up encrypted-only and the drop coverage check later refuses. On first
+ * acceptance `ColumnMigration.confirmDualWrites` records it, naming the twin,
+ * so re-runs skip the prompt; over a twin that already holds values that
+ * opens the forced-pass obligation, unless `waive` records the waiver.
  *
- * Only the reverse lifecycle IN PROGRESS passes the gate: an
- * `encrypted-dropped` event from an earlier lifecycle (the column was dropped
- * and later encrypted again) asks again.
+ * Only the reverse column migration IN PROGRESS passes the gate: an
+ * `encrypted-dropped` event from an earlier one (the column was dropped and
+ * later encrypted again) asks again. On one in progress, `waive` still
+ * records a waiver, or is refused once a forced pass has started.
+ *
+ * Returns the column migration as it now stands, or `null` when declined.
  */
-async function ensureReverseDualWritesDeployed(
-  db: pg.PoolClient,
-  opts: {
-    pair: DecryptPair
-    confirmFlag: boolean
-    acknowledgedHazard?: {
-      hazard: TwinHazard
-      via: 'force' | 'confirm-plaintext-current'
-    }
-  },
-): Promise<boolean> {
+async function ensureReverseDualWritesDeployed(opts: {
+  pair: DecryptPair
+  confirmFlag: boolean
+  waive: boolean
+}): Promise<ColumnMigration | null> {
   const { pair } = opts
-  if (pair.lifecycleActive) return true
+  const waiver = opts.waive ? ('plaintext-current' as const) : undefined
+  if (pair.migration.phase !== null) {
+    return waiver === undefined
+      ? pair.migration
+      : pair.migration.confirmDualWrites({ waiver })
+  }
 
   const isInteractive =
     Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
@@ -356,34 +360,36 @@ async function ensureReverseDualWritesDeployed(
       message: `Has the dual-write code been deployed for ${target} → ${pair.plaintextColumn}?`,
       initialValue: false,
     })
-    if (p.isCancel(ok) || !ok) return false
+    if (p.isCancel(ok) || !ok) return null
   } else {
     p.log.error(
       `${target} has no recorded reverse \`dual-writing\` transition. Re-run with --confirm-dual-writes-deployed once your application is writing to both columns.`,
     )
-    return false
+    return null
   }
 
-  await appendEvent(db, {
-    tableName: pair.table,
-    columnName: pair.encryptedColumn,
-    event: 'decrypt_dual_writing',
-    phase: 'decrypt-dual-writing',
-    details: {
-      plaintextColumn: pair.plaintextColumn,
-      // A twin that held values before this lifecycle: what was found and
-      // which flag the operator chose. `acknowledgedWith: 'force'` opens the
-      // forced-pass obligation `runDecryptBackfill` enforces on every run.
-      ...(opts.acknowledgedHazard
-        ? {
-            existingPlaintext: opts.acknowledgedHazard.hazard.kind,
-            acknowledgedWith: opts.acknowledgedHazard.via,
-          }
-        : {}),
-    },
-  })
-  p.log.success(`${target} marked as 'decrypt-dual-writing' in cs_migrations.`)
-  return true
+  const confirmed = await pair.migration.confirmDualWrites({ waiver })
+  p.log.success(`${target} marked as '${confirmed.phase}' in cs_migrations.`)
+  return confirmed
+}
+
+/**
+ * Why a run is a forced pass the operator did not ask for, or `null`. The
+ * column migration forces it; the operator should know before it overwrites.
+ */
+export function forcedReason(
+  forcedBy: ForcedBy,
+  table: string,
+  pair: Pick<DecryptPair, 'encryptedColumn' | 'plaintextColumn'>,
+): string | null {
+  switch (forcedBy) {
+    case 'forced-pass':
+      return `This run is a forced pass: a forced pass over ${table}.${pair.plaintextColumn} started earlier and has not completed, so ${pair.plaintextColumn} may hold a mix of overwritten and stale values. Every run overwrites it from ${pair.encryptedColumn} until one completes.`
+    case 'existing-values':
+      return `This run is a forced pass: ${table}.${pair.plaintextColumn} held values before this reverse migration began and no waiver (--confirm-plaintext-current) is recorded, so it overwrites them from ${pair.encryptedColumn}.`
+    default:
+      return null
+  }
 }
 
 /**

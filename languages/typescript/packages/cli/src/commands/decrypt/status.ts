@@ -1,10 +1,11 @@
 import {
+  ColumnMigration,
+  type ColumnMigrationState,
   classifyEqlDomain,
-  isReverseMigrationPhase,
-  type MigrationStateRow,
-  plaintextTypeForEqlDomain,
+  passProgress,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
+import { BackfillConfigError } from '@/commands/encrypt/backfill.js'
 import {
   fetchPhysicalColumns,
   latestByColumnSafe,
@@ -14,10 +15,10 @@ import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
 import {
-  derivePlaintextName,
-  isActiveReverseLifecycle,
-  manifestPlaintextFor,
-  recordedPlaintextColumn,
+  type DecryptPair,
+  openForwardMigrationMessage,
+  PlaintextColumnIsEqlError,
+  resolveDecryptPair,
 } from './lib/resolve-pair.js'
 
 interface Row {
@@ -45,21 +46,18 @@ const STATUS_HEADERS: Row = {
 /**
  * CLI handler for `stash decrypt status` — the reverse twin of
  * `stash encrypt status`. One row per EQL v3 column in the current schema,
- * plus any column whose reverse lifecycle is on record but whose encrypted
- * column is already gone, merging:
+ * plus any column whose reverse column migration is on record but whose
+ * encrypted column is already gone.
  *
- * - `information_schema.columns` — which columns are encrypted, their domain,
- *   and whether the plaintext twin exists yet;
- * - the latest REVERSE event per encrypted column in `cs_migrations` — phase,
- *   progress, and the count of values the backfill could not decrypt.
+ * Each row comes from the same `resolveDecryptPair` (and so the same
+ * `ColumnMigration`) that `decrypt plan`, `backfill` and `drop` use, so the
+ * commands never show a different twin, phase or warning for one column. A
+ * twin that is itself an EQL column, which `plan` and `backfill` refuse, is
+ * flagged `plaintext-col-is-eql`; one they would refuse or warn about is
+ * flagged `forward-open` or `twin-has-values`.
  *
- * The twin name comes from the same rules `decrypt plan` and `decrypt
- * backfill` use (recorded pairing of the lifecycle in progress, then the
- * manifest, then {@link derivePlaintextName}), so the three commands never
- * show different names for one column. A twin that is itself an EQL column,
- * which `plan` and `backfill` refuse, is flagged `plaintext-col-is-eql`.
- *
- * Read-only, and runs no per-row coverage queries (as `encrypt status`).
+ * Read-only. Like `encrypt status` it runs no coverage counts; the only
+ * per-row probe is whether an existing twin holds any value (`EXISTS`).
  */
 export async function decryptStatusCommand() {
   p.intro(runnerCommand(detectPackageManager(), 'stash decrypt status'))
@@ -82,58 +80,33 @@ export async function decryptStatusCommand() {
     for (const [table, columns] of physicalCols) {
       for (const [column, domain] of columns) {
         if (domain === null || classifyEqlDomain(domain) !== 3) continue
-        const key = `${table}.${column}`
-        seen.add(key)
-        const latest = reverseOnly(stateMap.get(`${table}.${column}`))
-        const recordedTwin = recordedPlaintextColumn(latest)
-        const active = isActiveReverseLifecycle(
-          latest,
-          recordedTwin === undefined
-            ? null
-            : forwardOnly(stateMap.get(`${table}.${recordedTwin}`)),
-        )
-        // A finished lifecycle's events are history: this column starts over.
-        const state = active ? latest : null
-        const plaintext =
-          (active ? recordedTwin : undefined) ??
-          (await manifestPlaintextFor(table, column)) ??
-          derivePlaintextName(column).name
-        const twinDomain = columns.get(plaintext)
-        rows.push(
-          renderRow({
-            table,
-            column,
-            domain,
-            plaintext,
-            state,
-            plaintextExists: columns.has(plaintext),
-            plaintextIsEql:
-              twinDomain !== undefined &&
-              twinDomain !== null &&
-              classifyEqlDomain(twinDomain) !== null,
-            mappedType: plaintextTypeForEqlDomain(domain)?.sqlType,
-          }),
-        )
+        seen.add(`${table}.${column}`)
+        rows.push(await currentRow(client, table, column, domain))
       }
     }
 
-    // Reverse lifecycles whose encrypted column is no longer visible — most
-    // often `encrypted-dropped` after the migration was applied.
-    for (const [key, row] of stateMap) {
+    // Reverse column migrations whose encrypted column is no longer visible
+    // — most often a generated drop that was applied.
+    for (const key of stateMap.keys()) {
       if (seen.has(key)) continue
-      const state = reverseOnly(row)
-      if (!state) continue
       const lastDot = key.lastIndexOf('.')
       const table = key.slice(0, lastDot)
       const column = key.slice(lastDot + 1)
-      const plaintext = recordedPlaintextColumn(state) ?? '—'
+      const migration = await ColumnMigration.load(client, {
+        table,
+        column,
+        direction: 'reverse',
+        manifest: null,
+      })
+      if (migration.latest === null) continue
+      const plaintext = migration.recordedTwin ?? '—'
       rows.push(
         renderRow({
           table,
           column,
           domain: '—',
           plaintext,
-          state,
+          migration,
           plaintextExists: physicalCols.get(table)?.has(plaintext) ?? false,
           encryptedGone: true,
         }),
@@ -161,16 +134,44 @@ export async function decryptStatusCommand() {
   if (exitCode) process.exit(exitCode)
 }
 
-function reverseOnly(
-  row: MigrationStateRow | undefined,
-): MigrationStateRow | null {
-  return row && isReverseMigrationPhase(row.phase) ? row : null
-}
-
-function forwardOnly(
-  row: MigrationStateRow | undefined,
-): MigrationStateRow | null {
-  return row && !isReverseMigrationPhase(row.phase) ? row : null
+/** The row for an EQL v3 column that exists, from its resolved pair. */
+async function currentRow(
+  client: ReturnType<typeof createPgClient>,
+  table: string,
+  column: string,
+  domain: string,
+): Promise<Row> {
+  let pair: DecryptPair
+  try {
+    pair = await resolveDecryptPair(client, { table, encryptedColumn: column })
+  } catch (error) {
+    if (!(error instanceof BackfillConfigError)) throw error
+    const migration = await ColumnMigration.load(client, {
+      table,
+      column,
+      direction: 'reverse',
+    })
+    return renderRow({
+      table,
+      column,
+      domain,
+      plaintext: migration.twin.column,
+      migration,
+      plaintextExists: true,
+      plaintextIsEql: error instanceof PlaintextColumnIsEqlError,
+    })
+  }
+  return renderRow({
+    table,
+    column,
+    domain,
+    plaintext: pair.plaintextColumn,
+    migration: pair.migration,
+    plaintextExists: pair.plaintextSqlType !== null,
+    mappedType: pair.mapping?.sqlType,
+    forwardOpen: openForwardMigrationMessage(pair) !== null,
+    twinHasValues: await pair.migration.existingTwinValues(),
+  })
 }
 
 function renderRow(input: {
@@ -178,7 +179,7 @@ function renderRow(input: {
   column: string
   domain: string
   plaintext: string
-  state: MigrationStateRow | null
+  migration: ColumnMigrationState
   plaintextExists: boolean
   /** The twin's name is taken by an EQL column, so it cannot hold plaintext. */
   plaintextIsEql?: boolean
@@ -186,22 +187,30 @@ function renderRow(input: {
   mappedType?: string
   /** The encrypted column is no longer in the catalog. */
   encryptedGone?: boolean
+  /** The twin is the source of a forward encryption not yet dropped. */
+  forwardOpen?: boolean
+  /** The twin already holds values no reverse migration wrote. */
+  twinHasValues?: boolean
 }): Row {
-  const { state } = input
+  const { migration } = input
   const flags: string[] = []
   if (input.plaintextIsEql) {
     flags.push('plaintext-col-is-eql')
   } else if (!input.plaintextExists && input.plaintext !== '—') {
     flags.push('plaintext-col-missing')
   }
-  if (input.encryptedGone && state?.phase !== 'encrypted-dropped') {
+  if (input.encryptedGone && !migration.dropGenerated) {
     flags.push('encrypted-col-missing')
   }
-  if (!input.encryptedGone && input.mappedType === undefined) {
+  if (!input.encryptedGone && !input.plaintextIsEql && !input.mappedType) {
     flags.push('unmapped-domain')
   }
+  if (input.forwardOpen) flags.push('forward-open')
+  if (input.twinHasValues) flags.push('twin-has-values')
+  if (migration.obligations.length > 0) flags.push('forced-pass-owed')
 
-  const skipped = skippedCount(state)
+  const progress = passProgress(migration)
+  const skipped = progress?.rowsSkipped ?? null
   const plaintext =
     input.plaintextExists || input.plaintext === '—'
       ? input.plaintext
@@ -212,46 +221,28 @@ function renderRow(input: {
     column: input.column,
     domain: input.domain,
     plaintext,
-    phase: state?.phase ?? '—',
-    progress: formatProgress(state),
+    phase: migration.phase ?? '—',
+    progress: formatProgress(migration),
     skipped: skipped === null ? '—' : skipped.toLocaleString(),
     flags: flags.join(', '),
   }
 }
 
-/** Cumulative undecryptable count recorded on the latest reverse event. */
-function skippedCount(state: MigrationStateRow | null): number | null {
-  const value = state?.details?.rowsSkipped
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
 /**
- * Phase-aware PROGRESS framing, matching `encrypt status`:
- *
- *   decrypt-dual-writing — gate passed, no backfill yet.
- *   decrypting           — rowsProcessed/rowsTotal (an `error` event keeps
- *                          this phase, so a failed run shows where it stopped).
- *   decrypted            — complete; not a degenerate `0/0` ratio.
- *   encrypted-dropped    — drop migration generated.
+ * PROGRESS framing, matching `encrypt status`: awaiting backfill once
+ * dual-writes are confirmed, `rowsProcessed/rowsTotal` while a pass runs (a
+ * failed run shows where it stopped), complete, then dropped.
  */
-function formatProgress(state: MigrationStateRow | null): string {
-  switch (state?.phase) {
-    case 'decrypt-dual-writing':
-      return '(awaiting backfill)'
-    case 'decrypting': {
-      if (state.rowsTotal === null) return '—'
-      const processed = state.rowsProcessed ?? 0
-      const pct =
-        state.rowsTotal > 0
-          ? Math.floor((processed / state.rowsTotal) * 100)
-          : 100
-      return `${processed}/${state.rowsTotal} (${pct}%)${state.event === 'error' ? ' (last run failed)' : ''}`
-    }
-    case 'decrypted':
-      return '(backfill complete)'
-    case 'encrypted-dropped':
-      return '(dropped)'
-    default:
-      return '—'
-  }
+function formatProgress(migration: ColumnMigrationState): string {
+  if (migration.phase === null) return '—'
+  if (migration.dropGenerated) return '(dropped)'
+  const progress = passProgress(migration)
+  if (progress === null) return '(awaiting backfill)'
+  if (progress.completed) return '(backfill complete)'
+  if (progress.rowsTotal === null) return '—'
+  const pct =
+    progress.rowsTotal > 0
+      ? Math.floor((progress.rowsProcessed / progress.rowsTotal) * 100)
+      : 100
+  return `${progress.rowsProcessed}/${progress.rowsTotal} (${pct}%)${progress.failed ? ' (last run failed)' : ''}`
 }

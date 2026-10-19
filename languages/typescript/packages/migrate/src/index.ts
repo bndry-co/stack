@@ -53,6 +53,8 @@ export {
   type OpenCounterpart,
   openCounterpart,
   type PassPlan,
+  type PassProgress,
+  passProgress,
   planPassFor,
   type TwinSource,
   type Waiver,

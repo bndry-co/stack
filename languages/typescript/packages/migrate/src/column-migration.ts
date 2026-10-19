@@ -126,6 +126,8 @@ export interface ColumnMigrationState {
   phase: MigrationPhase | null
   /** `phase` is set and the drop has not been generated. */
   open: boolean
+  /** The drop of the source column has been generated (`phase` is the last). */
+  dropGenerated: boolean
   /** The twin the current column migration's events name, if they do. */
   recordedTwin: string | undefined
   /** At most one: there is only one kind of obligation. */
@@ -161,6 +163,7 @@ export function deriveColumnMigration(input: {
     latest,
     phase: null,
     open: false,
+    dropGenerated: false,
     recordedTwin: undefined,
     obligations: [],
   }
@@ -213,6 +216,7 @@ export function deriveColumnMigration(input: {
     latest,
     phase: latest.phase,
     open: latest.phase !== vocab.droppedPhase,
+    dropGenerated: latest.phase === vocab.droppedPhase,
     recordedTwin,
     obligations: obligation === null ? [] : [obligation],
   }
@@ -233,6 +237,41 @@ export function openCounterpart(input: {
   if (latest === undefined) return null
   if (latest.phase === DIRECTION_VOCABULARY[direction].droppedPhase) return null
   return { direction, column: input.twin, phase: latest.phase }
+}
+
+/** Where the latest backfill pass stands, from its latest event. */
+export interface PassProgress {
+  rowsProcessed: number
+  /** `null` before a pass has counted its rows. */
+  rowsTotal: number | null
+  /** Cumulative rows the pass visited but could not write. */
+  rowsSkipped: number | null
+  /** The latest run failed (an `error` event); a re-run resumes it. */
+  failed: boolean
+  /** The pass completed. */
+  completed: boolean
+}
+
+/**
+ * The latest pass's progress, or `null` when no pass has run in the column
+ * migration in progress.
+ */
+export function passProgress(state: ColumnMigrationState): PassProgress | null {
+  const { latest } = state
+  if (state.phase === null || latest === null) return null
+  const vocab = DIRECTION_VOCABULARY[state.direction]
+  if (latest.phase !== vocab.runningPhase && latest.event !== vocab.completed) {
+    return null
+  }
+  const skipped = latest.details?.rowsSkipped
+  return {
+    rowsProcessed: latest.rowsProcessed ?? 0,
+    rowsTotal: latest.rowsTotal,
+    rowsSkipped:
+      typeof skipped === 'number' && Number.isFinite(skipped) ? skipped : null,
+    failed: latest.event === 'error',
+    completed: latest.event === vocab.completed,
+  }
 }
 
 /** How the next run will go: its mode, why, and where it resumes. */
@@ -346,6 +385,7 @@ export class ColumnMigration implements ColumnMigrationState {
   readonly latest: MigrationStateRow | null
   readonly phase: MigrationPhase | null
   readonly open: boolean
+  readonly dropGenerated: boolean
   readonly recordedTwin: string | undefined
   readonly obligations: readonly Obligation[]
 
@@ -364,6 +404,7 @@ export class ColumnMigration implements ColumnMigrationState {
     this.latest = state.latest
     this.phase = state.phase
     this.open = state.open
+    this.dropGenerated = state.dropGenerated
     this.recordedTwin = state.recordedTwin
     this.obligations = state.obligations
   }
