@@ -7,7 +7,7 @@
 //! and the host takes the step with `se_io`:
 //!
 //! ```text
-//! { "handle": <u32>,
+//! { "handle": <u64>,
 //!   "requests": [ { "method": "POST", "url": <string>,
 //!                   "headers": <bytes>, "body": <bytes> }, ... ] }
 //! ```
@@ -38,10 +38,10 @@ use crate::status::STATUS_ENCODING;
 /// The step the host takes with `se_io`, as frame bytes. The bytes carry a
 /// bearer token, so the caller registers them and the host's `se_dealloc`
 /// wipes them; the staging buffer is wiped here.
-pub fn encode_step(handle: u32, requests: &[Request]) -> Result<Vec<u8>, u32> {
+pub fn encode_step(handle: u64, requests: &[Request]) -> Result<Vec<u8>, u32> {
     #[derive(Serialize)]
     struct Wire<'a> {
-        handle: u32,
+        handle: u64,
         requests: Vec<RequestWire<'a>>,
     }
     #[derive(Serialize)]
@@ -123,7 +123,7 @@ mod tests {
         );
         let bytes = encode_step(7, &[request]).unwrap();
         let expected = frame(&obj(vec![
-            ("handle", V::U32(7)),
+            ("handle", V::U64(7)),
             (
                 "requests",
                 V::Arr(vec![obj(vec![

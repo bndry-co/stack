@@ -47,6 +47,12 @@ type Client struct {
 	// the guest is treated as stuck and closed. guest.StuckAfter; tests
 	// shorten it.
 	stuck time.Duration
+	// paused bounds the operations that may be paused in the guest at once
+	// to its cap (maxPaused): an operation that can reach ZeroKMS takes a
+	// slot before its first step and gives it back when it ends, so a
+	// caller past the cap waits here for one rather than being refused by
+	// the guest.
+	paused chan struct{}
 	// closed refuses further calls: either Close ran, or a stuck or
 	// trapped call took the module down under us (see Client.call).
 	// released is the runtime's own state, tracked apart from it because
@@ -232,7 +238,7 @@ func consumeUnresolved(creds Credentials) {
 // instance, not the client: a cleanup whose argument reaches its object
 // keeps that object alive forever.
 func newClient(inst *instance, t *transport) *Client {
-	c := &Client{inst: inst, transport: t, stuck: guest.StuckAfter}
+	c := &Client{inst: inst, transport: t, stuck: guest.StuckAfter, paused: make(chan struct{}, maxPaused)}
 	c.cleanup = runtime.AddCleanup(c, func(inst *instance) { _ = inst.release() }, inst)
 	return c
 }
@@ -397,6 +403,11 @@ func (c *Client) resolveKeyset(ctx context.Context, sel KeysetSelector) (KeysetI
 	return id, nil
 }
 
+// maxPaused is the most operations the guest holds paused at once: MAX_OPEN
+// in stack-guest-abi's step module. One more is refused there, so the
+// client never starts more than this many operations that can pause.
+const maxPaused = 64
+
 // call runs an operation that never reaches ZeroKMS (a plan check, the
 // catalog, a verify): the step loop with no token to fetch.
 func (c *Client) call(ctx context.Context, f stepFunc) ([]byte, error) {
@@ -413,13 +424,19 @@ func (c *Client) callKMS(ctx context.Context, f stepFunc) ([]byte, error) {
 // first step is f, and each later one resumes it with the responses to the
 // requests the step before asked for. The client's lock is held for each
 // step and released while the requests run, so callers share the client
-// between steps rather than queue behind a round trip. When kms is set,
-// the token is fetched once, before the operation's first step and outside
-// the lock, and every step of the operation hands it over, so the guest's
-// token_get never waits and the token source is asked once per operation.
+// between steps rather than queue behind a round trip.
 //
-// The caller's context governs everything the host waits on: the token
-// fetch, the wait for the lock and the requests, which run under it. It
+// When kms is set, the operation first takes one of the guest's paused
+// slots (see Client.paused), and the token is fetched once, before its
+// first step and outside the lock; every step of the operation hands it
+// over, so the guest's token_get never waits. The token source is asked
+// once per such operation, including one the guest answers from its cache
+// without asking for the token (a query term on a loaded keyset, a cached
+// keyset lookup): which operations reach ZeroKMS is known only once the
+// guest has run. A source that fails is reported only if the guest asks.
+//
+// The caller's context governs everything the host waits on: the slot, the
+// token fetch, the wait for the lock and the requests, which run under it. It
 // never reaches the guest, which runs each step under guest.Detach (see
 // step). An operation whose caller gives up between steps is aborted,
 // which drops it in the guest with everything it held, and the call fails
@@ -430,6 +447,14 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 		return nil, err
 	}
 	token, tokenErr := "", error(nil)
+	if kms {
+		select {
+		case c.paused <- struct{}{}:
+			defer func() { <-c.paused }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if kms && c.transport != nil {
 		token, tokenErr = c.transport.fetchToken(ctx)
 		// A caller that gave up waiting on its token never starts the
@@ -439,16 +464,20 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 		}
 	}
 	step, resumed := f, false
-	var handle uint32
+	var handle uint64
 	var responses []byte
 	for {
 		out, io, err := c.step(ctx, token, tokenErr, step)
+		if resumed {
+			// The resume step wipes its responses when it runs; when it
+			// never ran (its caller gave up waiting for the client, or the
+			// client closed meanwhile) they are wiped here.
+			wipe(responses)
+		}
 		if errors.Is(err, errLockWait) {
 			// The step never ran: a paused operation is still the
-			// guest's to drop, and its responses still the host's to
-			// wipe.
+			// guest's to drop.
 			if resumed {
-				wipe(responses)
 				c.abort(handle)
 			}
 			return nil, ctx.Err()
@@ -478,7 +507,7 @@ func (c *Client) drive(ctx context.Context, kms bool, f stepFunc) ([]byte, error
 		handle, resumed = h, true
 		step = func(ctx context.Context, inst *instance) ([]byte, error) {
 			defer wipe(pending)
-			return inst.call(ctx, inst.resume, scalar(uint64(h)), buf(pending))
+			return inst.call(ctx, inst.resume, scalar(h), buf(pending))
 		}
 	}
 }
@@ -509,14 +538,14 @@ func settle(ctx context.Context, out []byte, err error) ([]byte, error) {
 // on it between steps. It waits for the lock however long that takes, and
 // runs under no deadline: the operation's plaintext and keys are wiped
 // only when it is dropped.
-func (c *Client) abort(handle uint32) {
+func (c *Client) abort(handle uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed || c.inst.module.IsClosed() {
 		return
 	}
 	ctx := context.Background()
-	_, _ = c.inst.call(ctx, c.inst.abort, scalar(uint64(handle)))
+	_, _ = c.inst.call(ctx, c.inst.abort, scalar(handle))
 }
 
 // errLockWait marks a step that never ran because its caller's context

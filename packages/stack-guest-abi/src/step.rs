@@ -22,9 +22,13 @@
 //!   costs no handle.
 //! - Handles are issued in increasing order and never reused, so a stale
 //!   [`resume`] can never reach another operation: it is an unknown handle.
+//!   They are 64-bit so a long-lived instance never runs out: at a million
+//!   pauses a second, that takes over half a million years.
 //! - At most [`MAX_OPEN`] operations may be paused at once. One more is
 //!   refused, and dropped, so a host that forgets to abort cannot grow the
-//!   table without bound.
+//!   table without bound. The cap guards against a faulty host; a host
+//!   with more concurrent callers than that bounds itself to it, so they
+//!   wait rather than fail (the Go client does, in `Client.drive`).
 //! - An unknown, finished or aborted handle is `STATUS_STATE`. It never
 //!   panics.
 //!
@@ -134,7 +138,7 @@ pub enum Step {
     /// perform `requests` and [`resume`] it with their responses, in order.
     NeedsIo {
         /// The paused operation.
-        handle: u32,
+        handle: u64,
         /// What it waits on.
         requests: Vec<Request>,
     },
@@ -177,9 +181,9 @@ thread_local! {
     /// The requests of the operation being polled, so [`request`] can record
     /// into them without the work knowing which operation it belongs to.
     static CURRENT: RefCell<Option<Rc<Io>>> = const { RefCell::new(None) };
-    static OPEN: RefCell<BTreeMap<u32, Open>> = const { RefCell::new(BTreeMap::new()) };
+    static OPEN: RefCell<BTreeMap<u64, Open>> = const { RefCell::new(BTreeMap::new()) };
     /// The next handle to issue. Zero is never issued.
-    static NEXT: Cell<u32> = const { Cell::new(1) };
+    static NEXT: Cell<u64> = const { Cell::new(1) };
     /// A step's requests, encoded and registered for the host to take
     /// ([`take_pending`]).
     static PENDING: Cell<Option<(*mut u8, usize)>> = const { Cell::new(None) };
@@ -269,7 +273,7 @@ pub fn start(work: Operation) -> Result<Step, u32> {
 /// `STATUS_STATE` for an unknown handle; `STATUS_ENCODING` when the number
 /// of responses is not the number of requests (the operation is dropped);
 /// otherwise as [`start`].
-pub fn resume(handle: u32, responses: Vec<Response>) -> Result<Step, u32> {
+pub fn resume(handle: u64, responses: Vec<Response>) -> Result<Step, u32> {
     clear_pending();
     let Some(open) = OPEN.with(|open| open.borrow_mut().remove(&handle)) else {
         return Err(unknown_handle());
@@ -298,7 +302,7 @@ pub fn resume(handle: u32, responses: Vec<Response>) -> Result<Step, u32> {
 /// # Errors
 ///
 /// `STATUS_STATE` for an unknown handle.
-pub fn abort(handle: u32) -> Result<(), u32> {
+pub fn abort(handle: u64) -> Result<(), u32> {
     match OPEN.with(|open| open.borrow_mut().remove(&handle)) {
         Some(open) => {
             drop(open);
@@ -323,7 +327,7 @@ pub fn open_count() -> usize {
 
 /// Poll `work` once, as operation `handle` if it has one, and say what came
 /// of it.
-fn step(handle: Option<u32>, mut work: Operation, io: Rc<Io>) -> Result<Step, u32> {
+fn step(handle: Option<u64>, mut work: Operation, io: Rc<Io>) -> Result<Step, u32> {
     let previous = CURRENT.with(|current| current.replace(Some(io.clone())));
     let polled = work.as_mut().poll(&mut Context::from_waker(Waker::noop()));
     CURRENT.with(|current| *current.borrow_mut() = previous);
@@ -367,7 +371,7 @@ fn step(handle: Option<u32>, mut work: Operation, io: Rc<Io>) -> Result<Step, u3
 }
 
 /// The next handle.
-fn issue() -> Result<u32, u32> {
+fn issue() -> Result<u64, u32> {
     NEXT.with(|next| {
         let handle = next.get();
         let following = handle
@@ -464,7 +468,7 @@ mod tests {
         })
     }
 
-    fn needs_io(step: Result<Step, u32>) -> (u32, Vec<Request>) {
+    fn needs_io(step: Result<Step, u32>) -> (u64, Vec<Request>) {
         match step {
             Ok(Step::NeedsIo { handle, requests }) => (handle, requests),
             other => panic!("expected NeedsIo, got {other:?}"),

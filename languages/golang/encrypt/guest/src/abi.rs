@@ -706,7 +706,7 @@ pub extern "C" fn se_io() -> u64 {
 ///
 /// As for [`se_term`].
 #[no_mangle]
-pub unsafe extern "C" fn se_resume(handle: u32, resp_ptr: *mut u8, resp_len: u32) -> u64 {
+pub unsafe extern "C" fn se_resume(handle: u64, resp_ptr: *mut u8, resp_len: u32) -> u64 {
     export(|| {
         let bytes = unsafe { take_plaintext(resp_ptr, resp_len) };
         let responses = bytes.and_then(|bytes| io::decode_responses(&bytes));
@@ -721,6 +721,6 @@ pub unsafe extern "C" fn se_resume(handle: u32, resp_ptr: *mut u8, resp_len: u32
 /// empty output; `STATUS_STATE` for a handle that names no paused
 /// operation (one that finished, failed or was aborted).
 #[no_mangle]
-pub extern "C" fn se_abort(handle: u32) -> u64 {
+pub extern "C" fn se_abort(handle: u64) -> u64 {
     export(|| step::abort(handle).map(|()| Vec::new()))
 }

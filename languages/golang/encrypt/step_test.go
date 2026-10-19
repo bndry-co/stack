@@ -5,8 +5,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -106,6 +111,72 @@ func TestAStepDoesNotHoldTheLockWhileItsRequestRuns(t *testing.T) {
 	close(stub.release)
 	if err := <-done; !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("init: %v, want ErrUnauthorized", err)
+	}
+}
+
+// The guest refuses an operation past its cap of paused operations, so the
+// client never starts one: a caller past the cap waits for a slot, leaves
+// the queue when its context ends, and runs once a slot is free. Here the
+// cap is one, so the paused init holds the only slot.
+func TestACallerPastThePausedCapWaitsForASlot(t *testing.T) {
+	stub := newHeldStub(t)
+	c := stepClient(t, staticToken("stub-token"))
+	if got := cap(c.paused); got != maxPaused {
+		t.Fatalf("paused slots: %d, want maxPaused (%d)", got, maxPaused)
+	}
+	c.paused = make(chan struct{}, 1)
+	first := make(chan error, 1)
+	go func() {
+		_, err := c.callKMS(context.Background(), initStep(t, stub.URL))
+		first <- err
+	}()
+	waitFor(t, stub.arrived, "the first init's request")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := c.callKMS(ctx, initStep(t, stub.URL)); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a call past the cap: %v, want context.DeadlineExceeded (it waited)", err)
+	}
+
+	second := make(chan error, 1)
+	go func() {
+		_, err := c.callKMS(context.Background(), initStep(t, stub.URL))
+		second <- err
+	}()
+	select {
+	case <-stub.arrived:
+		t.Fatal("a call past the cap sent a request while the slot was held")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(stub.release)
+	if err := <-first; !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("first init: %v, want ErrUnauthorized", err)
+	}
+	if err := <-second; !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("the waiting init: %v, want ErrUnauthorized (it ran once the slot was free)", err)
+	}
+	if n := len(c.paused); n != 0 {
+		t.Fatalf("%d slots still held after every call ended", n)
+	}
+}
+
+// maxPaused is the guest's MAX_OPEN, written twice: a Go bound above the
+// guest's cap lets the guest refuse a caller the client should have
+// queued.
+func TestMaxPausedIsTheGuestsCap(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "packages", "stack-guest-abi", "src", "step.rs"))
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skip("stack-guest-abi's source is not beside this module")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`pub const MAX_OPEN: usize = (\d+);`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("MAX_OPEN not found in stack-guest-abi's step.rs")
+	}
+	if got := string(m[1]); got != strconv.Itoa(maxPaused) {
+		t.Fatalf("the guest's MAX_OPEN is %s, maxPaused is %d", got, maxPaused)
 	}
 }
 
@@ -225,7 +296,7 @@ func TestAnAbortedInitLeavesNoKeyInGuestMemory(t *testing.T) {
 
 // A step the host cannot decode is refused, never performed.
 func TestAMalformedStepIsRefused(t *testing.T) {
-	for _, raw := range [][]byte{nil, {0xff}, marshalStep(t, map[string]any{"handle": uint32(1)})} {
+	for _, raw := range [][]byte{nil, {0xff}, marshalStep(t, map[string]any{"handle": uint64(1)})} {
 		if _, err := decodeStep(raw); !errors.Is(err, errMalformedStep) {
 			t.Errorf("decodeStep(%x): %v, want errMalformedStep", raw, err)
 		}

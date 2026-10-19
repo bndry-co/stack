@@ -102,8 +102,14 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `ErrTransport` too, and the guest drops the paused call, wiping what it
   held; the client stays open.
   The token is fetched once per call, before its first step and outside
-  the lock. This is the step loop an edge runtime's host needs, where
-  `fetch` cannot block.
+  the lock. That includes a call the guest answers from its cache (a query
+  term on a loaded keyset, a cached keyset lookup), which never asked for
+  a token before, so a token source sees one request per such call; one
+  that fails is still reported only when the guest needs the token. At
+  most 64 calls that can reach ZeroKMS are in progress at once (the
+  guest's cap on paused calls); one past that waits for another to finish,
+  as it waited for the client before. This is the step loop an
+  edge runtime's host needs, where `fetch` cannot block.
 - **stashgen refuses a match index on an index-only field**
   (`stash:"name,index=match"` with no `encrypt`). A match query's rows are
   checked by decrypting them, and such a field stores no ciphertext.

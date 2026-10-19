@@ -25,7 +25,7 @@ type stepFunc func(ctx context.Context, inst *instance) ([]byte, error)
 // ioStep is a paused operation's step, as the guest hands it over: the
 // operation's handle and the requests it waits on.
 type ioStep struct {
-	handle   uint32
+	handle   uint64
 	requests []ioRequest
 }
 
@@ -48,6 +48,10 @@ var errMalformedStep = errors.New("encrypt: the guest's step is malformed")
 
 // takeIO takes the step a paused export left (se_io), once.
 func (inst *instance) takeIO(ctx context.Context) (*ioStep, error) {
+	// The same bracket guest.Call keeps: the memory stays mapped until the
+	// step is copied out and its buffer freed.
+	inst.mem.Enter()
+	defer inst.mem.Exit()
 	res, err := inst.io.Call(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: guest call: %w", errGuestTrap, err)
@@ -67,7 +71,7 @@ func (inst *instance) takeIO(ctx context.Context) (*ioStep, error) {
 	return decodeStep(raw)
 }
 
-// decodeStep reads `{"handle": u32, "requests": [{"method", "url",
+// decodeStep reads `{"handle": u64, "requests": [{"method", "url",
 // "headers", "body"}, ...]}`. Every byte slice the decoder returns is its
 // own copy.
 func decodeStep(raw []byte) (*ioStep, error) {
@@ -84,7 +88,7 @@ func decodeStep(raw []byte) (*ioStep, error) {
 	for _, f := range obj {
 		switch f.Key {
 		case "handle":
-			h, ok := f.Value.(uint32)
+			h, ok := f.Value.(uint64)
 			if !ok {
 				return nil, errMalformedStep
 			}
