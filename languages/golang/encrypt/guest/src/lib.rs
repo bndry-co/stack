@@ -76,7 +76,8 @@
 //! - [`abi`], [`host`] (wasm32 only) — this guest's export surface and its
 //!   token import. The conventions every guest shares — `se_alloc` /
 //!   `se_dealloc`, the buffer registry, the packed result encoding, the
-//!   status table, the `transport_send` import — are `stack_guest_abi`'s;
+//!   status table, the step loop (`stack_guest_abi::step`) — are
+//!   `stack_guest_abi`'s, and [`io`] is how this guest's steps cross;
 //!   [`abi`]'s module docs give this guest's contract on top of them.
 //!
 //! On wasm32 `vitaminc-encrypt` uses its pure-Rust (RustCrypto `aes-gcm`)
@@ -91,6 +92,7 @@ pub mod config;
 #[cfg(feature = "deterministic-kms")]
 pub mod deterministic;
 pub mod headers;
+pub mod io;
 pub mod ops;
 pub mod options;
 pub mod response;

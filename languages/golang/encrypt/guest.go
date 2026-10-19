@@ -88,6 +88,9 @@ type instance struct {
 	queryTerm, verify, limit      api.Function
 	encryptRecord, decryptRecord  api.Function
 	planCheck, targets, operators api.Function
+	// The step loop (step.go): take a paused export's step, resume it with
+	// the responses, or abort it.
+	io, resume, abort api.Function
 }
 
 // guestModuleConfig is the module configuration every guest instance runs
@@ -183,6 +186,9 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 		"se_plan_check":     &inst.planCheck,
 		"se_targets":        &inst.targets,
 		"se_operators":      &inst.operators,
+		"se_io":             &inst.io,
+		"se_resume":         &inst.resume,
+		"se_abort":          &inst.abort,
 	}
 	for name, slot := range exports {
 		if *slot = module.ExportedFunction(name); *slot == nil {

@@ -144,6 +144,23 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   open. A client or profile still closes itself (`ErrState`) when the
   guest traps, or when a call runs on for 30 seconds after its context
   ended.
+- **A call no longer holds the client across a ZeroKMS round trip.** The
+  guest returns each ZeroKMS request to the client instead of performing it
+  through a blocking host import (`transport_send` is gone; the guest's one
+  import is `token_get`). The client performs the request with its lock
+  free, so other callers run meanwhile, then resumes the call. A call whose
+  context ends between those steps returns the context's error, matching
+  `ErrTransport` too, and the guest drops the paused call, wiping what it
+  held; the client stays open.
+  The token is fetched once per call, before its first step and outside
+  the lock. That includes a call the guest answers from its cache (a query
+  term on a loaded keyset, a cached keyset lookup), which never asked for
+  a token before, so a token source sees one request per such call; one
+  that fails is still reported only when the guest needs the token. At
+  most 64 calls that can reach ZeroKMS are in progress at once (the
+  guest's cap on paused calls); one past that waits for another to finish,
+  as it waited for the client before. This is the step loop an
+  edge runtime's host needs, where `fetch` cannot block.
 - **stashgen refuses a match index on an index-only field**
   (`stash:"name,index=match"` with no `encrypt`). A match query's rows are
   checked by decrypting them, and such a field stores no ciphertext.

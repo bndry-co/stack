@@ -86,6 +86,11 @@ var (
 	// ErrContextMismatch is a row whose stored context field is not the
 	// context the caller named, refused before any key is retrieved.
 	ErrContextMismatch = errors.New("cipherstash: the stored context is not the one expected")
+	// ErrNeedsIO is not a failure: the export paused, waiting for the host
+	// to perform HTTP requests on its behalf and resume it (the step loop).
+	// A guest package's call loop takes the step, performs it and resumes;
+	// it never reaches a caller.
+	ErrNeedsIO = errors.New("cipherstash: the guest is waiting on the host for I/O")
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
 	// on Linux, excluded from core dumps). A constructor returns it when
 	// asked for locked memory and refused, and so does any later call under

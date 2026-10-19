@@ -113,7 +113,9 @@ func testInit(url string) initConfig {
 	return initConfig{clientID: testClientID, clientKey: NewClientKey([]byte(testClientKey)), zerokmsURL: url}
 }
 
-func TestImportSurfaceIsWASIPlusTransport(t *testing.T) {
+// The guest reaches its host through one import, token_get: its ZeroKMS
+// requests come back through the step loop, so it has no HTTP import.
+func TestImportSurfaceIsWASIPlusTokenGet(t *testing.T) {
 	ctx := context.Background()
 	r := wazero.NewRuntime(ctx)
 	defer r.Close(ctx)
@@ -138,12 +140,12 @@ func TestImportSurfaceIsWASIPlusTransport(t *testing.T) {
 			t.Errorf("guest imports %s::%s, outside the allowed surface", module, name)
 		}
 	}
-	want := []string{"token_get", "transport_send"}
+	want := []string{"token_get"}
 	sort.Strings(transportImports)
 	if !reflect.DeepEqual(transportImports, want) {
 		t.Fatalf("transport imports = %v, want %v", transportImports, want)
 	}
-	for name := range map[string]bool{"se_alloc": true, "se_dealloc": true, "se_cipher_init": true, "se_shutdown": true, "se_keyset": true, "se_term": true, "se_query_term": true, "se_verify": true, "se_target_limit": true, "se_encrypt_record": true, "se_decrypt_record": true, "se_plan_check": true, "se_targets": true, "se_operators": true} {
+	for name := range map[string]bool{"se_alloc": true, "se_dealloc": true, "se_cipher_init": true, "se_shutdown": true, "se_keyset": true, "se_term": true, "se_query_term": true, "se_verify": true, "se_target_limit": true, "se_encrypt_record": true, "se_decrypt_record": true, "se_plan_check": true, "se_targets": true, "se_operators": true, "se_io": true, "se_resume": true, "se_abort": true} {
 		if _, ok := compiled.ExportedFunctions()[name]; !ok {
 			t.Errorf("guest does not export %s", name)
 		}
@@ -912,7 +914,10 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = inst.release() }()
-	_, err = inst.call(ctx, inst.cipherInit, buf(encoded))
+	c := newClient(inst, tr)
+	_, err = c.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.cipherInit, buf(encoded))
+	})
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("init: %v", err)
 	}
@@ -937,7 +942,9 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 	}
 }
 
-func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
+// The init's one load-keyset request is one step: one request performed,
+// and the operation's handle spent once it ends.
+func TestEachRequestIsOneStep(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "text/plain", "nope")
 	tr := &transport{rt: http.DefaultTransport, token: staticToken("stub-token")}
@@ -947,12 +954,18 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = inst.release() }()
+	c := newClient(inst, tr)
 	encoded, _ := encodeConfig(testInit(stub.URL))
-	if _, err := inst.call(ctx, inst.cipherInit, buf(encoded)); !errors.Is(err, ErrUnauthorized) {
+	if _, err := c.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.cipherInit, buf(encoded))
+	}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("init: %v", err)
 	}
 	if n := tr.sends.Load(); n != 1 {
 		t.Fatalf("transport sends = %d, want 1", n)
+	}
+	if _, err := inst.call(ctx, inst.abort, scalar(1)); !errors.Is(err, ErrState) {
+		t.Fatalf("aborting the finished operation's handle: %v, want ErrState", err)
 	}
 }
 

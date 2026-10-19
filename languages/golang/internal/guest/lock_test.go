@@ -34,6 +34,21 @@ func TestLockWaitEndsWithTheContext(t *testing.T) {
 	}
 }
 
+func TestTryLockTakesOnlyAFreeLock(t *testing.T) {
+	var l Lock
+	if !l.TryLock() {
+		t.Fatal("TryLock on a free lock did not take it")
+	}
+	if l.TryLock() {
+		t.Fatal("TryLock on a held lock took it")
+	}
+	l.Unlock()
+	if !l.TryLock() {
+		t.Fatal("TryLock after Unlock did not take it")
+	}
+	l.Unlock()
+}
+
 type valueKey struct{}
 
 func TestDetachKeepsValuesNotCancellation(t *testing.T) {

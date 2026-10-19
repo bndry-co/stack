@@ -13,9 +13,10 @@
 //! back through `se_last_error`'s packing. Each scenario also pins the codes
 //! it reaches, so a path that stops being driven fails here, by name,
 //! instead of quietly dropping out of the check.
-//! Unreachable natively, and so not here: the host imports (`token_get`,
-//! `transport_send`), whose failures arrive as stack-auth and ZeroKMS
-//! errors the key-source and token scenarios below already encode.
+//! Unreachable natively, and so not here: the host's side of the step loop
+//! (the `token_get` import, and the responses `se_resume` is handed), whose
+//! failures arrive as stack-auth and ZeroKMS errors the key-source and token
+//! scenarios below already encode.
 
 use std::borrow::Cow;
 use std::future::IntoFuture;
