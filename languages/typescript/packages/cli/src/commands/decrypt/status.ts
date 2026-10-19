@@ -74,44 +74,11 @@ export async function decryptStatusCommand() {
       fetchPhysicalColumns(client),
     ])
 
-    const rows: Row[] = []
-    const seen = new Set<string>()
-
-    for (const [table, columns] of physicalCols) {
-      for (const [column, domain] of columns) {
-        if (domain === null || classifyEqlDomain(domain) !== 3) continue
-        seen.add(`${table}.${column}`)
-        rows.push(await currentRow(client, table, column, domain))
-      }
-    }
-
-    // Reverse column migrations whose encrypted column is no longer visible
-    // — most often a generated drop that was applied.
-    for (const key of stateMap.keys()) {
-      if (seen.has(key)) continue
-      const lastDot = key.lastIndexOf('.')
-      const table = key.slice(0, lastDot)
-      const column = key.slice(lastDot + 1)
-      const migration = await ColumnMigration.load(client, {
-        table,
-        column,
-        direction: 'reverse',
-        manifest: null,
-      })
-      if (migration.latest === null) continue
-      const plaintext = migration.recordedTwin ?? '—'
-      rows.push(
-        renderRow({
-          table,
-          column,
-          domain: '—',
-          plaintext,
-          migration,
-          plaintextExists: physicalCols.get(table)?.has(plaintext) ?? false,
-          encryptedGone: true,
-        }),
-      )
-    }
+    const current = await currentRows(client, physicalCols)
+    const rows = [
+      ...current.rows,
+      ...(await goneRows(client, stateMap, current.seen, physicalCols)),
+    ]
 
     if (rows.length === 0) {
       p.log.info(
@@ -132,6 +99,64 @@ export async function decryptStatusCommand() {
     await client.end()
   }
   if (exitCode) process.exit(exitCode)
+}
+
+type PhysicalColumns = Awaited<ReturnType<typeof fetchPhysicalColumns>>
+
+/** One row per EQL v3 column in the current schema, and the keys shown. */
+async function currentRows(
+  client: ReturnType<typeof createPgClient>,
+  physicalCols: PhysicalColumns,
+): Promise<{ rows: Row[]; seen: Set<string> }> {
+  const rows: Row[] = []
+  const seen = new Set<string>()
+  for (const [table, columns] of physicalCols) {
+    for (const [column, domain] of columns) {
+      if (domain === null || classifyEqlDomain(domain) !== 3) continue
+      seen.add(`${table}.${column}`)
+      rows.push(await currentRow(client, table, column, domain))
+    }
+  }
+  return { rows, seen }
+}
+
+/**
+ * Reverse column migrations whose encrypted column is no longer visible —
+ * most often a generated drop that was applied.
+ */
+async function goneRows(
+  client: ReturnType<typeof createPgClient>,
+  stateMap: ReadonlyMap<string, unknown>,
+  seen: ReadonlySet<string>,
+  physicalCols: PhysicalColumns,
+): Promise<Row[]> {
+  const rows: Row[] = []
+  for (const key of stateMap.keys()) {
+    if (seen.has(key)) continue
+    const lastDot = key.lastIndexOf('.')
+    const table = key.slice(0, lastDot)
+    const column = key.slice(lastDot + 1)
+    const migration = await ColumnMigration.load(client, {
+      table,
+      column,
+      direction: 'reverse',
+      manifest: null,
+    })
+    if (migration.latest === null) continue
+    const plaintext = migration.recordedTwin ?? '—'
+    rows.push(
+      renderRow({
+        table,
+        column,
+        domain: '—',
+        plaintext,
+        migration,
+        plaintextExists: physicalCols.get(table)?.has(plaintext) ?? false,
+        encryptedGone: true,
+      }),
+    )
+  }
+  return rows
 }
 
 /** The row for an EQL v3 column that exists, from its resolved pair. */
@@ -174,7 +199,7 @@ async function currentRow(
   })
 }
 
-function renderRow(input: {
+interface RowInput {
   table: string
   column: string
   domain: string
@@ -191,7 +216,31 @@ function renderRow(input: {
   forwardOpen?: boolean
   /** The twin already holds values no reverse migration wrote. */
   twinHasValues?: boolean
-}): Row {
+}
+
+function renderRow(input: RowInput): Row {
+  const { migration } = input
+  const progress = passProgress(migration)
+  const skipped = progress?.rowsSkipped ?? null
+  const plaintext =
+    input.plaintextExists || input.plaintext === '—'
+      ? input.plaintext
+      : `${input.plaintext} (${input.mappedType ?? '?'}, to add)`
+
+  return {
+    table: input.table,
+    column: input.column,
+    domain: input.domain,
+    plaintext,
+    phase: migration.phase ?? '—',
+    progress: formatProgress(migration),
+    skipped: skipped === null ? '—' : skipped.toLocaleString(),
+    flags: rowFlags(input).join(', '),
+  }
+}
+
+/** The FLAGS column: what the other commands would refuse or warn about. */
+function rowFlags(input: RowInput): string[] {
   const { migration } = input
   const flags: string[] = []
   if (input.plaintextIsEql) {
@@ -208,24 +257,7 @@ function renderRow(input: {
   if (input.forwardOpen) flags.push('forward-open')
   if (input.twinHasValues) flags.push('twin-has-values')
   if (migration.obligations.length > 0) flags.push('forced-pass-owed')
-
-  const progress = passProgress(migration)
-  const skipped = progress?.rowsSkipped ?? null
-  const plaintext =
-    input.plaintextExists || input.plaintext === '—'
-      ? input.plaintext
-      : `${input.plaintext} (${input.mappedType ?? '?'}, to add)`
-
-  return {
-    table: input.table,
-    column: input.column,
-    domain: input.domain,
-    plaintext,
-    phase: migration.phase ?? '—',
-    progress: formatProgress(migration),
-    skipped: skipped === null ? '—' : skipped.toLocaleString(),
-    flags: flags.join(', '),
-  }
+  return flags
 }
 
 /**
