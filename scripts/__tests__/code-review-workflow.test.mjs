@@ -10,6 +10,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { runsWhen } from './lib/expressions.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
 const WORKFLOW = '.github/workflows/code-review.yml'
@@ -58,6 +59,42 @@ describe('Code-review routine trigger', () => {
       group: `${gha('github.workflow')}-${gha('github.event.pull_request.number')}`,
       'cancel-in-progress': false,
     })
+  })
+
+  it('skips draft, bot and fork pull requests and runs the rest', () => {
+    // Evaluated, not string-matched: a wrong operator between the clauses
+    // still contains every clause.
+    const REPO = 'cipherstash/stack'
+    const context = (pullRequest) => ({
+      github: {
+        event_name: 'pull_request',
+        repository: REPO,
+        event: {
+          pull_request: {
+            head: { repo: { full_name: REPO } },
+            draft: false,
+            user: { type: 'User' },
+            ...pullRequest,
+          },
+        },
+      },
+    })
+    const condition = String(request.if)
+    expect(runsWhen(condition, context({}))).toBe(true)
+    expect(runsWhen(condition, context({ draft: true }))).toBe(false)
+    expect(runsWhen(condition, context({ user: { type: 'Bot' } }))).toBe(false)
+    expect(
+      runsWhen(
+        condition,
+        context({ head: { repo: { full_name: 'contributor/stack' } } }),
+      ),
+    ).toBe(false)
+  })
+
+  it('reports a failed request without failing the pull request check', () => {
+    // The review is advisory: an API error or outage shows in the run, not as
+    // a red check on the pull request.
+    expect(fire['continue-on-error']).toBe(true)
   })
 
   it('grants the job token nothing and stays bounded', () => {
@@ -120,6 +157,7 @@ describe('Code-review routine trigger script', () => {
       `#!${process.execPath}
 const { readFileSync, writeFileSync } = require('node:fs')
 writeFileSync(process.env.CURL_LOG, JSON.stringify(process.argv.slice(2)) + '\\0' + readFileSync(0, 'utf8'))
+process.exit(Number(process.env.CURL_EXIT ?? 0))
 `,
     )
     chmodSync(stub, 0o755)
@@ -151,6 +189,14 @@ writeFileSync(process.env.CURL_LOG, JSON.stringify(process.argv.slice(2)) + '\\0
     expect(fire.run).not.toMatch(/--retry/)
   })
 
+  it('fails the step when curl reports an HTTP error', () => {
+    // curl exits 22 when --fail-with-body receives a 4xx or 5xx answer: a
+    // revoked token or a deleted trigger must not read as a fired review.
+    const result = run({ ...baseEnv(), CURL_EXIT: '22' })
+    expect(result.status).toBe(22)
+    expect(curlCall().args).toContain('--fail-with-body')
+  })
+
   it('keeps quotes in pull-request fields inside the JSON body', () => {
     const result = run({ ...baseEnv(), PR_URL: 'https://x/"},"text":"evil' })
     expect(result.status, result.stderr).toBe(0)
@@ -172,6 +218,7 @@ writeFileSync(process.env.CURL_LOG, JSON.stringify(process.argv.slice(2)) + '\\0
     ['trig_01../../other', 'a path'],
     ['trig_01?x=1', 'a query'],
     ['01ABCdef', 'no trig_ prefix'],
+    ['../../other/trig_01ABC', 'a path before trig_'],
   ])('refuses trigger id %j (%s) without calling curl', (id) => {
     const result = run({ ...baseEnv(), TRIGGER_ID: id })
     expect(result.status).toBe(1)

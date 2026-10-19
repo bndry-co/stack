@@ -35,6 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fire the code-review routine
+        # The review is advisory: a failed request (an outage, a revoked token) shows as a failed step in this run, not
+        # as a red check on the pull request.
+        continue-on-error: true
         env:
           CLAUDE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
           TRIGGER_ID: ${{ vars.CLAUDE_ROUTINE_TRIGGER_ID }}
@@ -55,7 +58,7 @@ jobs:
           body=$(jq -n --arg url "$PR_URL" --arg number "$PR_NUMBER" --arg repo "$REPO" \
             '{text: "Review pull request #\($number) in \($repo): \($url)"}')
           # No retry: a request that timed out may still have started a session, and a second would review twice. A
-          # failed run is re-run by hand. The token goes in on standard input, never on curl's command line.
+          # failed request is re-run by hand. The token goes in on standard input, never on curl's command line.
           curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 30 -X POST \
             "https://api.anthropic.com/v1/claude_code/routines/$TRIGGER_ID/fire" \
             -H @- \
