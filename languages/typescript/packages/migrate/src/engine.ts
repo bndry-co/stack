@@ -169,7 +169,13 @@ export async function runChunkedMigration<Row extends { pk: string }>(
   const plan = await migration.planPass({ force: options.force ?? false })
   const { force, forcedBy } = plan
   const mode: PassMode = { force }
-  const base = { ...options.baseDetails, force }
+  // The pairing is recorded on every event whatever the caller passes, so a
+  // later run with a different twin is refused rather than resumed.
+  const base = {
+    ...options.baseDetails,
+    [events.twinKey]: options.twinColumn,
+    force,
+  }
 
   const resumedFrom = plan.resumeFrom
   const resumeCursor = resumedFrom ? resumedFrom.cursorValue : null

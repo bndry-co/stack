@@ -187,20 +187,22 @@ export function deriveColumnMigration(input: {
   const scope = events.slice(scopeStart)
 
   let obligation: Obligation | null = null
+  // The mode of the latest pass started, for completion events written
+  // before every event recorded its own (see `passForced`).
+  let startedForced = false
   for (const e of scope) {
+    if (e.event === vocab.started) startedForced = isForced(e)
     if (e.event === vocab.dualWriting) {
-      obligation =
-        e.details?.existingTwinValues === true &&
-        e.details?.waiver === undefined
-          ? {
-              kind: 'forced-pass',
-              reason: 'existing-values',
-              openedAt: e.id,
-              waivable: true,
-            }
-          : null
+      obligation = owesUpFront(e)
+        ? {
+            kind: 'forced-pass',
+            reason: 'existing-values',
+            openedAt: e.id,
+            waivable: true,
+          }
+        : null
     } else if (e.event === vocab.completed) {
-      if (isForced(e)) obligation = null
+      if (passForced(e, startedForced)) obligation = null
     } else if (e.phase === vocab.runningPhase && isForced(e)) {
       if (obligation?.reason !== 'forced-pass') {
         obligation = {
@@ -687,6 +689,29 @@ function ofDirection(
 
 function isForced(row: MigrationStateRow): boolean {
   return row.details?.force === true
+}
+
+/**
+ * Whether a completion event closes a forced pass. An earlier release
+ * recorded `force` on the started event only, so a completion without the
+ * key takes the mode of the pass started before it.
+ */
+function passForced(row: MigrationStateRow, startedForced: boolean): boolean {
+  if (row.details !== null && 'force' in row.details) return isForced(row)
+  return startedForced
+}
+
+/**
+ * Whether a dual-write confirmation opens the up-front obligation: the twin
+ * already held values and no waiver was given. An earlier release recorded
+ * the same choice as `acknowledgedWith: 'force'`.
+ */
+function owesUpFront(row: MigrationStateRow): boolean {
+  if (row.details?.acknowledgedWith === 'force') return true
+  return (
+    row.details?.existingTwinValues === true &&
+    row.details?.waiver === undefined
+  )
 }
 
 function twinNamedBy(

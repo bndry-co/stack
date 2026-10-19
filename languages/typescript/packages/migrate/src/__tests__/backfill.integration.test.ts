@@ -22,6 +22,7 @@ import pg from 'pg'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { type EncryptionClientLike, runBackfill } from '../backfill.js'
 import { ColumnMigrationError } from '../column-migration.js'
+import { runChunkedMigration } from '../engine.js'
 import { installMigrationsSchema } from '../install.js'
 import { appendEvent, latestByColumn, progress } from '../state.js'
 
@@ -555,5 +556,58 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
     }
     await expect(forward()).rejects.toBeInstanceOf(ColumnMigrationError)
     expect(await countEncrypted()).toBe(0)
+  })
+  it('the engine records the twin itself, so a paused run is not resumed into another', async () => {
+    await seed(4)
+    const run = async (twinColumn: string, signal?: AbortSignal) => {
+      const db = await pool.connect()
+      try {
+        return await runChunkedMigration<{ pk: string }>({
+          db,
+          tableName: 'migrate_test.users',
+          stateColumn: 'email',
+          twinColumn,
+          direction: 'forward',
+          chunkSize: 2,
+          signal,
+          countPending: async (after) =>
+            Number(
+              (
+                await db.query<{ n: string }>(
+                  'SELECT count(*)::text AS n FROM migrate_test.users WHERE id > $1',
+                  [after ?? 0],
+                )
+              ).rows[0]?.n,
+            ),
+          fetchPage: async (after, limit) => {
+            const { rows } = await db.query<{ pk: string }>(
+              'SELECT id::text AS pk FROM migrate_test.users WHERE id > $1 ORDER BY id LIMIT $2',
+              [after ?? 0, limit],
+            )
+            return { rows, lastPk: rows.at(-1)?.pk ?? null }
+          },
+          prepareChunk: async () => ({ write: async () => {} }),
+        })
+      } finally {
+        db.release()
+      }
+    }
+
+    // Pause after the first chunk, with no baseDetails naming the twin.
+    const controller = new AbortController()
+    controller.abort()
+    const paused = await run('email_encrypted', controller.signal)
+    expect(paused.completed).toBe(false)
+    const { rows: recorded } = await pool.query<{ details: unknown }>(
+      `SELECT details FROM cipherstash.cs_migrations
+        WHERE column_name = 'email' ORDER BY id DESC LIMIT 1`,
+    )
+    expect(recorded[0]?.details).toMatchObject({
+      encryptedColumn: 'email_encrypted',
+    })
+
+    await expect(run('email_ciphertext')).rejects.toMatchObject({
+      code: 'twin-mismatch',
+    })
   })
 })

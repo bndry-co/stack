@@ -246,6 +246,38 @@ describe('deriveColumnMigration (reverse)', () => {
   })
 })
 
+describe('deriveColumnMigration (reverse, events from an earlier release)', () => {
+  it('a twin acknowledged with --force at confirm owes a forced pass', () => {
+    const state = deriveColumnMigration({
+      direction: 'reverse',
+      history: [
+        ev('decrypt_dual_writing', 'decrypt-dual-writing', {
+          ...twin,
+          existingPlaintext: 'prepopulated',
+          acknowledgedWith: 'force',
+        }),
+      ],
+    })
+    expect(state.obligations).toMatchObject([
+      { reason: 'existing-values', waivable: true },
+    ])
+  })
+
+  it('a twin acknowledged as current at confirm owes nothing', () => {
+    const state = deriveColumnMigration({
+      direction: 'reverse',
+      history: [
+        ev('decrypt_dual_writing', 'decrypt-dual-writing', {
+          ...twin,
+          existingPlaintext: 'prepopulated',
+          acknowledgedWith: 'confirm-plaintext-current',
+        }),
+      ],
+    })
+    expect(state.obligations).toEqual([])
+  })
+})
+
 describe('deriveColumnMigration (forward)', () => {
   const fwd = (
     event: MigrationEvent,
@@ -260,6 +292,32 @@ describe('deriveColumnMigration (forward)', () => {
         fwd('dual_writing', 'dual-writing'),
         fwd('backfill_started', 'backfilling', { force: true }),
         fwd('backfill_checkpoint', 'backfilling', { chunkIndex: 0 }),
+      ],
+    })
+    expect(state.obligations.map((o) => o.reason)).toEqual(['forced-pass'])
+  })
+
+  it('a forced pass an older release completed (force only on started) is not owed again', () => {
+    const state = deriveColumnMigration({
+      direction: 'forward',
+      history: [
+        fwd('dual_writing', 'dual-writing'),
+        fwd('backfill_started', 'backfilling', { force: true }),
+        fwd('backfill_checkpoint', 'backfilling', { chunkIndex: 0 }),
+        fwd('backfilled', 'backfilled', {}),
+      ],
+    })
+    expect(state.obligations).toEqual([])
+  })
+
+  it('an older unforced pass completing does not close a forced pass started after it', () => {
+    const state = deriveColumnMigration({
+      direction: 'forward',
+      history: [
+        fwd('dual_writing', 'dual-writing'),
+        fwd('backfill_started', 'backfilling', { force: true }),
+        fwd('backfill_started', 'backfilling', {}),
+        fwd('backfilled', 'backfilled', {}),
       ],
     })
     expect(state.obligations.map((o) => o.reason)).toEqual(['forced-pass'])
