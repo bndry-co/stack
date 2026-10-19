@@ -81,70 +81,66 @@ pub const TARGETS: &[Target] = &[
         name: "Smallint",
         family: "smallint",
         suffix: "",
-        plaintext: None,
+        plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint",
         indexes: &[],
         query: None,
         query_sql_domain: None,
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "SmallintEq",
         family: "smallint",
         suffix: "Eq",
-        plaintext: None,
+        plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint_eq",
         indexes: &["eq"],
         query: Some("SmallintEqQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_eq"),
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "SmallintOrdOre",
         family: "smallint",
         suffix: "OrdOre",
-        plaintext: None,
+        plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint_ord_ore",
         indexes: &["ore"],
         query: Some("SmallintOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_ord_ore"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
         ),
     },
     Target {
         name: "SmallintOrd",
         family: "smallint",
         suffix: "Ord",
-        plaintext: None,
+        plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint_ord",
         indexes: &["ope"],
         query: Some("SmallintOrdQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_ord"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
         ),
     },
     Target {
         name: "SmallintOrdOpe",
         family: "smallint",
         suffix: "OrdOpe",
-        plaintext: None,
+        plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint_ord_ope",
         indexes: &["ope"],
         query: Some("SmallintOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_ord_ope"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
         ),
     },
     Target {
@@ -224,7 +220,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: None,
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -238,7 +234,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_date_eq"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -252,7 +248,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_date_ord_ore"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -266,7 +262,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_date_ord"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -280,7 +276,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_date_ord_ope"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -294,7 +290,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: None,
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -308,7 +304,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_timestamp_eq"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -322,7 +318,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ore"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -336,7 +332,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_timestamp_ord"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -350,7 +346,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ope"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -364,7 +360,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: None,
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -378,7 +374,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_numeric_eq"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -392,7 +388,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_numeric_ord_ore"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -406,7 +402,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_numeric_ord"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -420,7 +416,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_numeric_ord_ope"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)",
         ),
     },
     Target {
@@ -716,6 +712,15 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "IntegerEq" => {
             run_target::<super::integer::IntegerEq, i32, K>("IntegerEq", keyset, column, plaintext)
         }
+        "Smallint" => {
+            run_target::<super::smallint::Smallint, i16, K>("Smallint", keyset, column, plaintext)
+        }
+        "SmallintEq" => run_target::<super::smallint::SmallintEq, i16, K>(
+            "SmallintEq",
+            keyset,
+            column,
+            plaintext,
+        ),
         "Bigint" => {
             run_target::<super::bigint::Bigint, i64, K>("Bigint", keyset, column, plaintext)
         }
@@ -758,6 +763,12 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "IntegerEq" => {
             open_target::<super::integer::IntegerEq, i32, K>("IntegerEq", opener, column, stored)
         }
+        "Smallint" => {
+            open_target::<super::smallint::Smallint, i16, K>("Smallint", opener, column, stored)
+        }
+        "SmallintEq" => {
+            open_target::<super::smallint::SmallintEq, i16, K>("SmallintEq", opener, column, stored)
+        }
         "Bigint" => open_target::<super::bigint::Bigint, i64, K>("Bigint", opener, column, stored),
         "BigintEq" => {
             open_target::<super::bigint::BigintEq, i64, K>("BigintEq", opener, column, stored)
@@ -791,6 +802,12 @@ pub(crate) fn query_named<'a, K: 'static>(
     match name {
         "IntegerEq" => run_target::<super::integer::IntegerEqQuery, i32, K>(
             "IntegerEq",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "SmallintEq" => run_target::<super::smallint::SmallintEqQuery, i16, K>(
+            "SmallintEq",
             keyset,
             column,
             plaintext,

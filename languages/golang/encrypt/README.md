@@ -434,6 +434,8 @@ The EQL types the engine produces, and the Go field types each takes:
 | `TextEq` | `string` | `=`, `<>` |
 | `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
 | `Text` | `string` | none: stored and read only |
+| `Smallint` | `int16`, or any Go integer type (see below) | none |
+| `SmallintEq` | the same | `=`, `<>` |
 | `Integer` | `int32`, or any Go integer type (see below) | none |
 | `IntegerEq` | the same | `=`, `<>` |
 | `Bigint` | `int64`, or any Go integer type | none |
@@ -446,7 +448,8 @@ The EQL types the engine produces, and the Go field types each takes:
 
 Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
 is sealed at the type's width, and opens back into the field's type. A type
-every value of which fits (an `int16` or a `uint16` field for `Integer`)
+every value of which fits (an `int16` or a `uint16` field for `Integer`, an
+`int8` for `Smallint`)
 always seals; a wider one (an `int64` or a `uint32` field for `Integer`) is
 range checked value by value, and `Encrypt` refuses a value that does not fit
 with `ErrEncoding`, naming the field's kind and not the value.

@@ -14,31 +14,31 @@ var Types = []Type{
 	{Name: "IntegerOrdOre", GoName: "IntegerOrdOre", Family: "integer", Suffix: "OrdOre", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord_ore", Indexes: []string{"ore"}, Query: "IntegerOrdOreQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
 	{Name: "IntegerOrd", GoName: "IntegerOrd", Family: "integer", Suffix: "Ord", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord", Indexes: []string{"ope"}, Query: "IntegerOrdQuery", QuerySQLDomain: "eql_v4.query_integer_ord", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
 	{Name: "IntegerOrdOpe", GoName: "IntegerOrdOpe", Family: "integer", Suffix: "OrdOpe", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord_ope", Indexes: []string{"ope"}, Query: "IntegerOrdOpeQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ope", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
-	{Name: "Smallint", GoName: "Smallint", Family: "smallint", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_smallint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "SmallintEq", GoName: "SmallintEq", Family: "smallint", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_smallint_eq", Indexes: []string{"eq"}, Query: "SmallintEqQuery", QuerySQLDomain: "eql_v4.query_smallint_eq", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "SmallintOrdOre", GoName: "SmallintOrdOre", Family: "smallint", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord_ore", Indexes: []string{"ore"}, Query: "SmallintOrdOreQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ore", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "SmallintOrd", GoName: "SmallintOrd", Family: "smallint", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord", Indexes: []string{"ope"}, Query: "SmallintOrdQuery", QuerySQLDomain: "eql_v4.query_smallint_ord", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "SmallintOrdOpe", GoName: "SmallintOrdOpe", Family: "smallint", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord_ope", Indexes: []string{"ope"}, Query: "SmallintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ope", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
+	{Name: "Smallint", GoName: "Smallint", Family: "smallint", Suffix: "", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
+	{Name: "SmallintEq", GoName: "SmallintEq", Family: "smallint", Suffix: "Eq", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint_eq", Indexes: []string{"eq"}, Query: "SmallintEqQuery", QuerySQLDomain: "eql_v4.query_smallint_eq", Producible: true, Reason: ""},
+	{Name: "SmallintOrdOre", GoName: "SmallintOrdOre", Family: "smallint", Suffix: "OrdOre", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint_ord_ore", Indexes: []string{"ore"}, Query: "SmallintOrdOreQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
+	{Name: "SmallintOrd", GoName: "SmallintOrd", Family: "smallint", Suffix: "Ord", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint_ord", Indexes: []string{"ope"}, Query: "SmallintOrdQuery", QuerySQLDomain: "eql_v4.query_smallint_ord", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
+	{Name: "SmallintOrdOpe", GoName: "SmallintOrdOpe", Family: "smallint", Suffix: "OrdOpe", Plaintext: "int16", SQLDomain: "public.eql_v4_smallint_ord_ope", Indexes: []string{"ope"}, Query: "SmallintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ope", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
 	{Name: "Bigint", GoName: "Bigint", Family: "bigint", Suffix: "", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "BigintEq", GoName: "BigintEq", Family: "bigint", Suffix: "Eq", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_eq", Indexes: []string{"eq"}, Query: "BigintEqQuery", QuerySQLDomain: "eql_v4.query_bigint_eq", Producible: true, Reason: ""},
 	{Name: "BigintOrdOre", GoName: "BigintOrdOre", Family: "bigint", Suffix: "OrdOre", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord_ore", Indexes: []string{"ore"}, Query: "BigintOrdOreQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
 	{Name: "BigintOrd", GoName: "BigintOrd", Family: "bigint", Suffix: "Ord", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord", Indexes: []string{"ope"}, Query: "BigintOrdQuery", QuerySQLDomain: "eql_v4.query_bigint_ord", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
 	{Name: "BigintOrdOpe", GoName: "BigintOrdOpe", Family: "bigint", Suffix: "OrdOpe", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord_ope", Indexes: []string{"ope"}, Query: "BigintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ope", Producible: false, Reason: "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)"},
-	{Name: "Date", GoName: "Date", Family: "date", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_date", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "DateEq", GoName: "DateEq", Family: "date", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_date_eq", Indexes: []string{"eq"}, Query: "DateEqQuery", QuerySQLDomain: "eql_v4.query_date_eq", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "DateOrdOre", GoName: "DateOrdOre", Family: "date", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ore", Indexes: []string{"ore"}, Query: "DateOrdOreQuery", QuerySQLDomain: "eql_v4.query_date_ord_ore", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "DateOrd", GoName: "DateOrd", Family: "date", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_date_ord", Indexes: []string{"ope"}, Query: "DateOrdQuery", QuerySQLDomain: "eql_v4.query_date_ord", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "DateOrdOpe", GoName: "DateOrdOpe", Family: "date", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ope", Indexes: []string{"ope"}, Query: "DateOrdOpeQuery", QuerySQLDomain: "eql_v4.query_date_ord_ope", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "Timestamp", GoName: "Timestamp", Family: "timestamp", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_timestamp", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "TimestampEq", GoName: "TimestampEq", Family: "timestamp", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_eq", Indexes: []string{"eq"}, Query: "TimestampEqQuery", QuerySQLDomain: "eql_v4.query_timestamp_eq", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "TimestampOrdOre", GoName: "TimestampOrdOre", Family: "timestamp", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord_ore", Indexes: []string{"ore"}, Query: "TimestampOrdOreQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ore", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "TimestampOrd", GoName: "TimestampOrd", Family: "timestamp", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord", Indexes: []string{"ope"}, Query: "TimestampOrdQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "TimestampOrdOpe", GoName: "TimestampOrdOpe", Family: "timestamp", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord_ope", Indexes: []string{"ope"}, Query: "TimestampOrdOpeQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ope", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "Numeric", GoName: "Numeric", Family: "numeric", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_numeric", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "NumericEq", GoName: "NumericEq", Family: "numeric", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_numeric_eq", Indexes: []string{"eq"}, Query: "NumericEqQuery", QuerySQLDomain: "eql_v4.query_numeric_eq", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "NumericOrdOre", GoName: "NumericOrdOre", Family: "numeric", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ore", Indexes: []string{"ore"}, Query: "NumericOrdOreQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ore", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "NumericOrd", GoName: "NumericOrd", Family: "numeric", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord", Indexes: []string{"ope"}, Query: "NumericOrdQuery", QuerySQLDomain: "eql_v4.query_numeric_ord", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
-	{Name: "NumericOrdOpe", GoName: "NumericOrdOpe", Family: "numeric", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ope", Indexes: []string{"ope"}, Query: "NumericOrdOpeQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ope", Producible: false, Reason: "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)"},
+	{Name: "Date", GoName: "Date", Family: "date", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_date", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "DateEq", GoName: "DateEq", Family: "date", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_date_eq", Indexes: []string{"eq"}, Query: "DateEqQuery", QuerySQLDomain: "eql_v4.query_date_eq", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "DateOrdOre", GoName: "DateOrdOre", Family: "date", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ore", Indexes: []string{"ore"}, Query: "DateOrdOreQuery", QuerySQLDomain: "eql_v4.query_date_ord_ore", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "DateOrd", GoName: "DateOrd", Family: "date", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_date_ord", Indexes: []string{"ope"}, Query: "DateOrdQuery", QuerySQLDomain: "eql_v4.query_date_ord", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "DateOrdOpe", GoName: "DateOrdOpe", Family: "date", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ope", Indexes: []string{"ope"}, Query: "DateOrdOpeQuery", QuerySQLDomain: "eql_v4.query_date_ord_ope", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "Timestamp", GoName: "Timestamp", Family: "timestamp", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_timestamp", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "TimestampEq", GoName: "TimestampEq", Family: "timestamp", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_eq", Indexes: []string{"eq"}, Query: "TimestampEqQuery", QuerySQLDomain: "eql_v4.query_timestamp_eq", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "TimestampOrdOre", GoName: "TimestampOrdOre", Family: "timestamp", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord_ore", Indexes: []string{"ore"}, Query: "TimestampOrdOreQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ore", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "TimestampOrd", GoName: "TimestampOrd", Family: "timestamp", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord", Indexes: []string{"ope"}, Query: "TimestampOrdQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "TimestampOrdOpe", GoName: "TimestampOrdOpe", Family: "timestamp", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord_ope", Indexes: []string{"ope"}, Query: "TimestampOrdOpeQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ope", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "Numeric", GoName: "Numeric", Family: "numeric", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_numeric", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "NumericEq", GoName: "NumericEq", Family: "numeric", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_numeric_eq", Indexes: []string{"eq"}, Query: "NumericEqQuery", QuerySQLDomain: "eql_v4.query_numeric_eq", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "NumericOrdOre", GoName: "NumericOrdOre", Family: "numeric", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ore", Indexes: []string{"ore"}, Query: "NumericOrdOreQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ore", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "NumericOrd", GoName: "NumericOrd", Family: "numeric", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord", Indexes: []string{"ope"}, Query: "NumericOrdQuery", QuerySQLDomain: "eql_v4.query_numeric_ord", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
+	{Name: "NumericOrdOpe", GoName: "NumericOrdOpe", Family: "numeric", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ope", Indexes: []string{"ope"}, Query: "NumericOrdOpeQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ope", Producible: false, Reason: "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130)"},
 	{Name: "Text", GoName: "Text", Family: "text", Suffix: "", Plaintext: "string", SQLDomain: "public.eql_v4_text", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "TextEq", GoName: "TextEq", Family: "text", Suffix: "Eq", Plaintext: "string", SQLDomain: "public.eql_v4_text_eq", Indexes: []string{"eq"}, Query: "TextEqQuery", QuerySQLDomain: "eql_v4.query_text_eq", Producible: true, Reason: ""},
 	{Name: "TextMatch", GoName: "TextMatch", Family: "text", Suffix: "Match", Plaintext: "string", SQLDomain: "public.eql_v4_text_match", Indexes: []string{"match"}, Query: "TextMatchQuery", QuerySQLDomain: "eql_v4.query_text_match", Producible: true, Reason: ""},
@@ -275,7 +275,7 @@ func (v *IntegerOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Smallint is the EQL type stored in public.eql_v4_smallint: the smallint family with no index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine produces it from a int16.
 type Smallint []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -299,7 +299,7 @@ func (v *Smallint) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintEq is the EQL type stored in public.eql_v4_smallint_eq: the smallint family with the eq index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine produces it from a int16.
 type SmallintEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -346,7 +346,7 @@ func (v *SmallintEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintOrdOre is the EQL type stored in public.eql_v4_smallint_ord_ore: the smallint family with the ore index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: EQL stores block ORE terms and the engine derives CLLW ORE (#1132).
 type SmallintOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -393,7 +393,7 @@ func (v *SmallintOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintOrd is the EQL type stored in public.eql_v4_smallint_ord: the smallint family with the ope index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
 type SmallintOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -440,7 +440,7 @@ func (v *SmallintOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintOrdOpe is the EQL type stored in public.eql_v4_smallint_ord_ope: the smallint family with the ope index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236).
 type SmallintOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -699,7 +699,7 @@ func (v *BigintOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Date is the EQL type stored in public.eql_v4_date: the date family with no index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type Date []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -723,7 +723,7 @@ func (v *Date) UnmarshalJSON(b []byte) error {
 }
 
 // DateEq is the EQL type stored in public.eql_v4_date_eq: the date family with the eq index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type DateEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -770,7 +770,7 @@ func (v *DateEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DateOrdOre is the EQL type stored in public.eql_v4_date_ord_ore: the date family with the ore index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type DateOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -817,7 +817,7 @@ func (v *DateOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DateOrd is the EQL type stored in public.eql_v4_date_ord: the date family with the ope index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type DateOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -864,7 +864,7 @@ func (v *DateOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DateOrdOpe is the EQL type stored in public.eql_v4_date_ord_ope: the date family with the ope index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type DateOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -911,7 +911,7 @@ func (v *DateOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Timestamp is the EQL type stored in public.eql_v4_timestamp: the timestamp family with no index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type Timestamp []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -935,7 +935,7 @@ func (v *Timestamp) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampEq is the EQL type stored in public.eql_v4_timestamp_eq: the timestamp family with the eq index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type TimestampEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -982,7 +982,7 @@ func (v *TimestampEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampOrdOre is the EQL type stored in public.eql_v4_timestamp_ord_ore: the timestamp family with the ore index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type TimestampOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1029,7 +1029,7 @@ func (v *TimestampOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampOrd is the EQL type stored in public.eql_v4_timestamp_ord: the timestamp family with the ope index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type TimestampOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1076,7 +1076,7 @@ func (v *TimestampOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampOrdOpe is the EQL type stored in public.eql_v4_timestamp_ord_ope: the timestamp family with the ope index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type TimestampOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1123,7 +1123,7 @@ func (v *TimestampOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Numeric is the EQL type stored in public.eql_v4_numeric: the numeric family with no index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type Numeric []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1147,7 +1147,7 @@ func (v *Numeric) UnmarshalJSON(b []byte) error {
 }
 
 // NumericEq is the EQL type stored in public.eql_v4_numeric_eq: the numeric family with the eq index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type NumericEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1194,7 +1194,7 @@ func (v *NumericEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // NumericOrdOre is the EQL type stored in public.eql_v4_numeric_ord_ore: the numeric family with the ore index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type NumericOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1241,7 +1241,7 @@ func (v *NumericOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // NumericOrd is the EQL type stored in public.eql_v4_numeric_ord: the numeric family with the ope index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type NumericOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1288,7 +1288,7 @@ func (v *NumericOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // NumericOrdOpe is the EQL type stored in public.eql_v4_numeric_ord_ope: the numeric family with the ope index.
-// The engine cannot produce it yet: the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144).
+// The engine cannot produce it yet: eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK carry the kind, and which Rust type a date, timestamp or decimal is produced from is not decided (#1130).
 type NumericOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.

@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   baseline, so `=` compares as PostgreSQL's own integer and `float8 =` do:
   one term per integer value whatever its width, `-0.0 = 0.0` and
   `NaN = NaN`. The ciphertext keeps the exact value.
+- **`Smallint` and `SmallintEq` are producible** (`stack-encrypt` feature),
+  from `i16`. `SmallintEq`'s equality term is the integer one: a smallint
+  and an integer or bigint of the same value under one column share it.
+  The `date`, `timestamp` and `numeric` families say why they are still
+  unproducible: the engine has their kinds, and their Rust plaintext types
+  are not chosen yet.
 - **`Target::match_options`** (`targets` feature): the options a type's
   match index is built under, `EqlMatch`'s, for a type that carries one
   (`TextMatch`), and `None` otherwise. Stack Encrypt answers `matches`

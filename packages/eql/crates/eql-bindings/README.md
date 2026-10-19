@@ -112,6 +112,7 @@ plaintext:
 | v4 type | Plaintext |
 | --- | --- |
 | `Text`, `TextMatch` | `String` |
+| `Smallint`, `SmallintEq` | `i16` |
 | `Integer`, `IntegerEq` | `i32` |
 | `Bigint`, `BigintEq` | `i64` |
 | `Boolean` | `bool` |
@@ -134,8 +135,9 @@ other order finds nothing until #1171 is fixed. Text too short to make a
 column yet, and a `TextMatchQuery` for it is refused too: one filter type
 builds both, and an empty filter as a query would match every row. The
 ordering types wait for the engine's order keys (#1236), text's order types
-(#1131) and block ORE (#1132), and `Json` for a decision on sealing a
-document as one leaf.
+(#1131) and block ORE (#1132), `Date`, `Timestamp` and `Numeric` for a
+choice of their Rust plaintext types (#1130), and `Json` for a decision on
+sealing a document as one leaf.
 
 The generated API docs include a complete, executable example in the
 `eql_bindings::encryption` module, from cipher setup through decryption. Its

@@ -5,12 +5,15 @@
 | `v4_rows.json` | the Go SDK's `TestV4RowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `v4_queries.json` | the by-name dispatch in `tests/v4_types.rs` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `text_eq_query.json`, `ste_vec_selectors.json` | `tests/text_eq.rs`, `tests/ste_vec_selectors.rs` | yes, see each test |
+| `v4_smallint_rows.json` | the Go SDK's `TestV4SmallintRowsMatchTheCommittedFixture` | yes, with `EQL_UPDATE_FIXTURES=1` |
 | `stored_v4_rows_v1.json` | copied from `v4_rows.json` at the next build | **never: frozen** |
 
 ## `stored_v4_rows_v1.json` (FROZEN)
 
 `Profile` rows the Go SDK's generated code stored with the `next` build, one
-value of every producible EQL v4 type. `v4_rows.json` proves
+value of every EQL v4 type that build produced. Types made producible since
+are sealed into their own regenerable row fixtures (see the table above); a
+later frozen file covers them once it is cut. `v4_rows.json` proves
 the Go SDK and Rust agree *today* and is regenerated when the encoding moves.
 This file is the opposite: it is never regenerated or edited, so a change
 that breaks rows already stored fails instead of being regenerated away.

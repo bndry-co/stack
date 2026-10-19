@@ -191,6 +191,8 @@ mod tests {
             [
                 "Integer",
                 "IntegerEq",
+                "Smallint",
+                "SmallintEq",
                 "Bigint",
                 "BigintEq",
                 "Text",

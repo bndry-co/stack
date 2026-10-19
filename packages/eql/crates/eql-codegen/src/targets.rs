@@ -19,7 +19,7 @@
 //! [`encryption_gap`](crate::bindings::encryption_gap) on every domain.
 //!
 //! The reasons a type is not producible, each naming the issue that tracks
-//! it: the engine's value enum has no kind for the family (#1144); the
+//! it: no Rust plaintext type is chosen for the family yet (#1130); the
 //! engine's order terms are not yet derived over ADR-0002's order keys
 //! (#1236) or, for text, no EQL type is built from them (#1131); EQL's ORE
 //! term is block ORE where the engine derives CLLW ORE (#1132); and the JSON
@@ -413,7 +413,7 @@ mod tests {
                 .find(|f| f.name == name)
                 .expect("family")
         };
-        for family_name in ["integer", "bigint", "real", "double"] {
+        for family_name in ["integer", "smallint", "bigint", "real", "double"] {
             let family = family(family_name);
             assert!(gap(family, "").is_none(), "{family_name}");
             assert!(gap(family, "eq").is_none(), "{family_name}Eq is producible");
@@ -426,12 +426,16 @@ mod tests {
                 "{family_name}"
             );
         }
-        assert!(gap(family("date"), "")
-            .unwrap()
-            .contains("no kind for this family"));
-        assert!(gap(family("smallint"), "eq")
-            .unwrap()
-            .contains("no kind for this family"));
+        for family_name in ["date", "timestamp", "numeric"] {
+            for domain in ["", "eq", "ord"] {
+                assert!(
+                    gap(family(family_name), domain)
+                        .unwrap()
+                        .contains("no Rust plaintext type for this family"),
+                    "{family_name} {domain:?}"
+                );
+            }
+        }
         assert!(gap(family("json"), "").unwrap().contains("tree of leaves"));
     }
 

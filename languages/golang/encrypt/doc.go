@@ -21,14 +21,15 @@
 //	}
 //
 // encrypt_into names the EQL type the field is stored as. The Go field type
-// must match it: TextEq, TextMatch and Text take a string, Integer and
-// IntegerEq an int32, Bigint and BigintEq an int64, Boolean a bool, Real and
-// RealEq a float32, and Double and DoubleEq a float64. An integer EQL type
+// must match it: TextEq, TextMatch and Text take a string, Smallint and
+// SmallintEq an int16, Integer and IntegerEq an int32, Bigint and BigintEq
+// an int64, Boolean a bool, Real and RealEq a float32, and Double and
+// DoubleEq a float64. An integer EQL type
 // also takes any other built-in Go integer type, sealed at the type's width:
 // one every value of which fits it (an int16 into Integer) always seals, and
 // a wider one (an int64 into Integer) is range checked, a value that does not
-// fit refused with [ErrEncoding]. The *Eq types answer Eq; Integer, Bigint,
-// Boolean, Real, Double and Text are stored and read only.
+// fit refused with [ErrEncoding]. The *Eq types answer Eq; Smallint,
+// Integer, Bigint, Boolean, Real, Double and Text are stored and read only.
 //
 // 3. Run the generator. It writes user_stash.go beside the struct:
 //
