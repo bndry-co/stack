@@ -192,7 +192,7 @@ fn data_plan() -> DataPlan {
             )
         })
         .collect();
-    record::plan(FfiValue::Object(fields)).expect("the data plan parses")
+    record::plan(&ffi_frame(&FfiValue::Object(fields))).expect("the data plan parses")
 }
 
 /// The source as a binding hands it over: one frame, a map of the fields in
@@ -378,10 +378,9 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
             "{} eq: the query is the stored term",
             kind.field
         );
-        let ctx = context(FfiValue::Array(vec![
-            FfiValue::String("value_kinds".into()),
-            FfiValue::String(kind.field.into()),
-        ]))
+        let ctx = context(
+            &vitaminc_aead_frame::serde::to_vec(&("value_kinds", kind.field)).expect("frames"),
+        )
         .expect("context");
         let typed_eq = keyset
             .equality_term(kind.value, ctx.clone())
@@ -445,7 +444,7 @@ async fn a_value_of_another_width_is_refused_when_sealed() {
         "an int32 is not an int8: {:?}",
         refused.err()
     );
-    let ore_on_a_date = record::plan(FfiValue::Object(vec![(
+    let ore_on_a_date = record::plan(&ffi_frame(&FfiValue::Object(vec![(
         "day".into(),
         FfiValue::Object(vec![
             (
@@ -461,7 +460,7 @@ async fn a_value_of_another_width_is_refused_when_sealed() {
             ),
             ("type".into(), FfiValue::String("date".into())),
         ]),
-    )]));
+    )])));
     assert!(matches!(
         ore_on_a_date,
         Err(Error::Plan {
@@ -552,4 +551,9 @@ async fn the_committed_fixture_opens_and_its_terms_are_todays() {
         let term = query(&keyset, &plan, field, OpSpec::Eq, input).await;
         assert_eq!(json!(hex(&term)), entry["term"], "{field}: today's");
     }
+}
+
+/// A plan as frame bytes: what a binding sends.
+fn ffi_frame(value: &FfiValue) -> Vec<u8> {
+    vitaminc_protected::Controlled::risky_unwrap(value.to_frame().expect("frames"))
 }

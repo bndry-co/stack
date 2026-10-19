@@ -33,7 +33,7 @@
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-use super::{FfiValue, ValueFrame};
+use super::ValueFrame;
 use stack_kms::DataKeySource;
 use vitaminc_aead::plaintext::{
     Error as SinkError, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
@@ -41,7 +41,9 @@ use vitaminc_aead::plaintext::{
 use vitaminc_normalize::{domain_of, normalize, NormalizeError};
 use zeroize::Zeroizing;
 
-use super::{utf8, Error, Reason};
+use serde::{Deserialize, Serialize, Serializer};
+
+use super::{Error, Reason};
 use crate::sem::{
     CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, MatchOptions, QueryTokens, TermError, Tokenizer,
 };
@@ -72,9 +74,10 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 /// `[32, 65536]`, a non-zero n-gram length) are refused. The other three
 /// indexes have no options and no object form.
 ///
-/// [`to_value`](Self::to_value) writes the string whenever the options are
-/// the defaults and the object, with all four options, otherwise, so a
-/// default plan is byte-for-byte what it was before options had a wire form.
+/// Serialized (it is `Serialize`), an index writes the string whenever the
+/// options are the defaults and the object, with all four options,
+/// otherwise, so a default plan is byte-for-byte what it was before options
+/// had a wire form.
 impl IndexSpec {
     /// The index a bare key names, under default options, or `None` for a
     /// string that is not an index key.
@@ -88,54 +91,20 @@ impl IndexSpec {
         })
     }
 
-    /// Read an index from its wire form (see the [type docs](Self#wire-form)).
+    /// Read an index from its wire form's frame (see the
+    /// [type docs](Self#wire-form)).
     ///
     /// # Errors
     ///
     /// [`Error::Plan`] ([`Reason::UnknownOutput`]) for a value that is
     /// neither an index key nor a match options object, or whose options are
-    /// unknown, mistyped or out of bounds; [`Reason::RepeatedKey`] for an
-    /// option given twice. It names no field: the plan parser names it.
-    pub fn from_value(value: &FfiValue) -> Result<Self, Error> {
-        let unknown = || Error::bad_plan(Reason::UnknownOutput);
-        match value {
-            FfiValue::String(s) => Self::parse(utf8(s).ok_or_else(unknown)?).ok_or_else(unknown),
-            FfiValue::Object(entries) => match entries.as_slice() {
-                [(key, FfiValue::Object(options))] if key == "match" => {
-                    Ok(IndexSpec::Match(match_options(options)?))
-                }
-                _ => Err(unknown()),
-            },
-            _ => Err(unknown()),
-        }
-    }
-
-    /// Write this index in its wire form (see the [type docs](Self#wire-form)):
-    /// the key, or for a match index under non-default options, the object
-    /// carrying all four of them. [`from_value`](Self::from_value) reads it
-    /// back to an equal index.
-    pub fn to_value(&self) -> FfiValue {
-        match self {
-            IndexSpec::Match(options) if *options != MatchOptions::default() => {
-                let tokenizer = match options.tokenizer {
-                    Tokenizer::Standard => FfiValue::String("standard".into()),
-                    Tokenizer::Ngram { length } => FfiValue::Object(vec![(
-                        "ngram".to_string(),
-                        FfiValue::UInt64(length as u64),
-                    )]),
-                };
-                FfiValue::Object(vec![(
-                    "match".to_string(),
-                    FfiValue::Object(vec![
-                        ("tokenizer".to_string(), tokenizer),
-                        ("downcase".to_string(), FfiValue::Bool(options.downcase)),
-                        ("k".to_string(), FfiValue::UInt64(options.k as u64)),
-                        ("m".to_string(), FfiValue::UInt64(u64::from(options.m))),
-                    ]),
-                )])
-            }
-            _ => FfiValue::String(self.key().into()),
-        }
+    /// unknown, mistyped or out of bounds, and for bytes that are not one
+    /// frame (an option given twice is refused by the frame). It names no
+    /// field: the plan parser names it.
+    pub fn from_frame(frame: &[u8]) -> Result<Self, Error> {
+        vitaminc_aead_frame::serde::from_slice::<IndexWire>(frame)
+            .map(IndexSpec::from)
+            .map_err(|_| Error::bad_plan(Reason::UnknownOutput))
     }
 
     /// Whether the scheme defines this index's term for `value`: whether it
@@ -198,53 +167,139 @@ fn ordered(value: &Physical<'_>) -> bool {
     }
 }
 
-/// The options object of a match index's wire form: each key at most once,
-/// each defaulting, and the whole checked against the scheme's bounds.
-fn match_options(entries: &[(String, FfiValue)]) -> Result<MatchOptions, Error> {
-    let unknown = || Error::bad_plan(Reason::UnknownOutput);
-    let mut options = MatchOptions::default();
-    let mut seen: Vec<&str> = Vec::with_capacity(entries.len());
-    for (key, value) in entries {
-        if seen.contains(&key.as_str()) {
-            return Err(Error::bad_plan(Reason::RepeatedKey));
+/// An index in its wire form: its key, or for a match index under options
+/// other than the defaults, a one-entry object mapping `"match"` to all four
+/// of them (see [`IndexSpec`'s docs](IndexSpec#wire-form)).
+impl Serialize for IndexSpec {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "lowercase")]
+        enum Out {
+            Eq,
+            #[serde(rename = "match")]
+            DefaultMatch,
+            Match(MatchOut),
+            Ore,
+            Ope,
         }
-        seen.push(key);
-        match (key.as_str(), value) {
-            ("tokenizer", FfiValue::String(s)) if utf8(s) == Some("standard") => {
-                options.tokenizer = Tokenizer::Standard;
-            }
-            ("tokenizer", FfiValue::Object(tokenizer)) => match tokenizer.as_slice() {
-                [(name, length)] if name == "ngram" => {
-                    options.tokenizer = Tokenizer::Ngram {
-                        length: integer(length)?,
-                    };
-                }
-                _ => return Err(unknown()),
-            },
-            ("downcase", FfiValue::Bool(downcase)) => options.downcase = *downcase,
-            ("k", k) => options.k = integer(k)?,
-            ("m", m) => options.m = integer(m)?,
-            _ => return Err(unknown()),
+        #[derive(Serialize)]
+        struct MatchOut {
+            tokenizer: TokenizerOut,
+            downcase: bool,
+            k: u64,
+            m: u64,
         }
+        #[derive(Serialize)]
+        #[serde(rename_all = "lowercase")]
+        enum TokenizerOut {
+            Standard,
+            Ngram(u64),
+        }
+        match self {
+            IndexSpec::Equality => Out::Eq,
+            IndexSpec::Match(options) if *options == MatchOptions::default() => Out::DefaultMatch,
+            IndexSpec::Match(options) => Out::Match(MatchOut {
+                tokenizer: match options.tokenizer {
+                    Tokenizer::Standard => TokenizerOut::Standard,
+                    Tokenizer::Ngram { length } => TokenizerOut::Ngram(length as u64),
+                },
+                downcase: options.downcase,
+                k: options.k as u64,
+                m: u64::from(options.m),
+            }),
+            IndexSpec::Ore => Out::Ore,
+            IndexSpec::Ope => Out::Ope,
+        }
+        .serialize(s)
     }
-    if options.validate().is_err() {
-        return Err(unknown());
-    }
-    Ok(options)
 }
 
-/// A non-negative integer leaf of any width, as the target type, or
-/// [`Error::Plan`] ([`Reason::UnknownOutput`]: it is a match option).
-fn integer<T: TryFrom<u64>>(value: &FfiValue) -> Result<T, Error> {
-    let wide = match value {
-        FfiValue::Int32(v) => u64::try_from(*v).ok(),
-        FfiValue::Int64(v) => u64::try_from(*v).ok(),
-        FfiValue::UInt32(v) => Some(u64::from(*v)),
-        FfiValue::UInt64(v) => Some(*v),
-        _ => None,
-    };
-    wide.and_then(|v| T::try_from(v).ok())
-        .ok_or(Error::bad_plan(Reason::UnknownOutput))
+/// An index in its wire form, as serde reads it from a frame (see
+/// [`IndexSpec`'s docs](IndexSpec#wire-form)): a key, or for a match index a
+/// one-entry object mapping `"match"` to its options. A bare `"match"`, and
+/// `{"match": null}`, are the default options.
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum IndexWire {
+    Eq,
+    Match(Option<MatchWire>),
+    Ore,
+    Ope,
+}
+
+impl From<IndexWire> for IndexSpec {
+    fn from(index: IndexWire) -> Self {
+        match index {
+            IndexWire::Eq => IndexSpec::Equality,
+            IndexWire::Match(options) => IndexSpec::Match(options.map(|o| o.0).unwrap_or_default()),
+            IndexWire::Ore => IndexSpec::Ore,
+            IndexWire::Ope => IndexSpec::Ope,
+        }
+    }
+}
+
+/// A match index's options object: each option optional, defaulting to
+/// [`MatchOptions::default`]'s, and the whole checked against the match
+/// scheme's bounds.
+#[derive(Deserialize)]
+#[serde(try_from = "MatchOptionsWire")]
+pub(super) struct MatchWire(pub(super) MatchOptions);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct MatchOptionsWire {
+    tokenizer: TokenizerWire,
+    downcase: bool,
+    k: usize,
+    m: u32,
+}
+
+impl Default for MatchOptionsWire {
+    fn default() -> Self {
+        let MatchOptions {
+            tokenizer,
+            downcase,
+            k,
+            m,
+        } = MatchOptions::default();
+        Self {
+            tokenizer: match tokenizer {
+                Tokenizer::Standard => TokenizerWire::Standard,
+                Tokenizer::Ngram { length } => TokenizerWire::Ngram(length),
+            },
+            downcase,
+            k,
+            m,
+        }
+    }
+}
+
+/// `"standard"`, or `{"ngram": <length>}`.
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum TokenizerWire {
+    Standard,
+    Ngram(usize),
+}
+
+impl TryFrom<MatchOptionsWire> for MatchWire {
+    type Error = &'static str;
+
+    fn try_from(wire: MatchOptionsWire) -> Result<Self, Self::Error> {
+        let options = MatchOptions {
+            tokenizer: match wire.tokenizer {
+                TokenizerWire::Standard => Tokenizer::Standard,
+                TokenizerWire::Ngram(length) => Tokenizer::Ngram { length },
+            },
+            downcase: wire.downcase,
+            k: wire.k,
+            m: wire.m,
+        };
+        options
+            .validate()
+            .map(|_| MatchWire(options))
+            .map_err(|_| "match options the match scheme refuses")
+    }
 }
 
 /// Derive one index term's frozen byte encoding.
@@ -267,14 +322,12 @@ fn integer<T: TryFrom<u64>>(value: &FfiValue) -> Result<T, Error> {
 ///     .await?;
 /// let keyset = cipher.default_keyset();
 ///
-/// let ctx = context(FfiValue::Array(vec![
-///     FfiValue::String("users".into()),
-///     FfiValue::String("age".into()),
-/// ]))?;
+/// // `["users", "age"]`, as a binding writes it.
+/// let ctx = context(&vitaminc_aead_frame::serde::to_vec(&("users", "age"))?)?;
 /// let probe = term(&keyset, &FfiValue::UInt32(34), &IndexSpec::Equality, ctx.clone()).await?;
 /// let typed = keyset.equality_term(34u32, ctx).await?;
 /// assert_eq!(probe, typed.into_bytes().to_vec());
-/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();
 /// ```
 ///
@@ -705,6 +758,8 @@ impl Index<ValueFrame> for IndexSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dynamic::utf8;
+    use crate::dynamic::FfiValue;
     use crate::dynamic::{context, Output};
     use crate::sem::TermError;
     use crate::{nonempty, StackCipher};
@@ -806,7 +861,7 @@ mod tests {
     async fn match_text_with_no_tokens_is_refused_as_a_query_and_stored_empty() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let ctx = context(s("users/bio")).expect("context");
+        let ctx = ctx("users/bio");
         for text in ["", "  ", "hi"] {
             let refused = term(&keyset, &s(text), &default_match(), ctx.clone()).await;
             assert!(
@@ -842,7 +897,7 @@ mod tests {
     async fn a_match_query_under_invalid_options_is_refused_not_tokenised() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let ctx = context(s("users/bio")).expect("context");
+        let ctx = ctx("users/bio");
         let zero = IndexSpec::Match(MatchOptions {
             tokenizer: Tokenizer::Ngram { length: 0 },
             ..MatchOptions::default()
@@ -894,6 +949,16 @@ mod tests {
     /// `"match"` names.
     fn default_match() -> IndexSpec {
         IndexSpec::Match(MatchOptions::default())
+    }
+
+    /// An index read from the frame of its wire form, as a plan carries it.
+    fn index_of(value: &FfiValue) -> Result<IndexSpec, Error> {
+        IndexSpec::from_frame(&crate::dynamic::test_frame::frame_of(value))
+    }
+
+    /// A one-part context, read from its frame as a binding sends it.
+    fn ctx(label: &str) -> NonEmpty<crate::ContextPiece<'static>> {
+        context(&vitaminc_aead_frame::serde::to_vec(&label).expect("frames")).expect("context")
     }
 
     fn s(value: &str) -> FfiValue {
@@ -951,7 +1016,7 @@ mod tests {
         async fn derives_the_bytes_the_typed_path_derives() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let ks = &keyset;
             let dynamic = |value: FfiValue, kind: IndexSpec| {
                 let ctx = ctx.clone();
@@ -1028,7 +1093,7 @@ mod tests {
         async fn equality_is_one_term_per_number_and_per_nfc_string() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let eq = |value: FfiValue| {
                 let ctx = ctx.clone();
                 let keyset = &keyset;
@@ -1078,7 +1143,7 @@ mod tests {
         async fn a_frame_derives_the_terms_its_value_does() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let derive = |frame: Vec<u8>, kind: IndexSpec| {
                 let ctx = ctx.clone();
                 let keyset = &keyset;
@@ -1186,7 +1251,7 @@ mod tests {
         async fn equality_follows_vitaminc_for_decimals_and_timestamps() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let eq = |value: ValueFrame| {
                 let ctx = ctx.clone();
                 let keyset = &keyset;
@@ -1269,7 +1334,7 @@ mod tests {
         async fn term_is_error_term_naming_the_kind() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let refused = [
                 ("a bool", FfiValue::Bool(true), IndexSpec::Equality),
                 ("a bool", FfiValue::Bool(true), default_match()),
@@ -1296,7 +1361,7 @@ mod tests {
         async fn a_decimal_date_or_timestamp_has_no_order_term_yet() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             for leaf in [decimal(150, 2), date(19_782), instant(7)] {
                 for kind in [IndexSpec::Ore, IndexSpec::Ope] {
                     assert!(!kind.defines(&leaf), "{kind}");
@@ -1318,7 +1383,7 @@ mod tests {
         async fn text_that_does_not_normalize_is_refused_when_derived() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             for kind in [IndexSpec::Equality, default_match()] {
                 let unassigned = s("a\u{378}b");
                 assert!(kind.defines(&unassigned), "{kind} takes text");
@@ -1343,7 +1408,7 @@ mod tests {
         async fn term_is_error_term_naming_the_kind() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let not_scalars = [
                 ("null", FfiValue::Null),
                 ("undefined", FfiValue::Undefined),
@@ -1419,13 +1484,13 @@ mod tests {
                 IndexSpec::Ore,
                 IndexSpec::Ope,
             ] {
-                let wire = spec.to_value();
+                let wire = crate::dynamic::test_frame::value_of(&spec);
                 assert!(
                     matches!(&wire, FfiValue::String(k) if utf8(k) == Some(spec.key())),
                     "{spec} writes as its bare key"
                 );
                 assert_eq!(
-                    IndexSpec::from_value(&wire).expect("reads back"),
+                    index_of(&wire).expect("reads back"),
                     spec,
                     "{spec} reads back from its key"
                 );
@@ -1465,13 +1530,13 @@ mod tests {
             ];
             for options in cases {
                 let spec = IndexSpec::Match(options.clone());
-                let wire = spec.to_value();
+                let wire = crate::dynamic::test_frame::value_of(&spec);
                 assert!(
                     matches!(&wire, FfiValue::Object(_)),
                     "{options:?} is not the default, so it writes as an object"
                 );
                 assert_eq!(
-                    IndexSpec::from_value(&wire).expect("reads back"),
+                    index_of(&wire).expect("reads back"),
                     spec,
                     "{options:?} round-trips"
                 );
@@ -1499,7 +1564,7 @@ mod tests {
                 ]),
             )]);
             assert_eq!(
-                IndexSpec::from_value(&wire).expect("reads"),
+                index_of(&wire).expect("reads"),
                 IndexSpec::Match(MatchOptions {
                     tokenizer: crate::sem::Tokenizer::Ngram { length: 4 },
                     k: 5,
@@ -1516,7 +1581,7 @@ mod tests {
                 ]),
             )]);
             assert_eq!(
-                IndexSpec::from_value(&wire).expect("reads"),
+                index_of(&wire).expect("reads"),
                 IndexSpec::Match(MatchOptions {
                     tokenizer: crate::sem::Tokenizer::Standard,
                     downcase: false,
@@ -1527,7 +1592,7 @@ mod tests {
             // An empty options object is the defaults, and reads as the
             // bare key does.
             assert_eq!(
-                IndexSpec::from_value(&obj(vec![("match", obj(vec![]))])).expect("reads"),
+                index_of(&obj(vec![("match", obj(vec![]))])).expect("reads"),
                 default_match()
             );
         }
@@ -1594,12 +1659,10 @@ mod tests {
                 ),
             ];
             for (label, wire) in refused {
-                let error = IndexSpec::from_value(&wire).expect_err(label);
-                let reason = if label == "an option twice" {
-                    Reason::RepeatedKey
-                } else {
-                    Reason::UnknownOutput
-                };
+                let error = index_of(&wire).expect_err(label);
+                // An option given twice is refused by the frame, and reads
+                // as any other malformed index.
+                let reason = Reason::UnknownOutput;
                 assert!(
                     matches!(error, Error::Plan { field: None, .. }),
                     "{label}: {error:?}"
@@ -1626,7 +1689,7 @@ mod tests {
             }
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let ctx = context(s("users/x")).expect("context");
+            let ctx = ctx("users/x");
             let text = || s("Alice Smith");
             let wide = term(
                 &keyset,
@@ -1654,6 +1717,11 @@ mod tests {
 #[cfg(test)]
 mod wire_form {
     use super::*;
+    use crate::dynamic::FfiValue;
+
+    fn index_of(value: &FfiValue) -> Result<IndexSpec, Error> {
+        IndexSpec::from_frame(&crate::dynamic::test_frame::frame_of(value))
+    }
     use crate::sem::{MatchConfig, Tokenizer};
     use crate::target::{Equality, Index, Match, Ope, Ore};
 
@@ -1681,7 +1749,7 @@ mod wire_form {
         ];
         for spec in specs {
             assert_eq!(
-                IndexSpec::from_value(&spec.to_value()).expect("reads back"),
+                index_of(&crate::dynamic::test_frame::value_of(&spec)).expect("reads back"),
                 spec,
                 "{spec:?} survives the data form"
             );
@@ -1692,8 +1760,8 @@ mod wire_form {
     fn a_default_match_index_is_the_bare_match_key() {
         let spec = Index::<String>::spec(&Match);
         assert!(matches!(
-            spec.to_value(),
-            FfiValue::String(key) if super::utf8(&key) == Some("match")
+            crate::dynamic::test_frame::value_of(&spec),
+            FfiValue::String(key) if crate::dynamic::utf8(&key) == Some("match")
         ));
     }
 
@@ -1702,7 +1770,10 @@ mod wire_form {
         let spec = Index::<String>::spec(&Match::<Words>::new());
         assert_eq!(spec, IndexSpec::Match(Words::options()));
         assert!(
-            matches!(spec.to_value(), FfiValue::Object(_)),
+            matches!(
+                crate::dynamic::test_frame::value_of(&spec),
+                FfiValue::Object(_)
+            ),
             "non-default options are written, not dropped"
         );
     }

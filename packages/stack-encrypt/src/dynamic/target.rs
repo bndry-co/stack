@@ -18,7 +18,7 @@
 //!
 //! # Wire format
 //!
-//! [`TargetDescriptor::to_value`] is the entry a guest's `se_targets` export
+//! A [`TargetDescriptor`], serialized, is the entry a guest's `se_targets` export
 //! lists for each type; the keys are fixed on [`TargetDescriptor`], in the
 //! crate that owns the data grammar, and `eql-bindings` is tested to spell
 //! its table the same way.
@@ -27,8 +27,8 @@
 
 use std::fmt;
 
-use super::query::{operator_to_value, target_operators};
-use super::{FfiValue, OpSpec, ValueFrame, ValueKind};
+use super::query::target_operators;
+use super::{OpSpec, ValueFrame, ValueKind};
 
 use crate::sem::MatchOptions;
 use crate::{KeysetCipher, Label, Pending, StackCipher};
@@ -37,7 +37,7 @@ use crate::{KeysetCipher, Label, Pending, StackCipher};
 ///
 /// # Wire format
 ///
-/// [`to_value`](Self::to_value) is the entry a guest's `se_targets` export
+/// The descriptor, serialized (it is `Serialize`), is the entry a guest's `se_targets` export
 /// lists for each type, so a generator can ask the engine it embeds which
 /// EQL types it holds. Every key is always present; an absent value is
 /// null, never a missing key.
@@ -103,6 +103,43 @@ pub struct TargetDescriptor {
     pub match_options: Option<MatchOptions>,
 }
 
+/// The descriptor in its wire form: the object a guest's `se_targets`
+/// lists, every key present (see [the type's wire format](TargetDescriptor#wire-format)).
+impl serde::Serialize for TargetDescriptor {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        #[derive(serde::Serialize)]
+        struct Wire<'a> {
+            name: &'a str,
+            family: &'a str,
+            suffix: &'a str,
+            plaintext: Option<&'static str>,
+            sql_domain: &'a str,
+            indexes: &'a [String],
+            query: Option<&'a str>,
+            query_sql_domain: Option<&'a str>,
+            producible: bool,
+            reason: Option<&'a str>,
+            operators: Vec<super::OperatorEntry>,
+        }
+        serde::Serialize::serialize(
+            &Wire {
+                name: &self.name,
+                family: &self.family,
+                suffix: &self.suffix,
+                plaintext: self.plaintext.map(ValueKind::name),
+                sql_domain: &self.sql_domain,
+                indexes: &self.indexes,
+                query: self.query.as_deref(),
+                query_sql_domain: self.query_sql_domain.as_deref(),
+                producible: self.producible,
+                reason: self.reason.as_deref(),
+                operators: self.operator_entries(),
+            },
+            s,
+        )
+    }
+}
+
 impl TargetDescriptor {
     /// A descriptor with every field given. The one constructor, so a host
     /// cannot leave a wire field out.
@@ -145,42 +182,13 @@ impl TargetDescriptor {
         self
     }
 
-    /// The descriptor in its wire form: the object a guest's `se_targets`
-    /// lists, every key present (see [the type's wire format](Self#wire-format)).
-    pub fn to_value(&self) -> FfiValue {
-        let text = |s: &str| FfiValue::String(s.into());
-        let optional = |s: &Option<String>| s.as_deref().map_or(FfiValue::Null, text);
-        FfiValue::Object(vec![
-            ("name".to_string(), text(&self.name)),
-            ("family".to_string(), text(&self.family)),
-            ("suffix".to_string(), text(&self.suffix)),
-            (
-                "plaintext".to_string(),
-                self.plaintext
-                    .map_or(FfiValue::Null, |kind| text(kind.name())),
-            ),
-            ("sql_domain".to_string(), text(&self.sql_domain)),
-            (
-                "indexes".to_string(),
-                FfiValue::Array(self.indexes.iter().map(|k| text(k)).collect()),
-            ),
-            ("query".to_string(), optional(&self.query)),
-            (
-                "query_sql_domain".to_string(),
-                optional(&self.query_sql_domain),
-            ),
-            ("producible".to_string(), FfiValue::Bool(self.producible)),
-            ("reason".to_string(), optional(&self.reason)),
-            (
-                "operators".to_string(),
-                FfiValue::Array(
-                    target_operators(self)
-                        .iter()
-                        .map(|(op, index)| operator_to_value(*op, index))
-                        .collect(),
-                ),
-            ),
-        ])
+    /// The entries of [`operators`](Self::operators), each with the index
+    /// that answers it, as the wire form lists them.
+    fn operator_entries(&self) -> Vec<super::OperatorEntry> {
+        target_operators(self)
+            .iter()
+            .map(|(op, index)| super::OperatorEntry::new(*op, index))
+            .collect()
     }
 
     /// The operators the engine answers for a field that names this type,
@@ -582,6 +590,7 @@ impl fmt::Display for TargetDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dynamic::FfiValue;
 
     fn text_eq() -> TargetDescriptor {
         TargetDescriptor::new(
@@ -651,7 +660,7 @@ mod tests {
 
     #[test]
     fn the_wire_form_has_every_key_in_order_with_null_for_absent() {
-        let FfiValue::Object(entries) = text_eq().to_value() else {
+        let FfiValue::Object(entries) = crate::dynamic::test_frame::value_of(&text_eq()) else {
             panic!("an object");
         };
         let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
@@ -681,7 +690,7 @@ mod tests {
         let mut unspecified = text_eq();
         unspecified.plaintext = None;
         unspecified.query = None;
-        let FfiValue::Object(entries) = unspecified.to_value() else {
+        let FfiValue::Object(entries) = crate::dynamic::test_frame::value_of(&unspecified) else {
             panic!("an object");
         };
         assert!(matches!(&entries[3].1, FfiValue::Null));
