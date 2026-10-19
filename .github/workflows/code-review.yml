@@ -17,6 +17,12 @@ on:
 
 permissions: {}
 
+# One run per pull request at a time. A second event waits rather than cancelling the first, whose request may already
+# have started a session; a third replaces the waiting one, so a burst of toggles fires at most twice.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   request:
     # The fork guard as workflow-dispatch-job-conditions.test.mjs requires it spelled.

@@ -51,6 +51,15 @@ describe('Code-review routine trigger', () => {
     )
   })
 
+  it('runs one request per pull request at a time, never cancelling one', () => {
+    // Cancelling a run mid-request could leave a session started behind a
+    // cancelled check; a queued run is replaced by the next, bounding a burst.
+    expect(workflow.concurrency).toEqual({
+      group: `${gha('github.workflow')}-${gha('github.event.pull_request.number')}`,
+      'cancel-in-progress': false,
+    })
+  })
+
   it('grants the job token nothing and stays bounded', () => {
     // The request is authenticated by the routine token alone.
     expect(workflow.permissions).toEqual({})
