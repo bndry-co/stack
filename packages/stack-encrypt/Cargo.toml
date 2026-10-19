@@ -50,6 +50,9 @@ serde = { workspace = true }
 base64ct = { version = "1.7", features = ["alloc"] }
 
 cllw-ore = { workspace = true }
+# Block ORE (`OreBlock`): ore-rs's 6-bit schemes through the same
+# vitaminc-ore traits cllw-ore implements.
+ore-rs = { workspace = true }
 # Every error derives `miette::Diagnostic` (a code, and help where a caller
 # can act) and gives its structured fields as a `serde_json` map through
 # `ErrorPayload`. Both are already in the graph through stack-kms.

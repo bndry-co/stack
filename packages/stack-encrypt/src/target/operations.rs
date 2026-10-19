@@ -21,7 +21,7 @@ use std::fmt;
 ///
 /// The derive supplies it; a hand-written implementation composes the
 /// constructors in this module ([`ciphertext`], [`equality`], [`matching`],
-/// [`ore`], [`ope`]) and converts their output with [`Encryption::map`] or
+/// [`ore`], [`ope`], [`ore_block`]) and converts their output with [`Encryption::map`] or
 /// [`Encryption::transcode`]. Nothing here receives the plaintext or a
 /// cipher: the returned [`Encryption`]'s execution is private, so a target
 /// can choose operations and build its output but cannot replace encryption.
@@ -556,6 +556,12 @@ term_operation!(
     ope, crate::sem::OpeTerm<S>, consume, [],
     [S: crate::sem::Orderable]
 );
+term_operation!(
+    /// The block ORE term of `S` under the context the tree hands it, with
+    /// the same bounds as [`ore`].
+    ore_block, crate::sem::OreBlockTerm<S>, consume, [],
+    [S: crate::sem::Orderable]
+);
 
 impl<T: 'static, K: 'static> Decryption<T, K> {
     /// Reject the opening: execution yields `error` without I/O, any
@@ -947,6 +953,21 @@ where
     }
     fn indexes() -> Vec<super::IndexSpec> {
         vec![super::IndexSpec::Ope]
+    }
+}
+impl<S> EncryptFrom<S> for crate::sem::OreBlockTerm<S>
+where
+    S: crate::sem::Orderable + Clone,
+{
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    where
+        S: 's,
+    {
+        ore_block()
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::OreBlock]
     }
 }
 
