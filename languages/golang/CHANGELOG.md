@@ -116,6 +116,15 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   that orders by ADR-0002's order key: floats as PostgreSQL's `float8`
   sorts them, text by its fold. No `Between` yet: it needs EQL v4's range
   query domains.
+- **`TextSearch`**: a `string` field tagged `encrypt_into=TextSearch` gets
+  `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, one column for all of them.
+  The stored value keeps all three terms. Text shorter than three
+  characters, an empty string included, is stored with an empty match
+  filter, where `TextMatch` refuses it with `ErrTerm`: `Eq`, `Lt`, `Lte`,
+  `Gt` and `Gte` find the row, and no `Matches` query does. Each query
+  carries only the term its operator reads, so `Eq` and `Lt` take a
+  two-letter value and `Matches` refuses one (`ErrTerm`). Needs the EQL v4
+  SQL from this release, whose `eql_v4.query_text_search` accepts one term.
 - **Ordering methods on text.** A string field with `index=ore` or
   `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`. Text orders by its
   folded form (ADR-0002: case and accents folded, under Unicode 16), so

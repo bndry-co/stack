@@ -158,7 +158,7 @@ The engine produces these EQL types today, each from one Go field type:
 
 | `encrypt_into` | Go field |
 |---|---|
-| `TextEq`, `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe` | `string` |
+| `TextEq`, `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe`, `TextSearch` | `string` |
 | `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe` | `int16`, or any Go integer type |
 | `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe` | `int32`, or any Go integer type |
 | `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe` | `int64`, or any Go integer type |
@@ -169,12 +169,13 @@ The engine produces these EQL types today, each from one Go field type:
 | `Timestamp`, `TimestampEq` | `time.Time` |
 | `Numeric`, `NumericEq` | `encrypt.Decimal` |
 
-The `Eq` types answer `Eq`; the `Ord` and `OrdOpe` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp` and `Numeric` are stored and read only, with no query method.
+The `Eq` types answer `Eq`; the `Ord` and `OrdOpe` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `TextMatch` answers `Matches`, and `TextSearch` all of `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, each query carrying only the term its operator reads; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp` and `Numeric` are stored and read only, with no query method.
 The ordered date, timestamp and numeric types are refused: the engine derives no order term for these kinds yet.
 An ordered type has no `Between` method yet, because a `BETWEEN` operand needs EQL v4's range query domains.
 
 Any built-in Go integer field takes an integer type (ADR-0002) and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.
 A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index; its query refuses such text too.
+A `TextSearch` field stores such text with an empty match filter, so its `Eq`, `Lt`, `Lte`, `Gt` and `Gte` queries find it and no `Matches` query does; those queries take such text too, and its `Matches` query refuses it.
 Put the column on the left of `@@` (`WHERE name @@ $1::eql_v4.query_text_match`): the other operand order finds nothing until #1171 is fixed.
 `encrypt_into` with any other type is refused with the type's name and the reason it is not produced yet.
 Separate columns work today for four indexes: `equality`, `match`, `ore` and `ope`.

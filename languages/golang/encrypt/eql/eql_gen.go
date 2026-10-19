@@ -46,7 +46,7 @@ var Types = []Type{
 	{Name: "TextOrd", GoName: "TextOrd", Family: "text", Suffix: "Ord", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord", Indexes: []string{"eq", "ope"}, Query: "TextOrdQuery", QuerySQLDomain: "eql_v4.query_text_ord", Producible: true, Reason: ""},
 	{Name: "TextOrdOpe", GoName: "TextOrdOpe", Family: "text", Suffix: "OrdOpe", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ope", Indexes: []string{"eq", "ope"}, Query: "TextOrdOpeQuery", QuerySQLDomain: "eql_v4.query_text_ord_ope", Producible: true, Reason: ""},
 	{Name: "TextSearchOre", GoName: "TextSearchOre", Family: "text", Suffix: "SearchOre", Plaintext: "string", SQLDomain: "public.eql_v4_text_search_ore", Indexes: []string{"eq", "ore", "match"}, Query: "TextSearchOreQuery", QuerySQLDomain: "eql_v4.query_text_search_ore", Producible: false, Reason: "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"},
-	{Name: "TextSearch", GoName: "TextSearch", Family: "text", Suffix: "Search", Plaintext: "string", SQLDomain: "public.eql_v4_text_search", Indexes: []string{"eq", "ope", "match"}, Query: "TextSearchQuery", QuerySQLDomain: "eql_v4.query_text_search", Producible: false, Reason: "every query of this type carries a match term, which text shorter than one 3-gram cannot make, so `=` or `<` on short text would be refused; how a query that is not a match leaves it out is not decided (#1131)"},
+	{Name: "TextSearch", GoName: "TextSearch", Family: "text", Suffix: "Search", Plaintext: "string", SQLDomain: "public.eql_v4_text_search", Indexes: []string{"eq", "ope", "match"}, Query: "TextSearchQuery", QuerySQLDomain: "eql_v4.query_text_search", Producible: true, Reason: ""},
 	{Name: "Boolean", GoName: "Boolean", Family: "boolean", Suffix: "", Plaintext: "bool", SQLDomain: "public.eql_v4_boolean", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "Real", GoName: "Real", Family: "real", Suffix: "", Plaintext: "float32", SQLDomain: "public.eql_v4_real", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "RealEq", GoName: "RealEq", Family: "real", Suffix: "Eq", Plaintext: "float32", SQLDomain: "public.eql_v4_real_eq", Indexes: []string{"eq"}, Query: "RealEqQuery", QuerySQLDomain: "eql_v4.query_real_eq", Producible: true, Reason: ""},
@@ -1641,7 +1641,7 @@ func (v *TextSearchOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextSearch is the EQL type stored in public.eql_v4_text_search: the text family with the eq and ope and match indexes.
-// The engine cannot produce it yet: every query of this type carries a match term, which text shorter than one 3-gram cannot make, so `=` or `<` on short text would be refused; how a query that is not a match leaves it out is not decided (#1131).
+// The engine produces it from a string.
 type TextSearch []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.

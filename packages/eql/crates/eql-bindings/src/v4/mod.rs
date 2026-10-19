@@ -23,8 +23,10 @@
 //! published JSON Schema yet; those follow in `@cipherstash/eql` 4.0. The
 //! term newtypes and the [`DomainType`] trait are shared with v3: a v4
 //! `Ciphertext` or `Hmac256` is v3's type, so a change to a term's validation
-//! in `v3::terms` changes v4 too. What separates the two on the wire is the
-//! envelope's [`SchemaVersion`], which refuses the other generation's `v`.
+//! in `v3::terms` changes v4 too. The one v4 term v3 has no use for is
+//! [`terms::SearchBloomFilter`], the stored filter of a search domain. What
+//! separates the two on the wire is the envelope's [`SchemaVersion`], which
+//! refuses the other generation's `v`.
 
 /// Generated: the `op::Answers` impls through which Stack Encrypt's typed
 /// query chain queries a producible type, each type's
@@ -58,8 +60,57 @@ pub mod text;
 pub mod timestamp;
 
 pub use crate::v3::domain_type::{DomainType, SQL_SCHEMA};
-pub use crate::v3::terms;
 pub use inventory::{all, all_query, all_range_query};
+
+/// The wire-field newtypes of the v4 payloads: v3's, shared, and
+/// [`SearchBloomFilter`](terms::SearchBloomFilter).
+pub mod terms {
+    pub use crate::v3::terms::*;
+
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+    use ts_rs::TS;
+
+    /// The `bf` term of a stored search value (`TextSearch`,
+    /// `TextSearchOre`): a [`BloomFilter`] that may be empty.
+    ///
+    /// Text too short to cut a 3-gram (empty, separator-only, or shorter than
+    /// three characters) has no match tokens. A search column stores it with
+    /// the empty filter, Stack Encrypt's answer for a stored value, so `=`
+    /// and `<` still find it through its `hm` and `op`, and no `@@` query
+    /// does: EQL's `matches` finds a stored filter only when it contains the
+    /// query's, and an EQL v4 search query's filter is never empty (the
+    /// match projection refuses such text, and the SQL refuses `"bf": []`).
+    ///
+    /// [`BloomFilter`], the filter of `TextMatch` and of every query, still
+    /// refuses such text: `TextMatch` has no other term to find it by. The
+    /// JSON is [`BloomFilter`]'s, and so is the JSON Schema; only what Stack
+    /// Encrypt derives into it differs.
+    #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+    #[serde(transparent)]
+    pub struct SearchBloomFilter(pub BloomFilter);
+
+    /// [`BloomFilter`]'s schema, under its name: the wire format is one.
+    impl JsonSchema for SearchBloomFilter {
+        fn schema_name() -> std::borrow::Cow<'static, str> {
+            BloomFilter::schema_name()
+        }
+
+        fn schema_id() -> std::borrow::Cow<'static, str> {
+            BloomFilter::schema_id()
+        }
+
+        fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+            BloomFilter::json_schema(generator)
+        }
+    }
+
+    impl From<SearchBloomFilter> for BloomFilter {
+        fn from(filter: SearchBloomFilter) -> Self {
+            filter.0
+        }
+    }
+}
 
 /// The PostgreSQL typname prefix every `public` v4 domain carries.
 pub const PUBLIC_TYPNAME_PREFIX: &str = "eql_v4_";

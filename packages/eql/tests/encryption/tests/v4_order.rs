@@ -81,14 +81,17 @@ fn op(value: &serde_json::Value) -> &str {
     value["op"].as_str().expect("an ordered value carries op")
 }
 
-/// Every producible ordered type is in [`ORDERED`] and the other way
-/// round: a type that becomes producible is covered here or fails.
+/// Every producible `Ord` and `OrdOpe` type is in [`ORDERED`] and the other
+/// way round: a type that becomes producible is covered here or fails.
+/// `TextSearch` carries an OPE term too; its query carries one term per
+/// operator, and `v4_text_search.rs` covers it.
 #[test]
 fn the_ordered_producible_types_are_these() {
     let mut ordered: Vec<&str> = targets::targets()
         .iter()
         .filter(|t| t.producible && t.indexes.contains(&"ope"))
         .map(|t| t.name)
+        .filter(|name| *name != "TextSearch")
         .collect();
     ordered.sort_unstable();
     let mut expected = ORDERED.to_vec();

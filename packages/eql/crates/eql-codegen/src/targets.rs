@@ -31,17 +31,23 @@
 //!
 //! The reasons a type is not producible: eql-bindings names no Rust
 //! plaintext type for the family; the engine derives no order term for a
-//! date, timestamp or decimal; EQL's ORE term is block ORE where the engine
-//! derives CLLW ORE (#1132); a
-//! `TextSearch` query carries a match term that short text cannot make
-//! (#1131); and the JSON index is a new engine operation (#1060).
+//! date, timestamp or decimal; EQL's ORE term is block ORE where the
+//! engine derives CLLW ORE; and the JSON index is a new engine operation.
+//! Each reason string names the issue that tracks it.
+//!
+//! The query dispatch takes the index that answers the query's operator. A
+//! twin whose terms are optional in EQL v4 (`TextSearchQuery`) is built
+//! through the projection for that index, so it carries that term alone.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use eql_domains::{Domain, DomainFamily, Shape, Term};
 
-use crate::bindings::{encryption_gap, format_rs, plaintext_of, stored_payload_domains};
+use crate::bindings::{
+    encryption_gap, format_rs, plaintext_of, query_projection_ident, stored_payload_domains,
+};
+use crate::context::v4_optional_query_terms;
 use crate::render::EqlVersion;
 
 /// The version every target is produced into.
@@ -167,6 +173,11 @@ pub(crate) struct Row {
     /// The query twin's struct identifier and SQL domain, if the type
     /// answers a query.
     pub(crate) query: Option<(String, String)>,
+    /// For a query twin whose terms are optional in EQL v4, the projection
+    /// that builds it for each index, by the index's key: the query dispatch
+    /// runs the one for the index that answers the query's operator.
+    /// Empty for every other twin, whose plan derives all its terms.
+    pub(crate) projections: Vec<(&'static str, String)>,
     pub(crate) reason: Option<&'static str>,
     /// The operators the type answers in the typed query chain: none
     /// unless it is producible and has a query twin ([`answers_for_indexes`]).
@@ -253,6 +264,19 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
         ),
         indexes,
         query,
+        projections: if !is_stevec && v4_optional_query_terms(domain) {
+            Term::payload_terms(domain.terms)
+                .into_iter()
+                .map(|term| {
+                    (
+                        index_key(term),
+                        query_projection_ident(family, domain, term),
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
         reason,
         answers,
     }
@@ -411,14 +435,45 @@ fn render_targets_from(rows: &[Row]) -> String {
         .collect();
     // A producible type with no query twin (a storage-only domain) gets no
     // query arm: the fall-through refuses it as answering no query.
+    //
+    // A twin whose terms are optional is built through the projection of
+    // the index that answers the query's operator, and carries that term
+    // alone; any other index is one the type does not carry, which
+    // `encryption::targets::query` refuses before dispatching here.
     let query_arms: TokenStream = producible
         .iter()
         .filter_map(|r| {
             let (query, _) = r.query.as_ref()?;
             let (name, ty, source) = arm(r, query);
-            Some(quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), })
+            if r.projections.is_empty() {
+                return Some(
+                    quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), },
+                );
+            }
+            let by_index: TokenStream = r
+                .projections
+                .iter()
+                .map(|(key, projection)| {
+                    let (_, projection, _) = arm(r, projection);
+                    quote! {
+                        #key => run_projected::<#projection, #ty, #source, K>(#name, keyset, column, plaintext),
+                    }
+                })
+                .collect();
+            Some(quote! {
+                #name => match index.key() {
+                    #by_index
+                    _ => Err(no_index(#name, index)),
+                },
+            })
         })
         .collect();
+    let projected = producible.iter().any(|r| !r.projections.is_empty());
+    let index_param = if projected {
+        quote!(index)
+    } else {
+        quote!(_index)
+    };
     // One `use` per plaintext a producible type names by path (`String` is
     // in the prelude), so the arms stay short enough to read.
     let mut imports: Vec<&str> = producible
@@ -435,10 +490,10 @@ fn render_targets_from(rows: &[Row]) -> String {
             quote!(use #path;)
         })
         .collect();
-    let helpers = if producible.is_empty() {
-        quote!()
-    } else {
-        quote!(open_target, run_target,)
+    let helpers = match (producible.is_empty(), projected) {
+        (true, _) => quote!(),
+        (false, false) => quote!(open_target, run_target,),
+        (false, true) => quote!(no_index, open_target, run_projected, run_target,),
     };
 
     let mod_doc = " The EQL types a Stack Encrypt data plan may name as a field target — \
@@ -453,6 +508,7 @@ fn render_targets_from(rows: &[Row]) -> String {
         #![doc = #mod_doc]
 
         use stack_encrypt::dynamic::ValueFrame;
+        use stack_encrypt::target::IndexSpec;
 
         #imports
         use crate::encryption::targets::{#helpers refuse, refuse_query, Opener, Target, TargetError};
@@ -499,8 +555,11 @@ fn render_targets_from(rows: &[Row]) -> String {
         /// Run the named type's query twin for one plaintext, or refuse the
         /// name: as `encrypt_named` does, or as answering no query
         /// (`TargetError::NoQuery`) for a producible type with no twin.
+        /// `index` answers the query's operator; a twin whose terms are
+        /// optional carries that index's term alone.
         pub(crate) fn query_named<'a, K: 'static>(
             name: &str,
+            #index_param: &IndexSpec,
             keyset: &'a KeysetCipher<'_, K>,
             column: NonEmpty<Identifier>,
             plaintext: ValueFrame,
@@ -652,13 +711,9 @@ mod tests {
             target_gap(family, family.domain_by_name(name).expect("domain"))
         };
         let text = eql_domains::TEXT;
-        for producible in ["", "eq", "match", "ord", "ord_ope"] {
+        for producible in ["", "eq", "match", "ord", "ord_ope", "search"] {
             assert!(gap(&text, producible).is_none(), "text {producible:?}");
         }
-        assert!(
-            gap(&text, "search").unwrap().contains("match term"),
-            "TextSearch waits on how a query leaves out its match term"
-        );
         for block_ore in ["ord_ore", "search_ore"] {
             assert!(
                 gap(&text, block_ore).unwrap().contains("block ORE"),
@@ -784,29 +839,58 @@ mod tests {
             };
             assert_eq!(count("run_target", &name), 1, "{name}: one encrypt arm");
             assert_eq!(count("open_target", &name), 1, "{name}: one decrypt arm");
+            let projected = v4_optional_query_terms(domain);
             assert_eq!(
                 count("run_target", &format!("{name}Query")),
-                usize::from(!domain.terms.is_empty()),
+                usize::from(!domain.terms.is_empty() && !projected),
                 "{name}: a query arm exactly when it has a query twin"
             );
+            if projected {
+                // One arm per index, each through the projection for it.
+                for term in Term::payload_terms(domain.terms) {
+                    let projection = query_projection_ident(family, domain, term);
+                    let needle = format!(
+                        "\"{}\"=>run_projected::<super::{module}::{projection},super::{module}::{name}Query,{plaintext},K>(\"{name}\",",
+                        index_key(term)
+                    );
+                    // rustfmt leaves a trailing comma in a broken turbofish.
+                    let unbroken = tight.replace(",>", ">");
+                    assert_eq!(unbroken.matches(&needle).count(), 1, "{needle}");
+                }
+            }
         }
         // No unproducible type has an arm: the only `=>` arms are the
-        // producible ones and the three fall-throughs.
-        let with_twin = ENCRYPTION_DOMAINS
+        // producible ones, one per index of a projected twin, and the
+        // fall-throughs.
+        let (with_twin, by_index) = ENCRYPTION_DOMAINS
             .iter()
-            .filter(|(f, d)| {
+            .map(|(f, d)| {
                 let family = eql_domains::CATALOG.iter().find(|x| x.name == *f).unwrap();
-                !family.domain_by_name(d).unwrap().terms.is_empty()
+                family.domain_by_name(d).unwrap()
             })
-            .count();
+            .filter(|domain| !domain.terms.is_empty())
+            .fold((0, 0), |(twins, by_index), domain| {
+                let indexes = if v4_optional_query_terms(domain) {
+                    Term::payload_terms(domain.terms).len()
+                } else {
+                    0
+                };
+                (twins + 1, by_index + indexes)
+            });
+        assert!(by_index > 0, "TextSearch's query is projected");
         let arms = out.matches("\" => ").count();
         assert_eq!(
             arms,
-            ENCRYPTION_DOMAINS.len() * 2 + with_twin,
+            ENCRYPTION_DOMAINS.len() * 2 + with_twin + by_index,
             "arms: {out}"
         );
         assert_eq!(out.matches("_ => Err(refuse(name))").count(), 2);
         assert_eq!(out.matches("_ => Err(refuse_query(name))").count(), 1);
+        assert_eq!(
+            out.matches("_ => Err(no_index(\"TextSearch\", index))")
+                .count(),
+            1
+        );
     }
 
     /// A type answers operators in the typed query chain exactly when the

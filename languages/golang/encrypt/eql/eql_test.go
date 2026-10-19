@@ -24,7 +24,7 @@ func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 		"Smallint", "SmallintEq", "SmallintOrd", "SmallintOrdOpe",
 		"Bigint", "BigintEq", "BigintOrd", "BigintOrdOpe",
 		"Date", "DateEq", "Timestamp", "TimestampEq", "Numeric", "NumericEq",
-		"Text", "TextEq", "TextMatch", "TextOrd", "TextOrdOpe",
+		"Text", "TextEq", "TextMatch", "TextOrd", "TextOrdOpe", "TextSearch",
 		"Boolean",
 		"Real", "RealEq", "RealOrd", "RealOrdOpe",
 		"Double", "DoubleEq", "DoubleOrd", "DoubleOrdOpe",

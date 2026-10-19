@@ -585,7 +585,7 @@ mod the_table {
     /// The types the engine produces in EQL v4 today: the storage and
     /// equality domains of every family whose plaintext eql-bindings names,
     /// the OPE-ordered domains of those the engine derives an order term
-    /// for, and text match.
+    /// for, and text match and search.
     #[test]
     fn the_producible_types_are_the_ones_with_no_ore_and_a_rust_plaintext() {
         let producible: Vec<&str> = targets::targets()
@@ -619,6 +619,7 @@ mod the_table {
                 "TextMatch",
                 "TextOrd",
                 "TextOrdOpe",
+                "TextSearch",
                 "Boolean",
                 "Real",
                 "RealEq",
@@ -639,7 +640,6 @@ mod the_table {
                     "no order term for a date, timestamp or decimal yet"
                 }
                 (_, "OrdOre" | "SearchOre") => "derives CLLW ORE (#1132)",
-                ("text", "Search") => "carries a match term",
                 (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };
             assert!(reason.contains(expected), "{}: {reason}", row.name);

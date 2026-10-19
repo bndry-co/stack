@@ -444,33 +444,45 @@ async fn every_producible_type_dispatches_by_name() {
                 );
             }
             Some(_) => {
-                let query = targets::query(
-                    name,
-                    &common::index_of(name),
-                    &keyset,
-                    &label(),
-                    sample(kind),
-                )
-                .unwrap()
-                .await
-                .unwrap();
-                let query: serde_json::Value = serde_json::from_slice(&query).unwrap();
-                assert!(
-                    query.get("c").is_none(),
-                    "{name}: a query carries no ciphertext"
-                );
-                if target.indexes.contains(&"eq") {
-                    assert_eq!(
-                        query["hm"], json["hm"],
-                        "{name}: the query probes the stored term"
+                // Asked through each index the type carries, the query
+                // carries that index's term, the stored one. TextSearch's
+                // carries it alone (EQL v4's search query terms are
+                // optional); every other twin carries all of its terms
+                // whatever the index.
+                let term_of = |key: &str| match key {
+                    "eq" => "hm",
+                    "ope" => "op",
+                    "match" => "bf",
+                    other => panic!("{name}: no term for index {other}"),
+                };
+                for key in target.indexes {
+                    let index = stack_encrypt::target::IndexSpec::parse(key).unwrap();
+                    let query = targets::query(name, &index, &keyset, &label(), sample(kind))
+                        .unwrap()
+                        .await
+                        .unwrap();
+                    let query: serde_json::Value = serde_json::from_slice(&query).unwrap();
+                    assert!(
+                        query.get("c").is_none(),
+                        "{name}: a query carries no ciphertext"
                     );
-                }
-                if target.indexes.contains(&"ope") {
-                    assert!(json["op"].is_string(), "{name} stores an op");
+                    let term = term_of(key);
+                    assert!(json[term].is_string() || json[term].is_array(), "{name}");
                     assert_eq!(
-                        query["op"], json["op"],
-                        "{name}: the query compares the stored order term"
+                        query[term], json[term],
+                        "{name} via {key}: the query carries the stored term"
                     );
+                    let carried: Vec<&str> = target
+                        .indexes
+                        .iter()
+                        .map(|key| term_of(key))
+                        .filter(|term| query.get(term).is_some())
+                        .collect();
+                    if name == "TextSearch" {
+                        assert_eq!(carried, [term], "{name} via {key}: its term alone");
+                    } else {
+                        assert_eq!(carried.len(), target.indexes.len(), "{name} via {key}");
+                    }
                 }
             }
         }
