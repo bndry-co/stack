@@ -18,9 +18,10 @@
 //! the derive, and [`target_gap`] is tested to agree with
 //! [`encryption_gap`](crate::bindings::encryption_gap) on every domain.
 //!
-//! The reasons a type is not producible, each naming the issue that tracks
-//! it: no Rust plaintext type is chosen for the family yet (#1130); EQL's
-//! ORE term is block ORE where the engine derives CLLW ORE (#1132); a
+//! The reasons a type is not producible: eql-bindings names no Rust
+//! plaintext type for the family; the engine derives no order term for a
+//! date, timestamp or decimal; EQL's ORE term is block ORE where the engine
+//! derives CLLW ORE (#1132); a
 //! `TextSearch` query carries a match term that short text cannot make
 //! (#1131); and the JSON index is a new engine operation (#1060).
 
@@ -424,13 +425,19 @@ mod tests {
                 "{family_name}"
             );
         }
+        // A date, a timestamp and a decimal are stored and compared for
+        // equality; every ordered domain of theirs waits for an order term,
+        // block ORE included, which waits for that first.
         for family_name in ["date", "timestamp", "numeric"] {
-            for domain in ["", "eq", "ord"] {
+            let family = family(family_name);
+            assert!(gap(family, "").is_none(), "{family_name}");
+            assert!(gap(family, "eq").is_none(), "{family_name}Eq is producible");
+            for ordered in ["ord", "ord_ope", "ord_ore"] {
                 assert!(
-                    gap(family(family_name), domain)
+                    gap(family, ordered)
                         .unwrap()
-                        .contains("no Rust plaintext type for this family"),
-                    "{family_name} {domain:?}"
+                        .contains("no order term for a date, timestamp or decimal"),
+                    "{family_name} {ordered}"
                 );
             }
         }

@@ -409,7 +409,7 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	}
 	for _, target := range targets {
 		switch {
-		case slices.Contains([]string{"TextEq", "IntegerEq", "SmallintEq", "BigintEq", "RealEq", "DoubleEq"}, target.Name):
+		case slices.Contains([]string{"TextEq", "IntegerEq", "SmallintEq", "BigintEq", "RealEq", "DoubleEq", "DateEq", "TimestampEq", "NumericEq"}, target.Name):
 			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
 			if len(target.Operators) != 1 || target.Operators[0] != want[0] {
 				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)

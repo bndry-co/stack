@@ -486,6 +486,9 @@ mod the_table {
                 "boolean" => Some(ValueKind::Bool),
                 "real" => Some(ValueKind::Float32),
                 "double" => Some(ValueKind::Float64),
+                "date" => Some(ValueKind::Date),
+                "timestamp" => Some(ValueKind::Timestamp),
+                "numeric" => Some(ValueKind::Decimal),
                 // The rest have no Rust plaintext type in eql-bindings yet.
                 _ => None,
             };
@@ -560,8 +563,9 @@ mod the_table {
         }
     }
 
-    /// The types the engine produces in EQL v4 today: the storage, equality
-    /// and OPE-ordered domains of the families eql-bindings names a plaintext
+    /// The types the engine produces in EQL v4 today: the storage and
+    /// equality domains of every family whose plaintext eql-bindings names,
+    /// the OPE-ordered domains of those the engine derives an order term
     /// for, and text match.
     #[test]
     fn the_producible_types_are_the_ones_with_no_ore_and_a_rust_plaintext() {
@@ -585,6 +589,12 @@ mod the_table {
                 "BigintEq",
                 "BigintOrd",
                 "BigintOrdOpe",
+                "Date",
+                "DateEq",
+                "Timestamp",
+                "TimestampEq",
+                "Numeric",
+                "NumericEq",
                 "Text",
                 "TextEq",
                 "TextMatch",
@@ -606,7 +616,9 @@ mod the_table {
             let expected = match (row.family, row.suffix) {
                 ("json", "Search") => "JSON index",
                 ("json", "") => "tree of leaves",
-                ("date" | "timestamp" | "numeric", _) => "no Rust plaintext type for this family",
+                ("date" | "timestamp" | "numeric", "Ord" | "OrdOpe" | "OrdOre") => {
+                    "no order term for a date, timestamp or decimal yet"
+                }
                 (_, "OrdOre" | "SearchOre") => "derives CLLW ORE (#1132)",
                 ("text", "Search") => "carries a match term",
                 (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
@@ -635,7 +647,7 @@ mod the_table {
                 "reason": null
             })
         );
-        let row = targets::target("Date").unwrap();
+        let row = targets::target("Json").unwrap();
         let json = serde_json::to_value(row).unwrap();
         assert_eq!(
             json["plaintext"],

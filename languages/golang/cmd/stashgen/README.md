@@ -165,8 +165,12 @@ The engine produces these EQL types today, each from one Go field type:
 | `Boolean` | `bool` |
 | `Real`, `RealEq`, `RealOrd`, `RealOrdOpe` | `float32` |
 | `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe` | `float64` |
+| `Date`, `DateEq` | `encrypt.Date` |
+| `Timestamp`, `TimestampEq` | `time.Time` |
+| `Numeric`, `NumericEq` | `encrypt.Decimal` |
 
-The `Eq` types answer `Eq`; the `Ord` and `OrdOpe` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real` and `Double` are stored and read only, with no query method.
+The `Eq` types answer `Eq`; the `Ord` and `OrdOpe` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp` and `Numeric` are stored and read only, with no query method.
+The ordered date, timestamp and numeric types are refused: the engine derives no order term for these kinds yet.
 An ordered type has no `Between` method yet, because a `BETWEEN` operand needs EQL v4's range query domains.
 
 Any built-in Go integer field takes an integer type (ADR-0002) and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.

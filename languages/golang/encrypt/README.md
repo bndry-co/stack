@@ -260,7 +260,7 @@ index: with 256 values, an order term would rank every row among 256, which
 a few known rows resolve to the values, as a `bool`'s would say which rows
 are true. Equality follows vitaminc's normalisation: an
 integer equals itself at every width, decimals compare at any scale
-(`1.50 = 1.5`), and a timestamp compares to the microsecond. An order index on
+(`1.50 = 1.5`), and a timestamp compares to the microsecond, truncated, never rounded. An order index on
 a decimal, date or timestamp is refused for now: the engine derives no
 order term for those kinds yet.
 
@@ -493,6 +493,12 @@ The EQL types the engine produces, and the Go field types each takes:
 | `Double` | `float64` | none |
 | `DoubleEq` | `float64` | `=`, `<>` |
 | `DoubleOrd`, `DoubleOrdOpe` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `Date` | `encrypt.Date` | none |
+| `DateEq` | `encrypt.Date` | `=`, `<>` |
+| `Timestamp` | `time.Time` | none |
+| `TimestampEq` | `time.Time` | `=`, `<>` (to the microsecond, truncated) |
+| `Numeric` | `encrypt.Decimal` | none |
+| `NumericEq` | `encrypt.Decimal` | `=`, `<>` (`1.5 = 1.50`) |
 
 Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
 is sealed at the type's width, and opens back into the field's type. A type
@@ -508,7 +514,17 @@ A `TextMatch` value must be at least three characters long: shorter text has
 no 3-grams to index and is refused. The number equality types compare as
 PostgreSQL compares the plain types: an integer equals itself whatever its
 width, and for floats `-0.0 = 0.0` and `NaN = NaN`; the stored value still
-decrypts to exactly what was written.
+decrypts to exactly what was written. The same holds for the date,
+timestamp and numeric types: `NumericEq` normalises the scale, so `1.5` and
+`1.50` are equal, and `TimestampEq` compares to the microsecond, truncating
+(never rounding) the nanoseconds below it, so two instants in one
+microsecond are equal; each still opens as it was written, a
+decimal with its scale and a `time.Time` with its nanoseconds, in UTC. A
+`time.Time` is sealed as its instant, whatever its location. A zero
+`encrypt.Date`, a date or instant outside years -262143 to 262142 and a
+decimal with more than 28 digits after the point are refused with
+`ErrEncoding`. The ordered date, timestamp and numeric types are not
+produced yet: the engine derives no order term for these kinds.
 
 The `Ord` and `OrdOpe` types store an OPE term, which EQL compares as bytes,
 and order by ADR-0002's order key: integers by value, floats as PostgreSQL's
@@ -526,7 +542,7 @@ answers `Eq` through an equality term only. A text order type also stores
 neither `<` nor `>` each other and not `=` either. Text holding a code point
 Unicode 16 does not assign has no order term and is refused. There is no
 `Between` method yet: a `BETWEEN` needs EQL v4's range query domains. The rest of
-the catalog (ORE ordering, dates, decimals, JSON) is listed in
+the catalog (ORE ordering, ordered dates, timestamps and decimals, JSON) is listed in
 `eql.Types` with the reason it is not produced yet, and `stashgen` refuses it
 with that reason. The guest builds the value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the

@@ -1199,14 +1199,17 @@ name = "eql-bindings"
 version = "3.0.6"
 dependencies = [
  "base64",
+ "chrono",
  "eql-domains",
  "hex",
+ "rust_decimal",
  "schemars",
  "serde",
  "serde_json",
  "stack-encrypt",
  "thiserror 2.0.20",
  "ts-rs",
+ "vitaminc-aead 0.6.1",
  "zeroize",
 ]
 
@@ -1237,10 +1240,12 @@ name = "eql-encryption-tests"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "chrono",
  "cipherstash-client",
  "eql-bindings",
  "eql-domains",
  "postgres",
+ "rust_decimal",
  "serde",
  "serde_json",
  "stack-encrypt",
@@ -5095,7 +5100,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71b8c5c4ced92545dce5fd7cf04581d08210def174cc81475cf227fa2506c5b7"
 dependencies = [
  "bytes",
+ "chrono",
  "futures-util",
+ "rust_decimal",
  "serde",
  "thiserror 2.0.20",
  "vitaminc-aead-derive 0.6.1",

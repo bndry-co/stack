@@ -52,6 +52,15 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **The date, timestamp and numeric EQL v4 types are producible** (#1130):
+  `Date` and `DateEq` from an `encrypt.Date`, `Timestamp` and `TimestampEq`
+  from a `time.Time`, and `Numeric` and `NumericEq` from an
+  `encrypt.Decimal`, with `encrypt_into=`. The `Eq` types answer `Eq`:
+  `NumericEq` normalises the scale (`1.5 = 1.50`) and `TimestampEq` compares
+  to the microsecond (truncated, never rounded), while each value opens as it was sealed. A
+  `time.Time` seals its instant and opens in UTC. Their `Ord`, `OrdOpe` and
+  `OrdOre` types stay unproducible until the engine derives order terms
+  for these kinds (#1236).
 - **Every integer width, 128-bit integers, dates, timestamps and decimals
   as sealed fields** (#1144). Each integer type seals at its own width
   (`int8` as an int8, `uint16` as a uint16), so `record.Kind` and

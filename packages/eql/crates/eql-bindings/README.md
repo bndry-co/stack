@@ -107,7 +107,8 @@ The optional `stack-encrypt` feature enables `EncryptFrom<String>` for
 implements these traits. The derives are emitted by `eql-codegen`.
 
 The other v4 types Stack Encrypt produces take a Rust primitive as their
-plaintext:
+plaintext, or, for a date, a timestamp or a decimal, one of
+`eql_bindings::v4::plaintext`'s types:
 
 | v4 type | Plaintext |
 | --- | --- |
@@ -118,6 +119,22 @@ plaintext:
 | `Boolean` | `bool` |
 | `Real`, `RealEq`, `RealOrd`, `RealOrdOpe` | `f32` |
 | `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe` | `f64` |
+| `Date`, `DateEq` | `v4::plaintext::Date`: an `i32` of days since 1970-01-01 |
+| `Timestamp`, `TimestampEq` | `v4::plaintext::Timestamp`: `i64` Unix seconds and `u32` nanoseconds, UTC, no leap seconds |
+| `Numeric`, `NumericEq` | `v4::plaintext::Decimal`: an `i128` mantissa (below 2^96) and a `u8` scale (at most 28) |
+
+A date, a timestamp and a decimal have no Rust standard type, and chrono's
+and rust_decimal's types cannot be wiped, so these three are this crate's
+own. Each is built range checked (vitaminc's ranges, which are chrono's and
+rust_decimal's), refusing a value outside them with an error that does not
+show it, and wipes its integers when dropped. It is not `Copy`. The `chrono`
+and `rust_decimal` features convert to and from `NaiveDate`,
+`DateTime<Utc>` and rust_decimal's `Decimal`; the value converted to is the
+caller's, and is not wiped. Only a leap second, which a `DateTime<Utc>` can
+hold and a `Timestamp` cannot, is refused in a conversion. On `NumericEq`,
+`1.5 = 1.50` (the scale is normalised); on `TimestampEq`, an instant is truncated to the microsecond (the nanoseconds below it are dropped, not rounded), so two instants in the same microsecond are equal. Each opens as
+it was stored. The ordered date, timestamp and numeric types are refused
+until the engine derives their order terms.
 
 Each seals the same leaf the Go SDK seals for the same value, so values
 written here and by the Go SDK open each other. On the equality

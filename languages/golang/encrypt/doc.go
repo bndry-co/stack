@@ -23,15 +23,19 @@
 // encrypt_into names the EQL type the field is stored as. The Go field type
 // must match it: TextEq, TextMatch and Text take a string, Smallint and
 // SmallintEq an int16, Integer and IntegerEq an int32, Bigint and BigintEq
-// an int64, Boolean a bool, Real and RealEq a float32, and Double and
-// DoubleEq a float64. An integer EQL type
+// an int64, Boolean a bool, Real and RealEq a float32, Double and DoubleEq a
+// float64, Date and DateEq a [Date], Timestamp and TimestampEq a time.Time,
+// and Numeric and NumericEq a [Decimal]. An integer EQL type
 // also takes any other built-in Go integer type, sealed at the type's width:
 // one every value of which fits it (an int16 into Integer) always seals, and
 // a wider one (an int64 into Integer) is range checked, a value that does not
 // fit refused with [ErrEncoding]. The *Eq types answer Eq; the *Ord and
 // *OrdOpe types (IntegerOrd, SmallintOrd, BigintOrd, RealOrd, DoubleOrd,
-// TextOrd and their OrdOpe twins) answer Lt, Lte, Gt and Gte, and Eq too on text; Smallint,
-// Integer, Bigint, Boolean, Real, Double and Text are stored and read only.
+// TextOrd and their OrdOpe twins) answer Lt, Lte, Gt and Gte, and Eq too on
+// text; Smallint, Integer, Bigint, Boolean, Real, Double, Text, Date,
+// Timestamp and Numeric are stored and read only. NumericEq compares
+// decimals with their scale normalised (1.5 = 1.50), and TimestampEq
+// compares instants to the microsecond, truncated, never rounded.
 //
 // 3. Run the generator. It writes user_stash.go beside the struct:
 //
