@@ -199,7 +199,7 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 	case "matches":
 		return stashgen.IndexMatch, declared(stashgen.IndexMatch)
 	}
-	orderable := (integer(t) && !eightBit(t)) || t.Kind == stashgen.KindString
+	orderable := (integer(t) && !eightBit(t)) || t.Kind == stashgen.KindFloat || t.Kind == stashgen.KindString
 	if !orderable {
 		return "", false
 	}

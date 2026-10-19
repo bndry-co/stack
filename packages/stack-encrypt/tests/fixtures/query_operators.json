@@ -39,6 +39,17 @@
         "match"
       ],
       "type": "string"
+    },
+    "score": {
+      "context": [
+        "users",
+        "score"
+      ],
+      "outputs": [
+        "c",
+        "ore"
+      ],
+      "type": "float64"
     }
   },
   "queries": [
@@ -154,6 +165,36 @@
         "index": "match",
         "operator": "matches",
         "term": "30009d00c100"
+      }
+    },
+    {
+      "field": "score",
+      "input": 1.5,
+      "operator": "lt",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "ore",
+        "operator": "lt",
+        "term": "d86769e4203df9a878dfb084014ea9df2ac9e74b1cef394f5042a6a88e4b81ab7d678eb59f8d27089e5e988fe8130bf9ea2707ab35e341d60c19c9836360eb21"
+      }
+    },
+    {
+      "field": "score",
+      "input": [
+        -0.5,
+        2.5
+      ],
+      "operator": "between",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "ore",
+        "operator": "between",
+        "term": [
+          "d73ffdebc829eff390b70c5e169f58bf4b2aa664817584cc01f5e114eb7d91d2b6fe729db0f85f0df93d0487a2888f0a1865ca8946912ec33493cb18c5abb183",
+          "d8688e0201b46fefe8147f16e4011433e428361b12b70e40fed58a526bcdad72208619a7f90e617d22ddda3df8de4ccc224672bc0ea650ad64e30fb253851039"
+        ]
       }
     }
   ],

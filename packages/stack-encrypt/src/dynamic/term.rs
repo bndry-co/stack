@@ -1073,6 +1073,16 @@ mod tests {
             ordered!(2.5f64, Tree::Float64(2.5), "f64");
             ordered!("alice".to_string(), s("alice"), "text");
             ordered!(b"ab".to_vec(), bytes(b"ab"), "bytes");
+
+            // A float32 is ordered as the f64 it widens to: `f32`'s target
+            // is `F64`, so a dynamic `f32` and the typed `f64` it widens to
+            // are one term.
+            let ore = term(ks, 1.5f32, &IndexSpec::Ore, ctx.clone()).await;
+            let typed = keyset.ore_term(1.5f64, nonempty!("users/x")).await;
+            assert_eq!(ore.expect("ore"), typed.expect("typed").as_ref().to_vec());
+            let ope = term(ks, 1.5f32, &IndexSpec::Ope, ctx.clone()).await;
+            let typed = keyset.ope_term(1.5f64, nonempty!("users/x")).await;
+            assert_eq!(ope.expect("ope"), typed.expect("typed").as_ref().to_vec());
         }
 
         /// Equality normalizes: every integer width of one number is one

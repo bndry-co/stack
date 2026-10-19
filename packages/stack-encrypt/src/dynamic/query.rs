@@ -35,15 +35,16 @@
 //! A field with indexes answers what [`OpSpec::answered_by`] says for its
 //! declared kind: `eq` through an equality index, `matches` through a match
 //! index over text, and the orderings (`lt`, `lte`, `gt`, `gte`,
-//! `between`) through an ORE index over an integer or text, or an OPE index
-//! when the field declares no ORE. The typed path's default for an ordering
-//! is ORE, and OPE is the typed path's `.via(Ope)`; here a field that
-//! declares only OPE is answered through it. Text orders by its folded
-//! order key (ADR-0002). An ordering over bytes or a float is not answered,
-//! as `op::Ordered` covers the integers of 16 bits and wider (`int16` to
-//! `uint128`) and text only. Nor is one over an 8-bit integer, which has
-//! no order term, or a decimal, date or timestamp:
-//! a plan cannot declare an order index on one yet.
+//! `between`) through an ORE index over an integer of 16 bits or wider, a
+//! float or text, or an OPE index when the field declares no ORE. The typed
+//! path's default for an ordering is ORE, and OPE is the typed path's
+//! `.via(Ope)`; here a field that declares only OPE is answered through it.
+//! Every order term is derived over the value's ADR-0002 order key: a
+//! float's ties `-0.0` with `0.0` and sorts every NaN last, and text's is
+//! its fold. An ordering over bytes is not answered, as `op::Ordered` does
+//! not cover them. Nor is one over an 8-bit integer, which has no order
+//! term, or over a decimal, date or timestamp: a plan cannot declare an
+//! order index on one yet.
 //!
 //! A field that names an EQL type answers what its
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
@@ -174,6 +175,7 @@ impl OpSpec {
     /// let both = [IndexSpec::Ope, IndexSpec::Ore];
     /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::UInt32, &both), Some(&IndexSpec::Ore));
     /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::String, &both), Some(&IndexSpec::Ore));
+    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::Float32, &both), Some(&IndexSpec::Ore));
     /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::Bytes, &both), None);
     /// assert_eq!(OpSpec::Eq.answered_by(ValueKind::UInt32, &both), None);
     /// ```
@@ -202,10 +204,11 @@ impl fmt::Display for OpSpec {
 }
 
 /// The kinds the ordering operators are answered over: the integers of 16
-/// bits and wider, `int16` to `uint128`, and text, as
+/// bits and wider, `int16` to `uint128`, the floats and text, as
 /// [`op::Ordered`](crate::op::Ordered) covers them in the typed path. Not
-/// `int8` or `uint8`, which have no order term. Text orders by its order
-/// key (ADR-0002's fold).
+/// `int8` or `uint8`, which have no order term. Each orders by its ADR-0002
+/// order key; a `float32` is ordered as the `f64` it widens to, as the
+/// typed path asks.
 fn ordered(kind: ValueKind) -> bool {
     matches!(
         kind,
@@ -217,6 +220,8 @@ fn ordered(kind: ValueKind) -> bool {
             | ValueKind::UInt32
             | ValueKind::UInt64
             | ValueKind::UInt128
+            | ValueKind::Float32
+            | ValueKind::Float64
             | ValueKind::String
     )
 }
@@ -1078,6 +1083,8 @@ mod tests {
             field("score", "int64", vec![text("ope")]),
             field("nickname", "string", vec![text("c"), text("ore")]),
             field("handle", "string", vec![text("c"), case_sensitive]),
+            field("ratio", "float32", vec![text("c"), text("ore")]),
+            field("rating", "float64", vec![text("c"), text("ope")]),
         ])))
         .expect("the plan parses")
     }
@@ -1182,6 +1189,8 @@ mod tests {
                 ValueKind::UInt32,
                 ValueKind::UInt64,
                 ValueKind::UInt128,
+                ValueKind::Float32,
+                ValueKind::Float64,
                 ValueKind::String,
             ] {
                 assert_eq!(
@@ -1202,7 +1211,6 @@ mod tests {
             }
             for kind in [
                 ValueKind::Bytes,
-                ValueKind::Float64,
                 ValueKind::Bool,
                 ValueKind::Decimal,
                 ValueKind::Date,
@@ -1211,7 +1219,7 @@ mod tests {
                 assert_eq!(
                     answered(op, kind, &all),
                     None,
-                    "{op} is answered over integers and text only: {kind}"
+                    "{op} is not answered over {kind}"
                 );
             }
         }
@@ -1463,6 +1471,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(folded.operand, cafe.operand);
+
+        // A float32 orders as the f64 it widens to: `-0.0` ties `0.0`, so
+        // the two are one term.
+        let zero = query(&keyset, "ratio", OpSpec::Lt, 0.0f32).await.unwrap();
+        let negative_zero = query(&keyset, "ratio", OpSpec::Lt, -0.0f32).await.unwrap();
+        assert_eq!(negative_zero.operand, zero.operand);
     }
 
     /// A plan whose context is a field of each record has no context a

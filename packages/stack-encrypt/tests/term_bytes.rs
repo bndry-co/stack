@@ -29,7 +29,9 @@
 //! their width, text by the system ADR-0002's fold, behind cllw-ore's
 //! marker byte) and encrypted under a column salt that binds the scheme
 //! and the target. Terms written by 0.1.0 and 0.2.0 do not compare with
-//! these (the CHANGELOG says so).
+//! these (the CHANGELOG says so). Floats are ordered by the same path:
+//! `F64`'s encoding folds `-0.0` into `0.0` and every NaN into one, which
+//! cllw-ore's own float encoding did not.
 
 use stack_encrypt::nonempty;
 use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions};
@@ -252,4 +254,141 @@ async fn text_with_no_fold_has_no_order_term() {
         .ope_term("a\u{378}b".to_string(), nonempty!("users/surname"))
         .await
         .is_err());
+}
+
+/// A float's order term: cllw-ore's encryption of its ADR-0002 order key,
+/// the `f64` with zero signs and NaN payloads folded, under the column salt
+/// of the `F64` target. Pins the key, the salt and the encryption.
+#[tokio::test]
+async fn float_order_term_bytes_are_pinned() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ore = keyset
+        .ore_term(1.5f64, nonempty!("users/score"))
+        .await
+        .unwrap();
+    let ope = keyset
+        .ope_term(1.5f64, nonempty!("users/score"))
+        .await
+        .unwrap();
+    assert_eq!(hex(ore.as_ref()), "f591a4bf7663b9ffcaf021d87de0d10dad925b7663e33de47966c05dab4f76ff1e8bc5537162088c01be03b4db4d3fe980b111f46e7d4da445ec19d2f7445ef0");
+    assert_eq!(hex(ope.as_ref()), "01501c6dd5f9a769811461eadfd54631ea58f3f051e7603117396add6c79e5fe4fd2f549c92f0afeaf94cd6c49fc33a9a0657c812132bea46779b2f19f10ce36ae");
+}
+
+/// Floats order as Postgres's `float8` does: `-0.0` ties `0.0`, every NaN is
+/// one value, and it sorts above `+Infinity`. The ORE terms compare in that
+/// order, and the OPE terms' bytes do.
+#[tokio::test]
+async fn float_order_terms_follow_the_semantic_baseline() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ore = |value: f64| keyset.ore_term(value, nonempty!("users/score"));
+    let ope = |value: f64| keyset.ope_term(value, nonempty!("users/score"));
+
+    assert_eq!(ore(-0.0).await.unwrap(), ore(0.0).await.unwrap());
+    assert_eq!(ope(-0.0).await.unwrap(), ope(0.0).await.unwrap());
+    let nans = [
+        f64::NAN,
+        -f64::NAN,
+        f64::from_bits(0x7ff8_0000_0000_beef),
+        f64::from_bits(0x7ff0_0000_0000_0001),
+    ];
+    for nan in nans {
+        assert_eq!(
+            ore(nan).await.unwrap(),
+            ore(f64::NAN).await.unwrap(),
+            "{nan:?}"
+        );
+        assert_eq!(
+            ope(nan).await.unwrap(),
+            ope(f64::NAN).await.unwrap(),
+            "{nan:?}"
+        );
+    }
+
+    let ascending = [
+        f64::NEG_INFINITY,
+        f64::MIN,
+        -1.5,
+        -f64::MIN_POSITIVE,
+        0.0,
+        f64::MIN_POSITIVE,
+        1.5,
+        f64::MAX,
+        f64::INFINITY,
+        f64::NAN,
+    ];
+    for pair in ascending.windows(2) {
+        let (lo, hi) = (pair[0], pair[1]);
+        assert!(
+            ore(lo).await.unwrap() < ore(hi).await.unwrap(),
+            "ore: {lo:?} < {hi:?}"
+        );
+        assert!(
+            ope(lo).await.unwrap().as_ref() < ope(hi).await.unwrap().as_ref(),
+            "ope: {lo:?} < {hi:?}"
+        );
+    }
+}
+
+/// An `f32` is ordered as the `f64` it widens to (ADR-0002): its target
+/// is `F64`, and vitaminc widens it exactly, so its terms are the `f64`'s.
+#[tokio::test]
+async fn an_f32_is_ordered_as_the_f64_it_widens_to() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    for value in [1.5f32, -0.0, f32::NAN, f32::MIN_POSITIVE, f32::INFINITY] {
+        let wide = f64::from(value);
+        assert_eq!(
+            keyset
+                .ore_term(value, nonempty!("users/score"))
+                .await
+                .unwrap(),
+            keyset
+                .ore_term(wide, nonempty!("users/score"))
+                .await
+                .unwrap(),
+            "ore {value:?}"
+        );
+        assert_eq!(
+            keyset
+                .ope_term(value, nonempty!("users/score"))
+                .await
+                .unwrap(),
+            keyset
+                .ope_term(wide, nonempty!("users/score"))
+                .await
+                .unwrap(),
+            "ope {value:?}"
+        );
+    }
+}
+
+/// Every integer width of 16 bits or more is encoded at its own target: an
+/// ORE term of one byte per bit of the width and an OPE term of one more,
+/// each ordering as the values do, from the width's minimum through its
+/// maximum. (A `u8` and an `i8` have no order term.)
+#[tokio::test]
+async fn every_integer_width_orders_by_its_own_key() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    macro_rules! width {
+        ($($ty:ty),+) => {$({
+            let values: [$ty; 3] = [<$ty>::MIN, <$ty>::MIN / 2 + <$ty>::MAX / 2 + 1, <$ty>::MAX];
+            let bits = <$ty>::BITS as usize;
+            let mut ores = Vec::new();
+            let mut opes = Vec::new();
+            for value in values {
+                let ore = keyset.ore_term(value, nonempty!("users/n")).await.unwrap();
+                let ope = keyset.ope_term(value, nonempty!("users/n")).await.unwrap();
+                assert_eq!(ore.as_ref().len(), bits, "{} ore", stringify!($ty));
+                assert_eq!(ope.as_ref().len(), bits + 1, "{} ope", stringify!($ty));
+                ores.push(ore);
+                opes.push(ope.as_ref().to_vec());
+            }
+            assert!(ores[0] < ores[1] && ores[1] < ores[2], "{} ore order", stringify!($ty));
+            assert!(opes[0] < opes[1] && opes[1] < opes[2], "{} ope order", stringify!($ty));
+        })+};
+    }
+    width!(u16, u32, u64, u128, i16, i32, i64, i128);
 }
