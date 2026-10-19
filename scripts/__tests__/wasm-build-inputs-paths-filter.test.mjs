@@ -327,6 +327,7 @@ function compilesFfiRust(relPath) {
  * one. `tests.yml` and `tests-rust.yml` are both half-cases: `push` is
  * `branches: [main]` with no filter, so only their `pull_request` lists are
  * here. `tests.yml`'s is `'**'` with one negation, which `filterCovers` reads.
+
  */
 function filteredEvents(relPath) {
   const wf = readWorkflow(relPath)
@@ -510,6 +511,37 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
           ).toEqual([])
         })
       }
+    })
+  }
+
+  // The other direction, for the one directory where it has bitten. Every
+  // check above asks whether a filter covers the key; none asks whether it
+  // covers much more. `packages/eql/crates/**` sat in these filters, matching
+  // eql-codegen, the EQL v4 modules eql-bindings gates behind a feature
+  // protect-ffi never enables, and the crate's tests and docs, so an EQL v4
+  // pull request started every suite here over files the binding does not
+  // compile. The key now names the compiled files (held to them by
+  // ffi-binding-action.test.mjs); a filter entry under the EQL crates must be
+  // one of its entries, not a wider glob.
+  const EQL_CRATES = 'packages/eql/crates'
+  const nativeInputs = new Set(buildInputs(NATIVE_CACHE_STEP))
+  for (const { relPath, event, paths } of KEYS[0].workflows.flatMap(
+    filteredEvents,
+  )) {
+    it(`${relPath} (${event}) names no EQL crate path the binding does not compile`, () => {
+      const wider = paths.filter(
+        (entry) =>
+          !entry.startsWith('!') &&
+          (literalPrefix(entry) === EQL_CRATES ||
+            literalPrefix(entry).startsWith(`${EQL_CRATES}/`) ||
+            EQL_CRATES.startsWith(`${literalPrefix(entry)}/`)) &&
+          literalPrefix(entry) !== '' &&
+          !nativeInputs.has(entry),
+      )
+      expect(
+        wider,
+        `These \`${event}\` filter entries in ${relPath} reach into ${EQL_CRATES}/ beyond what the native cache key hashes, so an edit there starts this workflow over code the binding does not compile. Copy the key's eql-bindings entries instead.`,
+      ).toEqual([])
     })
   }
 
