@@ -43,8 +43,9 @@ AS $$ SELECT {{ a.body }} $$;
 --!       serves as one range scan.{% if b.ore %} For this ORE range that index needs the
 --!       default btree operator class on {{ internal_schema }}.ore_block_256, which the
 --!       installer creates only with superuser privileges. Without it (on Supabase,
---!       for instance) the installer disables the ORE column domains, so use an OPE
---!       column (`_ord`, `_ord_ope`, `_search`) and its OPE range, which index everywhere.{% endif %}
+--!       for instance) the installer disables the ORE column domains and this ORE range,
+--!       so use an OPE column ({{ b.ope_columns }})
+--!       and {{ b.ope_range }}, which index everywhere.{% endif %}
 --! @note `BETWEEN` is an SQL keyword, so call it schema-qualified:
 --!       `{{ schema }}.between(...)` parses, a bare `between(...)` does not.
 --! @note Cast the range to its exact domain, `$1::{{ schema }}.{{ b.range }}`.

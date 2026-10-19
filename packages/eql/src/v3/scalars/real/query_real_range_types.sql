@@ -1,6 +1,7 @@
 -- AUTOMATICALLY GENERATED FILE.
 -- ONLY EQL VERSION: 4
 -- REQUIRE: src/v3/schema.sql
+-- REQUIRE: src/v3/scalars/ore_fallback.sql
 
 --! @file v3/scalars/real/query_real_range_types.sql
 --! @brief Range query-operand domains for real: the operand of `{{prefix}}.between`.
@@ -17,9 +18,14 @@
 --! @note EQL version {{eql_version}} only: the `-- ONLY EQL VERSION:` line above keeps this
 --!       file out of every other version's installer.
 --! @note Like every query operand, a range lives in `{{prefix}}`, not `public`,
---!       and holds no ciphertext `c`. The client refuses a range whose low
---!       bound is above its high bound; one that reaches the database anyway
---!       matches no row.
+--!       and holds no ciphertext `c`. A range whose low bound is above its
+--!       high bound matches no row, as with SQL `BETWEEN`; the SQL does not
+--!       reorder the bounds.
+--! @note On an install without the ORE operator class (a non-superuser
+--!       install, on Supabase for instance), the ORE range domain is disabled
+--!       as the single-bound ORE domains are: a value cast to it raises
+--!       `feature_not_supported`, naming the OPE range. See
+--!       `v3/scalars/ore_fallback.sql`.
 
 DO $$
 BEGIN
@@ -68,3 +74,26 @@ BEGIN
   COMMENT ON DOMAIN {{prefix}}.query_real_range_ope IS 'EQL real range query operand (CLLW OPE)';
 END
 $$;
+
+-- Without the default btree operator class on {{prefix}}_internal.ore_block_256
+-- (the installer skips it on insufficient_privilege), ore_fallback.sql has
+-- created {{prefix}}_internal.ore_domain_unavailable and poisoned the
+-- single-bound ORE domains. It cannot reach this ORE range, which exists in
+-- EQL v4 only, so the same NOT VALID poison CHECK is added here.
+DO $do$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_opclass c
+    JOIN pg_catalog.pg_am am ON am.oid = c.opcmethod
+    WHERE am.amname = 'btree'
+      AND c.opcdefault
+      AND c.opcintype = '{{prefix}}_internal.ore_block_256'::pg_catalog.regtype
+  ) THEN
+    RETURN;
+  END IF;
+
+  ALTER DOMAIN {{prefix}}.query_real_range_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_real_range_ore', '{{prefix}}.query_real_range_ope (range)')) NOT VALID;
+END;
+$do$;

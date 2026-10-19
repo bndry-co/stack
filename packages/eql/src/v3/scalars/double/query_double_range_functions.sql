@@ -99,8 +99,9 @@ AS $$ SELECT {{prefix}}_internal.ope_cllw(jsonb_build_object('op', r::jsonb -> '
 --!       serves as one range scan. For this ORE range that index needs the
 --!       default btree operator class on {{prefix}}_internal.ore_block_256, which the
 --!       installer creates only with superuser privileges. Without it (on Supabase,
---!       for instance) the installer disables the ORE column domains, so use an OPE
---!       column (`_ord`, `_ord_ope`, `_search`) and its OPE range, which index everywhere.
+--!       for instance) the installer disables the ORE column domains and this ORE range,
+--!       so use an OPE column (`public.{{prefix}}_double_ord`, `public.{{prefix}}_double_ord_ope`)
+--!       and `{{prefix}}.query_double_range_ope`, which index everywhere.
 --! @note `BETWEEN` is an SQL keyword, so call it schema-qualified:
 --!       `{{prefix}}.between(...)` parses, a bare `between(...)` does not.
 --! @note Cast the range to its exact domain, `$1::{{prefix}}.query_double_range_ore`.

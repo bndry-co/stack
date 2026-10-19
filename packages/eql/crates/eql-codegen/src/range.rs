@@ -31,7 +31,7 @@
 use eql_domains::{DomainFamily, Term, RANGE_BOUND_KEYS};
 
 use crate::consts::{sql_str, INTERNAL_SCHEMA};
-use crate::context::{domain_name, environment};
+use crate::context::{domain_name, environment, query_domain_name};
 use crate::render::{EqlVersion, ONLY_DIRECTIVE};
 
 /// The version the range surface belongs to.
@@ -94,23 +94,59 @@ struct RangeDomainBlock {
     comment: String,
 }
 
+/// An ORE range domain the file disables when the install has no ORE
+/// operator class, as `ore_fallback.sql` disables the single-bound ORE
+/// domains: `name` for the identifier position, `name_literal` sql_str-escaped
+/// for the poison error's message, `alternatives` for its hint.
+#[derive(serde::Serialize)]
+struct OreRangeFallback {
+    name: String,
+    name_literal: String,
+    alternatives: String,
+}
+
 #[derive(serde::Serialize)]
 struct RangeTypesContext {
     only_directive: String,
     family_name: String,
+    requires: Vec<String>,
     domains: Vec<RangeDomainBlock>,
+    ore_ranges: Vec<OreRangeFallback>,
+}
+
+/// The file whose poison function an ORE range's fallback calls.
+const ORE_FALLBACK: &str = "src/v3/scalars/ore_fallback.sql";
+
+/// The poison hint for an ORE range: the family's OPE range, which needs no
+/// operator class. Every family with an ORE range has one today; a future
+/// family without must still render a sentence.
+fn ore_range_alternatives(spec: &DomainFamily) -> String {
+    if spec.range_terms().contains(&Term::Ope) {
+        format!(
+            "{} (range)",
+            query_domain_name(&spec.range_query_name(Term::Ope))
+        )
+    } else {
+        "a non-ORE encrypted domain".to_string()
+    }
 }
 
 /// Body of `query_<T>_range_types.sql`, or `None` for a family with no
 /// ordering term.
+///
+/// An ORE range domain is disabled on an install without the ORE operator
+/// class, as the single-bound ORE domains are. `ore_fallback.sql` cannot do
+/// it, since it is shared with EQL v3 and the range domains are v4 only, so
+/// this file adds the same NOT VALID poison CHECK to its own ORE range,
+/// calling the function `ore_fallback.sql` creates under the same condition.
 pub fn render_range_types_file(spec: &DomainFamily) -> Option<String> {
     let terms = spec.range_terms();
     if terms.is_empty() {
         return None;
     }
     let domains = terms
-        .into_iter()
-        .map(|term| {
+        .iter()
+        .map(|&term| {
             let name = spec.range_query_name(term);
             RangeDomainBlock {
                 typname: sql_str(&name),
@@ -129,10 +165,28 @@ pub fn render_range_types_file(spec: &DomainFamily) -> Option<String> {
             }
         })
         .collect();
+    let ore_ranges: Vec<OreRangeFallback> = terms
+        .iter()
+        .filter(|&&t| t == Term::Ore)
+        .map(|&t| {
+            let name = query_domain_name(&spec.range_query_name(t));
+            OreRangeFallback {
+                name_literal: sql_str(&name),
+                name,
+                alternatives: sql_str(&ore_range_alternatives(spec)),
+            }
+        })
+        .collect();
+    let mut requires = vec!["src/v3/schema.sql".to_string()];
+    if !ore_ranges.is_empty() {
+        requires.push(ORE_FALLBACK.to_string());
+    }
     let ctx = RangeTypesContext {
         only_directive: only_directive(),
         family_name: spec.name.to_string(),
+        requires,
         domains,
+        ore_ranges,
     };
     Some(
         environment()
@@ -161,6 +215,10 @@ struct Between {
     /// An ORE range, whose index needs the opclass a non-superuser
     /// install skips: the generated docs say so.
     ore: bool,
+    /// For an ORE range, the family's OPE column domains and OPE range,
+    /// which the generated docs point to instead. Empty otherwise.
+    ope_columns: String,
+    ope_range: String,
 }
 
 #[derive(serde::Serialize)]
@@ -196,6 +254,17 @@ pub fn render_range_functions_file(spec: &DomainFamily) -> Option<String> {
     ];
     let mut accessors = Vec::new();
     let mut betweens = Vec::new();
+    let ope_columns = spec
+        .range_columns(Term::Ope)
+        .iter()
+        .map(|d| format!("`{}`", domain_name(&d.full_name(family_name))))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ope_range = if terms.contains(&Term::Ope) {
+        format!("`{}`", query_domain_name(&spec.range_query_name(Term::Ope)))
+    } else {
+        String::new()
+    };
     for &term in &terms {
         let range = spec.range_query_name(term);
         let returns = format!("{INTERNAL_SCHEMA}.{}", term.ctor());
@@ -228,6 +297,16 @@ pub fn render_range_functions_file(spec: &DomainFamily) -> Option<String> {
                 range: range.clone(),
                 extractor: term.extractor(),
                 ore: term == Term::Ore,
+                ope_columns: if term == Term::Ore {
+                    ope_columns.clone()
+                } else {
+                    String::new()
+                },
+                ope_range: if term == Term::Ore {
+                    ope_range.clone()
+                } else {
+                    String::new()
+                },
             });
         }
     }
@@ -442,6 +521,69 @@ mod tests {
                 ore,
                 "{overload}"
             );
+        }
+    }
+
+    /// The ORE note names the family's own OPE columns and OPE range, not a
+    /// fixed list: only text has a `_search` domain.
+    #[test]
+    fn the_ore_note_names_the_familys_own_ope_columns() {
+        let integer = render_range_functions_file(integer()).unwrap();
+        assert!(
+            integer.contains(
+                "use an OPE column (`public.{{prefix}}_integer_ord`, \
+                 `public.{{prefix}}_integer_ord_ope`)\n--!       and `{{prefix}}.query_integer_range_ope`"
+            ),
+            "{integer}"
+        );
+        assert!(!integer.contains("_search"), "{integer}");
+        let text = render_range_functions_file(&TEXT).unwrap();
+        assert!(text.contains("`public.{{prefix}}_text_search`"), "{text}");
+    }
+
+    /// An ORE range is disabled where the single-bound ORE domains are: the
+    /// file requires `ore_fallback.sql`, whose poison function it calls, and
+    /// adds the poison CHECK to the ORE range alone, behind the same opclass
+    /// check, with the OPE range as the hint.
+    #[test]
+    fn the_ore_range_is_disabled_without_the_ore_opclass() {
+        for f in CATALOG.iter().filter(|f| !f.range_terms().is_empty()) {
+            let body = render_range_types_file(f).unwrap();
+            let ore = f.range_terms().contains(&Term::Ore);
+            assert_eq!(
+                body.contains("-- REQUIRE: src/v3/scalars/ore_fallback.sql"),
+                ore,
+                "{}",
+                f.name
+            );
+            let v4 = render_str(&body, EqlVersion::V4).unwrap();
+            let alters: Vec<&str> = v4
+                .lines()
+                .filter(|l| l.contains("ADD CONSTRAINT eql_ore_unavailable"))
+                .collect();
+            if !ore {
+                assert!(alters.is_empty(), "{}", f.name);
+                continue;
+            }
+            let name = format!("eql_v4.query_{}_range_ore", f.name);
+            assert_eq!(
+                alters,
+                [format!(
+                    "  ALTER DOMAIN {name} ADD CONSTRAINT eql_ore_unavailable"
+                )],
+                "{}",
+                f.name
+            );
+            assert!(
+                v4.contains(&format!(
+                    "CHECK (eql_v4_internal.ore_domain_unavailable(VALUE, '{name}', \
+                     'eql_v4.query_{}_range_ope (range)')) NOT VALID;",
+                    f.name
+                )),
+                "{v4}"
+            );
+            assert!(v4
+                .contains("AND c.opcintype = 'eql_v4_internal.ore_block_256'::pg_catalog.regtype"));
         }
     }
 

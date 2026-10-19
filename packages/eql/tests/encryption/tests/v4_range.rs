@@ -362,8 +362,8 @@ fn postgres_between_finds_integers_in_an_inclusive_range() {
             }
         }
 
-        // A range whose low bound is above its high bound matches nothing:
-        // the client refuses one, and the SQL does not reorder it.
+        // A range whose low bound is above its high bound matches nothing,
+        // as with SQL `BETWEEN`: the SQL does not reorder the bounds.
         assert_eq!(
             found("ore", "query_integer_range_ore", &ore(30, 10)),
             Vec::<i32>::new()
@@ -938,4 +938,110 @@ fn postgres_between_needs_the_exact_range_domain() {
     .unwrap();
     db.prepare("SELECT 1 FROM v4_range_cast WHERE ore < $1")
         .unwrap();
+}
+
+/// A role and a database of its own, made by the superuser connection and
+/// dropped on the way out, panic or not. Roles are cluster-global, so the
+/// name carries the process id.
+struct NonSuperuserDatabase {
+    name: String,
+}
+
+impl NonSuperuserDatabase {
+    fn create(admin: &mut postgres::Client) -> Self {
+        let name = format!("eql_v4_nosuper_{}", std::process::id());
+        // One statement per call: a multi-statement query runs in one
+        // transaction, and `CREATE DATABASE` / `DROP DATABASE` refuse one.
+        for statement in [
+            format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"),
+            format!("DROP ROLE IF EXISTS {name}"),
+            format!("CREATE ROLE {name} LOGIN NOSUPERUSER PASSWORD '{name}'"),
+            format!("CREATE DATABASE {name} OWNER {name}"),
+        ] {
+            admin.batch_execute(&statement).unwrap();
+        }
+        Self { name }
+    }
+
+    fn connect(&self) -> postgres::Client {
+        let url = std::env::var("EQL_TEST_DATABASE_URL").expect("EQL_TEST_DATABASE_URL");
+        let mut config: postgres::Config = url.parse().unwrap();
+        config
+            .dbname(&self.name)
+            .user(&self.name)
+            .password(&self.name);
+        config.connect(postgres::NoTls).unwrap()
+    }
+}
+
+impl Drop for NonSuperuserDatabase {
+    fn drop(&mut self) {
+        let name = &self.name;
+        let mut admin = connect();
+        let _ = admin.batch_execute(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"));
+        let _ = admin.batch_execute(&format!("DROP ROLE IF EXISTS {name}"));
+    }
+}
+
+/// Needs an EQL v4 installation, and a superuser on `EQL_TEST_DATABASE_URL`
+/// who can create a role and a database. A non-superuser install skips the
+/// `ore_block_256` btree opclass, and `ore_fallback.sql` disables the
+/// single-bound ORE domains. Every ORE range domain is disabled the same way,
+/// naming its family's OPE range, which stays usable. The bundle is the one
+/// `mise run test:encryption:postgres` builds and installs.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_a_non_superuser_install_disables_the_ore_ranges() {
+    let bundle = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../release/cipherstash-encrypt-v4.sql"
+    ))
+    .expect("the v4 bundle: run `mise run build`");
+    let mut admin = connect();
+    let database = NonSuperuserDatabase::create(&mut admin);
+    let mut db = database.connect();
+    db.batch_execute(&bundle).unwrap();
+
+    let opclass: bool = db
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_opclass c
+               JOIN pg_catalog.pg_am am ON am.oid = c.opcmethod
+              WHERE am.amname = 'btree' AND c.opcdefault
+                AND c.opcintype = 'eql_v4_internal.ore_block_256'::pg_catalog.regtype)",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert!(!opclass, "a non-superuser install created the ORE opclass");
+
+    let cast = |db: &mut postgres::Client, value: &Value, domain: &str| {
+        db.query_one(
+            &format!("SELECT $1::text::jsonb::{domain}::text"),
+            &[&value.to_string()],
+        )
+        .map(|_| ())
+    };
+    let ore = json!({"v": 4, "i": identifier(), "lo": ["00"], "hi": ["00"]});
+    let ope = json!({"v": 4, "i": identifier(), "lo": "00", "hi": "00"});
+    let mut checked = 0;
+    for family in eql_domains::CATALOG
+        .iter()
+        .filter(|f| f.range_terms().contains(&eql_domains::Term::Ore))
+    {
+        let ore_range = format!("eql_v4.{}", family.range_query_name(eql_domains::Term::Ore));
+        let ope_range = format!("eql_v4.{}", family.range_query_name(eql_domains::Term::Ope));
+        let err = cast(&mut db, &ore, &ore_range).unwrap_err();
+        assert_eq!(sqlstate(&err), "0A000", "{ore_range}: {err}");
+        let db_error = err.as_db_error().unwrap();
+        assert!(db_error.message().contains(&ore_range), "{err}");
+        assert!(
+            db_error.hint().is_some_and(|h| h.contains(&ope_range)),
+            "{ore_range}: {:?}",
+            db_error.hint()
+        );
+        cast(&mut db, &ope, &ope_range).unwrap();
+        checked += 1;
+    }
+    assert_eq!(checked, 9, "every ordered family has an ORE range");
+    drop(db);
 }
