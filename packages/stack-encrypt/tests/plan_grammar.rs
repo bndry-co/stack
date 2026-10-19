@@ -15,7 +15,7 @@ use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::op;
 use stack_encrypt::plan::{pick, Field, FieldKind, FieldValues, Fields, Opens, PlanError, Runs};
 use stack_encrypt::sem::{
-    EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm, Tokenizer,
+    EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreBlockTerm, OreTerm, Tokenizer,
 };
 use stack_encrypt::target::{
     CallerContext, DeclaredContext, DecryptField, DecryptInto, Decryptable, Decryption,
@@ -1726,6 +1726,10 @@ fn every_target_declares_the_indexes_its_terms_answer() {
     assert_eq!(
         <OpeTerm<u32> as EncryptFrom<u32>>::indexes(),
         [IndexSpec::Ope]
+    );
+    assert_eq!(
+        <OreBlockTerm<u32> as EncryptFrom<u32>>::indexes(),
+        [IndexSpec::OreBlock]
     );
     assert!(<StackCipherText as EncryptFrom<u32>>::indexes().is_empty());
     assert_eq!(

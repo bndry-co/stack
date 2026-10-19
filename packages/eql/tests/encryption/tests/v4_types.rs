@@ -445,14 +445,17 @@ async fn every_producible_type_dispatches_by_name() {
             }
             Some(_) => {
                 // Asked through each index the type carries, the query
-                // carries that index's term, the stored one. TextSearch's
-                // carries it alone (EQL v4's search query terms are
-                // optional); every other twin carries all of its terms
-                // whatever the index.
+                // carries that index's term: the stored one, save a block
+                // ORE term, which is encrypted under a fresh nonce each
+                // time and so only has the stored one's shape. The search
+                // types' queries carry it alone (EQL v4's search query
+                // terms are optional); every other twin carries all of its
+                // terms whatever the index.
                 let term_of = |key: &str| match key {
                     "eq" => "hm",
                     "ope" => "op",
                     "match" => "bf",
+                    "ore_block" => "ob",
                     other => panic!("{name}: no term for index {other}"),
                 };
                 for key in target.indexes {
@@ -468,17 +471,34 @@ async fn every_producible_type_dispatches_by_name() {
                     );
                     let term = term_of(key);
                     assert!(json[term].is_string() || json[term].is_array(), "{name}");
-                    assert_eq!(
-                        query[term], json[term],
-                        "{name} via {key}: the query carries the stored term"
-                    );
+                    if term == "ob" {
+                        let one_hex = |value: &serde_json::Value| {
+                            value
+                                .as_array()
+                                .is_some_and(|a| a.len() == 1 && a[0].is_string())
+                        };
+                        assert!(
+                            one_hex(&json[term]) && one_hex(&query[term]),
+                            "{name} via {key}: one block ORE term each"
+                        );
+                        assert_eq!(
+                            query[term][0].as_str().unwrap().len(),
+                            json[term][0].as_str().unwrap().len(),
+                            "{name} via {key}: the query's term is the stored one's length"
+                        );
+                    } else {
+                        assert_eq!(
+                            query[term], json[term],
+                            "{name} via {key}: the query carries the stored term"
+                        );
+                    }
                     let carried: Vec<&str> = target
                         .indexes
                         .iter()
                         .map(|key| term_of(key))
                         .filter(|term| query.get(term).is_some())
                         .collect();
-                    if name == "TextSearch" {
+                    if matches!(name, "TextSearch" | "TextSearchOre") {
                         assert_eq!(carried, [term], "{name} via {key}: its term alone");
                     } else {
                         assert_eq!(carried.len(), target.indexes.len(), "{name} via {key}");

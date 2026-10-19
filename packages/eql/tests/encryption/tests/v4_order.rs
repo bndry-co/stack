@@ -97,8 +97,7 @@ fn the_ordered_producible_types_are_these() {
     let mut expected = ORDERED.to_vec();
     expected.sort_unstable();
     assert_eq!(ordered, expected);
-    // No producible type carries an ORE term: EQL's is block ORE, and the
-    // engine's is CLLW ORE.
+    // No type carries a CLLW ORE term: EQL's ORE term is block ORE.
     assert!(targets::targets()
         .iter()
         .filter(|t| t.producible)

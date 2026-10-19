@@ -36,15 +36,15 @@
 //! declared kind: `eq` through an equality index, `matches` through a match
 //! index over text, and the orderings (`lt`, `lte`, `gt`, `gte`,
 //! `between`) through an ORE index over an integer of 16 bits or wider, a
-//! float or text, or an OPE index when the field declares no ORE. The typed
-//! path's default for an ordering is ORE, and OPE is the typed path's
-//! `.via(Ope)`; here a field that declares only OPE is answered through it.
-//! Every order term is derived over the value's ADR-0002 order key: a
-//! float's ties `-0.0` with `0.0` and sorts every NaN last, and text's is
-//! its fold. An ordering over bytes is not answered, as `op::Ordered` does
-//! not cover them. Nor is one over an 8-bit integer, which has no order
-//! term, or over a decimal, date or timestamp: a plan cannot declare an
-//! order index on one yet.
+//! float or text, else a block ORE index, else an OPE index. The typed
+//! path's default for an ordering is ORE, and block ORE and OPE are the
+//! typed path's `.via(OreBlock)` and `.via(Ope)`; here a field that
+//! declares only one of them is answered through it. Every order term is
+//! derived over the value's ADR-0002 order key: a float's ties `-0.0` with
+//! `0.0` and sorts every NaN last, and text's is its fold. An ordering over
+//! bytes is not answered, as `op::Ordered` does not cover them. Nor is one
+//! over an 8-bit integer, which has no order term, or over a decimal, date
+//! or timestamp: a plan cannot declare an order index on one yet.
 //!
 //! A field that names an EQL type answers what its
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
@@ -189,6 +189,7 @@ impl OpSpec {
                     return None;
                 }
                 declared(|index| matches!(index, IndexSpec::Ore))
+                    .or_else(|| declared(|index| matches!(index, IndexSpec::OreBlock)))
                     .or_else(|| declared(|index| matches!(index, IndexSpec::Ope)))
             }
         }
@@ -612,6 +613,15 @@ fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
             order_text(lo).map_err(refused)?;
             order_text(hi).map_err(refused)?;
         }
+        // Block ORE refuses more order text: a fold longer than 1023
+        // bytes, or one that ends in NUL.
+        (IndexSpec::OreBlock, Input::One(value)) => {
+            ore_block_text(value).map_err(refused)?;
+        }
+        (IndexSpec::OreBlock, Input::Pair(lo, hi)) => {
+            ore_block_text(lo).map_err(refused)?;
+            ore_block_text(hi).map_err(refused)?;
+        }
         (IndexSpec::Match(options), Input::One(value)) => {
             query_tokens(value, options).map(drop)?;
         }
@@ -636,6 +646,22 @@ fn order_text(value: &ValueFrame) -> Result<(), TermError> {
                 (None, Physical::Text(text)) => Ok(vitaminc_ore::text(text)
                     .map(drop)
                     .map_err(TermError::Normalize)),
+                _ => Err(None),
+            },
+        ))
+        // Not one text scalar: nothing to refuse here.
+        .unwrap_or(Ok(()))
+}
+
+/// Whether `value`, if it is order text, has a block ORE term: its fold
+/// exists, is at most 1023 bytes and does not end in NUL
+/// ([`crate::sem::ore_block_text`]). Anything but text has nothing to
+/// refuse here.
+fn ore_block_text(value: &ValueFrame) -> Result<(), TermError> {
+    value
+        .visit(OneScalar::new(
+            |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                (None, Physical::Text(text)) => Ok(crate::sem::ore_block_text(text)),
                 _ => Err(None),
             },
         ))
@@ -1481,6 +1507,59 @@ mod tests {
         let zero = query(&keyset, "ratio", OpSpec::Lt, 0.0f32).await.unwrap();
         let negative_zero = query(&keyset, "ratio", OpSpec::Lt, -0.0f32).await.unwrap();
         assert_eq!(negative_zero.operand, zero.operand);
+    }
+
+    /// Block ORE takes order text whose fold is at most 1023 bytes and does
+    /// not end in NUL. A query is refused for any other, either bound of a
+    /// range included, before any term exists, by the key-free check too.
+    #[tokio::test]
+    async fn block_ore_refuses_text_it_has_no_term_for_before_any_term() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let plan = record::plan(&frame_of(&Tree::Object(vec![field(
+            "title",
+            "string",
+            vec![text("c"), text("ore_block")],
+        )])))
+        .expect("the plan parses");
+        let one = |text: &str| ValueFrame::of(text).expect("a value");
+        let two = |lo: &str, hi: &str| ValueFrame::of(vec![lo, hi]).expect("a value");
+        let longest = "a".repeat(1023);
+        let too_long = "a".repeat(1024);
+        let refused = [
+            (OpSpec::Lt, one(&too_long), "long"),
+            (OpSpec::Gt, one("a\0"), "nul"),
+            (OpSpec::Between, two("a", &too_long), "long"),
+            (OpSpec::Between, two(&too_long, "b"), "long"),
+            (OpSpec::Between, two("a\0", "b"), "nul"),
+            (OpSpec::Between, two("a", "b\0"), "nul"),
+        ];
+        for (op, input, what) in refused {
+            let derived = match query_term(&keyset, &plan, "title", op, &input, &NoTargets) {
+                Ok(pending) => pending.await.map_err(Error::Cipher).map(|_| ()),
+                Err(error) => Err(error),
+            };
+            for error in [
+                derived.unwrap_err(),
+                check_query(&plan, "title", op, &input, &NoTargets).unwrap_err(),
+            ] {
+                let term = term_error(&error);
+                let expected = match what {
+                    "long" => matches!(term, Some(TermError::OreBlockTooLong)),
+                    _ => matches!(term, Some(TermError::OreBlockTrailingNul)),
+                };
+                assert!(expected, "{op:?} {what}: {error:?}");
+            }
+        }
+        for input in [one(&longest), one("a\0b"), one("")] {
+            check_query(&plan, "title", OpSpec::Lt, &input, &NoTargets)
+                .expect("block ORE takes it");
+            let term = query_term(&keyset, &plan, "title", OpSpec::Lt, &input, &NoTargets)
+                .expect("a query")
+                .await
+                .expect("a term");
+            assert_eq!(term.index, IndexSpec::OreBlock);
+        }
     }
 
     /// A plan whose context is a field of each record has no context a

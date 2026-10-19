@@ -2,7 +2,8 @@
 //! engine instead of once per caller.
 //!
 //! An *index* is an operation that derives a search term beside a
-//! ciphertext: [`Equality`], [`Match`], [`Ore`] or [`Ope`]. Each is a type
+//! ciphertext: [`Equality`], [`Match`], [`Ore`], [`Ope`] or [`OreBlock`].
+//! Each is a type
 //! implementing [`Index<S>`] for exactly the plaintexts its scheme is defined
 //! over, so an index that does not apply does not compile: `Match` is text
 //! only, so a match index on an integer is a type error, not a runtime one.
@@ -54,11 +55,12 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use super::context::{AeadContext, CallerContext};
-use super::operations::{ciphertext, equality, matching, ope, open, ore};
+use super::operations::{ciphertext, equality, matching, ope, open, ore, ore_block};
 use super::source::{ConsumeSource, ShareSource};
 use super::{DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption};
 use crate::sem::{
-    DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm,
+    DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreBlockTerm,
+    OreTerm,
 };
 use crate::StackCipherText;
 
@@ -69,7 +71,8 @@ use crate::StackCipherText;
 /// spell an index as an `IndexSpec`, options included.
 ///
 /// The [`key`](Self::key) strings are the output keys of the `dynamic` record
-/// format (`"eq"`, `"match"`, `"ore"`, `"ope"`), so they are wire format;
+/// format (`"eq"`, `"match"`, `"ore"`, `"ope"`, `"ore_block"`), so they are
+/// wire format;
 /// that is why this enum is exhaustive: a new index is something every
 /// binding has to be taught. With the `dynamic` feature, a plan spells an
 /// index as its key, or, for a match index with non-default options, as an
@@ -81,10 +84,13 @@ pub enum IndexSpec {
     Equality,
     /// Full-text match, with the options its terms are generated under.
     Match(MatchOptions),
-    /// Order-revealing comparison.
+    /// Order-revealing comparison, CLLW ORE.
     Ore,
-    /// Order-preserving comparison.
+    /// Order-preserving comparison, CLLW OPE.
     Ope,
+    /// Order-revealing comparison, 6-bit block ORE: the term EQL v4's
+    /// `_ord_ore` domains store as `ob`.
+    OreBlock,
 }
 
 impl IndexSpec {
@@ -101,6 +107,7 @@ impl IndexSpec {
             IndexSpec::Match(_) => "match",
             IndexSpec::Ore => "ore",
             IndexSpec::Ope => "ope",
+            IndexSpec::OreBlock => "ore_block",
         }
     }
 }
@@ -159,6 +166,21 @@ pub struct Ore;
 /// The order-preserving index; see [`Ore`]. Defined for the same `S`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Ope;
+
+/// The block ORE index: ore-rs's 6-bit block ORE ciphertext of the value,
+/// under a key derived from the field's context
+/// ([`OreBlockTerm`](crate::sem::OreBlockTerm)). Defined for the same `S`
+/// as [`Ore`].
+///
+/// [`Ore`] and [`Ope`] are CLLW schemes. This is the other ORE family, the
+/// one EQL v4's `_ord_ore` domains store (`ob`), named as EQL names it: an
+/// ORE *block* term. Its terms leak less than [`Ore`]'s (a stored term's
+/// right half is randomised, and a comparison reveals the first differing
+/// six-bit block rather than the first differing bit), cost more (about
+/// 300 bytes for an `i64`, 600 for short text), and need a comparator
+/// that is not byte order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct OreBlock;
 
 /// The full-text match index, over text only, with the tokenizer and filter
 /// parameters its [`MatchConfig`] `O` fixes.
@@ -263,6 +285,23 @@ where
         S: 's,
     {
         ope()
+    }
+}
+impl<S> Index<S> for OreBlock
+where
+    S: crate::sem::Orderable,
+{
+    type Term = OreBlockTerm<S>;
+    fn spec(&self) -> IndexSpec {
+        IndexSpec::OreBlock
+    }
+    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+        &self,
+    ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
+    where
+        S: 's,
+    {
+        ore_block()
     }
 }
 
@@ -384,7 +423,7 @@ macro_rules! single_index {
         }
     )+};
 }
-single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope, [] IndexSpec);
+single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope, [] OreBlock, [] IndexSpec);
 
 /// A tuple of indexes: each index's operation, zipped left to right, and the
 /// nested pairs `zip` builds flattened back into one tuple of terms.
@@ -572,6 +611,13 @@ where
 {
     type Indexes = Ope;
     const INDEXES: Ope = Ope;
+}
+impl<S> TermSet<S> for OreBlockTerm<S>
+where
+    S: crate::sem::Orderable,
+{
+    type Indexes = OreBlock;
+    const INDEXES: OreBlock = OreBlock;
 }
 
 /// A tuple of terms names the tuple of their indexes. Each element must be

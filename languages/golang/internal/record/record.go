@@ -6,8 +6,8 @@
 // to check one.
 //
 // The spellings here are wire format, fixed by stack-encrypt's
-// dynamic::record: the output keys "c", "eq", "match", "ore", "ope" and
-// "passthrough", and the type names "bool", "int8", "int16", "int32",
+// dynamic::record: the output keys "c", "eq", "match", "ore", "ope",
+// "ore_block" and "passthrough", and the type names "bool", "int8", "int16", "int32",
 // "int64", "int128", "uint8", "uint16", "uint32", "uint64", "uint128",
 // "float32", "float64", "decimal", "date", "timestamp", "string" and
 // "bytes". A field's context is
@@ -75,6 +75,7 @@ const (
 	Match       Output = "match"
 	Ore         Output = "ore"
 	Ope         Output = "ope"
+	OreBlock    Output = "ore_block"
 	Passthrough Output = "passthrough"
 )
 
@@ -428,7 +429,7 @@ type Sealed = map[string]Outputs
 // Target is one EQL type as se_targets lists it. The entry's keys are wire
 // format, written by eql-bindings' serialiser and read by [ParseTargets]:
 // name, family, suffix, plaintext (a ValueKind name, or null), sql_domain,
-// indexes (eq | match | ore | ope | json), query (or null), query_sql_domain
+// indexes (eq | match | ore | ope | ore_block | json), query (or null), query_sql_domain
 // (or null), producible, reason (or null), and operators, which the engine
 // adds: the operators it answers for the type, each an object of operator,
 // fidelity (exact | probabilistic), arity (one | pair) and index.

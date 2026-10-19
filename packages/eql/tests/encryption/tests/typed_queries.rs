@@ -318,24 +318,32 @@ fn the_typed_chain_answers_what_the_data_path_answers() {
             }
         }
     }
-    // The gap today: every producible ordered type, and text search, whose
-    // twin carries an order term among its three. A type leaves this list
+    // The gap today: every producible ordered type (OPE and block ORE), and
+    // text search, whose twins carry an order term among their three. A type
+    // leaves this list
     // when the typed chain assembles its twin, and its answers are then
     // held to the data path's above.
     assert_eq!(
         gap,
         [
+            "IntegerOrdOre",
             "IntegerOrd",
             "IntegerOrdOpe",
+            "SmallintOrdOre",
             "SmallintOrd",
             "SmallintOrdOpe",
+            "BigintOrdOre",
             "BigintOrd",
             "BigintOrdOpe",
+            "TextOrdOre",
             "TextOrd",
             "TextOrdOpe",
+            "TextSearchOre",
             "TextSearch",
+            "RealOrdOre",
             "RealOrd",
             "RealOrdOpe",
+            "DoubleOrdOre",
             "DoubleOrd",
             "DoubleOrdOpe",
         ]

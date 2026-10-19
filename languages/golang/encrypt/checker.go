@@ -178,7 +178,7 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 				switch o := record.Output(s); o {
 				// "json" is the SteVec document index, which no plan output
 				// carries.
-				case record.Equality, record.Match, record.Ore, record.Ope, "json":
+				case record.Equality, record.Match, record.Ore, record.Ope, record.OreBlock, "json":
 					t.Indexes = append(t.Indexes, o)
 				default:
 					return t, fmt.Errorf("unknown index %q", s)
@@ -294,10 +294,10 @@ func parseFidelity(s string) (record.Fidelity, error) {
 }
 
 // parseOperatorIndex reads the index that answers an operator: eq, match,
-// ore or ope.
+// ore, ope or ore_block.
 func parseOperatorIndex(s string) (record.Output, error) {
 	switch o := record.Output(s); o {
-	case record.Equality, record.Match, record.Ore, record.Ope:
+	case record.Equality, record.Match, record.Ore, record.Ope, record.OreBlock:
 		return o, nil
 	}
 	return "", fmt.Errorf("unknown index %q", s)

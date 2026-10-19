@@ -46,13 +46,11 @@ pub const TARGETS: &[Target] = &[
         suffix: "OrdOre",
         plaintext: Some("int32"),
         sql_domain: "public.eql_v4_integer_ord_ore",
-        indexes: &["ore"],
+        indexes: &["ore_block"],
         query: Some("IntegerOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_integer_ord_ore"),
-        producible: false,
-        reason: Some(
-            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "IntegerOrd",
@@ -108,13 +106,11 @@ pub const TARGETS: &[Target] = &[
         suffix: "OrdOre",
         plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint_ord_ore",
-        indexes: &["ore"],
+        indexes: &["ore_block"],
         query: Some("SmallintOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_ord_ore"),
-        producible: false,
-        reason: Some(
-            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "SmallintOrd",
@@ -170,13 +166,11 @@ pub const TARGETS: &[Target] = &[
         suffix: "OrdOre",
         plaintext: Some("int64"),
         sql_domain: "public.eql_v4_bigint_ord_ore",
-        indexes: &["ore"],
+        indexes: &["ore_block"],
         query: Some("BigintOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_bigint_ord_ore"),
-        producible: false,
-        reason: Some(
-            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "BigintOrd",
@@ -232,7 +226,7 @@ pub const TARGETS: &[Target] = &[
         suffix: "OrdOre",
         plaintext: Some("date"),
         sql_domain: "public.eql_v4_date_ord_ore",
-        indexes: &["ore"],
+        indexes: &["ore_block"],
         query: Some("DateOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_date_ord_ore"),
         producible: false,
@@ -298,7 +292,7 @@ pub const TARGETS: &[Target] = &[
         suffix: "OrdOre",
         plaintext: Some("timestamp"),
         sql_domain: "public.eql_v4_timestamp_ord_ore",
-        indexes: &["ore"],
+        indexes: &["ore_block"],
         query: Some("TimestampOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ore"),
         producible: false,
@@ -364,7 +358,7 @@ pub const TARGETS: &[Target] = &[
         suffix: "OrdOre",
         plaintext: Some("decimal"),
         sql_domain: "public.eql_v4_numeric_ord_ore",
-        indexes: &["ore"],
+        indexes: &["ore_block"],
         query: Some("NumericOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_ord_ore"),
         producible: false,
@@ -442,13 +436,11 @@ pub const TARGETS: &[Target] = &[
         suffix: "OrdOre",
         plaintext: Some("string"),
         sql_domain: "public.eql_v4_text_ord_ore",
-        indexes: &["eq", "ore"],
+        indexes: &["eq", "ore_block"],
         query: Some("TextOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_text_ord_ore"),
-        producible: false,
-        reason: Some(
-            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TextOrd",
@@ -480,13 +472,11 @@ pub const TARGETS: &[Target] = &[
         suffix: "SearchOre",
         plaintext: Some("string"),
         sql_domain: "public.eql_v4_text_search_ore",
-        indexes: &["eq", "ore", "match"],
+        indexes: &["eq", "ore_block", "match"],
         query: Some("TextSearchOreQuery"),
         query_sql_domain: Some("eql_v4.query_text_search_ore"),
-        producible: false,
-        reason: Some(
-            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TextSearch",
@@ -542,13 +532,11 @@ pub const TARGETS: &[Target] = &[
         suffix: "OrdOre",
         plaintext: Some("float32"),
         sql_domain: "public.eql_v4_real_ord_ore",
-        indexes: &["ore"],
+        indexes: &["ore_block"],
         query: Some("RealOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_real_ord_ore"),
-        producible: false,
-        reason: Some(
-            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "RealOrd",
@@ -604,13 +592,11 @@ pub const TARGETS: &[Target] = &[
         suffix: "OrdOre",
         plaintext: Some("float64"),
         sql_domain: "public.eql_v4_double_ord_ore",
-        indexes: &["ore"],
+        indexes: &["ore_block"],
         query: Some("DoubleOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_double_ord_ore"),
-        producible: false,
-        reason: Some(
-            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "DoubleOrd",
@@ -679,6 +665,12 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "IntegerEq" => {
             run_target::<super::integer::IntegerEq, i32, K>("IntegerEq", keyset, column, plaintext)
         }
+        "IntegerOrdOre" => run_target::<super::integer::IntegerOrdOre, i32, K>(
+            "IntegerOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
         "IntegerOrd" => run_target::<super::integer::IntegerOrd, i32, K>(
             "IntegerOrd",
             keyset,
@@ -696,6 +688,12 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         }
         "SmallintEq" => run_target::<super::smallint::SmallintEq, i16, K>(
             "SmallintEq",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "SmallintOrdOre" => run_target::<super::smallint::SmallintOrdOre, i16, K>(
+            "SmallintOrdOre",
             keyset,
             column,
             plaintext,
@@ -718,6 +716,12 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "BigintEq" => {
             run_target::<super::bigint::BigintEq, i64, K>("BigintEq", keyset, column, plaintext)
         }
+        "BigintOrdOre" => run_target::<super::bigint::BigintOrdOre, i64, K>(
+            "BigintOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
         "BigintOrd" => {
             run_target::<super::bigint::BigintOrd, i64, K>("BigintOrd", keyset, column, plaintext)
         }
@@ -757,11 +761,23 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "TextMatch" => {
             run_target::<super::text::TextMatch, String, K>("TextMatch", keyset, column, plaintext)
         }
+        "TextOrdOre" => run_target::<super::text::TextOrdOre, String, K>(
+            "TextOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
         "TextOrd" => {
             run_target::<super::text::TextOrd, String, K>("TextOrd", keyset, column, plaintext)
         }
         "TextOrdOpe" => run_target::<super::text::TextOrdOpe, String, K>(
             "TextOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TextSearchOre" => run_target::<super::text::TextSearchOre, String, K>(
+            "TextSearchOre",
             keyset,
             column,
             plaintext,
@@ -777,6 +793,9 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         }
         "Real" => run_target::<super::real::Real, f32, K>("Real", keyset, column, plaintext),
         "RealEq" => run_target::<super::real::RealEq, f32, K>("RealEq", keyset, column, plaintext),
+        "RealOrdOre" => {
+            run_target::<super::real::RealOrdOre, f32, K>("RealOrdOre", keyset, column, plaintext)
+        }
         "RealOrd" => {
             run_target::<super::real::RealOrd, f32, K>("RealOrd", keyset, column, plaintext)
         }
@@ -789,6 +808,12 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "DoubleEq" => {
             run_target::<super::double::DoubleEq, f64, K>("DoubleEq", keyset, column, plaintext)
         }
+        "DoubleOrdOre" => run_target::<super::double::DoubleOrdOre, f64, K>(
+            "DoubleOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
         "DoubleOrd" => {
             run_target::<super::double::DoubleOrd, f64, K>("DoubleOrd", keyset, column, plaintext)
         }
@@ -816,6 +841,12 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "IntegerEq" => {
             open_target::<super::integer::IntegerEq, i32, K>("IntegerEq", opener, column, stored)
         }
+        "IntegerOrdOre" => open_target::<super::integer::IntegerOrdOre, i32, K>(
+            "IntegerOrdOre",
+            opener,
+            column,
+            stored,
+        ),
         "IntegerOrd" => {
             open_target::<super::integer::IntegerOrd, i32, K>("IntegerOrd", opener, column, stored)
         }
@@ -831,6 +862,12 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "SmallintEq" => {
             open_target::<super::smallint::SmallintEq, i16, K>("SmallintEq", opener, column, stored)
         }
+        "SmallintOrdOre" => open_target::<super::smallint::SmallintOrdOre, i16, K>(
+            "SmallintOrdOre",
+            opener,
+            column,
+            stored,
+        ),
         "SmallintOrd" => open_target::<super::smallint::SmallintOrd, i16, K>(
             "SmallintOrd",
             opener,
@@ -847,6 +884,12 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "BigintEq" => {
             open_target::<super::bigint::BigintEq, i64, K>("BigintEq", opener, column, stored)
         }
+        "BigintOrdOre" => open_target::<super::bigint::BigintOrdOre, i64, K>(
+            "BigintOrdOre",
+            opener,
+            column,
+            stored,
+        ),
         "BigintOrd" => {
             open_target::<super::bigint::BigintOrd, i64, K>("BigintOrd", opener, column, stored)
         }
@@ -884,12 +927,21 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "TextMatch" => {
             open_target::<super::text::TextMatch, String, K>("TextMatch", opener, column, stored)
         }
+        "TextOrdOre" => {
+            open_target::<super::text::TextOrdOre, String, K>("TextOrdOre", opener, column, stored)
+        }
         "TextOrd" => {
             open_target::<super::text::TextOrd, String, K>("TextOrd", opener, column, stored)
         }
         "TextOrdOpe" => {
             open_target::<super::text::TextOrdOpe, String, K>("TextOrdOpe", opener, column, stored)
         }
+        "TextSearchOre" => open_target::<super::text::TextSearchOre, String, K>(
+            "TextSearchOre",
+            opener,
+            column,
+            stored,
+        ),
         "TextSearch" => {
             open_target::<super::text::TextSearch, String, K>("TextSearch", opener, column, stored)
         }
@@ -898,6 +950,9 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         }
         "Real" => open_target::<super::real::Real, f32, K>("Real", opener, column, stored),
         "RealEq" => open_target::<super::real::RealEq, f32, K>("RealEq", opener, column, stored),
+        "RealOrdOre" => {
+            open_target::<super::real::RealOrdOre, f32, K>("RealOrdOre", opener, column, stored)
+        }
         "RealOrd" => open_target::<super::real::RealOrd, f32, K>("RealOrd", opener, column, stored),
         "RealOrdOpe" => {
             open_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", opener, column, stored)
@@ -906,6 +961,12 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "DoubleEq" => {
             open_target::<super::double::DoubleEq, f64, K>("DoubleEq", opener, column, stored)
         }
+        "DoubleOrdOre" => open_target::<super::double::DoubleOrdOre, f64, K>(
+            "DoubleOrdOre",
+            opener,
+            column,
+            stored,
+        ),
         "DoubleOrd" => {
             open_target::<super::double::DoubleOrd, f64, K>("DoubleOrd", opener, column, stored)
         }
@@ -937,6 +998,12 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
+        "IntegerOrdOre" => run_target::<super::integer::IntegerOrdOreQuery, i32, K>(
+            "IntegerOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
         "IntegerOrd" => run_target::<super::integer::IntegerOrdQuery, i32, K>(
             "IntegerOrd",
             keyset,
@@ -955,6 +1022,12 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
+        "SmallintOrdOre" => run_target::<super::smallint::SmallintOrdOreQuery, i16, K>(
+            "SmallintOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
         "SmallintOrd" => run_target::<super::smallint::SmallintOrdQuery, i16, K>(
             "SmallintOrd",
             keyset,
@@ -969,6 +1042,12 @@ pub(crate) fn query_named<'a, K: 'static>(
         ),
         "BigintEq" => run_target::<super::bigint::BigintEqQuery, i64, K>(
             "BigintEq", keyset, column, plaintext,
+        ),
+        "BigintOrdOre" => run_target::<super::bigint::BigintOrdOreQuery, i64, K>(
+            "BigintOrdOre",
+            keyset,
+            column,
+            plaintext,
         ),
         "BigintOrd" => run_target::<super::bigint::BigintOrdQuery, i64, K>(
             "BigintOrd",
@@ -1006,6 +1085,12 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
+        "TextOrdOre" => run_target::<super::text::TextOrdOreQuery, String, K>(
+            "TextOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
         "TextOrd" => {
             run_target::<super::text::TextOrdQuery, String, K>("TextOrd", keyset, column, plaintext)
         }
@@ -1015,6 +1100,27 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
+        "TextSearchOre" => match index.key() {
+            "eq" => run_projected::<
+                super::text::TextSearchOreEqualityQuery,
+                super::text::TextSearchOreQuery,
+                String,
+                K,
+            >("TextSearchOre", keyset, column, plaintext),
+            "ore_block" => run_projected::<
+                super::text::TextSearchOreOrderQuery,
+                super::text::TextSearchOreQuery,
+                String,
+                K,
+            >("TextSearchOre", keyset, column, plaintext),
+            "match" => run_projected::<
+                super::text::TextSearchOreMatchQuery,
+                super::text::TextSearchOreQuery,
+                String,
+                K,
+            >("TextSearchOre", keyset, column, plaintext),
+            _ => Err(no_index("TextSearchOre", index)),
+        },
         "TextSearch" => match index.key() {
             "eq" => run_projected::<
                 super::text::TextSearchEqualityQuery,
@@ -1039,6 +1145,12 @@ pub(crate) fn query_named<'a, K: 'static>(
         "RealEq" => {
             run_target::<super::real::RealEqQuery, f32, K>("RealEq", keyset, column, plaintext)
         }
+        "RealOrdOre" => run_target::<super::real::RealOrdOreQuery, f32, K>(
+            "RealOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
         "RealOrd" => {
             run_target::<super::real::RealOrdQuery, f32, K>("RealOrd", keyset, column, plaintext)
         }
@@ -1050,6 +1162,12 @@ pub(crate) fn query_named<'a, K: 'static>(
         ),
         "DoubleEq" => run_target::<super::double::DoubleEqQuery, f64, K>(
             "DoubleEq", keyset, column, plaintext,
+        ),
+        "DoubleOrdOre" => run_target::<super::double::DoubleOrdOreQuery, f64, K>(
+            "DoubleOrdOre",
+            keyset,
+            column,
+            plaintext,
         ),
         "DoubleOrd" => run_target::<super::double::DoubleOrdQuery, f64, K>(
             "DoubleOrd",

@@ -41,7 +41,7 @@ AS $$ SELECT {{ a.body }} $$;
 --!       stop inlining. Inlined, the planner sees two comparisons on
 --!       `{{ schema }}.{{ b.extractor }}(a)`, which a btree index on that expression
 --!       serves as one range scan.{% if b.ore %} For this ORE range that index needs the
---!       default btree operator class on {{ internal_schema }}.ore_block_256, which the
+--!       default btree operator class on {{ internal_schema }}.{{ ore_block }}, which the
 --!       installer creates only with superuser privileges. Without it (on Supabase,
 --!       for instance) the installer disables the ORE column domains and this ORE range,
 --!       so use an OPE column ({{ b.ope_columns }})

@@ -86,10 +86,10 @@ pub(crate) mod stats;
 pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE, MAX_ROWS};
 
 use crate::sem::{
-    DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, OpeTerm, Orderable, OreTerm,
-    QueryTokens, RangeQuery,
+    DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, OpeTerm, Orderable,
+    OreBlockTerm, OreTerm, QueryTokens, RangeQuery,
 };
-use crate::target::{DeclaredContext, Equality, Index, Match, Ope, Ore, Owned, Pending};
+use crate::target::{DeclaredContext, Equality, Index, Match, Ope, Ore, OreBlock, Owned, Pending};
 use crate::{Error, KeysetCipher, Label, NonEmpty, PlanError};
 
 /// A query operator: a unit type naming what a query asks of the server,
@@ -515,6 +515,7 @@ impl QueryTerm for EqualityTerm {}
 impl<O> QueryTerm for MatchQuery<O> {}
 impl<S: Orderable> QueryTerm for OreTerm<S> {}
 impl<S: Orderable> QueryTerm for OpeTerm<S> {}
+impl<S: Orderable> QueryTerm for OreBlockTerm<S> {}
 impl<T: QueryTerm> QueryTerm for RangeQuery<T> {}
 
 /// A query term whose answer can hold **false positives and no false
@@ -753,11 +754,14 @@ where
     }
 }
 
-/// The ordering operators on the ORE and OPE indexes, over the integer
-/// types ([`Ordered`]). The query term for a comparison is the index's own
-/// term for the value: this crate's ORE is CLLW, whose ciphertext has no
-/// left half to send alone, so what is sent is what is stored, as for an
-/// HMAC. `Between` sends both bounds' terms as one `RangeQuery`.
+/// The ordering operators on the ORE, OPE and block ORE indexes, over the
+/// [`Ordered`] types. The query term for a comparison is the index's own
+/// term for the value. CLLW ORE's ciphertext has no left half to send
+/// alone, so what is sent is what is stored, as for an HMAC. Block ORE's
+/// does, but EQL v4's comparator reads the right half of the operand a
+/// btree index or `between` passes second, which is the query, so a block
+/// ORE query is the full ciphertext too. `Between` sends both bounds'
+/// terms as one `RangeQuery`.
 macro_rules! orders {
     ($($index:ident => $term:ident),+ $(,)?) => {$(
         orders!(@one $index => $term; Lt, Lte, Gt, Gte);
@@ -793,10 +797,10 @@ macro_rules! orders {
         }
     )+};
 }
-orders!(Ore => OreTerm, Ope => OpeTerm);
+orders!(Ore => OreTerm, Ope => OpeTerm, OreBlock => OreBlockTerm);
 
-/// The ordering operators default to the ORE index; an OPE index is named
-/// with `.via(Ope)`.
+/// The ordering operators default to the ORE index; an OPE or block ORE
+/// index is named with `.via(Ope)` or `.via(OreBlock)`.
 macro_rules! default_ore {
     ($($op:ident),+ $(,)?) => {$(
         impl<S: Ordered> DefaultIndex<S> for $op {

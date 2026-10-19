@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended
+  2026-10-19). It derives ore-rs 0.9.0's 6-bit block ORE under its own key
+  domain, over the same order keys as the CLLW indexes:
+  `ore_rs::vitaminc::Bit6BlockOre` for targets of at most ten bytes (the
+  integers from 16 to 64 bits and both floats) and `ChainedBlockOre` for
+  text, bytes and the 128-bit integers, text padded to a power-of-two bucket
+  of at least 16 bytes. As for ORE and OPE, a boolean and an 8-bit integer
+  have no block ORE term. `sem::OreBlockTerm` is the term, the whole ciphertext; it carries
+  a random nonce, so it compares by the scheme's comparator (`compare`,
+  `PartialEq`, `PartialOrd`), never by its bytes, and
+  `OreBlockTerm::from_bytes` checks a stored term's structure. The typed
+  path reaches it with `.via(OreBlock)` and `target::ore_block()`, the
+  dynamic path as the index `ore_block`, and `KeysetCipher::ore_block_term`
+  derives one directly. A query is the full ciphertext too: EQL v4's
+  comparator reads the right half of the operand a btree index passes
+  second. Text whose fold is longer than 1023 bytes is refused with
+  `TermError::OreBlockTooLong`, text whose fold ends in NUL with
+  `TermError::OreBlockTrailingNul`, before any key is touched on the query
+  path; `TermError::OreBlock` carries a scheme failure and
+  `TermBytesError::MalformedOreBlockCiphertext` a malformed stored term. The
+  CLLW `Ore` and `Ope` indexes are unchanged, byte for byte.
+
 - **Every integer width, 128-bit integers, dates, timestamps and decimals
   as dynamic values** (`dynamic` feature; #1144, ADR-0002). They are
   vitaminc leaves in a `ValueFrame`, with no new `FfiValue` variant:
@@ -196,6 +218,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`IndexSpec` has a fifth variant, `OreBlock`** (the block ORE index
+  above). The enum is exhaustive on purpose, since a binding has to be
+  taught each index, so a `match` over it needs an arm for `OreBlock`. The
+  dynamic path answers an ordering through ORE, else block ORE, else OPE,
+  whichever the field declares.
 - **A target's query is handed the index that answers its operator**
   (`dynamic` feature). `TargetResolver::query` and `record::query` take an
   `&IndexSpec` after the type's name and the field respectively;

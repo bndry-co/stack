@@ -193,14 +193,17 @@ mod tests {
             [
                 "Integer",
                 "IntegerEq",
+                "IntegerOrdOre",
                 "IntegerOrd",
                 "IntegerOrdOpe",
                 "Smallint",
                 "SmallintEq",
+                "SmallintOrdOre",
                 "SmallintOrd",
                 "SmallintOrdOpe",
                 "Bigint",
                 "BigintEq",
+                "BigintOrdOre",
                 "BigintOrd",
                 "BigintOrdOpe",
                 "Date",
@@ -212,23 +215,27 @@ mod tests {
                 "Text",
                 "TextEq",
                 "TextMatch",
+                "TextOrdOre",
                 "TextOrd",
                 "TextOrdOpe",
+                "TextSearchOre",
                 "TextSearch",
                 "Boolean",
                 "Real",
                 "RealEq",
+                "RealOrdOre",
                 "RealOrd",
                 "RealOrdOpe",
                 "Double",
                 "DoubleEq",
+                "DoubleOrdOre",
                 "DoubleOrd",
                 "DoubleOrdOpe"
             ],
             "the engine's producible types, in catalog order"
         );
         assert!(matches!(
-            resolver().resolve("TextOrdOre"),
+            resolver().resolve("DateOrdOre"),
             Err(TargetError::Unproducible { .. })
         ));
         assert!(matches!(

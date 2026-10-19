@@ -10,9 +10,18 @@
 //! |-------------------|----------|----------|
 //! | `{{prefix}}`      | `eql_v3` | `eql_v4` |
 //! | `{{eql_version}}` | `3`      | `4`      |
+//! | `{{ore_block}}`   | `ore_block_256` | `ore_block_v2` |
 //!
 //! `{{prefix}}` is both the schema (`{{prefix}}.eq_term`) and the start of every
 //! other name (`{{prefix}}_internal`, `public.{{prefix}}_text_eq`).
+//!
+//! `{{ore_block}}` names the block ORE term type and everything built on it
+//! (`{{prefix}}_internal.{{ore_block}}_term`, `compare_{{ore_block}}_terms`).
+//! The two versions compare different ciphertexts under the one `ob` key:
+//! `eql_v3` cipherstash-client's 8-bit block ORE, whose blocks are 256-way,
+//! and `eql_v4` ore-rs's 6-bit block ORE, whose wire format is ore-rs's
+//! version 2. Each version's name says which it compares, so `eql_v4` does
+//! not reuse the name of another format.
 //!
 //! Rendering is strict in both directions. An unknown or unterminated
 //! placeholder is an error, and so is a literal `eql_v3` or `eql_v4` in the
@@ -62,6 +71,15 @@ pub const EQL_VERSION: &str = "{{eql_version}}";
 /// to every version. The number is the payload version ([`EqlVersion::number`]),
 /// not the schema name, because the source may not name a schema literally.
 pub const ONLY_DIRECTIVE: &str = "-- ONLY EQL VERSION:";
+/// The block ORE name placeholder. See [the module docs](self).
+pub const ORE_BLOCK: &str = "{{ore_block}}";
+
+/// The `eql_v3` block ORE name, which only [`ORE_BLOCK`] may write: a literal
+/// would name the 8-bit format in the `eql_v4` bundle too. The source
+/// directory of that name (`src/v3/sem/ore_block_256/`) is a path, not a
+/// name, and is allowed.
+const V3_ORE_BLOCK: &str = "ore_block_256";
+
 /// The directive line that opens a block kept only in `version`'s output:
 /// `-- {{#v4}}`. See [the module docs](self#version-blocks).
 pub fn block_open(version: EqlVersion) -> String {
@@ -132,6 +150,15 @@ impl EqlVersion {
             EqlVersion::V4 => "eql_v4",
         }
     }
+
+    /// The block ORE name: `ore_block_256` (cipherstash-client's 8-bit
+    /// format) or `ore_block_v2` (ore-rs's 6-bit format, wire version 2).
+    pub fn ore_block(self) -> &'static str {
+        match self {
+            EqlVersion::V3 => V3_ORE_BLOCK,
+            EqlVersion::V4 => "ore_block_v2",
+        }
+    }
 }
 
 impl std::str::FromStr for EqlVersion {
@@ -164,6 +191,8 @@ pub enum RenderError {
         only: EqlVersion,
         version: EqlVersion,
     },
+    /// A literal `ore_block_256` where `{{ore_block}}` belongs.
+    LiteralOreBlock { line: usize },
     /// A version block opened inside another; blocks do not nest.
     NestedBlock { line: usize },
     /// A block close with no open block, or naming another version than the
@@ -178,7 +207,8 @@ impl fmt::Display for RenderError {
         match self {
             RenderError::UnknownPlaceholder { line, name } => write!(
                 f,
-                "line {line}: unknown placeholder {{{{{name}}}}} (expected {PREFIX} or {EQL_VERSION})"
+                "line {line}: unknown placeholder {{{{{name}}}}} (expected {PREFIX}, {EQL_VERSION} \
+                 or {ORE_BLOCK})"
             ),
             RenderError::Unterminated { line } => {
                 write!(f, "line {line}: `{{{{` with no closing `}}}}`")
@@ -207,6 +237,11 @@ impl fmt::Display for RenderError {
                 only.prefix(),
                 version.prefix()
             ),
+            RenderError::LiteralOreBlock { line } => write!(
+                f,
+                "line {line}: literal `{V3_ORE_BLOCK}`; write {ORE_BLOCK} in its place, in \
+                 comments too, so the name follows the EQL version's block ORE format"
+            ),
             RenderError::NestedBlock { line } => {
                 write!(f, "line {line}: a version block opened inside another")
             }
@@ -215,7 +250,10 @@ impl fmt::Display for RenderError {
                 "line {line}: a version block close with no open block of that version"
             ),
             RenderError::UnclosedBlock { line } => {
-                write!(f, "line {line}: a version block opened here is never closed")
+                write!(
+                    f,
+                    "line {line}: a version block opened here is never closed"
+                )
             }
         }
     }
@@ -324,6 +362,9 @@ pub fn render_str(src: &str, version: EqlVersion) -> Result<String, RenderError>
                 });
             }
         }
+        if contains_ore_block_name(line) {
+            return Err(RenderError::LiteralOreBlock { line: lineno });
+        }
         match (directive(line), block) {
             (Some(Directive::Open(_)), Some(_)) => {
                 return Err(RenderError::NestedBlock { line: lineno })
@@ -352,6 +393,7 @@ pub fn render_str(src: &str, version: EqlVersion) -> Result<String, RenderError>
             match &after[..close] {
                 "prefix" => out.push_str(version.prefix()),
                 "eql_version" => out.push_str(version.number()),
+                "ore_block" => out.push_str(version.ore_block()),
                 other => {
                     return Err(RenderError::UnknownPlaceholder {
                         line: lineno,
@@ -378,6 +420,14 @@ fn contains_name(line: &str, prefix: &str) -> bool {
             .bytes()
             .next()
             .is_some_and(|b| b.is_ascii_digit())
+    })
+}
+
+/// Whether `line` names `ore_block_256` other than as the source directory
+/// `sem/ore_block_256/`.
+fn contains_ore_block_name(line: &str) -> bool {
+    line.match_indices(V3_ORE_BLOCK).any(|(at, _)| {
+        !(line[..at].ends_with("sem/") && line[at + V3_ORE_BLOCK.len()..].starts_with('/'))
     })
 }
 
@@ -527,6 +577,35 @@ mod tests {
                 name: " prefix ".to_string()
             })
         );
+    }
+
+    /// The block ORE name follows the version, and a literal of the
+    /// `eql_v3` name is refused unless it is the source directory's path.
+    #[test]
+    fn the_block_ore_name_follows_the_version() {
+        let src = "CREATE TYPE {{prefix}}_internal.{{ore_block}}_term AS (bytes bytea);\n\
+                   -- REQUIRE: src/v3/sem/ore_block_256/types.sql\n";
+        assert_eq!(
+            render_str(src, EqlVersion::V3).unwrap(),
+            "CREATE TYPE eql_v3_internal.ore_block_256_term AS (bytes bytea);\n\
+             -- REQUIRE: src/v3/sem/ore_block_256/types.sql\n"
+        );
+        assert_eq!(
+            render_str(src, EqlVersion::V4).unwrap(),
+            "CREATE TYPE eql_v4_internal.ore_block_v2_term AS (bytes bytea);\n\
+             -- REQUIRE: src/v3/sem/ore_block_256/types.sql\n"
+        );
+        for literal in [
+            "SELECT {{prefix}}_internal.ore_block_256(x);\n",
+            "-- compares ore_block_256 terms\n",
+            "-- the directory sem/ore_block_256 alone\n",
+        ] {
+            assert_eq!(
+                render_str(literal, EqlVersion::V4),
+                Err(RenderError::LiteralOreBlock { line: 1 }),
+                "{literal:?}"
+            );
+        }
     }
 
     #[test]

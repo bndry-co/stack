@@ -1218,6 +1218,8 @@ enum OutputWire {
     Match(Option<MatchWire>),
     Ore,
     Ope,
+    #[serde(rename = "ore_block")]
+    OreBlock,
 }
 
 impl From<OutputWire> for Output {
@@ -1229,6 +1231,7 @@ impl From<OutputWire> for Output {
             OutputWire::Match(options) => IndexWire::Match(options),
             OutputWire::Ore => IndexWire::Ore,
             OutputWire::Ope => IndexWire::Ope,
+            OutputWire::OreBlock => IndexWire::OreBlock,
         };
         Output::Term(index.into())
     }

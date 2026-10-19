@@ -10,7 +10,7 @@
 --!
 --! Composite type representing a single ORE block term. Stores encrypted data
 --! as bytea that enables range comparisons without decryption.
-CREATE TYPE {{prefix}}_internal.ore_block_256_term AS (
+CREATE TYPE {{prefix}}_internal.{{ore_block}}_term AS (
   bytes bytea
 );
 
@@ -21,6 +21,6 @@ CREATE TYPE {{prefix}}_internal.ore_block_256_term AS (
 --! in the 'ob' field of encrypted data payloads.
 --!
 --! @note Transient type used only during query execution.
-CREATE TYPE {{prefix}}_internal.ore_block_256 AS (
-  terms {{prefix}}_internal.ore_block_256_term[]
+CREATE TYPE {{prefix}}_internal.{{ore_block}} AS (
+  terms {{prefix}}_internal.{{ore_block}}_term[]
 );

@@ -241,10 +241,13 @@ mod tests {
         // so no type is declared twice.
         assert_eq!(out.matches("\ntype JSON []byte\n").count(), 1);
         assert_eq!(out.matches("\ntype SteVecQuery []byte\n").count(), 1);
-        // TextEq is producible and says so; TextOrdOre is not and says why.
+        // TextEq is producible and says so; DateOrdOre is not and says why.
         assert!(out.contains("// TextEq is the EQL type stored in public.eql_v4_text_eq"));
         assert!(out.contains("Producible: true, Reason: \"\""));
-        assert!(out.contains("Name: \"TextOrdOre\"") && out.contains("block ORE terms"));
+        assert!(
+            out.contains("Name: \"DateOrdOre\"")
+                && out.contains("no order term for a date, timestamp or decimal")
+        );
         // Every table row is one line: the shape gofmt leaves alone.
         for line in out.lines().filter(|l| l.starts_with("\t{Name: ")) {
             assert!(line.ends_with("},"), "{line}");
@@ -269,7 +272,7 @@ mod tests {
         }
         assert_eq!(count, 18, "nine ordered families, ORE and OPE each");
         assert!(out.contains(
-            "// IntegerRangeOreQuery is a range query value over the ore index of the integer family: \
+            "// IntegerRangeOreQuery is a range query value over the ore_block index of the integer family: \
              both bounds of one BETWEEN,\n// included, as the one operand eql_v4.query_integer_range_ore \
              takes in eql_v4.between. It ranges over IntegerOrdOre.\n"
         ));

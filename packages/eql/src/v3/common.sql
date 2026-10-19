@@ -19,7 +19,7 @@
 --! @note Returns NULL if input is JSON null
 --! @note Each array element is hex-decoded to bytea
 --! @note plpgsql, not `LANGUAGE sql` (issue #353). This helper's ONLY caller
---!   chain is `ore_block_256(val)` -> `jsonb_array_to_ore_block_256(val)` —
+--!   chain is `{{ore_block}}(val)` -> `jsonb_array_to_{{ore_block}}(val)` —
 --!   both reached exclusively from plpgsql and btree operator-class support
 --!   contexts, where SQL functions can NEVER be inlined and instead pay the
 --!   per-call SQL-function executor (measured 3.5x the per-call cost of the
@@ -49,7 +49,7 @@ $$ LANGUAGE plpgsql;
 --! @internal Keep the inline-critical marker so the post-install
 --! pin_search_path pass leaves this unpinned: a `SET search_path` clause on a
 --! plpgsql function forces per-call configuration switching — measurable on a
---! helper invoked per compared value in the ore_block_256 opclass hot path.
+--! helper invoked per compared value in the {{ore_block}} opclass hot path.
 --! It takes a bare `jsonb` arg (not a jsonb-backed encrypted DOMAIN), so the
 --! structural skip in tasks/pin_search_path_v3.sql does not recognise it;
 --! this marker is the documented manual opt-in.

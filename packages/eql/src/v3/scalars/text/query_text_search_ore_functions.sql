@@ -25,18 +25,18 @@ AS $$ SELECT {{prefix}}_internal.hmac_256({{prefix}}_internal.require_query_term
 
 --! @brief Index extractor for {{prefix}}.query_text_search_ore.
 --! @param a {{prefix}}.query_text_search_ore
---! @return {{prefix}}_internal.ore_block_256
+--! @return {{prefix}}_internal.{{ore_block}}
 -- {{#v4}}
 --! @throws When the operand carries no `ob` term, the term <, <=, > and >= compare.
 -- {{/v4}}
 CREATE FUNCTION {{prefix}}.ord_term_ore(a {{prefix}}.query_text_search_ore)
-RETURNS {{prefix}}_internal.ore_block_256
+RETURNS {{prefix}}_internal.{{ore_block}}
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 -- {{#v3}}
-AS $$ SELECT {{prefix}}_internal.ore_block_256(a::jsonb) $$;
+AS $$ SELECT {{prefix}}_internal.{{ore_block}}(a::jsonb) $$;
 -- {{/v3}}
 -- {{#v4}}
-AS $$ SELECT {{prefix}}_internal.ore_block_256({{prefix}}_internal.require_query_term(a::jsonb, '{{prefix}}.query_text_search_ore', 'ob', '<, <=, > and >=')) $$;
+AS $$ SELECT {{prefix}}_internal.{{ore_block}}({{prefix}}_internal.require_query_term(a::jsonb, '{{prefix}}.query_text_search_ore', 'ob', '<, <=, > and >=')) $$;
 -- {{/v4}}
 
 --! @brief Index extractor for {{prefix}}.query_text_search_ore.

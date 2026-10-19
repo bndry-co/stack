@@ -118,6 +118,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Into<TextSearchQuery>`), so it carries only the term its operator reads:
   `=` and `<` on two-letter text work, and a match query on it is refused.
   The by-name dispatch picks the projection for the index it is handed.
+- **The block ORE types are producible** (`stack-encrypt` feature):
+  `IntegerOrdOre`, `SmallintOrdOre`, `BigintOrdOre`, `RealOrdOre` and
+  `DoubleOrdOre` from `i32`, `i16`, `i64`, `f32` and `f64`, and `TextOrdOre` and `TextSearchOre` from
+  `String`. Their `ob` term is Stack Encrypt's block ORE term (ore-rs's
+  6-bit fixed-width scheme for the numbers, its chained scheme for text):
+  one element, the hex of the whole ciphertext. `OreBlock256` implements
+  `EncryptFrom` for any orderable plaintext and never decrypts. This is not
+  EQL v3's `ob` (cipherstash-client's 8-bit blocks, up to six per text
+  value), and only EQL v4's comparator, `compare_ore_block_v2_term`, reads
+  it. Every term carries a random nonce, so a query's `ob` never equals the
+  stored one; the comparator orders them. A query carries the full
+  ciphertext. `TextSearchOre` follows `TextSearch`: its query carries only
+  the term its operator reads. Text whose fold is longer than 1023 bytes or
+  ends in NUL has no block ORE term and is refused. In the target table an
+  `ob` term is the index `ore_block`, not `ore`, which is CLLW ORE.
 - **`encryption::targets::query` takes the index that answers the query's
   operator** (`targets` feature), an `&IndexSpec` after the name, as Stack
   Encrypt's `TargetResolver::query` hands it over. An index the type does

@@ -73,6 +73,7 @@ pub fn environment() -> minijinja::Environment<'static> {
     env.add_global("schema", SCHEMA);
     env.add_global("internal_schema", INTERNAL_SCHEMA);
     env.add_global("eql_version", EQL_VERSION);
+    env.add_global("ore_block", ORE_BLOCK);
     // The renderer's version-block directives, for SQL that differs between
     // `eql_v3` and `eql_v4` (`crate::render`, "Version blocks").
     env.add_global("v3_only", block_open(EqlVersion::V3));
@@ -335,7 +336,7 @@ pub struct FunctionsContext {
 /// Build the inlinable index-extractor entry for a domain term.
 ///
 /// The `RETURNS` type name equals the constructor name (`hmac_256`,
-/// `ore_block_256`); qualify it with `INTERNAL_SCHEMA` — the same schema as
+/// `{{ore_block}}`, [`sql_ctor`]); qualify it with `INTERNAL_SCHEMA` — the same schema as
 /// the body's constructor call — so the declared return type and the call
 /// stay in lockstep. `Term::returns()` is intentionally not used.
 pub fn extractor_entry(term: Term) -> FnEntry {
@@ -351,9 +352,9 @@ pub fn query_extractor_entry(domain: &Domain, term: Term, query_dom: &str) -> Fn
 
 fn extractor_entry_requiring(term: Term, required: Option<RequiredTerm>) -> FnEntry {
     FnEntry::Extractor {
-        ret: format!("{INTERNAL_SCHEMA}.{}", term.ctor()),
+        ret: format!("{INTERNAL_SCHEMA}.{}", sql_ctor(term)),
         extractor: term.extractor().to_string(),
-        ctor: term.ctor().to_string(),
+        ctor: sql_ctor(term).to_string(),
         required,
     }
 }
