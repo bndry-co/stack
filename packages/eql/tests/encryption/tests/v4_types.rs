@@ -210,7 +210,7 @@ async fn eq_terms(
     value: ValueFrame,
 ) -> (serde_json::Value, serde_json::Value) {
     let stored: serde_json::Value = by_name(keyset, name, value.clone()).await;
-    let query = targets::query(name, keyset, &label(), value)
+    let query = targets::query(name, &common::index_of(name), keyset, &label(), value)
         .unwrap()
         .await
         .unwrap();
@@ -431,34 +431,58 @@ async fn every_producible_type_dispatches_by_name() {
 
         match target.query {
             None => {
-                let error = refused(targets::query(name, &keyset, &label(), sample(kind)));
+                let error = refused(targets::query(
+                    name,
+                    &common::index_of(name),
+                    &keyset,
+                    &label(),
+                    sample(kind),
+                ));
                 assert!(
                     matches!(error, TargetError::NoQuery { .. }),
                     "{name}: {error}"
                 );
             }
             Some(_) => {
-                let query = targets::query(name, &keyset, &label(), sample(kind))
-                    .unwrap()
-                    .await
-                    .unwrap();
-                let query: serde_json::Value = serde_json::from_slice(&query).unwrap();
-                assert!(
-                    query.get("c").is_none(),
-                    "{name}: a query carries no ciphertext"
-                );
-                if target.indexes.contains(&"eq") {
-                    assert_eq!(
-                        query["hm"], json["hm"],
-                        "{name}: the query probes the stored term"
+                // Asked through each index the type carries, the query
+                // carries that index's term, the stored one. TextSearch's
+                // carries it alone (EQL v4's search query terms are
+                // optional); every other twin carries all of its terms
+                // whatever the index.
+                let term_of = |key: &str| match key {
+                    "eq" => "hm",
+                    "ope" => "op",
+                    "match" => "bf",
+                    other => panic!("{name}: no term for index {other}"),
+                };
+                for key in target.indexes {
+                    let index = stack_encrypt::target::IndexSpec::parse(key).unwrap();
+                    let query = targets::query(name, &index, &keyset, &label(), sample(kind))
+                        .unwrap()
+                        .await
+                        .unwrap();
+                    let query: serde_json::Value = serde_json::from_slice(&query).unwrap();
+                    assert!(
+                        query.get("c").is_none(),
+                        "{name}: a query carries no ciphertext"
                     );
-                }
-                if target.indexes.contains(&"ope") {
-                    assert!(json["op"].is_string(), "{name} stores an op");
+                    let term = term_of(key);
+                    assert!(json[term].is_string() || json[term].is_array(), "{name}");
                     assert_eq!(
-                        query["op"], json["op"],
-                        "{name}: the query compares the stored order term"
+                        query[term], json[term],
+                        "{name} via {key}: the query carries the stored term"
                     );
+                    let carried: Vec<&str> = target
+                        .indexes
+                        .iter()
+                        .map(|key| term_of(key))
+                        .filter(|term| query.get(term).is_some())
+                        .collect();
+                    if name == "TextSearch" {
+                        assert_eq!(carried, [term], "{name} via {key}: its term alone");
+                    } else {
+                        assert_eq!(carried.len(), target.indexes.len(), "{name} via {key}");
+                    }
                 }
             }
         }
@@ -481,7 +505,13 @@ async fn storage_only_text_round_trips_through_both_entry_points() {
     let opened: String = cipher.decrypt_as(named, column().into()).await.unwrap();
     assert_eq!(opened, "note");
     // A storage-only type answers no query.
-    let error = refused(targets::query("Text", &keyset, &label(), frame("note")));
+    let error = refused(targets::query(
+        "Text",
+        &common::index_of("Text"),
+        &keyset,
+        &label(),
+        frame("note"),
+    ));
     assert!(
         matches!(error, TargetError::NoQuery { name: "Text" }),
         "{error}"
@@ -1258,7 +1288,7 @@ async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
         let keyset = &keyset;
         async move {
             let label = Label::new(["profiles", column]).unwrap();
-            let bytes = targets::query(name, keyset, &label, value)
+            let bytes = targets::query(name, &common::index_of(name), keyset, &label, value)
                 .unwrap()
                 .await
                 .unwrap();

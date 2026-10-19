@@ -2,6 +2,7 @@
 
 use crate::consts::*;
 use crate::operator_surface::Operator;
+use crate::render::{block_close, block_open, EqlVersion};
 use eql_domains::{Domain, Term};
 
 /// Build the minijinja environment with the embedded templates: one whole-file
@@ -72,7 +73,68 @@ pub fn environment() -> minijinja::Environment<'static> {
     env.add_global("schema", SCHEMA);
     env.add_global("internal_schema", INTERNAL_SCHEMA);
     env.add_global("eql_version", EQL_VERSION);
+    // The renderer's version-block directives, for SQL that differs between
+    // `eql_v3` and `eql_v4` (`crate::render`, "Version blocks").
+    env.add_global("v3_only", block_open(EqlVersion::V3));
+    env.add_global("v3_end", block_close(EqlVersion::V3));
+    env.add_global("v4_only", block_open(EqlVersion::V4));
+    env.add_global("v4_end", block_close(EqlVersion::V4));
     env
+}
+
+/// Whether an EQL v4 query of `domain` carries only the terms its operator
+/// reads (ADR-0002, amended 2026-10-19): a domain whose terms include the
+/// match term beside others, `text_search` and `text_search_ore`. Text
+/// shorter than one 3-gram has no match term, so a query that had to carry
+/// every term could not express `=` or `<` on it.
+///
+/// EQL v4 only. The v4 query domain then requires at least one of its terms,
+/// and each extractor over it raises when the term it reads is absent
+/// ([`required_term`]); the `eql_v3` domain is cipherstash-client's format and
+/// keeps requiring every term. The v4 binding's query struct holds each term
+/// as an `Option`.
+pub fn v4_optional_query_terms(domain: &Domain) -> bool {
+    domain.terms.contains(&Term::Bloom) && Term::payload_terms(domain.terms).len() > 1
+}
+
+/// The term an extractor over a query operand reads, for an operand whose
+/// terms are optional in EQL v4 ([`v4_optional_query_terms`]): the extractor
+/// raises, naming the term and the operators that read it, when the operand
+/// carries none, rather than answer `NULL` and match no row.
+#[derive(serde::Serialize)]
+pub struct RequiredTerm {
+    /// sql_str-escaped JSON key, e.g. `hm`.
+    pub key: String,
+    /// sql_str-escaped schema-qualified query domain, for the message.
+    pub domain: String,
+    /// sql_str-escaped operators the term answers on this domain, as prose:
+    /// `= and <>`, `<, <=, > and >=`, `@@`.
+    pub operators: String,
+}
+
+/// The [`RequiredTerm`] for `term`'s extractor over `domain`'s query operand
+/// `query_dom`, or `None` when the operand's terms are not optional.
+pub fn required_term(domain: &Domain, term: Term, query_dom: &str) -> Option<RequiredTerm> {
+    if !v4_optional_query_terms(domain) {
+        return None;
+    }
+    // The operators this extractor answers on this domain: an operator two
+    // terms support is read through the first (`=` on `text_search` reads
+    // `hm`, not `op`).
+    let ops: Vec<&str> = Term::operators_for_terms(domain.terms)
+        .into_iter()
+        .filter(|op| Term::extractor_for_operator(domain.terms, op) == Some(term.extractor()))
+        .collect();
+    let operators = match ops.as_slice() {
+        [] => "no operator".to_string(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    Some(RequiredTerm {
+        key: sql_str(term.json_key()),
+        domain: sql_str(query_dom),
+        operators: sql_str(&operators),
+    })
 }
 
 /// One idempotent CREATE DOMAIN block, with SQL-required values precomputed.
@@ -91,6 +153,13 @@ pub struct DomainBlock {
     // query operand is index-terms-only). The template renders a
     // `NOT (VALUE ? k)` clause per key.
     pub forbidden_keys: Vec<String>,
+    // sql_str-escaped term keys of a query twin whose terms are optional in
+    // EQL v4 (`v4_optional_query_terms`); empty otherwise. When set, `keys`
+    // holds the envelope keys alone, and the template renders the term keys
+    // as required for `eql_v3` and as "at least one" for `eql_v4`, each in
+    // its own version block, with a present `nonempty_array_keys` key still
+    // a non-empty array.
+    pub optional_term_keys: Vec<String>,
     // sql_str-escaped one-line human description rendered as `COMMENT ON DOMAIN`.
     // Capability text is derived from the domain's terms (via
     // `Term::operators_for_terms`), so it can't drift from the generated CHECK /
@@ -171,6 +240,8 @@ pub fn domain_block(family_name: &str, domain: &Domain) -> DomainBlock {
             .collect(),
         // Storage domains forbid nothing; the query twin forbids `c`.
         forbidden_keys: vec![],
+        // A stored value carries every term in both versions.
+        optional_term_keys: vec![],
         comment: scalar_domain_comment(family_name, domain),
     }
 }
@@ -188,9 +259,13 @@ pub fn query_domain_block(family_name: &str, domain: &Domain) -> DomainBlock {
         .filter(|&&k| k != "c")
         .map(|k| sql_str(k))
         .collect();
-    for k in Term::term_json_keys(domain.terms) {
-        keys.push(sql_str(k));
-    }
+    let term_keys = Term::term_json_keys(domain.terms).into_iter().map(sql_str);
+    let optional_term_keys = if v4_optional_query_terms(domain) {
+        term_keys.collect()
+    } else {
+        keys.extend(term_keys);
+        vec![]
+    };
 
     DomainBlock {
         typname: sql_str(&name),
@@ -201,6 +276,7 @@ pub fn query_domain_block(family_name: &str, domain: &Domain) -> DomainBlock {
             .map(sql_str)
             .collect(),
         forbidden_keys: vec![sql_str("c")],
+        optional_term_keys,
         comment: query_domain_comment(family_name, domain),
     }
 }
@@ -223,6 +299,9 @@ pub enum FnEntry {
         ret: String,       // e.g. eql_v3_internal.hmac_256 (selection STAYS in Rust)
         extractor: String, // e.g. eq_term
         ctor: String,      // e.g. hmac_256 (called as {{ internal_schema }}.{{ ctor }})
+        // Set on an extractor over a query operand whose terms are optional
+        // in EQL v4: the v4 body raises when the term is absent.
+        required: Option<RequiredTerm>,
     },
     Wrapper {
         op: String,            // SQL operator used in the body, e.g. =
@@ -260,10 +339,22 @@ pub struct FunctionsContext {
 /// the body's constructor call — so the declared return type and the call
 /// stay in lockstep. `Term::returns()` is intentionally not used.
 pub fn extractor_entry(term: Term) -> FnEntry {
+    extractor_entry_requiring(term, None)
+}
+
+/// [`extractor_entry`] over a query operand: in EQL v4 it raises when the
+/// operand lacks the term, if the operand's terms are optional there
+/// ([`required_term`]).
+pub fn query_extractor_entry(domain: &Domain, term: Term, query_dom: &str) -> FnEntry {
+    extractor_entry_requiring(term, required_term(domain, term, query_dom))
+}
+
+fn extractor_entry_requiring(term: Term, required: Option<RequiredTerm>) -> FnEntry {
     FnEntry::Extractor {
         ret: format!("{INTERNAL_SCHEMA}.{}", term.ctor()),
         extractor: term.extractor().to_string(),
         ctor: term.ctor().to_string(),
+        required,
     }
 }
 

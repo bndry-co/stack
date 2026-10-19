@@ -1386,6 +1386,7 @@ fn targets_lists_what_the_build_holds() {
             "TextMatch",
             "TextOrd",
             "TextOrdOpe",
+            "TextSearch",
             "Boolean",
             "Real",
             "RealEq",
@@ -1812,6 +1813,19 @@ fn the_catalog_lists_each_types_operators() {
                 ("arity", "one"),
                 ("index", "match"),
             ]),
+            // Each operator through its own index, whose term alone the
+            // query carries.
+            "TextSearch" => {
+                let mut want = vec![exact("eq", "eq")];
+                want.extend(orderings());
+                want.push(vec![
+                    ("operator", "matches"),
+                    ("fidelity", "probabilistic"),
+                    ("arity", "one"),
+                    ("index", "match"),
+                ]);
+                assert_eq!(listed, want, "{name}");
+            }
             _ => {
                 // A type the engine does not produce answers nothing, and
                 // the other produced types are storage-only: no twin.

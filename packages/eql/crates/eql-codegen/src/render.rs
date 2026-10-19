@@ -25,6 +25,26 @@
 //! `between`, ADR-0009 decision 7) shares the one source tree: the build
 //! renders a file only for the version it belongs to ([`belongs_to`]), and
 //! [`render_str`] refuses to render it as any other.
+//! # Version blocks
+//!
+//! Where one version's SQL must differ from the other's, the source holds both
+//! forms, each between two directive lines (ADR-0002, amended 2026-10-19):
+//!
+//! ```sql
+//! -- {{#v3}}
+//!         AND VALUE ? 'hm'
+//! -- {{/v3}}
+//! -- {{#v4}}
+//!         AND (VALUE ? 'hm' OR VALUE ? 'op')
+//! -- {{/v4}}
+//! ```
+//!
+//! A block's lines are kept in its own version's output and dropped from the
+//! other's, and the directive lines are dropped from both, so a source with a
+//! block renders, for the version the block does not name, exactly as it did
+//! before the block was written. A directive is a whole line (leading
+//! whitespace allowed); blocks do not nest, a close must name the open block's
+//! version, and a block left open at the end of the file is an error.
 
 use std::fmt;
 use std::fs;
@@ -42,6 +62,47 @@ pub const EQL_VERSION: &str = "{{eql_version}}";
 /// to every version. The number is the payload version ([`EqlVersion::number`]),
 /// not the schema name, because the source may not name a schema literally.
 pub const ONLY_DIRECTIVE: &str = "-- ONLY EQL VERSION:";
+/// The directive line that opens a block kept only in `version`'s output:
+/// `-- {{#v4}}`. See [the module docs](self#version-blocks).
+pub fn block_open(version: EqlVersion) -> String {
+    format!("-- {{{{#v{}}}}}", version.number())
+}
+
+/// The directive line that closes a block [`block_open`] opened: `-- {{/v4}}`.
+pub fn block_close(version: EqlVersion) -> String {
+    format!("-- {{{{/v{}}}}}", version.number())
+}
+
+/// A version-block directive line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Directive {
+    Open(EqlVersion),
+    Close(EqlVersion),
+}
+
+/// The directive `line` is, if it is one: `-- {{#vN}}` or `-- {{/vN}}` for a
+/// version this renderer knows, alone on the line.
+fn directive(line: &str) -> Option<Directive> {
+    let inner = line
+        .trim()
+        .strip_prefix("--")?
+        .trim_start()
+        .strip_prefix("{{")?
+        .strip_suffix("}}")?;
+    let (open, name) = if let Some(name) = inner.strip_prefix('#') {
+        (true, name)
+    } else {
+        (false, inner.strip_prefix('/')?)
+    };
+    let version = EqlVersion::ALL
+        .into_iter()
+        .find(|v| name.strip_prefix('v') == Some(v.number()))?;
+    Some(if open {
+        Directive::Open(version)
+    } else {
+        Directive::Close(version)
+    })
+}
 
 /// An EQL version the source can be rendered as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +164,13 @@ pub enum RenderError {
         only: EqlVersion,
         version: EqlVersion,
     },
+    /// A version block opened inside another; blocks do not nest.
+    NestedBlock { line: usize },
+    /// A block close with no open block, or naming another version than the
+    /// open one.
+    UnmatchedClose { line: usize },
+    /// A block still open at the end of the source; `line` is its opening.
+    UnclosedBlock { line: usize },
 }
 
 impl fmt::Display for RenderError {
@@ -139,6 +207,16 @@ impl fmt::Display for RenderError {
                 only.prefix(),
                 version.prefix()
             ),
+            RenderError::NestedBlock { line } => {
+                write!(f, "line {line}: a version block opened inside another")
+            }
+            RenderError::UnmatchedClose { line } => write!(
+                f,
+                "line {line}: a version block close with no open block of that version"
+            ),
+            RenderError::UnclosedBlock { line } => {
+                write!(f, "line {line}: a version block opened here is never closed")
+            }
         }
     }
 }
@@ -234,6 +312,8 @@ pub fn render_str(src: &str, version: EqlVersion) -> Result<String, RenderError>
         }
     }
     let mut out = String::with_capacity(src.len());
+    // The open version block, and the line that opened it.
+    let mut block: Option<(EqlVersion, usize)> = None;
     for (i, line) in src.split_inclusive('\n').enumerate() {
         let lineno = i + 1;
         for v in EqlVersion::ALL {
@@ -243,6 +323,24 @@ pub fn render_str(src: &str, version: EqlVersion) -> Result<String, RenderError>
                     literal: v.prefix(),
                 });
             }
+        }
+        match (directive(line), block) {
+            (Some(Directive::Open(_)), Some(_)) => {
+                return Err(RenderError::NestedBlock { line: lineno })
+            }
+            (Some(Directive::Open(v)), None) => {
+                block = Some((v, lineno));
+                continue;
+            }
+            (Some(Directive::Close(v)), Some((open, _))) if v == open => {
+                block = None;
+                continue;
+            }
+            (Some(Directive::Close(_)), _) => {
+                return Err(RenderError::UnmatchedClose { line: lineno })
+            }
+            (None, Some((v, _))) if v != version => continue,
+            (None, _) => {}
         }
         let mut rest = line;
         while let Some(open) = rest.find("{{") {
@@ -264,6 +362,9 @@ pub fn render_str(src: &str, version: EqlVersion) -> Result<String, RenderError>
             rest = &after[close + 2..];
         }
         out.push_str(rest);
+    }
+    if let Some((_, line)) = block {
+        return Err(RenderError::UnclosedBlock { line });
     }
     Ok(out)
 }
@@ -551,6 +652,94 @@ mod tests {
             belongs_to("--! see `-- ONLY EQL VERSION: 4`\n", EqlVersion::V3),
             Ok(true)
         );
+    }
+
+    #[test]
+    fn a_version_block_renders_in_its_own_version_only() {
+        let src = format!(
+            "a {{{{prefix}}}}\n{}\n  three\n{}\n  {}\n  four {{{{eql_version}}}}\n  {}\nz\n",
+            block_open(EqlVersion::V3),
+            block_close(EqlVersion::V3),
+            block_open(EqlVersion::V4),
+            block_close(EqlVersion::V4),
+        );
+        assert_eq!(
+            render_str(&src, EqlVersion::V3).unwrap(),
+            "a eql_v3\n  three\nz\n"
+        );
+        assert_eq!(
+            render_str(&src, EqlVersion::V4).unwrap(),
+            "a eql_v4\n  four 4\nz\n"
+        );
+    }
+
+    /// A block written for one version leaves the other's output exactly as
+    /// the source without the block renders it.
+    #[test]
+    fn a_block_for_one_version_leaves_the_other_unchanged() {
+        let plain = "SELECT {{prefix}}.f();\nSELECT 2;\n";
+        let with = "SELECT {{prefix}}.f();\n-- {{#v4}}\nSELECT 'v4 only';\n-- {{/v4}}\nSELECT 2;\n";
+        assert_eq!(
+            render_str(with, EqlVersion::V3).unwrap(),
+            render_str(plain, EqlVersion::V3).unwrap()
+        );
+        assert_eq!(
+            render_str(with, EqlVersion::V4).unwrap(),
+            "SELECT eql_v4.f();\nSELECT 'v4 only';\nSELECT 2;\n"
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_blocks() {
+        for (src, err) in [
+            (
+                "-- {{#v3}}\n-- {{#v4}}\n-- {{/v4}}\n-- {{/v3}}\n",
+                RenderError::NestedBlock { line: 2 },
+            ),
+            ("x\n-- {{/v3}}\n", RenderError::UnmatchedClose { line: 2 }),
+            (
+                "-- {{#v3}}\n-- {{/v4}}\n",
+                RenderError::UnmatchedClose { line: 2 },
+            ),
+            ("x\n-- {{#v4}}\ny\n", RenderError::UnclosedBlock { line: 2 }),
+        ] {
+            assert_eq!(render_str(src, EqlVersion::V4), Err(err), "{src:?}");
+        }
+        // A directive naming a version the renderer does not know, or one
+        // that is not alone on its line, is an unknown placeholder.
+        for src in ["-- {{#v5}}\n", "SELECT 1; -- {{#v4}}\n"] {
+            assert!(
+                matches!(
+                    render_str(src, EqlVersion::V4),
+                    Err(RenderError::UnknownPlaceholder { line: 1, .. })
+                ),
+                "{src:?}"
+            );
+        }
+        // A literal name inside the other version's block is still refused.
+        assert!(matches!(
+            render_str(
+                "-- {{#v4}}\nSELECT eql_v3.f();\n-- {{/v4}}\n",
+                EqlVersion::V3
+            ),
+            Err(RenderError::LiteralName { line: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn a_directive_may_be_indented() {
+        assert_eq!(
+            directive("  -- {{#v4}}\n"),
+            Some(Directive::Open(EqlVersion::V4))
+        );
+        assert_eq!(
+            directive("--{{/v3}}"),
+            Some(Directive::Close(EqlVersion::V3))
+        );
+        assert_eq!(block_open(EqlVersion::V4), "-- {{#v4}}");
+        assert_eq!(block_close(EqlVersion::V3), "-- {{/v3}}");
+        assert_eq!(directive("-- {{prefix}}"), None);
+        assert_eq!(directive("-- {{#v4}} trailing"), None);
     }
 
     #[test]

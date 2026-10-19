@@ -90,11 +90,12 @@ impl TargetResolver for Eql {
     fn query<'a, K: 'static>(
         &self,
         name: &str,
+        index: &stack_encrypt::target::IndexSpec,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::query(name, keyset, label, plaintext).map_err(convert)
+        eql_targets::query(name, index, keyset, label, plaintext).map_err(convert)
     }
 }
 
@@ -317,7 +318,8 @@ fn the_typed_chain_answers_what_the_data_path_answers() {
             }
         }
     }
-    // The gap today: every producible ordered type. A type leaves this list
+    // The gap today: every producible ordered type, and text search, whose
+    // twin carries an order term among its three. A type leaves this list
     // when the typed chain assembles its twin, and its answers are then
     // held to the data path's above.
     assert_eq!(
@@ -331,6 +333,7 @@ fn the_typed_chain_answers_what_the_data_path_answers() {
             "BigintOrdOpe",
             "TextOrd",
             "TextOrdOpe",
+            "TextSearch",
             "RealOrd",
             "RealOrdOpe",
             "DoubleOrd",

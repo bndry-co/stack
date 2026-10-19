@@ -58,3 +58,49 @@ BEGIN
   RAISE EXCEPTION 'operator % is not supported for %', operator_name, type_name;
 END;
 $$ LANGUAGE plpgsql;
+-- {{#v4}}
+
+--! @brief Return a query operand unchanged when it carries the named term,
+--!        and raise when it does not.
+--!
+--! An EQL v4 search-domain query operand ({{prefix}}.query_text_search,
+--! {{prefix}}.query_text_search_ore) carries only the terms its operator
+--! reads, so each extractor over it reads its term through this helper. A
+--! missing term raises here rather than reading as NULL, which would compare
+--! as no row.
+--!
+--! A term whose value is JSON `null` is missing, and so is an empty array: a
+--! `bf` with no positions is the filter of text too short for a 3-gram, which
+--! a stored filter of the same text would contain, so a query carrying it
+--! would match exactly the stored values no match query should find.
+--!
+--! The raise happens where the operand is evaluated, not where the statement
+--! is planned. A literal operand is folded at plan time and raises even over
+--! an empty table; a bound parameter under a generic plan raises wherever the
+--! extractor reads it (an index scan always does, to build its key), and a
+--! plan that never reaches the predicate returns no row and no error.
+--! @internal
+--! @param val jsonb The query operand.
+--! @param domain_name text The operand's domain, for the message.
+--! @param term text The JSON key of the term the extractor reads (hm, op, ob, bf).
+--! @param operators text The operators that read the term, for the message.
+--! @return jsonb `val`, unchanged.
+--! @throws invalid_parameter_value When `val` has no `term` key, or its value
+--!         is JSON `null` or an empty array. The message names the domain, the
+--!         term and the operators, never the operand.
+CREATE FUNCTION {{prefix}}_internal.require_query_term(val jsonb, domain_name text, term text, operators text)
+RETURNS jsonb
+IMMUTABLE STRICT PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  IF NOT (val ? term)
+    OR jsonb_typeof(val -> term) = 'null'
+    OR (jsonb_typeof(val -> term) = 'array' AND jsonb_array_length(val -> term) = 0) THEN
+    RAISE EXCEPTION '% value has no "%" term, the term % compare', domain_name, term, operators
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  RETURN val;
+END;
+$$ LANGUAGE plpgsql;
+-- {{/v4}}

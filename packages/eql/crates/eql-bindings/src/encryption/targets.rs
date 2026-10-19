@@ -90,7 +90,7 @@ use std::fmt;
 use serde::{de::DeserializeOwned, Serialize};
 use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 use stack_encrypt::kms::MaybeSend;
-use stack_encrypt::target::ExpectedContext;
+use stack_encrypt::target::{ExpectedContext, IndexSpec};
 use stack_encrypt::{
     Decrypt, DecryptInto, Encrypt, EncryptFrom, Error, KeysetCipher, Label, NonEmpty, Pending,
     StackCipher,
@@ -199,6 +199,15 @@ pub enum TargetError {
     NoQuery {
         /// The type's name.
         name: &'static str,
+    },
+    /// A query asked through an index the type does not carry
+    /// ([`Target::indexes`]), so it has no term to derive.
+    #[error("{name} carries no {index} index, so no query is answered through it")]
+    NoIndex {
+        /// The type's name.
+        name: &'static str,
+        /// The index asked for, by its `IndexSpec::key()`.
+        index: &'static str,
     },
     /// The field's context is not an EQL column: an [`Identifier`] is a
     /// two-segment label, table then column, and this label is not one.
@@ -336,21 +345,52 @@ pub fn decrypt<'a, K: 'static>(
 /// matches stored values of the type under `context`'s column, as JSON
 /// bytes. A query derives no data key, so the pending settles without I/O.
 ///
+/// `index` is the type's index that answers the query's operator, one of
+/// [`Target::indexes`]; Stack Encrypt passes the one its
+/// `OpSpec::answered_by` picks. Most twins carry every term of their type
+/// whatever the index. `TextSearchQuery` carries the index's term alone
+/// (EQL v4's search query terms are optional), so `=` and `<` on text too
+/// short for a match term are answered, and `matches` on it is refused.
+///
 /// # Errors
 ///
-/// As [`encrypt`].
+/// As [`encrypt`], and [`TargetError::NoIndex`] for an index the type does
+/// not carry.
 pub fn query<'a, K: 'static>(
     name: &str,
+    index: &IndexSpec,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
-    if let Some(error) = no_query(target(name)) {
+    let Some(target) = target(name) else {
+        return Err(refuse(name));
+    };
+    if let Some(error) = no_query(Some(target)) {
         return Err(error);
     }
+    carries(target, index)?;
     let column = Identifier::from_label(context)?;
-    query_named(name, keyset, column, plaintext)
+    query_named(name, index, keyset, column, plaintext)
+}
+
+/// Refuse a query through an index the type does not carry.
+fn carries(target: &'static Target, index: &IndexSpec) -> Result<(), TargetError> {
+    match target.indexes.iter().find(|key| **key == index.key()) {
+        Some(_) => Ok(()),
+        None => Err(no_index(target.name, index)),
+    }
+}
+
+/// The refusal for a query on `name` through an index it does not carry.
+/// Also the generated query dispatch's fall-through for a twin built per
+/// index.
+pub(crate) fn no_index(name: &'static str, index: &IndexSpec) -> TargetError {
+    TargetError::NoIndex {
+        name,
+        index: index.key(),
+    }
 }
 
 /// Refuse a name the dispatch has no arm for, as the table explains it.
@@ -528,6 +568,32 @@ where
         .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))
 }
 
+/// Run the plan of `P`, a projection of the query twin `Q` that carries one
+/// term, and resolve to `Q`'s JSON bytes: the twin of a type whose query
+/// terms are optional, holding only the term `P` derives. The generated
+/// query dispatch picks `P` by the index that answers the query's operator.
+pub(crate) fn run_projected<'a, P, Q, S, K>(
+    name: &'static str,
+    keyset: &'a KeysetCipher<'_, K>,
+    column: NonEmpty<Identifier>,
+    plaintext: ValueFrame,
+) -> Result<Pending<'a, Vec<u8>, K>, TargetError>
+where
+    P: EncryptFrom<S, Context = NonEmpty<Identifier>> + Into<Q>,
+    Q: Serialize,
+    S: Plaintext,
+    K: 'static,
+{
+    // Wiped when this returns, as in `run_target`.
+    let plaintext = zeroize::Zeroizing::new(S::from_frame(name, &plaintext)?);
+    Ok(keyset
+        .encrypt_as::<S, P>(&plaintext, column)
+        .try_map(|value| {
+            let query: Q = value.into();
+            serde_json::to_vec(&query).map_err(|error| Error::Other(Box::new(error)))
+        }))
+}
+
 /// Parse a stored EQL value as the target and describe opening it through
 /// the target's own `DecryptInto`, under the column the caller expects.
 pub(crate) fn open_target<'a, T, S, K>(
@@ -638,6 +704,27 @@ mod tests {
             TargetError::Unproducible { .. }
         ));
         assert!(matches!(refuse_query("Nope"), TargetError::Unknown { .. }));
+    }
+
+    #[test]
+    fn a_query_through_an_index_the_type_lacks_is_refused() {
+        let text_eq = target("TextEq").unwrap();
+        assert!(carries(text_eq, &IndexSpec::Equality).is_ok());
+        let error = carries(text_eq, &IndexSpec::Ope).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                TargetError::NoIndex {
+                    name: "TextEq",
+                    index: "ope"
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "TextEq carries no ope index, so no query is answered through it"
+        );
     }
 
     #[test]

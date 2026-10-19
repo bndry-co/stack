@@ -13,3 +13,9 @@ type TextMatch []byte
 
 // TextMatchQuery is the query value for TextMatch.
 type TextMatchQuery []byte
+
+// TextSearch is an EQL value with equality, order and match terms.
+type TextSearch []byte
+
+// TextSearchQuery is the query value for TextSearch.
+type TextSearchQuery []byte

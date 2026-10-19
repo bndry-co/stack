@@ -113,6 +113,7 @@ use stack_encrypt::{
 
 use crate::{
     v3::terms::{BloomFilter, Ciphertext, Hmac256, OpeCllw},
+    v4::terms::SearchBloomFilter,
     Identifier,
 };
 
@@ -331,11 +332,12 @@ impl MatchConfig for EqlMatch {
 ///
 /// Text that cuts no token (empty, separator-only, or shorter than a 3-gram)
 /// is refused with [`TermError::EmptyTermText`], stored or queried. Stack
-/// Encrypt stores such a value as the empty filter, but EQL treats an empty
-/// filter as contained by every stored filter, and this one type builds both
-/// the stored filter and the query operand, so it cannot tell a query from a
-/// stored value: refusing both is the one way a query cannot match every
-/// row.
+/// Encrypt stores such a value as the empty filter, but this type is the
+/// filter of every match query, and a query's filter must never be empty;
+/// it is also `TextMatch`'s stored filter, and a `TextMatch` value with an
+/// empty filter is a row no operator can find. A search domain's stored
+/// filter, which `=` and `<` find through its other terms, is
+/// [`SearchBloomFilter`] and takes the empty filter ([`SearchMatchVisitor`]).
 #[doc(hidden)]
 pub struct MatchVisitor;
 impl Visitor for MatchVisitor {
@@ -399,6 +401,50 @@ impl Decryptable for BloomFilter {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for BloomFilter {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
+/// Builds a stored search value's filter: [`MatchVisitor`]'s filter, except
+/// that text which cuts no token stores the empty filter instead of being
+/// refused (see [`SearchBloomFilter`]).
+#[doc(hidden)]
+pub struct SearchMatchVisitor;
+impl Visitor for SearchMatchVisitor {
+    type Value = SearchBloomFilter;
+    // As in `MatchVisitor`: the one spelling of the terms' type that compiles
+    // against both the crates.io stack-encrypt and the tree.
+    #[allow(deprecated)]
+    fn matching<O: MatchConfig>(self, terms: MatchTerm<O>) -> Result<Self::Value, Error> {
+        if terms.positions().is_empty() {
+            return Ok(SearchBloomFilter(BloomFilter(Vec::new())));
+        }
+        MatchVisitor.matching(terms).map(SearchBloomFilter)
+    }
+}
+impl Transcode for SearchBloomFilter {
+    type Visitor = SearchMatchVisitor;
+    fn visitor() -> Self::Visitor {
+        SearchMatchVisitor
+    }
+}
+impl<S: AsRef<str>> EncryptFrom<S> for SearchBloomFilter {
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    where
+        S: 's,
+    {
+        // Configuration named by the type, as for `BloomFilter`.
+        #[allow(deprecated)]
+        let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
+        terms.transcode()
+    }
+}
+impl Decryptable for SearchBloomFilter {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for SearchBloomFilter {
     fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
         None
     }

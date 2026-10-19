@@ -196,6 +196,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A target's query is handed the index that answers its operator**
+  (`dynamic` feature). `TargetResolver::query` and `record::query` take an
+  `&IndexSpec` after the type's name and the field respectively;
+  `query_term` passes the index `OpSpec::answered_by` picks over the type's
+  indexes. A type whose query carries every term may ignore it. One whose
+  terms are optional derives that index's term alone, so EQL v4's
+  `TextSearch` answers `=` and `<` on text too short to make a match term,
+  and makes one only for `matches`. A resolver adds the parameter; a caller
+  of `record::query` passes the index it queries through.
 - **A ciphertext that opens as the wrong type is `Error::OpenedType`, not
   `Error::Aead`** (#1118). A typed decrypt of a leaf that authenticates but
   holds another type (an integer opened as `String`, a value too wide for

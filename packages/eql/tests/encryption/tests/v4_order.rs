@@ -66,7 +66,7 @@ async fn query(
     name: &str,
     value: ValueFrame,
 ) -> serde_json::Value {
-    let bytes = targets::query(name, keyset, &label(), value)
+    let bytes = targets::query(name, &common::index_of(name), keyset, &label(), value)
         .unwrap()
         .await
         .unwrap();
@@ -81,14 +81,17 @@ fn op(value: &serde_json::Value) -> &str {
     value["op"].as_str().expect("an ordered value carries op")
 }
 
-/// Every producible ordered type is in [`ORDERED`] and the other way
-/// round: a type that becomes producible is covered here or fails.
+/// Every producible `Ord` and `OrdOpe` type is in [`ORDERED`] and the other
+/// way round: a type that becomes producible is covered here or fails.
+/// `TextSearch` carries an OPE term too; its query carries one term per
+/// operator, and `v4_text_search.rs` covers it.
 #[test]
 fn the_ordered_producible_types_are_these() {
     let mut ordered: Vec<&str> = targets::targets()
         .iter()
         .filter(|t| t.producible && t.indexes.contains(&"ope"))
         .map(|t| t.name)
+        .filter(|name| *name != "TextSearch")
         .collect();
     ordered.sort_unstable();
     let mut expected = ORDERED.to_vec();
@@ -340,7 +343,13 @@ async fn text_with_no_fold_is_refused() {
             Err(error) => panic!("{name}: refused before the plan ran: {error}"),
         };
         assert!(stored.is_err(), "{name}: stored text with no fold");
-        let queried = match targets::query(name, &keyset, &label(), frame(unassigned)) {
+        let queried = match targets::query(
+            name,
+            &common::index_of(name),
+            &keyset,
+            &label(),
+            frame(unassigned),
+        ) {
             Ok(pending) => pending.await,
             Err(error) => panic!("{name}: refused before the plan ran: {error}"),
         };
@@ -406,7 +415,7 @@ async fn the_ordered_query_fixture_is_what_the_dispatch_derives() {
         let keyset = &keyset;
         async move {
             let label = Label::new(["rankings", column]).unwrap();
-            let bytes = targets::query(name, keyset, &label, value)
+            let bytes = targets::query(name, &common::index_of(name), keyset, &label, value)
                 .unwrap()
                 .await
                 .unwrap();
@@ -682,10 +691,16 @@ fn postgres_compares_and_orders_ope_rows() {
     let probes: Vec<String> = runtime.block_on(async {
         let mut probes = Vec::new();
         for ((column, _, _), (name, value)) in COLUMNS.iter().zip(frames(&rows[1].1)) {
-            let bytes = targets::query(name, &keyset, &under(column), value)
-                .unwrap()
-                .await
-                .unwrap();
+            let bytes = targets::query(
+                name,
+                &common::index_of(name),
+                &keyset,
+                &under(column),
+                value,
+            )
+            .unwrap()
+            .await
+            .unwrap();
             probes.push(String::from_utf8(bytes).unwrap());
         }
         probes

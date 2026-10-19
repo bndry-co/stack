@@ -71,3 +71,17 @@ pub async fn cipher() -> (StackCipher<Observed>, Arc<Mutex<Calls>>) {
     calls.lock().unwrap().loads = 0;
     (cipher, calls)
 }
+
+/// The index a query on the named type is asked through when the test does
+/// not care which: the first the type carries. Equality for a name with no
+/// row or no index, which a test of a refusal names; the refusal comes
+/// before the index is read.
+// Not every suite that includes this module queries by name.
+#[allow(dead_code)]
+pub fn index_of(name: &str) -> stack_encrypt::target::IndexSpec {
+    use stack_encrypt::target::IndexSpec;
+    eql_bindings::encryption::targets::target(name)
+        .and_then(|target| target.indexes.first())
+        .and_then(|key| IndexSpec::parse(key))
+        .unwrap_or(IndexSpec::Equality)
+}

@@ -162,11 +162,22 @@ where that matters. Write the stored column on the left, `col @@ query`: the
 other order finds nothing until #1171 is fixed. Text too short to make a
 3-gram (empty strings, two-letter codes) cannot be stored in a `TextMatch`
 column yet, and a `TextMatchQuery` for it is refused too: one filter type
-builds both, and an empty filter as a query would match every row. The ORE
-types (`*OrdOre`, `TextSearchOre`) wait for block ORE (#1132), `TextSearch`
-for how a query that is not a match leaves out its match term (#1131),
-`Date`, `Timestamp` and `Numeric` for a choice of their Rust plaintext types
-(#1130), and `Json` for a decision on sealing a document as one leaf.
+builds both, and an empty filter as a query would match every row.
+`TextSearch` stores all three terms (`TextEq`'s `hm`, `TextOrd`'s `op` and
+`TextMatch`'s `bf`). Text too short for a 3-gram is stored with the empty
+filter (`"bf": []`, the `SearchBloomFilter` field type): `=` and `<` find it
+through `hm` and `op`, and no `@@` query does, because a query's filter is
+never empty. (A `@@` between two stored values, which no producer builds, is
+not a query: two stored empty filters match each other there, as in v3.) Its query carries only the term its operator reads: build it
+through `TextSearchEqualityQuery` (`=`, `<>`), `TextSearchOrderQuery` (`<`,
+`<=`, `>`, `>=`) or `TextSearchMatchQuery` (`@@`) and convert into
+`TextSearchQuery`, and the by-name dispatch picks the one for the index that
+answers the operator. So `=` and `<` work on short text, a match query on it
+is refused, and EQL v4 raises on an operator whose term the query lacks (or
+holds as `null`, or as an empty filter).
+The ORE types (`*OrdOre`, `TextSearchOre`) wait for block ORE, `Date`,
+`Timestamp` and `Numeric` for a choice of their Rust plaintext types, and
+`Json` for a decision on sealing a document as one leaf.
 
 Each ordered v4 family also has two range query types, one per order term:
 `IntegerRangeOreQuery` and `IntegerRangeOpeQuery`, and so on

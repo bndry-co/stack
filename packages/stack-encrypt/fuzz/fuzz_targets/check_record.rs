@@ -104,6 +104,7 @@ impl TargetResolver for Fixed {
     fn query<'a, K: 'static>(
         &self,
         _: &str,
+        _: &stack_encrypt::target::IndexSpec,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: ValueFrame,

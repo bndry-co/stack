@@ -91,7 +91,7 @@ async fn hm(
     name: &str,
     value: ValueFrame,
 ) -> String {
-    let bytes = targets::query(name, keyset, &label(), value)
+    let bytes = targets::query(name, &common::index_of(name), keyset, &label(), value)
         .unwrap()
         .await
         .unwrap();
@@ -382,7 +382,7 @@ async fn the_ledger_query_fixture_is_what_the_dispatch_derives() {
         let keyset = &keyset;
         async move {
             let label = Label::new(["profiles", column]).unwrap();
-            let bytes = targets::query(name, keyset, &label, value)
+            let bytes = targets::query(name, &common::index_of(name), keyset, &label, value)
                 .unwrap()
                 .await
                 .unwrap();

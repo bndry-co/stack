@@ -430,6 +430,16 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 			if len(target.Operators) != 1 || target.Operators[0] != want {
 				t.Fatalf("TextMatch answers %+v, want %+v", target.Operators, want)
 			}
+		case target.Name == "TextSearch":
+			// Each through its own index: the query carries that term alone.
+			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
+			for _, name := range []string{"lt", "lte", "gt", "gte"} {
+				want = append(want, record.Operator{Name: name, Fidelity: record.Exact, Index: record.Ope})
+			}
+			want = append(want, record.Operator{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match})
+			if !slices.Equal(target.Operators, want) {
+				t.Fatalf("TextSearch answers %+v, want %+v", target.Operators, want)
+			}
 		case len(target.Operators) != 0:
 			// Every other type is storage-only or not produced.
 			t.Fatalf("%s (producible %v) answers %+v, want none", target.Name, target.Producible, target.Operators)

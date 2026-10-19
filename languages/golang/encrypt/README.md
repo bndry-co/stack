@@ -488,6 +488,7 @@ The EQL types the engine produces, and the Go field types each takes:
 | `TextEq` | `string` | `=`, `<>` |
 | `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
 | `TextOrd`, `TextOrdOpe` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `TextSearch` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY`, `@@` |
 | `Text` | `string` | none: stored and read only |
 | `Smallint` | `int16`, or any Go integer type (see below) | none |
 | `SmallintEq` | the same | `=`, `<>` |
@@ -523,7 +524,13 @@ with `ErrEncoding`, naming the field's kind and not the value.
 exactly their own width.
 
 A `TextMatch` value must be at least three characters long: shorter text has
-no 3-grams to index and is refused. The number equality types compare as
+no 3-grams to index and is refused. A `TextSearch` value of such text, an
+empty string included, is stored with an empty match filter: `Eq`, `Lt`,
+`Lte`, `Gt` and `Gte` find it through its other terms, and no `Matches`
+query does. A `TextSearch` query carries only the term its operator reads,
+so `Eq` and `Lt` on two-letter text work and `Matches` on it is refused; EQL
+v4 raises if a query lacks the term its operator compares. The number
+equality types compare as
 PostgreSQL compares the plain types: an integer equals itself whatever its
 width, and for floats `-0.0 = 0.0` and `NaN = NaN`; the stored value still
 decrypts to exactly what was written. The same holds for the date,
