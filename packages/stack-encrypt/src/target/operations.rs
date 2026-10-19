@@ -546,16 +546,15 @@ term_operation!(
 );
 term_operation!(
     /// The order-revealing term of `S` under the context the tree hands it.
-    /// The bounds are the leaf's own: they say which `S` the CLLW ORE scheme
-    /// can order.
+    /// The bound is the leaf's own: it says which `S` has an order target.
     ore, crate::sem::OreTerm<S>, consume, [],
-    [S: cllw_ore::CllwOreEncrypt + Send + 'static, S::Output: Send + 'static]
+    [S: crate::sem::Orderable]
 );
 term_operation!(
     /// The order-preserving term of `S` under the context the tree hands it,
     /// with the same bounds as [`ore`].
     ope, crate::sem::OpeTerm<S>, consume, [],
-    [S: cllw_ore::CllwOpeEncrypt + Send + 'static, S::Output: Send + 'static]
+    [S: crate::sem::Orderable]
 );
 
 impl<T: 'static, K: 'static> Decryption<T, K> {
@@ -922,8 +921,7 @@ impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
 }
 impl<S> EncryptFrom<S> for crate::sem::OreTerm<S>
 where
-    S: cllw_ore::CllwOreEncrypt + Clone + Send + 'static,
-    S::Output: Send + 'static,
+    S: crate::sem::Orderable + Clone,
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -938,8 +936,7 @@ where
 }
 impl<S> EncryptFrom<S> for crate::sem::OpeTerm<S>
 where
-    S: cllw_ore::CllwOpeEncrypt + Clone + Send + 'static,
-    S::Output: Send + 'static,
+    S: crate::sem::Orderable + Clone,
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>

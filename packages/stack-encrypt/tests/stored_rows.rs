@@ -14,6 +14,11 @@
 //!
 //! A deliberate change to the stored format adds `stored_rows_v2.json`
 //! beside this one. It never edits v1, and it says how v1 rows migrate.
+//! Order terms are the one exception, for as long as the README says: a
+//! deliberate change to how one is derived re-freezes only the `ore` and
+//! `ope` terms that moved, by running the check with
+//! `STACK_ENCRYPT_REFREEZE_ORDER_TERMS=1`. That run asserts nothing else
+//! moved before it rewrites anything.
 //!
 //! The schema and the rules are in `tests/fixtures/README.md`.
 #![cfg(feature = "dynamic")]
@@ -25,7 +30,7 @@ use std::path::PathBuf;
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{admits, FfiValue, Scope, ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{admits, Scope, ValueFrame, ValueKind};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::StackCipherText as Node;
 use stack_encrypt::{
@@ -144,27 +149,80 @@ fn skeleton(json: &Json) -> Json {
     }
 }
 
-// ---- a plan as JSON ---------------------------------------------------------
+/// Whether a stored map entry is an order term: `["ore", {"passthrough": ..}]`
+/// or the same under `"ope"`.
+fn is_order_term(pair: &Json) -> bool {
+    matches!(pair[0].as_str(), Some("ore" | "ope"))
+        && pair[1]
+            .as_object()
+            .is_some_and(|node| node.contains_key("passthrough"))
+}
 
-/// A plan in the fixture as the value a binding sends.
-fn ffi_of_json(value: &Json) -> FfiValue {
-    match value {
-        Json::String(text) => FfiValue::String(text.as_str().into()),
-        Json::Bool(b) => FfiValue::Bool(*b),
-        Json::Number(n) => FfiValue::UInt64(n.as_u64().expect("a non-negative integer")),
-        Json::Array(items) => FfiValue::Array(items.iter().map(ffi_of_json).collect()),
-        Json::Object(entries) => FfiValue::Object(
-            entries
+/// [`skeleton`] with every order term's bytes masked: what must stay
+/// exactly as written when order terms are re-frozen.
+fn without_order_terms(json: &Json) -> Json {
+    let object = json.as_object().expect("a node");
+    let (kind, value) = object.iter().next().expect("one entry");
+    match kind.as_str() {
+        "leaf" | "empty_seq" | "empty_map" => json!(kind),
+        "seq" => json!({
+            "seq": value.as_array().expect("a list").iter().map(without_order_terms).collect::<Vec<_>>()
+        }),
+        "map" => json!({
+            "map": value
+                .as_array()
+                .expect("a list")
                 .iter()
-                .map(|(key, value)| (key.clone(), ffi_of_json(value)))
-                .collect(),
-        ),
-        Json::Null => FfiValue::Null,
+                .map(|pair| {
+                    if is_order_term(pair) {
+                        json!([pair[0], "order term"])
+                    } else {
+                        json!([pair[0], without_order_terms(&pair[1])])
+                    }
+                })
+                .collect::<Vec<_>>()
+        }),
+        _ => json.clone(),
     }
 }
 
+/// Copy every order term of `resealed` over the one in the same place in
+/// `stored`. The two have the same shape, which the caller has asserted.
+fn refreeze_order_terms(stored: &mut Json, resealed: &Json) {
+    let Some(object) = stored.as_object_mut() else {
+        return;
+    };
+    let (kind, value) = object.iter_mut().next().expect("one entry");
+    let key = kind.clone();
+    let theirs = &resealed[key.as_str()];
+    match key.as_str() {
+        "seq" => {
+            for (index, node) in value.as_array_mut().expect("a list").iter_mut().enumerate() {
+                refreeze_order_terms(node, &theirs[index]);
+            }
+        }
+        "map" => {
+            for (index, pair) in value.as_array_mut().expect("a list").iter_mut().enumerate() {
+                if is_order_term(pair) {
+                    pair[1] = theirs[index][1].clone();
+                } else {
+                    refreeze_order_terms(&mut pair[1], &theirs[index][1]);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+// ---- a plan as JSON ---------------------------------------------------------
+
+/// A plan written as JSON, as frame bytes: what a binding sends.
+fn frame_of_json(value: &Json) -> Vec<u8> {
+    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+}
+
 fn plan_of(json: &Json) -> DataPlan {
-    record::plan(ffi_of_json(json)).expect("the frozen plan parses")
+    record::plan(&frame_of_json(json)).expect("the frozen plan parses")
 }
 
 // ---- sealing and opening ----------------------------------------------------
@@ -206,10 +264,17 @@ fn expected_of(case: &Json) -> Option<Label> {
 /// Every frozen row opens to exactly the frame it opened to when it was
 /// written, and sealing its source again today gives the same tree: the
 /// same shape and keys, the same terms, the same passthroughs.
+///
+/// With `STACK_ENCRYPT_REFREEZE_ORDER_TERMS=1` it instead re-freezes the
+/// `ore` and `ope` terms that moved, the one edit the README allows, after
+/// asserting that nothing else did: every row still opens as it did, and
+/// the resealed tree matches the stored one in everything but its order
+/// terms' bytes.
 #[tokio::test]
 async fn every_frozen_row_opens_and_seals_as_it_did() {
+    let refreeze = std::env::var("STACK_ENCRYPT_REFREEZE_ORDER_TERMS").is_ok_and(|v| v == "1");
     let text = std::fs::read_to_string(fixture_path()).expect("stored_rows_v1.json is committed");
-    let fixture: Json = serde_json::from_str(&text).expect("the fixture is JSON");
+    let mut fixture: Json = serde_json::from_str(&text).expect("the fixture is JSON");
     assert_eq!(fixture["key_source"]["kind"], json!("deterministic-sha256"));
     assert_eq!(fixture["key_source"]["seed"], json!(hex(&SEED)));
     let cipher = deterministic_cipher(SEED).await;
@@ -219,7 +284,7 @@ async fn every_frozen_row_opens_and_seals_as_it_did() {
         "the deterministic source names the keyset it named"
     );
 
-    let cases = fixture["cases"].as_array().expect("a list of cases");
+    let cases = fixture["cases"].as_array_mut().expect("a list of cases");
     assert!(!cases.is_empty());
     for case in cases {
         let name = case["name"].as_str().expect("a name");
@@ -236,10 +301,26 @@ async fn every_frozen_row_opens_and_seals_as_it_did() {
 
         let resealed = json_of_node(seal(&cipher, &source, &plan).await);
         assert_eq!(
-            skeleton(&resealed),
-            skeleton(stored),
+            without_order_terms(&resealed),
+            without_order_terms(stored),
             "{name}: sealing the source today stores the same shape, terms and passthroughs"
         );
+        if refreeze {
+            refreeze_order_terms(&mut case["stored"], &resealed);
+        } else {
+            assert_eq!(
+                skeleton(&resealed),
+                skeleton(stored),
+                "{name}: only ORE or OPE terms moved. If that is deliberate, re-freeze them \
+                 with STACK_ENCRYPT_REFREEZE_ORDER_TERMS=1 and say so in the CHANGELOG \
+                 (tests/fixtures/README.md)"
+            );
+        }
+    }
+    if refreeze {
+        let mut text = serde_json::to_string_pretty(&fixture).expect("serialise");
+        text.push('\n');
+        std::fs::write(fixture_path(), text).expect("write the fixture");
     }
 }
 
@@ -493,13 +574,14 @@ fn cases() -> Vec<Case> {
 /// `cargo test -p stack-encrypt --all-features --test stored_rows -- --ignored`
 /// only to create the file for the first time.
 #[tokio::test]
-#[ignore = "writes stored_rows_v1.json once; the file is frozen and must never be rewritten"]
+#[ignore = "writes stored_rows_v1.json once; the file is frozen and never regenerated"]
 async fn write_stored_rows_v1() {
     let path = fixture_path();
     assert!(
         !path.exists(),
-        "{} is frozen: it records rows an earlier build stored, and must never be rewritten. \
-         A change to the stored format adds stored_rows_v2.json beside it.",
+        "{} is frozen: it records rows an earlier build stored, and is never regenerated. \
+         A change to the stored format adds stored_rows_v2.json beside it; order terms are \
+         re-frozen by the check itself (tests/fixtures/README.md).",
         path.display()
     );
     let cipher = deterministic_cipher(SEED).await;
@@ -523,7 +605,7 @@ async fn write_stored_rows_v1() {
         }));
     }
     let fixture = json!({
-        "_comment": "FROZEN. Records the next build stored, under a deterministic key source. Every later build must open each one to `opened` and seal its `source` to the same shape, terms and passthroughs. Read by tests/stored_rows.rs; the schema is in README.md beside this file. Never regenerate or edit this file: a change to the stored format adds stored_rows_v2.json beside it.",
+        "_comment": "FROZEN. Records the next build stored, under a deterministic key source. Every later build must open each one to `opened` and seal its `source` to the same shape, terms and passthroughs. Read by tests/stored_rows.rs; the schema is in README.md beside this file. Never regenerate this file, and edit it only as README.md allows for order terms: a change to the stored format adds stored_rows_v2.json beside it.",
         "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
         "keyset_id": cipher.default_keyset().keyset_id().to_string(),
         "cases": written,

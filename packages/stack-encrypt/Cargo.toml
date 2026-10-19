@@ -37,8 +37,14 @@ vitaminc-hmac = { workspace = true }
 # number whatever its width, text in Unicode 16 NFC. Match text is
 # normalized by the same crate before it is tokenized.
 vitaminc-normalize = { workspace = true }
+# The order targets (`OrderTarget`) and the scheme traits cllw-ore's
+# `vitaminc` feature implements, which order terms encrypt through.
+vitaminc-ore = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
+# `dynamic` only: serde over the transport frame, which reads a binding's
+# control data (statistics, options, a plan) into typed messages.
+vitaminc-aead-frame = { workspace = true, optional = true, features = ["serde"] }
 serde = { workspace = true }
 # `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
 base64ct = { version = "1.7", features = ["alloc"] }
@@ -64,7 +70,7 @@ http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # `stack_encrypt::dynamic`: encrypt and decrypt values whose types are known
 # only at runtime, as an FFI binding's are. Off by default — it is only of
 # use to a binding author. Its transport frames are vitaminc-aead's own.
-dynamic = []
+dynamic = ["dep:vitaminc-aead-frame"]
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.
@@ -86,10 +92,10 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 trybuild = "1"
 
 # The derive diagnostics are recorded with every feature on, as `test:unit`
-# and CI run them. They cannot hold under both feature sets — rustc lists a
-# trait's other implementors in its help, and the `dynamic` feature's
-# `FfiValue` joins one such list and pushes another entry off it — so the
-# test is only built with that feature rather than skipped at runtime.
+# and CI run them. They cannot be relied on to hold under both feature sets
+# — rustc lists a trait's other implementors in its help, and the `dynamic`
+# feature adds implementors (`ValueFrame`) that can join such a list — so
+# the test is only built with that feature rather than skipped at runtime.
 [[test]]
 name = "ui"
 required-features = ["dynamic"]

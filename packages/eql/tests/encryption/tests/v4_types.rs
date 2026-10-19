@@ -1,6 +1,6 @@
 //! The EQL v4 types Stack Encrypt produces besides `TextEq`: the
-//! storage-only integer, bigint, boolean, float and text types, the integer
-//! and float equality types, and `TextMatch`. `Json` is not producible yet: a
+//! storage-only integer, smallint, bigint, boolean, float and text types, the
+//! integer and float equality types, and `TextMatch`. `Json` is not producible yet: a
 //! JSON value seals as a tree of leaves and EQL's `c` holds one.
 //!
 //! Each type must round-trip through both entry points (the typed
@@ -14,7 +14,7 @@ mod common;
 use eql_bindings::encryption::targets::{self as targets, TargetError};
 use eql_bindings::encryption::{CiphertextVisitor, NativeCiphertextVisitor as NativeLeaf};
 use eql_bindings::v3::terms::Ciphertext;
-use eql_bindings::v4::{bigint, boolean, double, integer, real, text};
+use eql_bindings::v4::{bigint, boolean, double, integer, plaintext, real, smallint, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
 use stack_encrypt::dynamic::{ValueFrame, ValueKind};
@@ -116,12 +116,16 @@ async fn by_name<T: DeserializeOwned>(
 /// A sample plaintext of each kind a producible type takes.
 fn sample(kind: ValueKind) -> ValueFrame {
     match kind {
+        ValueKind::Int16 => frame::<i16>(i16::MIN),
         ValueKind::Int32 => frame::<i32>(-42),
         ValueKind::Int64 => frame::<i64>(i64::MIN + 1),
         ValueKind::Bool => frame::<bool>(true),
         ValueKind::Float32 => frame::<f32>(-0.0),
         ValueKind::Float64 => frame::<f64>(f64::NAN),
         ValueKind::String => frame("a private note"),
+        ValueKind::Date => frame(plaintext::Date::from_days_since_epoch(-719_162).unwrap()),
+        ValueKind::Timestamp => frame(plaintext::Timestamp::new(-1, 999_999_999).unwrap()),
+        ValueKind::Decimal => frame(plaintext::Decimal::new(-123_450, 2).unwrap()),
         other => panic!("no sample for {other:?}: add one with the type that takes it"),
     }
 }
@@ -148,6 +152,31 @@ async fn integers_round_trip_and_seal_the_leaf_their_frame_seals() {
         let named: integer::Integer = by_name(&keyset, "Integer", frame::<i32>(value)).await;
         let opened = targets::decrypt(
             "Integer",
+            &cipher,
+            &label(),
+            &serde_json::to_vec(&named).unwrap(),
+        )
+        .unwrap()
+        .await
+        .unwrap();
+        assert!(same(&opened, &frame(value)));
+    }
+
+    for value in [0i16, -1, i16::MIN, i16::MAX] {
+        let stored: smallint::Smallint = keyset.encrypt_as(&value, column()).await.unwrap();
+        assert_v4_envelope(&stored, &["v", "i", "c"]);
+        let opened: i16 = cipher
+            .decrypt_as(stored.clone(), column().into())
+            .await
+            .unwrap();
+        assert_eq!(opened, value);
+        assert!(same(
+            &as_frame(&cipher, stored.c.clone()).await,
+            &frame(value)
+        ));
+        let named: smallint::Smallint = by_name(&keyset, "Smallint", frame::<i16>(value)).await;
+        let opened = targets::decrypt(
+            "Smallint",
             &cipher,
             &label(),
             &serde_json::to_vec(&named).unwrap(),
@@ -215,6 +244,15 @@ async fn number_equality_terms_follow_the_semantic_baseline() {
         hm("BigintEq", frame::<i64>(42)).await,
         "one integer domain for every width"
     );
+    assert_eq!(
+        hm("SmallintEq", frame::<i16>(42)).await,
+        hm("IntegerEq", frame::<i32>(42)).await,
+        "a smallint too"
+    );
+    assert_ne!(
+        hm("SmallintEq", frame::<i16>(-1)).await,
+        hm("SmallintEq", frame::<i16>(1)).await
+    );
 
     assert_eq!(
         hm("RealEq", frame::<f32>(-0.0)).await,
@@ -265,6 +303,13 @@ async fn number_equality_types_round_trip_through_the_typed_entry_point() {
     assert_eq!(serde_json::to_value(&stored).unwrap()["hm"], named["hm"]);
     let opened: i32 = cipher.decrypt_as(stored, column().into()).await.unwrap();
     assert_eq!(opened, -7);
+
+    let stored: smallint::SmallintEq = keyset.encrypt_as(&i16::MIN, column()).await.unwrap();
+    assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
+    let named: serde_json::Value = by_name(&keyset, "SmallintEq", frame::<i16>(i16::MIN)).await;
+    assert_eq!(serde_json::to_value(&stored).unwrap()["hm"], named["hm"]);
+    let opened: i16 = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    assert_eq!(opened, i16::MIN);
 
     let stored: bigint::BigintEq = keyset.encrypt_as(&i64::MIN, column()).await.unwrap();
     assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
@@ -408,6 +453,13 @@ async fn every_producible_type_dispatches_by_name() {
                         "{name}: the query probes the stored term"
                     );
                 }
+                if target.indexes.contains(&"ope") {
+                    assert!(json["op"].is_string(), "{name} stores an op");
+                    assert_eq!(
+                        query["op"], json["op"],
+                        "{name}: the query compares the stored order term"
+                    );
+                }
             }
         }
     }
@@ -524,6 +576,8 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     let keyset = cipher.default_keyset();
     for (name, value, expected) in [
         ("Integer", frame::<i64>(1), ValueKind::Int32),
+        ("Smallint", frame::<i32>(1), ValueKind::Int16),
+        ("SmallintEq", frame::<i64>(1), ValueKind::Int16),
         ("Bigint", frame::<i32>(1), ValueKind::Int64),
         ("Boolean", frame::<i32>(1), ValueKind::Bool),
         ("Real", frame::<f64>(1.0), ValueKind::Float32),
@@ -557,6 +611,22 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     };
     let opened: Result<i32, _> = cipher.decrypt_as(moved, column().into()).await;
     assert!(opened.is_err(), "i64::MAX does not fit an i32");
+
+    let moved = smallint::Smallint {
+        v: narrow.v,
+        i: narrow.i.clone(),
+        c: narrow.c.clone(),
+    };
+    let opened: i16 = cipher.decrypt_as(moved, column().into()).await.unwrap();
+    assert_eq!(opened, 42, "an i32 that fits opens as an i16");
+    let big: integer::Integer = keyset.encrypt_as(&70_000i32, column()).await.unwrap();
+    let moved = smallint::Smallint {
+        v: narrow.v,
+        i: big.i,
+        c: big.c,
+    };
+    let opened: Result<i16, _> = cipher.decrypt_as(moved, column().into()).await;
+    assert!(opened.is_err(), "70000 does not fit an i16");
 
     let flag: boolean::Boolean = keyset.encrypt_as(&true, column()).await.unwrap();
     let moved = integer::Integer {
@@ -913,6 +983,253 @@ fn postgres_finds_number_equality_rows() {
     );
 }
 
+/// Needs an EQL v4 installation. A `Smallint` stores and reads back, and
+/// `=` on a `SmallintEq` column finds the rows its query names, including
+/// the extremes of the width.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_stores_and_finds_smallint_rows() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = postgres::Client::connect(
+        &std::env::var("EQL_TEST_DATABASE_URL").expect("EQL_TEST_DATABASE_URL"),
+        postgres::NoTls,
+    )
+    .unwrap();
+    db.batch_execute(
+        "CREATE TEMP TABLE v4_smallint (
+            id int PRIMARY KEY,
+            plain public.eql_v4_smallint,
+            searchable public.eql_v4_smallint_eq
+        );",
+    )
+    .unwrap();
+    let json = |value: &dyn erased::Json| value.to_json();
+    for (id, value) in [(1, i16::MIN), (2, 7i16), (3, i16::MAX), (4, 7)] {
+        let (plain, searchable) = runtime.block_on(async {
+            (
+                keyset
+                    .encrypt_as::<_, smallint::Smallint>(&value, column())
+                    .await
+                    .unwrap(),
+                keyset
+                    .encrypt_as::<_, smallint::SmallintEq>(&value, column())
+                    .await
+                    .unwrap(),
+            )
+        });
+        db.execute(
+            "INSERT INTO v4_smallint VALUES ($1,
+                $2::text::jsonb::public.eql_v4_smallint,
+                $3::text::jsonb::public.eql_v4_smallint_eq)",
+            &[&id, &json(&plain), &json(&searchable)],
+        )
+        .unwrap();
+    }
+    let mut ids = |value: i16| -> Vec<i32> {
+        let query: smallint::SmallintEqQuery = runtime
+            .block_on(async { keyset.encrypt_as(&value, column()).await })
+            .unwrap();
+        db.query(
+            "SELECT id FROM v4_smallint WHERE searchable = $1::text::jsonb::eql_v4.query_smallint_eq ORDER BY id",
+            &[&json(&query)],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect()
+    };
+    assert_eq!(ids(7), [2, 4]);
+    assert_eq!(ids(i16::MIN), [1]);
+    assert_eq!(ids(i16::MAX), [3]);
+    assert_eq!(ids(8), Vec::<i32>::new());
+
+    let back: String = db
+        .query_one("SELECT plain::text FROM v4_smallint WHERE id = 1", &[])
+        .unwrap()
+        .get(0);
+    let opened: i16 = runtime
+        .block_on(async {
+            cipher
+                .decrypt_as(
+                    serde_json::from_str::<smallint::Smallint>(&back).unwrap(),
+                    column().into(),
+                )
+                .await
+        })
+        .unwrap();
+    assert_eq!(opened, i16::MIN);
+
+    // The storage-only column has no equality operator.
+    let err = db
+        .query("SELECT id FROM v4_smallint WHERE plain = plain", &[])
+        .unwrap_err();
+    let message = err.as_db_error().map(|e| e.message()).unwrap_or_default();
+    assert!(
+        message.contains("is not supported for public.eql_v4_smallint"),
+        "{message}"
+    );
+}
+
+/// `fixtures/v4_smallint_rows.json`: `Tally` rows the Go SDK's generated
+/// code sealed over the deterministic EQL guest
+/// (`TestV4SmallintRowsMatchTheCommittedFixture` writes it).
+mod go_tally {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[derive(serde::Deserialize)]
+    pub struct Fixture {
+        pub seed: String,
+        pub table: String,
+        pub rows: Vec<Row>,
+    }
+    #[derive(serde::Deserialize)]
+    pub struct Row {
+        pub id: i32,
+        pub plaintext: Plain,
+        pub stored: BTreeMap<String, serde_json::Value>,
+    }
+    #[derive(serde::Deserialize)]
+    pub struct Plain {
+        pub small: i16,
+        pub tally: i16,
+        pub wide: i32,
+    }
+
+    /// The committed rows, or the file `EQL_V4_SMALLINT_ROWS` names: CI
+    /// points it at rows the Go SDK sealed in the same job, so today's Go
+    /// ciphertexts reach Rust, not only the committed ones.
+    pub fn fixture() -> Fixture {
+        let path = std::env::var_os("EQL_V4_SMALLINT_ROWS").map_or_else(
+            || {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("fixtures/v4_smallint_rows.json")
+            },
+            std::path::PathBuf::from,
+        );
+        let raw = std::fs::read_to_string(path).expect(
+            "fixtures/v4_smallint_rows.json is written by the Go SDK's \
+             TestV4SmallintRowsMatchTheCommittedFixture",
+        );
+        serde_json::from_str(&raw).unwrap()
+    }
+
+    /// Open every field of `row` as its v4 type and check it against what
+    /// Go sealed. The `int32` field `wide` was sealed at 16 bits, so it
+    /// opens as an `i16` here.
+    pub async fn open_row(
+        cipher: &stack_encrypt::StackCipher<stack_kms::DeterministicSource>,
+        row: &Row,
+    ) {
+        let column = |name: &str| Identifier::for_column("profiles", name).unwrap();
+        let parsed = |name: &str| row.stored[name].clone();
+        let small: i16 = cipher
+            .decrypt_as(
+                serde_json::from_value::<smallint::Smallint>(parsed("small")).unwrap(),
+                column("small").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(small, row.plaintext.small, "row {} small", row.id);
+        let tally: i16 = cipher
+            .decrypt_as(
+                serde_json::from_value::<smallint::SmallintEq>(parsed("tally")).unwrap(),
+                column("tally").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(tally, row.plaintext.tally, "row {} tally", row.id);
+        let wide: i16 = cipher
+            .decrypt_as(
+                serde_json::from_value::<smallint::SmallintEq>(parsed("wide")).unwrap(),
+                column("wide").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(i32::from(wide), row.plaintext.wide, "row {} wide", row.id);
+    }
+}
+
+/// What the Go SDK sealed as `Smallint` and `SmallintEq` parses as each
+/// type and opens in Rust, at 16 bits, field by field.
+#[tokio::test]
+async fn smallint_rows_the_go_sdk_sealed_open_in_rust() {
+    let fixture = go_tally::fixture();
+    assert_eq!(fixture.table, "profiles");
+    assert!(fixture.rows.len() > 1);
+    let cipher = go_rows::cipher(&fixture.seed).await;
+    for row in &fixture.rows {
+        go_tally::open_row(&cipher, row).await;
+    }
+}
+
+/// The Go-sealed smallint rows in PostgreSQL: each value passes its domain
+/// check, and `=` with the fixture's `SmallintEq` query (which the Go SDK's
+/// test derives byte for byte) finds the rows holding that value.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_stores_and_queries_smallint_rows_the_go_sdk_sealed() {
+    let fixture = go_tally::fixture();
+    let mut db = postgres::Client::connect(
+        &std::env::var("EQL_TEST_DATABASE_URL").expect("EQL_TEST_DATABASE_URL"),
+        postgres::NoTls,
+    )
+    .unwrap();
+    db.batch_execute(
+        "CREATE TEMP TABLE go_tallies (
+            id int PRIMARY KEY,
+            small public.eql_v4_smallint,
+            tally public.eql_v4_smallint_eq,
+            wide public.eql_v4_smallint_eq
+        );",
+    )
+    .unwrap();
+    for row in &fixture.rows {
+        let v = |column: &str| row.stored[column].to_string();
+        db.execute(
+            "INSERT INTO go_tallies VALUES ($1,
+                $2::text::jsonb::public.eql_v4_smallint,
+                $3::text::jsonb::public.eql_v4_smallint_eq,
+                $4::text::jsonb::public.eql_v4_smallint_eq)",
+            &[&row.id, &v("small"), &v("tally"), &v("wide")],
+        )
+        .unwrap();
+    }
+    let queries: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_queries.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let plaintext = queries["tally"]["plaintext"].as_i64().unwrap();
+    let expected: Vec<i32> = fixture
+        .rows
+        .iter()
+        .filter(|r| i64::from(r.plaintext.tally) == plaintext)
+        .map(|r| r.id)
+        .collect();
+    assert!(
+        !expected.is_empty() && expected.len() < fixture.rows.len(),
+        "the fixture splits the rows"
+    );
+    let ids: Vec<i32> = db
+        .query(
+            "SELECT id FROM go_tallies WHERE tally = $1::text::jsonb::eql_v4.query_smallint_eq ORDER BY id",
+            &[&queries["tally"]["query"].as_str().unwrap()],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(ids, expected, "= over Go-sealed tally");
+}
+
 /// A stored value's JSON text, for binding as `$n::text::jsonb`.
 mod erased {
     pub trait Json {
@@ -974,6 +1291,10 @@ async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
         "email": {
             "plaintext": "alice@example.com",
             "query": query("TextEq", "email", frame("alice@example.com")).await,
+        },
+        "tally": {
+            "plaintext": -12,
+            "query": query("SmallintEq", "tally", frame::<i16>(-12)).await,
         },
     });
     let path =

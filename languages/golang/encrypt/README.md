@@ -117,6 +117,25 @@ ZeroKMS round trip `NewClient` makes. It has nothing to do with an
 *encryption* context, which is what a field is sealed under; that is the
 `context=` tag.
 
+Every call takes a `ctx` too, and a call whose `ctx` is cancelled or passes
+its deadline fails with the context's error. Only that call fails: one
+request giving up never closes the shared client for the others.
+
+- A call waiting for the client (it runs one call at a time) leaves the
+  queue when its `ctx` ends, and never starts.
+- A call waiting on ZeroKMS has that request cancelled. Its error matches
+  both `context.Canceled` or `context.DeadlineExceeded` and `ErrTransport`.
+- A call waiting on its auth strategy for a token returns too, with the
+  context's error. If the strategy is refreshing a device session, the
+  refresh finishes in the background, for up to 10 seconds. The service
+  rotates the refresh token when it answers, and dropping that answer
+  would leave the strategy unable to refresh.
+
+A client closes itself, and every later call returns `ErrState`, only when
+the guest's state is unknown: the guest trapped, or a call ran on for 30
+seconds after its `ctx` ended, which means a bug. A service that sees
+`ErrState` from a client it did not close builds a new one.
+
 Every other setting is a functional option with a default:
 
 ```go
@@ -210,20 +229,21 @@ or a type defined over one (`type Email string`):
 
 | Go field | Seals as | Indexes it can store | Query methods |
 |---|---|---|---|
-| `string` | text | `equality`, `match`, `ore`, `ope` | `Eq`, `Matches` |
+| `string` | text | `equality`, `match`, `ore`, `ope` | `Eq`, `Matches`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
 | `[]byte` | bytes | `equality`, `ore`, `ope` | `Eq` |
 | `bool` | a boolean | none | none |
-| `int8`, `int16`, `int32`, `int64`, `int` | an integer of the field's own width (`int` is 64-bit) | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
-| `uint8` (`byte`), `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` | the same |
+| `int16`, `int32`, `int64`, `int` | an integer of the field's own width (`int` is 64-bit) | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
+| `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` | the same |
+| `int8`, `uint8` (`byte`) | an 8-bit integer | `equality` | `Eq` |
 | `encrypt.Int128`, `encrypt.Uint128` | a 128-bit integer | `equality`, `ore`, `ope` | the same |
-| `float32`, `float64` | a float of its width | `equality`, `ore`, `ope` | `Eq` |
+| `float32`, `float64` | a float of its width | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
 | `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` | `Eq` |
 | `encrypt.Date` | a calendar date | `equality` | `Eq` |
 | `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
 
-Each query method needs its index declared. An `ore` or `ope` index on text,
-bytes or a float stores its term, but the engine answers no ordering through
-it yet, so such a field has no `Lt` (see [Queries](#queries)).
+Each query method needs its index declared. An `ore` or `ope` index on bytes
+stores its term, but the engine answers no ordering through it, so such a
+field has no `Lt` (see [Queries](#queries)).
 
 `encrypt.Date`, `Int128`, `Uint128` and `Decimal` are vitaminc's `vcvalue`
 types; build them with `encrypt.DateOf`, `ParseInt128`, `ParseUint128` and
@@ -234,12 +254,15 @@ sealed with, but a zero has no sign: `-0.00` opens as `0.00`. The zero
 `ErrEncoding`, naming the field; so is a decimal or a `time.Time` outside
 vitaminc's range. A sealed field cannot be a pointer, so an optional date has
 no sealed form yet: keep it in an opaque struct, or use a sentinel date. Each integer type seals at its own
-width, and each width is passed to the order scheme as itself, so an `int8`
-field's terms are an `int8`'s. Equality follows vitaminc's normalisation: an
+width, and each width is passed to the order scheme as itself, so an `int16`
+field's terms are an `int16`'s. An `int8` or `uint8` field has no order
+index: with 256 values, an order term would rank every row among 256, which
+a few known rows resolve to the values, as a `bool`'s would say which rows
+are true. Equality follows vitaminc's normalisation: an
 integer equals itself at every width, decimals compare at any scale
-(`1.50 = 1.5`), and a timestamp compares to the microsecond. An order index on
-a decimal, date or timestamp is refused for now: those order terms wait for
-new cllw-ore and ore-rs releases (#1236).
+(`1.50 = 1.5`), and a timestamp compares to the microsecond, truncated, never rounded. An order index on
+a decimal, date or timestamp is refused for now: the engine derives no
+order term for those kinds yet.
 
 A `match` index stores text with no token (an empty string, separator-only
 text, or text shorter than the n-gram length of 3 characters) as the empty
@@ -279,17 +302,32 @@ rules.
 | The field declares | Methods | Each returns |
 |---|---|---|
 | `index=equality` | `Eq` | `encrypt.EqualityTerm` |
-| `index=ore` or `index=ope`, on an integer of any width | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
+| `index=ore` or `index=ope`, on an integer of 16 bits or wider or a string | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
 | the same | `Between(ctx, cipher, lo, hi)` | `encrypt.Range[encrypt.OreTerm]` or `encrypt.Range[encrypt.OpeTerm]`, the two bounds' terms |
 | `index=match`, on a string | `Matches` | `encrypt.MatchQuery[T]` |
 | `encrypt_into=TextEq` | `Eq` | `eql.TextEqQuery` |
 | `encrypt_into=TextMatch` | `Matches` | `encrypt.EQLMatchQuery[eql.TextMatchQuery, T]` |
 
 A method takes the field's own Go type, so `Fields.Age.Lt` on a `uint32`
-field takes a `uint32`. An order index on text, bytes or a float stores its
-term but answers no ordering operator yet, so such a field has no `Lt`; nor
-does the `ope` index of a field that declares `ore` too, since `ore` answers
-the orderings. stashgen prints a notice for each such index, on stderr and in
+field takes a `uint32`.
+
+Text orders by its folded form (ADR-0002): case and accents are folded and
+`ß` becomes `ss`, under Unicode 16. So `Café`, `cafe` and `CAFÉ` are one
+value and tie, `alice` orders before `Zoe`, and `é` orders with `e`, not
+after `z`. `Between` is inclusive at both ends and, as SQL's `BETWEEN`,
+does not refuse a range whose low bound is above its high bound: such a
+range matches nothing. So `Between("b", "A")` matches nothing, since `A`
+folds to `a`, below `b`. Text holding a code point Unicode 16 does not assign has no
+fold, and its query or write is refused with `encrypt.ErrTerm`.
+
+Floats order as PostgreSQL's `float8` does (ADR-0002): `-0.0` and `0.0` are
+one value, and every NaN is one value, above `+Inf`, so `Between(math.NaN(),
+math.Inf(1))` matches nothing. A `float32` orders as the `float64` it
+widens to.
+
+An order index on bytes stores its term but answers no ordering
+operator, so such a field has no `Lt`; nor does the `ope` index of a field
+that declares `ore` too, since `ore` answers the orderings. stashgen prints a notice for each such index, on stderr and in
 the generated file: the terms are stored, and only your own code can compare
 them. A match index on an index-only field (`index=match` with no `encrypt`)
 is refused, because `Verify` checks a match query's rows by decrypting them.
@@ -380,7 +418,11 @@ or for stored data. Check an error two ways.
   its field's context (ZeroKMS refuses the key, or the AEAD fails).
 - `ErrEncoding`: a stored value or a call that does not fit the declaration.
 - `ErrUnauthorized`, `ErrNotFound`, `ErrTransport`, `ErrKMS`: ZeroKMS.
-- `ErrState`: a call on a closed client. `ErrMemoryLock`: see below.
+- `ErrState`: a call on a closed client: you closed it, or the guest
+  trapped or ran on long after a call's context ended (see Connect).
+  `ErrMemoryLock`: see below.
+- `context.Canceled`, `context.DeadlineExceeded`: the call's `ctx` ended.
+  The client is still open.
 
 `errors.As` with a `*Diagnostic` gives you the detail behind a failure the
 engine reports: a stable `Code` (`stack_encrypt::foreign_keyset`,
@@ -441,20 +483,35 @@ The EQL types the engine produces, and the Go field types each takes:
 |---|---|---|
 | `TextEq` | `string` | `=`, `<>` |
 | `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
+| `TextOrd`, `TextOrdOpe` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Text` | `string` | none: stored and read only |
+| `Smallint` | `int16`, or any Go integer type (see below) | none |
+| `SmallintEq` | the same | `=`, `<>` |
+| `SmallintOrd`, `SmallintOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Integer` | `int32`, or any Go integer type (see below) | none |
 | `IntegerEq` | the same | `=`, `<>` |
+| `IntegerOrd`, `IntegerOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Bigint` | `int64`, or any Go integer type | none |
 | `BigintEq` | the same | `=`, `<>` |
+| `BigintOrd`, `BigintOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Boolean` | `bool` | none |
 | `Real` | `float32` | none |
 | `RealEq` | `float32` | `=`, `<>` |
+| `RealOrd`, `RealOrdOpe` | `float32` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Double` | `float64` | none |
 | `DoubleEq` | `float64` | `=`, `<>` |
+| `DoubleOrd`, `DoubleOrdOpe` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `Date` | `encrypt.Date` | none |
+| `DateEq` | `encrypt.Date` | `=`, `<>` |
+| `Timestamp` | `time.Time` | none |
+| `TimestampEq` | `time.Time` | `=`, `<>` (to the microsecond, truncated) |
+| `Numeric` | `encrypt.Decimal` | none |
+| `NumericEq` | `encrypt.Decimal` | `=`, `<>` (`1.5 = 1.50`) |
 
 Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
 is sealed at the type's width, and opens back into the field's type. A type
-every value of which fits (an `int16` or a `uint16` field for `Integer`)
+every value of which fits (an `int16` or a `uint16` field for `Integer`, an
+`int8` for `Smallint`)
 always seals; a wider one (an `int64` or a `uint32` field for `Integer`) is
 range checked value by value, and `Encrypt` refuses a value that does not fit
 with `ErrEncoding`, naming the field's kind and not the value.
@@ -465,8 +522,35 @@ A `TextMatch` value must be at least three characters long: shorter text has
 no 3-grams to index and is refused. The number equality types compare as
 PostgreSQL compares the plain types: an integer equals itself whatever its
 width, and for floats `-0.0 = 0.0` and `NaN = NaN`; the stored value still
-decrypts to exactly what was written. The rest of
-the catalog (ordering, dates, decimals, JSON) is listed in
+decrypts to exactly what was written. The same holds for the date,
+timestamp and numeric types: `NumericEq` normalises the scale, so `1.5` and
+`1.50` are equal, and `TimestampEq` compares to the microsecond, truncating
+(never rounding) the nanoseconds below it, so two instants in one
+microsecond are equal; each still opens as it was written, a
+decimal with its scale and a `time.Time` with its nanoseconds, in UTC. A
+`time.Time` is sealed as its instant, whatever its location. A zero
+`encrypt.Date`, a date or instant outside years -262143 to 262142 and a
+decimal with more than 28 digits after the point are refused with
+`ErrEncoding`. The ordered date, timestamp and numeric types are not
+produced yet: the engine derives no order term for these kinds.
+
+The `Ord` and `OrdOpe` types store an OPE term, which EQL compares as bytes,
+and order by ADR-0002's order key: integers by value, floats as PostgreSQL's
+`float8` sorts them (`-0.0` ties `0.0`, every NaN is one value after
+`+Infinity`), text by its fold (case and accents folded, under Unicode 16).
+A field gets `Lt`, `Lte`, `Gt` and `Gte`, and a text field `Eq` too; sort
+with `ORDER BY eql_v4.ord_term(col)`. `ord_term` returns a `bytea` domain, so
+a plain functional btree index, `CREATE INDEX ON t (eql_v4.ord_term(col))`,
+serves `<`, `>` and `ORDER BY` with no operator class. That is why these
+types work on an install without superuser rights, where the ORE operator
+class is skipped. On a number column SQL's `=` compares
+the order term; stashgen writes no `Eq` method for one yet, since the engine
+answers `Eq` through an equality term only. A text order type also stores
+`TextEq`'s equality term, and `=` reads that, so `Café` and `cafe` are
+neither `<` nor `>` each other and not `=` either. Text holding a code point
+Unicode 16 does not assign has no order term and is refused. There is no
+`Between` method yet: a `BETWEEN` needs EQL v4's range query domains. The rest of
+the catalog (ORE ordering, ordered dates, timestamps and decimals, JSON) is listed in
 `eql.Types` with the reason it is not produced yet, and `stashgen` refuses it
 with that reason. The guest builds the value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the

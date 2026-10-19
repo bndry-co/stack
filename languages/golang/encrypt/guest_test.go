@@ -15,13 +15,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cipherstash/stack/languages/golang/auth"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/sys"
 )
 
 // Tests that drive the embedded guest without a live ZeroKMS. What they
@@ -277,53 +275,6 @@ func TestRoundTripperFailureIsTransport(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-// An interrupted call closes the module (WithCloseOnContextDone); the
-// client must then be closed rather than a wedge or a runtime error.
-func TestInterruptedCallClosesTheClient(t *testing.T) {
-	t.Run("deadline during a request", func(t *testing.T) {
-		guestOrSkip(t)
-		cfg := testConfig("http://zerokms.invalid")
-		cfg = append(cfg, WithTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			<-r.Context().Done()
-			return nil, r.Context().Err()
-		})))
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		defer cancel()
-		_, err := NewClient(ctx, cfg...)
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("NewClient: %v, want the deadline", err)
-		}
-	})
-	t.Run("closed module is ErrState", func(t *testing.T) {
-		ctx := context.Background()
-		c := rawInstance(t)
-		// What the runtime does to the module when a call's context ends.
-		if err := c.inst.module.CloseWithExitCode(ctx, sys.ExitCodeContextCanceled); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := c.Keyset(KeysetName("k")).KeysetID(ctx); !errors.Is(err, ErrState) {
-			t.Fatalf("Keyset on a closed module: %v, want ErrState", err)
-		}
-		if err := c.Close(); err != nil {
-			t.Fatalf("Close after interruption: %v", err)
-		}
-		// The close must reach the runtime. An interrupted call closes the
-		// module and marks the client closed; a Close that treated that as
-		// "already done" would leave the runtime and the host module it
-		// carries allocated for the life of the process.
-		if !c.released {
-			t.Error("Close after interruption left the runtime unreleased")
-		}
-		if m := c.inst.runtime.Module(transportModule); m != nil {
-			t.Errorf("host module %s is still registered after Close", transportModule)
-		}
-		// Still idempotent.
-		if err := c.Close(); err != nil {
-			t.Fatalf("second Close: %v", err)
-		}
-	})
-}
 
 // A response the host would have to buffer without bound is refused as a
 // transport failure, whether the size is announced or streamed.

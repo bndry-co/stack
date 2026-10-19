@@ -17,7 +17,7 @@
 //!   the field does not answer as it refuses a value of the wrong type, with
 //!   [`Error::Source`] naming the field.
 //! - [`field_operators`] lists the operators a plan field answers, each with
-//!   the index that answers it ([`operator_to_value`] writes one): what a
+//!   the index that answers it ([`OperatorEntry`] is one's wire form): what a
 //!   generator asks before the program runs, so it writes one query method
 //!   per operator the engine answers and holds no copy of the table.
 //! - [`verify`] and [`target_limit`] are a probabilistic term's two
@@ -35,13 +35,16 @@
 //! A field with indexes answers what [`OpSpec::answered_by`] says for its
 //! declared kind: `eq` through an equality index, `matches` through a match
 //! index over text, and the orderings (`lt`, `lte`, `gt`, `gte`,
-//! `between`) through an ORE index over an integer, or an OPE index when
-//! the field declares no ORE. The typed path's default for an ordering is
-//! ORE, and OPE is the typed path's `.via(Ope)`; here a field that declares
-//! only OPE is answered through it. An ordering over text, bytes or a float
-//! is not answered, as `op::Ordered` covers the integers only (of every
-//! width, `int8` to `uint128`). Nor is one over a decimal, date or
-//! timestamp: a plan cannot declare an order index on one until #1236.
+//! `between`) through an ORE index over an integer of 16 bits or wider, a
+//! float or text, or an OPE index when the field declares no ORE. The typed
+//! path's default for an ordering is ORE, and OPE is the typed path's
+//! `.via(Ope)`; here a field that declares only OPE is answered through it.
+//! Every order term is derived over the value's ADR-0002 order key: a
+//! float's ties `-0.0` with `0.0` and sorts every NaN last, and text's is
+//! its fold. An ordering over bytes is not answered, as `op::Ordered` does
+//! not cover them. Nor is one over an 8-bit integer, which has no order
+//! term, or over a decimal, date or timestamp: a plan cannot declare an
+//! order index on one yet.
 //!
 //! A field that names an EQL type answers what its
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
@@ -58,14 +61,18 @@
 //! # Wire format
 //!
 //! An operator is its [`name`](OpSpec::name). A query term is the object
-//! [`QueryTerm::to_value`] writes, the statistics the object
-//! [`Stats::from_value`] reads, and a limit the value
-//! [`limit_to_value`] writes; each is documented where it is written.
+//! [`QueryTerm`] serializes to, the statistics the frame object
+//! [`Stats::from_frame`] reads, and a limit [`Limit::rows`]: an unsigned
+//! 64-bit integer, or null for no finite fetch. Each answer is written to a
+//! frame by serde (`vitaminc_aead_frame::serde`) and documented on its
+//! type.
 //!
 //! [`Probabilistic::verify`]: crate::op::Probabilistic::verify
 //! [`Probabilistic::target_limit`]: crate::op::Probabilistic::target_limit
 
-use std::cmp::Ordering;
+use serde::{Serialize, Serializer};
+
+use super::WireBytes;
 use std::fmt;
 
 use stack_kms::DataKeySource;
@@ -75,7 +82,7 @@ use super::term::OneScalar;
 use super::term::{derive, Use};
 use super::value_frame::Parts;
 use super::ValueKind;
-use super::{admits, read, Error, FfiValue, Reason, TargetDescriptor, TargetResolver, ValueFrame};
+use super::{admits, read, Error, Reason, TargetDescriptor, TargetResolver, ValueFrame};
 use crate::op::{Limit, Stats};
 use crate::sem::{match_limit, MatchOptions, QueryTokens, TermError};
 use crate::target::IndexSpec;
@@ -167,7 +174,9 @@ impl OpSpec {
     ///
     /// let both = [IndexSpec::Ope, IndexSpec::Ore];
     /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::UInt32, &both), Some(&IndexSpec::Ore));
-    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::String, &both), None);
+    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::String, &both), Some(&IndexSpec::Ore));
+    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::Float32, &both), Some(&IndexSpec::Ore));
+    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::Bytes, &both), None);
     /// assert_eq!(OpSpec::Eq.answered_by(ValueKind::UInt32, &both), None);
     /// ```
     pub fn answered_by(self, kind: ValueKind, indexes: &[IndexSpec]) -> Option<&IndexSpec> {
@@ -194,22 +203,26 @@ impl fmt::Display for OpSpec {
     }
 }
 
-/// The kinds the ordering operators are answered over: the integers of
-/// every width, `int8` to `uint128`, as [`op::Ordered`](crate::op::Ordered)
-/// covers them in the typed path.
+/// The kinds the ordering operators are answered over: the integers of 16
+/// bits and wider, `int16` to `uint128`, the floats and text, as
+/// [`op::Ordered`](crate::op::Ordered) covers them in the typed path. Not
+/// `int8` or `uint8`, which have no order term. Each orders by its ADR-0002
+/// order key; a `float32` is ordered as the `f64` it widens to, as the
+/// typed path asks.
 fn ordered(kind: ValueKind) -> bool {
     matches!(
         kind,
-        ValueKind::Int8
-            | ValueKind::Int16
+        ValueKind::Int16
             | ValueKind::Int32
             | ValueKind::Int64
             | ValueKind::Int128
-            | ValueKind::UInt8
             | ValueKind::UInt16
             | ValueKind::UInt32
             | ValueKind::UInt64
             | ValueKind::UInt128
+            | ValueKind::Float32
+            | ValueKind::Float64
+            | ValueKind::String
     )
 }
 
@@ -304,6 +317,46 @@ pub enum Operand {
     },
 }
 
+/// The term in its wire form: an object with every key present, an
+/// absent value null.
+///
+/// | key | value |
+/// |---|---|
+/// | `operator` | string: the [operator's name](OpSpec::name), `"matches"` |
+/// | `fidelity` | string: `"exact"` or `"probabilistic"` ([`Fidelity::name`]) |
+/// | `index` | string: the [key](IndexSpec::key) of the index that answers, `"match"` |
+/// | `domain` | string or null: the query value's PostgreSQL domain, for a field that names an EQL type |
+/// | `term` | bytes: the term, or for `between` a list of two byte strings, the low bound's term then the high's |
+impl Serialize for QueryTerm {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Wire<'a> {
+            operator: &'static str,
+            fidelity: &'static str,
+            index: &'static str,
+            domain: Option<&'a str>,
+            term: Term<'a>,
+        }
+        #[derive(Serialize)]
+        #[serde(untagged)]
+        enum Term<'a> {
+            One(WireBytes<'a>),
+            Range([WireBytes<'a>; 2]),
+        }
+        Wire {
+            operator: self.operator.name(),
+            fidelity: self.fidelity().name(),
+            index: self.index.key(),
+            domain: self.domain.as_deref(),
+            term: match &self.operand {
+                Operand::One(term) => Term::One(WireBytes(term)),
+                Operand::Range { lo, hi } => Term::Range([WireBytes(lo), WireBytes(hi)]),
+            },
+        }
+        .serialize(s)
+    }
+}
+
 impl QueryTerm {
     /// The operator the term answers.
     pub fn operator(&self) -> OpSpec {
@@ -329,45 +382,6 @@ impl QueryTerm {
     /// What the term binds.
     pub fn operand(&self) -> &Operand {
         &self.operand
-    }
-
-    /// The term in its wire form: an object with every key present, an
-    /// absent value null.
-    ///
-    /// | key | value |
-    /// |---|---|
-    /// | `operator` | string: the [operator's name](OpSpec::name), `"matches"` |
-    /// | `fidelity` | string: `"exact"` or `"probabilistic"` ([`Fidelity::name`]) |
-    /// | `index` | string: the [key](IndexSpec::key) of the index that answers, `"match"` |
-    /// | `domain` | string or null: the query value's PostgreSQL domain, for a field that names an EQL type |
-    /// | `term` | bytes: the term, or for `between` a list of two byte strings, the low bound's term then the high's |
-    pub fn to_value(&self) -> FfiValue {
-        let bytes = |b: &[u8]| FfiValue::Bytes(vitaminc_protected::Protected::new(b.to_vec()));
-        let term = match &self.operand {
-            Operand::One(term) => bytes(term),
-            Operand::Range { lo, hi } => FfiValue::Array(vec![bytes(lo), bytes(hi)]),
-        };
-        FfiValue::Object(vec![
-            (
-                "operator".to_owned(),
-                FfiValue::String(self.operator.name().into()),
-            ),
-            (
-                "fidelity".to_owned(),
-                FfiValue::String(self.fidelity().name().into()),
-            ),
-            (
-                "index".to_owned(),
-                FfiValue::String(self.index.key().into()),
-            ),
-            (
-                "domain".to_owned(),
-                self.domain
-                    .as_deref()
-                    .map_or(FfiValue::Null, |domain| FfiValue::String(domain.into())),
-            ),
-            ("term".to_owned(), term),
-        ])
     }
 }
 
@@ -470,27 +484,21 @@ fn answers(
 /// answers what the type's [`TargetDescriptor::operators`] lists; a field
 /// with no declared kind answers none. The context does not matter, so a
 /// plan whose context is a field of each record is taken. Write each entry
-/// with [`operator_to_value`].
+/// as an [`OperatorEntry`].
 ///
 /// ```
-/// use stack_encrypt::dynamic::{field_operators, record, FfiValue, NoTargets, OpSpec};
+/// use stack_encrypt::dynamic::{field_operators, record, NoTargets, OpSpec};
 /// use stack_encrypt::target::IndexSpec;
 ///
-/// let text = |s: &str| FfiValue::String(s.into());
-/// let plan = record::plan(FfiValue::Object(vec![(
-///     "age".into(),
-///     FfiValue::Object(vec![
-///         ("context".into(), FfiValue::Array(vec![text("users"), text("age")])),
-///         ("outputs".into(), FfiValue::Array(vec![text("c"), text("eq"), text("ore")])),
-///         ("type".into(), text("uint32")),
-///     ]),
-/// )]))?;
+/// let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+///     "age": { "context": ["users", "age"], "outputs": ["c", "eq", "ore"], "type": "uint32" },
+/// }))?)?;
 ///
 /// let operators = field_operators(&plan, "age", &NoTargets)?;
 /// assert_eq!(operators[0], (OpSpec::Eq, IndexSpec::Equality));
 /// assert_eq!(operators[1], (OpSpec::Lt, IndexSpec::Ore));
 /// assert_eq!(operators.len(), 6, "eq, the four comparisons and between");
-/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Errors
@@ -515,17 +523,24 @@ pub fn field_operators(
 /// | `fidelity` | string: `exact` or `probabilistic` ([`Fidelity::name`]) |
 /// | `arity` | string: `one`, or `pair` for an operator whose input is two values, low then high |
 /// | `index` | string: the [key](IndexSpec::key) of the index that answers it, `eq` |
-pub fn operator_to_value(operator: OpSpec, index: &IndexSpec) -> FfiValue {
-    let text = |s: &str| FfiValue::String(s.into());
-    FfiValue::Object(vec![
-        ("operator".to_owned(), text(operator.name())),
-        ("fidelity".to_owned(), text(operator.fidelity().name())),
-        (
-            "arity".to_owned(),
-            text(if operator.takes_pair() { "pair" } else { "one" }),
-        ),
-        ("index".to_owned(), text(index.key())),
-    ])
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct OperatorEntry {
+    operator: &'static str,
+    fidelity: &'static str,
+    arity: &'static str,
+    index: &'static str,
+}
+
+impl OperatorEntry {
+    /// The entry for `operator`, answered by `index`.
+    pub fn new(operator: OpSpec, index: &IndexSpec) -> Self {
+        Self {
+            operator: operator.name(),
+            fidelity: operator.fidelity().name(),
+            arity: if operator.takes_pair() { "pair" } else { "one" },
+            index: index.key(),
+        }
+    }
 }
 
 /// Refuse a plan whose context is a field of each record: a term derives
@@ -578,18 +593,24 @@ fn not_a_range(field: &str) -> Error {
 }
 
 /// The refusals the typed path makes when a query is awaited, before any
-/// term exists ([`Supports::check`](crate::op::Supports::check)): a range
-/// whose low bound is above its high bound, and match text the index
-/// cannot normalize or that cuts no token. The match index's own
-/// derivation refuses the last two again; asking here lets a binding
-/// refuse at its boundary.
+/// term exists ([`Supports::check`](crate::op::Supports::check)): match
+/// text the index cannot normalize or that cuts no token, and equality
+/// text the scheme cannot normalize. Each index's own derivation refuses
+/// these again; asking here lets a binding refuse at its boundary. A range
+/// whose low bound is above its high bound is not refused: as SQL's
+/// `BETWEEN`, it matches nothing.
 fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
     let refused = |error: TermError| Error::Cipher(error.into());
     match (index, input) {
-        (_, Input::Pair(lo, hi)) => {
-            if integer_order(lo, hi) == Some(Ordering::Greater) {
-                return Err(refused(TermError::InvertedRange));
-            }
+        // Order text the fold cannot take (a code point unassigned in
+        // Unicode 16) is refused here, before a term or a keyset, as
+        // derivation would refuse it after one.
+        (IndexSpec::Ore | IndexSpec::Ope, Input::One(value)) => {
+            order_text(value).map_err(refused)?;
+        }
+        (IndexSpec::Ore | IndexSpec::Ope, Input::Pair(lo, hi)) => {
+            order_text(lo).map_err(refused)?;
+            order_text(hi).map_err(refused)?;
         }
         (IndexSpec::Match(options), Input::One(value)) => {
             query_tokens(value, options).map(drop)?;
@@ -605,31 +626,21 @@ fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
     Ok(())
 }
 
-/// The order of two integers of one kind, or `None` for anything else.
-fn integer_order(lo: &ValueFrame, hi: &ValueFrame) -> Option<Ordering> {
-    let (lo_kind, lo) = integer_of(lo)?;
-    let (hi_kind, hi) = integer_of(hi)?;
-    (lo_kind == hi_kind).then(|| lo.cmp(&hi))
-}
-
-/// An integer scalar's kind and value, or `None` for anything else. The
-/// value is its sign and 128-bit two's-complement word (vitaminc's
-/// [`Int::sign_and_word`](vitaminc_aead::plaintext::Int::sign_and_word)),
-/// ordered negatives first, so one comparison covers every width from
-/// `i128::MIN` to `u128::MAX`.
-fn integer_of(value: &ValueFrame) -> Option<(ValueKind, (bool, u128))> {
-    let kind = value.kind()?;
-    let (negative, word) = value
+/// Whether `value`, if it is order text, has a fold: `vitaminc-ore`'s
+/// `Text` encoding, the one an order index encrypts, refuses a code point
+/// Unicode 16 does not assign. Anything but text has nothing to refuse.
+fn order_text(value: &ValueFrame) -> Result<(), TermError> {
+    value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
-                (None, Physical::Int(int)) => Ok(int.sign_and_word()),
+                (None, Physical::Text(text)) => Ok(vitaminc_ore::text(text)
+                    .map(drop)
+                    .map_err(TermError::Normalize)),
                 _ => Err(None),
             },
         ))
-        .ok()?;
-    // `!negative` so a negative sorts below every non-negative; within a
-    // sign the two's-complement words order as the values do.
-    Some((kind, (!negative, word)))
+        // Not one text scalar: nothing to refuse here.
+        .unwrap_or(Ok(()))
 }
 
 /// The tokens a match query of `value` keeps, under the index's options.
@@ -692,24 +703,18 @@ pub fn check_query(
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{query_term, record, FfiValue, NoTargets, OpSpec, Operand};
+/// use stack_encrypt::dynamic::{query_term, record, NoTargets, OpSpec, Operand};
 /// use stack_encrypt::kms::FakeDataKeySource;
 /// use stack_encrypt::{op, Ore, Plan, StackCipher};
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 /// let keyset = cipher.default_keyset();
-/// let text = |s: &str| FfiValue::String(s.into());
-/// let plan = record::plan(FfiValue::Object(vec![(
-///     "age".into(),
-///     FfiValue::Object(vec![
-///         ("context".into(), FfiValue::Array(vec![text("users"), text("age")])),
-///         ("outputs".into(), FfiValue::Array(vec![text("c"), text("ore")])),
-///         ("type".into(), text("uint32")),
-///     ]),
-/// )]))?;
+/// let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+///     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint32" },
+/// }))?)?;
 ///
-/// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, FfiValue::UInt32(40), &NoTargets)?.await?;
+/// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, 40u32, &NoTargets)?.await?;
 ///
 /// // The typed path's term for the same query.
 /// let typed_plan = Plan::context("users/age").with::<u32, _>(Ore).build()?;
@@ -729,10 +734,11 @@ pub fn check_query(
 /// field does not answer ([`Reason::OperatorNotAnswered`]), an input that
 /// cannot be read as the field's kind ([`Reason::FieldType`]) and a
 /// `between` input that is not two values ([`Reason::NotARange`]).
-/// [`Error::Cipher`] for the query refusals the typed path makes: a range
-/// whose low bound is above its high ([`TermError::InvertedRange`]), and
-/// match text that cuts no token ([`TermError::EmptyTermText`]) or that
-/// the index cannot normalize ([`TermError::Normalize`]).
+/// [`Error::Cipher`] for the query refusals the typed path makes: match
+/// text that cuts no token ([`TermError::EmptyTermText`]), and text the
+/// index cannot normalize ([`TermError::Normalize`]). A range whose low
+/// bound is above its high bound is not refused: as SQL's `BETWEEN`, it
+/// matches nothing.
 /// [`Error::Target`] for what the resolver refuses.
 pub fn query_term<'a, K>(
     cipher: &'a KeysetCipher<'_, K>,
@@ -946,7 +952,7 @@ fn twin_query_bits(term: &[u8], options: &MatchOptions) -> Option<usize> {
 }
 
 impl Stats {
-    /// Read statistics from their wire form, an object:
+    /// Read statistics from their wire form, a frame object:
     ///
     /// | key | value |
     /// |---|---|
@@ -954,89 +960,82 @@ impl Stats {
     /// | `histogram` | optional, or null: a list of `[bits, rows]` pairs of integers, a measured histogram of the stored filters' set-bit counts ([`Stats::measured`]); absent, the declared prior ([`Stats::declared`]) |
     /// | `confidence` | optional, or null: a float, the confidence to target instead of 99% ([`Stats::with_confidence`]) |
     ///
-    /// Integers are read at any width and must not be negative.
+    /// Integers are read at any width up to 64 bits and must not be
+    /// negative; `bits` must fit a `u32`. A confidence is a float of either
+    /// width, never an integer.
     ///
     /// # Errors
     ///
-    /// [`Error::Source`] with [`Reason::NotStats`] for anything else: not an
-    /// object, no `rows`, a key given twice or not one of the three, or a
-    /// value of another type.
-    pub fn from_value(value: &FfiValue) -> Result<Self, Error> {
-        let refused = || Error::bad_source(Reason::NotStats);
-        let FfiValue::Object(entries) = value else {
-            return Err(refused());
+    /// [`Error::Source`] with [`Reason::NotStats`] for anything else: not a
+    /// frame, not an object, no `rows`, a key given twice or not one of the
+    /// three, or a value of another type.
+    pub fn from_frame(bytes: &[u8]) -> Result<Self, Error> {
+        let wire: StatsWire = vitaminc_aead_frame::serde::from_slice(bytes)
+            .map_err(|_| Error::bad_source(Reason::NotStats))?;
+        let stats = match wire.histogram {
+            Some(histogram) => Stats::measured(wire.rows, histogram),
+            None => Stats::declared(wire.rows),
         };
-        let mut seen: Vec<&str> = Vec::with_capacity(entries.len());
-        let (mut rows, mut histogram, mut confidence) = (None, None, None);
-        for (key, value) in entries {
-            if seen.contains(&key.as_str()) {
-                return Err(refused());
-            }
-            seen.push(key);
-            match (key.as_str(), value) {
-                ("histogram" | "confidence", FfiValue::Null) => {}
-                ("rows", rows_value) => rows = Some(unsigned(rows_value).ok_or_else(refused)?),
-                ("histogram", FfiValue::Array(buckets)) => {
-                    histogram = Some(
-                        buckets
-                            .iter()
-                            .map(|bucket| match bucket {
-                                FfiValue::Array(pair) => match pair.as_slice() {
-                                    [bits, rows] => Some((
-                                        u32::try_from(unsigned(bits)?).ok()?,
-                                        unsigned(rows)?,
-                                    )),
-                                    _ => None,
-                                },
-                                _ => None,
-                            })
-                            .collect::<Option<Vec<(u32, u64)>>>()
-                            .ok_or_else(refused)?,
-                    );
-                }
-                ("confidence", FfiValue::Float64(c)) => confidence = Some(*c),
-                ("confidence", FfiValue::Float32(c)) => confidence = Some(f64::from(*c)),
-                _ => return Err(refused()),
-            }
-        }
-        let rows = rows.ok_or_else(refused)?;
-        let stats = match histogram {
-            Some(histogram) => Stats::measured(rows, histogram),
-            None => Stats::declared(rows),
-        };
-        Ok(match confidence {
-            Some(confidence) => stats.with_confidence(confidence),
+        Ok(match wire.confidence {
+            Some(Confidence(confidence)) => stats.with_confidence(confidence),
             None => stats,
         })
     }
 }
 
-/// A non-negative integer of any width.
-fn unsigned(value: &FfiValue) -> Option<u64> {
-    match value {
-        FfiValue::Int32(v) => u64::try_from(*v).ok(),
-        FfiValue::Int64(v) => u64::try_from(*v).ok(),
-        FfiValue::UInt32(v) => Some(u64::from(*v)),
-        FfiValue::UInt64(v) => Some(*v),
-        _ => None,
-    }
+/// [`Stats`] as a binding writes it ([`Stats::from_frame`]).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatsWire {
+    rows: u64,
+    #[serde(default)]
+    histogram: Option<Vec<(u32, u64)>>,
+    #[serde(default)]
+    confidence: Option<Confidence>,
 }
 
-/// A limit in its wire form: the rows to fetch as an unsigned 64-bit
-/// integer, or null for [`Limit::Unbounded`].
-pub fn limit_to_value(limit: Limit) -> FfiValue {
-    limit.rows().map_or(FfiValue::Null, FfiValue::UInt64)
+/// A confidence: a float of either width. serde's own `f64` would also take
+/// an integer, which the wire form refuses.
+struct Confidence(f64);
+
+impl<'de> serde::Deserialize<'de> for Confidence {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl serde::de::Visitor<'_> for V {
+            type Value = Confidence;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a float")
+            }
+            fn visit_f32<E>(self, v: f32) -> Result<Confidence, E> {
+                Ok(Confidence(f64::from(v)))
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<Confidence, E> {
+                Ok(Confidence(v))
+            }
+        }
+        d.deserialize_any(V)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dynamic::test_frame::Tree;
+    use crate::dynamic::test_frame::{frame_of, value_of};
+
+    fn operator_value(operator: OpSpec, index: &IndexSpec) -> Tree {
+        value_of(&OperatorEntry::new(operator, index))
+    }
+
+    /// Statistics as a binding sends them.
+    fn stats_frame(value: &Tree) -> Result<Stats, Error> {
+        Stats::from_frame(&crate::dynamic::test_frame::frame_of(value))
+    }
     use crate::dynamic::{record, NoTargets, TargetError};
     use crate::op::{self, Probabilistic as _};
     use crate::sem::MatchTerms;
     use crate::{Equality, Label, Match, Ope, Ore, StackCipher};
     use stack_kms::FakeDataKeySource;
-    use vitaminc_protected::Controlled;
 
     async fn cipher() -> StackCipher<FakeDataKeySource> {
         StackCipher::builder()
@@ -1046,24 +1045,24 @@ mod tests {
             .expect("build cipher")
     }
 
-    fn text(s: &str) -> FfiValue {
-        FfiValue::String(s.into())
+    fn text(s: &str) -> Tree {
+        Tree::String(s.into())
     }
 
-    fn vf(value: &FfiValue) -> ValueFrame {
+    fn vf(value: &Tree) -> ValueFrame {
         ValueFrame::of(value).expect("a value")
     }
 
     /// One field of `users`, as a binding spells it.
-    fn field(name: &str, kind: &str, outputs: Vec<FfiValue>) -> (String, FfiValue) {
+    fn field(name: &str, kind: &str, outputs: Vec<Tree>) -> (String, Tree) {
         (
             name.to_owned(),
-            FfiValue::Object(vec![
+            Tree::Object(vec![
                 (
                     "context".into(),
-                    FfiValue::Array(vec![text("users"), text(name)]),
+                    Tree::Array(vec![text("users"), text(name)]),
                 ),
-                ("outputs".into(), FfiValue::Array(outputs)),
+                ("outputs".into(), Tree::Array(outputs)),
                 ("type".into(), text(kind)),
             ]),
         )
@@ -1073,18 +1072,20 @@ mod tests {
     /// match, an age with ORE and OPE, a score with OPE alone, a nickname
     /// with ORE over text, and a case-sensitive handle.
     fn users() -> Plan {
-        let case_sensitive = FfiValue::Object(vec![(
+        let case_sensitive = Tree::Object(vec![(
             "match".into(),
-            FfiValue::Object(vec![("downcase".into(), FfiValue::Bool(false))]),
+            Tree::Object(vec![("downcase".into(), Tree::Bool(false))]),
         )]);
-        record::plan(FfiValue::Object(vec![
+        record::plan(&frame_of(&Tree::Object(vec![
             field("email", "string", vec![text("c"), text("eq")]),
             field("name", "string", vec![text("c"), text("match")]),
             field("age", "uint32", vec![text("c"), text("ope"), text("ore")]),
             field("score", "int64", vec![text("ope")]),
             field("nickname", "string", vec![text("c"), text("ore")]),
             field("handle", "string", vec![text("c"), case_sensitive]),
-        ]))
+            field("ratio", "float32", vec![text("c"), text("ore")]),
+            field("rating", "float64", vec![text("c"), text("ope")]),
+        ])))
         .expect("the plan parses")
     }
 
@@ -1092,7 +1093,7 @@ mod tests {
         keyset: &KeysetCipher<'_, FakeDataKeySource>,
         name: &str,
         operator: OpSpec,
-        input: FfiValue,
+        input: impl Encrypt,
     ) -> Result<QueryTerm, Error> {
         query_term(keyset, &users(), name, operator, input, &NoTargets)?
             .await
@@ -1172,17 +1173,25 @@ mod tests {
             OpSpec::Gte,
             OpSpec::Between,
         ] {
+            for kind in [ValueKind::Int8, ValueKind::UInt8, ValueKind::Bool] {
+                assert_eq!(
+                    answered(op, kind, &all),
+                    None,
+                    "{op} {kind}: an 8-bit integer has no order term, as a boolean has none"
+                );
+            }
             for kind in [
-                ValueKind::Int8,
                 ValueKind::Int16,
                 ValueKind::Int32,
                 ValueKind::Int64,
                 ValueKind::Int128,
-                ValueKind::UInt8,
                 ValueKind::UInt16,
                 ValueKind::UInt32,
                 ValueKind::UInt64,
                 ValueKind::UInt128,
+                ValueKind::Float32,
+                ValueKind::Float64,
+                ValueKind::String,
             ] {
                 assert_eq!(
                     answered(op, kind, &all),
@@ -1201,9 +1210,7 @@ mod tests {
                 );
             }
             for kind in [
-                ValueKind::String,
                 ValueKind::Bytes,
-                ValueKind::Float64,
                 ValueKind::Bool,
                 ValueKind::Decimal,
                 ValueKind::Date,
@@ -1212,7 +1219,7 @@ mod tests {
                 assert_eq!(
                     answered(op, kind, &all),
                     None,
-                    "{op} is answered over integers only: {kind}"
+                    "{op} is not answered over {kind}"
                 );
             }
         }
@@ -1265,11 +1272,7 @@ mod tests {
             .build()
             .unwrap();
         let typed = cipher.query(op::Lt, &40u32).on(&plan).await.unwrap();
-        for input in [
-            FfiValue::UInt32(40),
-            FfiValue::Float64(40.0),
-            FfiValue::Int64(40),
-        ] {
+        for input in [Tree::UInt32(40), Tree::Float64(40.0), Tree::Int64(40)] {
             let term = query(&keyset, "age", OpSpec::Lt, input).await.unwrap();
             assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
             assert_eq!(term.index(), &IndexSpec::Ore, "ORE before OPE");
@@ -1293,7 +1296,7 @@ mod tests {
             &keyset,
             "age",
             OpSpec::Between,
-            FfiValue::Array(vec![FfiValue::UInt32(18), FfiValue::UInt32(65)]),
+            Tree::Array(vec![Tree::UInt32(18), Tree::UInt32(65)]),
         )
         .await
         .unwrap();
@@ -1308,7 +1311,7 @@ mod tests {
             &keyset,
             "age",
             OpSpec::Between,
-            FfiValue::Array(vec![FfiValue::UInt32(7), FfiValue::UInt32(7)]),
+            Tree::Array(vec![Tree::UInt32(7), Tree::UInt32(7)]),
         )
         .await;
         assert!(one.is_ok(), "(v, v) is one value: {one:?}");
@@ -1327,7 +1330,7 @@ mod tests {
             &keyset,
             "score",
             OpSpec::Between,
-            FfiValue::Array(vec![FfiValue::Int64(-5), FfiValue::Int64(5)]),
+            Tree::Array(vec![Tree::Int64(-5), Tree::Int64(5)]),
         )
         .await
         .unwrap();
@@ -1375,39 +1378,29 @@ mod tests {
             ),
             (
                 "nickname",
-                OpSpec::Lt,
+                OpSpec::Eq,
                 text("bob"),
                 Reason::OperatorNotAnswered,
             ),
             (
                 "age",
                 OpSpec::Eq,
-                FfiValue::UInt32(1),
+                Tree::UInt32(1),
                 Reason::OperatorNotAnswered,
             ),
             ("age", OpSpec::Lt, text("40"), Reason::FieldType),
-            (
-                "age",
-                OpSpec::Lt,
-                FfiValue::Float64(40.5),
-                Reason::FieldType,
-            ),
+            ("age", OpSpec::Lt, Tree::Float64(40.5), Reason::FieldType),
+            ("age", OpSpec::Between, Tree::UInt32(40), Reason::NotARange),
             (
                 "age",
                 OpSpec::Between,
-                FfiValue::UInt32(40),
+                Tree::Array(vec![Tree::UInt32(1)]),
                 Reason::NotARange,
             ),
             (
                 "age",
                 OpSpec::Between,
-                FfiValue::Array(vec![FfiValue::UInt32(1)]),
-                Reason::NotARange,
-            ),
-            (
-                "age",
-                OpSpec::Between,
-                FfiValue::Array(vec![FfiValue::UInt32(1), text("2")]),
+                Tree::Array(vec![Tree::UInt32(1), text("2")]),
                 Reason::FieldType,
             ),
         ];
@@ -1437,27 +1430,53 @@ mod tests {
     async fn the_typed_paths_query_refusals_are_made_before_any_term() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let pair = |lo, hi| FfiValue::Array(vec![FfiValue::UInt32(lo), FfiValue::UInt32(hi)]);
+        let one = |text: &str| ValueFrame::of(text).expect("a value");
+        let two = |lo: &str, hi: &str| ValueFrame::of(vec![lo, hi]).expect("a value");
         let cases = [
-            ("age", OpSpec::Between, pair(65, 18), "inverted"),
-            ("name", OpSpec::Matches, text("al"), "empty"),
-            ("name", OpSpec::Matches, text("\u{0378}abc"), "normalize"),
-            ("email", OpSpec::Eq, text("a\u{0378}bc"), "normalize"),
+            ("nickname", OpSpec::Lt, one("a\u{0378}"), "normalize"),
+            (
+                "nickname",
+                OpSpec::Between,
+                two("a", "b\u{0378}"),
+                "normalize",
+            ),
+            (
+                "nickname",
+                OpSpec::Between,
+                two("a\u{0378}", "b"),
+                "normalize",
+            ),
+            ("name", OpSpec::Matches, one("al"), "empty"),
+            ("name", OpSpec::Matches, one("\u{0378}abc"), "normalize"),
+            ("email", OpSpec::Eq, one("a\u{0378}bc"), "normalize"),
         ];
         for (name, op, input, what) in cases {
             for error in [
-                query(&keyset, name, op, input.clone()).await.unwrap_err(),
-                check_query(&users(), name, op, input, &NoTargets).unwrap_err(),
+                query(&keyset, name, op, &input).await.unwrap_err(),
+                check_query(&users(), name, op, &input, &NoTargets).unwrap_err(),
             ] {
                 let term = term_error(&error);
                 let expected = match what {
-                    "inverted" => matches!(term, Some(TermError::InvertedRange)),
                     "empty" => matches!(term, Some(TermError::EmptyTermText)),
                     _ => matches!(term, Some(TermError::Normalize(_))),
                 };
-                assert!(expected, "{what}: {error:?}");
+                assert!(expected, "{name} {what}: {error:?}");
             }
         }
+        // The terms of folded equivalents are one term.
+        let cafe = query(&keyset, "nickname", OpSpec::Lt, "cafe")
+            .await
+            .unwrap();
+        let folded = query(&keyset, "nickname", OpSpec::Lt, "CAF\u{c9}")
+            .await
+            .unwrap();
+        assert_eq!(folded.operand, cafe.operand);
+
+        // A float32 orders as the f64 it widens to: `-0.0` ties `0.0`, so
+        // the two are one term.
+        let zero = query(&keyset, "ratio", OpSpec::Lt, 0.0f32).await.unwrap();
+        let negative_zero = query(&keyset, "ratio", OpSpec::Lt, -0.0f32).await.unwrap();
+        assert_eq!(negative_zero.operand, zero.operand);
     }
 
     /// A plan whose context is a field of each record has no context a
@@ -1470,18 +1489,18 @@ mod tests {
         let one = |name: &str, kind: &str, output: &str| {
             (
                 name.to_owned(),
-                FfiValue::Object(vec![
-                    ("context".into(), FfiValue::Array(vec![text(name)])),
-                    ("outputs".into(), FfiValue::Array(vec![text(output)])),
+                Tree::Object(vec![
+                    ("context".into(), Tree::Array(vec![text(name)])),
+                    ("outputs".into(), Tree::Array(vec![text(output)])),
                     ("type".into(), text(kind)),
                 ]),
             )
         };
-        let plan = record::plan(FfiValue::Object(vec![
+        let plan = record::plan(&frame_of(&Tree::Object(vec![
             ("context_field".into(), text("tenant")),
             one("tenant", "string", "passthrough"),
             one("email", "string", "eq"),
-        ]))
+        ])))
         .unwrap();
         let error = query_term(&keyset, &plan, "email", OpSpec::Eq, text("a"), &NoTargets)
             .map(drop)
@@ -1501,7 +1520,7 @@ mod tests {
             "email",
             OpSpec::Eq,
             text("a"),
-            Vec::<FfiValue>::new(),
+            Vec::<Tree>::new(),
             &NoTargets,
         )
         .unwrap_err();
@@ -1523,7 +1542,7 @@ mod tests {
             .unwrap();
         let typed = cipher.query(op::Matches, "alice").on(&plan).await.unwrap();
         let page = ["Alice Smith", "alicia", "Bob", "MALICE", "", "ali ce"];
-        let values: Vec<FfiValue> = page.iter().map(|v| text(v)).collect();
+        let values: Vec<Tree> = page.iter().map(|v| text(v)).collect();
         let verified = verify(
             &users(),
             "name",
@@ -1545,7 +1564,7 @@ mod tests {
             "name",
             OpSpec::Matches,
             text("alice"),
-            &[FfiValue::Null],
+            &[Tree::Null],
             &NoTargets,
         )
         .unwrap();
@@ -1555,7 +1574,7 @@ mod tests {
             "name",
             OpSpec::Matches,
             text("alice"),
-            Vec::<FfiValue>::new(),
+            Vec::<Tree>::new(),
             &NoTargets,
         )
         .unwrap();
@@ -1594,7 +1613,7 @@ mod tests {
 
     #[test]
     fn verify_refuses_what_it_cannot_answer() {
-        let refused = |name: &str, op: OpSpec, input: FfiValue, values: &[FfiValue]| {
+        let refused = |name: &str, op: OpSpec, input: Tree, values: &[Tree]| {
             verify(&users(), name, op, input, values, &NoTargets).unwrap_err()
         };
         let error = refused("email", OpSpec::Eq, text("a"), &[text("a")]);
@@ -1602,7 +1621,7 @@ mod tests {
             reason_of(&error),
             (Some("email"), Some(Reason::ExactOperator))
         );
-        let error = refused("age", OpSpec::Lt, FfiValue::UInt32(1), &[]);
+        let error = refused("age", OpSpec::Lt, Tree::UInt32(1), &[]);
         assert_eq!(
             reason_of(&error),
             (Some("age"), Some(Reason::ExactOperator))
@@ -1612,14 +1631,9 @@ mod tests {
             reason_of(&error),
             (Some("email"), Some(Reason::OperatorNotAnswered))
         );
-        let error = refused(
-            "name",
-            OpSpec::Matches,
-            text("alice"),
-            &[FfiValue::UInt32(1)],
-        );
+        let error = refused("name", OpSpec::Matches, text("alice"), &[Tree::UInt32(1)]);
         assert_eq!(reason_of(&error), (Some("name"), Some(Reason::FieldType)));
-        let error = refused("name", OpSpec::Matches, FfiValue::UInt32(1), &[]);
+        let error = refused("name", OpSpec::Matches, Tree::UInt32(1), &[]);
         assert_eq!(reason_of(&error), (Some("name"), Some(Reason::FieldType)));
         let error = refused("name", OpSpec::Matches, text("al"), &[text("al")]);
         assert!(
@@ -1637,8 +1651,10 @@ mod tests {
             tokenizer: crate::sem::Tokenizer::Ngram { length: 0 },
             ..MatchOptions::default()
         };
-        let context = crate::dynamic::context(FfiValue::Array(vec![text("users"), text("name")]))
-            .expect("context");
+        let context = crate::dynamic::context(
+            &vitaminc_aead_frame::serde::to_vec(&("users", "name")).expect("frames"),
+        )
+        .expect("context");
         let field = FieldPlan::new(
             "name",
             context,
@@ -1760,75 +1776,76 @@ mod tests {
 
     #[test]
     fn statistics_read_from_their_wire_form() {
-        let object = |entries: Vec<(&str, FfiValue)>| {
-            FfiValue::Object(
+        let object = |entries: Vec<(&str, Tree)>| {
+            Tree::Object(
                 entries
                     .into_iter()
                     .map(|(k, v)| (k.to_owned(), v))
                     .collect(),
             )
         };
-        let pair = |bits: u32, rows: u64| {
-            FfiValue::Array(vec![FfiValue::UInt32(bits), FfiValue::UInt64(rows)])
-        };
+        let pair = |bits: u32, rows: u64| Tree::Array(vec![Tree::UInt32(bits), Tree::UInt64(rows)]);
         assert_eq!(
-            Stats::from_value(&object(vec![("rows", FfiValue::UInt64(9))])).unwrap(),
+            stats_frame(&object(vec![("rows", Tree::UInt64(9))])).unwrap(),
             Stats::declared(9)
         );
         assert_eq!(
-            Stats::from_value(&object(vec![
-                ("rows", FfiValue::Int64(9)),
-                ("histogram", FfiValue::Null),
-                ("confidence", FfiValue::Null),
+            stats_frame(&object(vec![
+                ("rows", Tree::Int64(9)),
+                ("histogram", Tree::Null),
+                ("confidence", Tree::Null),
             ]))
             .unwrap(),
             Stats::declared(9)
         );
         assert_eq!(
-            Stats::from_value(&object(vec![
-                ("histogram", FfiValue::Array(vec![pair(3, 4), pair(5, 6)])),
-                ("confidence", FfiValue::Float64(0.9)),
-                ("rows", FfiValue::UInt32(10)),
+            stats_frame(&object(vec![
+                ("histogram", Tree::Array(vec![pair(3, 4), pair(5, 6)])),
+                ("confidence", Tree::Float64(0.9)),
+                ("rows", Tree::UInt32(10)),
             ]))
             .unwrap(),
             Stats::measured(10, [(3, 4), (5, 6)]).with_confidence(0.9)
         );
         for (what, bad) in [
-            ("not an object", FfiValue::UInt64(9)),
+            ("not an object", Tree::UInt64(9)),
+            ("an array by position", Tree::Array(vec![Tree::UInt64(9)])),
+            (
+                "every key by position",
+                Tree::Array(vec![
+                    Tree::UInt64(9),
+                    Tree::Array(vec![pair(3, 4)]),
+                    Tree::Float64(0.5),
+                ]),
+            ),
             ("no rows", object(vec![])),
-            ("null rows", object(vec![("rows", FfiValue::Null)])),
-            ("negative rows", object(vec![("rows", FfiValue::Int64(-1))])),
-            ("float rows", object(vec![("rows", FfiValue::Float64(9.0))])),
+            ("null rows", object(vec![("rows", Tree::Null)])),
+            ("negative rows", object(vec![("rows", Tree::Int64(-1))])),
+            ("float rows", object(vec![("rows", Tree::Float64(9.0))])),
             (
                 "rows twice",
-                object(vec![
-                    ("rows", FfiValue::UInt64(1)),
-                    ("rows", FfiValue::UInt64(1)),
-                ]),
+                object(vec![("rows", Tree::UInt64(1)), ("rows", Tree::UInt64(1))]),
             ),
             (
                 "unknown key",
-                object(vec![
-                    ("rows", FfiValue::UInt64(1)),
-                    ("want", FfiValue::Null),
-                ]),
+                object(vec![("rows", Tree::UInt64(1)), ("want", Tree::Null)]),
             ),
             (
                 "bucket not a pair",
                 object(vec![
-                    ("rows", FfiValue::UInt64(1)),
-                    ("histogram", FfiValue::Array(vec![FfiValue::UInt32(3)])),
+                    ("rows", Tree::UInt64(1)),
+                    ("histogram", Tree::Array(vec![Tree::UInt32(3)])),
                 ]),
             ),
             (
                 "bits too wide",
                 object(vec![
-                    ("rows", FfiValue::UInt64(1)),
+                    ("rows", Tree::UInt64(1)),
                     (
                         "histogram",
-                        FfiValue::Array(vec![FfiValue::Array(vec![
-                            FfiValue::UInt64(u64::from(u32::MAX) + 1),
-                            FfiValue::UInt64(1),
+                        Tree::Array(vec![Tree::Array(vec![
+                            Tree::UInt64(u64::from(u32::MAX) + 1),
+                            Tree::UInt64(1),
                         ])]),
                     ),
                 ]),
@@ -1836,12 +1853,19 @@ mod tests {
             (
                 "confidence as text",
                 object(vec![
-                    ("rows", FfiValue::UInt64(1)),
+                    ("rows", Tree::UInt64(1)),
                     ("confidence", text("high")),
                 ]),
             ),
+            (
+                "confidence as an integer",
+                object(vec![
+                    ("rows", Tree::UInt64(1)),
+                    ("confidence", Tree::UInt64(1)),
+                ]),
+            ),
         ] {
-            let error = Stats::from_value(&bad).unwrap_err();
+            let error = stats_frame(&bad).unwrap_err();
             assert_eq!(reason_of(&error), (None, Some(Reason::NotStats)), "{what}");
         }
     }
@@ -1857,13 +1881,13 @@ mod tests {
         use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = record::plan(FfiValue::Object(vec![
-            field("tiny", "int8", vec![text("c"), text("ore")]),
+        let plan = record::plan(&frame_of(&Tree::Object(vec![
+            field("tiny", "int16", vec![text("c"), text("ore")]),
             field("huge", "int128", vec![text("c"), text("ope")]),
             field("day", "date", vec![text("c"), text("eq")]),
             field("at", "timestamp", vec![text("c"), text("eq")]),
             field("price", "decimal", vec![text("c"), text("eq")]),
-        ]))
+        ])))
         .expect("the plan parses");
         let frame = |ty: Option<Logical>, value: Physical<'_>| {
             ValueFrame::of(Raw(ty, value)).expect("a value")
@@ -1880,22 +1904,22 @@ mod tests {
         };
 
         let tiny = crate::Plan::context("users/tiny")
-            .with::<i8, _>(Ore)
+            .with::<i16, _>(Ore)
             .build()
             .unwrap();
-        let typed = cipher.query(op::Lt, &-8i8).on(&tiny).await.unwrap();
+        let typed = cipher.query(op::Lt, &-8i16).on(&tiny).await.unwrap();
         for input in [
             int(Int::I8(-8)),
-            vf(&FfiValue::Int64(-8)),
-            vf(&FfiValue::Float64(-8.0)),
+            vf(&Tree::Int64(-8)),
+            vf(&Tree::Float64(-8.0)),
         ] {
             let term = ask("tiny", OpSpec::Lt, input).await.unwrap();
             assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
         }
-        let refused = ask("tiny", OpSpec::Lt, vf(&FfiValue::Int64(300))).await;
+        let refused = ask("tiny", OpSpec::Lt, vf(&Tree::Int64(70_000))).await;
         assert!(
             matches!(&refused, Err(error) if reason_of(error) == (Some("tiny"), Some(Reason::FieldType))),
-            "300 is no int8: {refused:?}"
+            "70000 is no int16: {refused:?}"
         );
 
         let huge = crate::Plan::context("users/huge")
@@ -1927,14 +1951,16 @@ mod tests {
         ])
         .unwrap();
         assert!(
-            ask("huge", OpSpec::Between, inverted).await.is_err(),
-            "an inverted 128-bit range is refused"
+            ask("huge", OpSpec::Between, inverted).await.is_ok(),
+            "an inverted 128-bit range is not refused"
         );
 
         let stored = |value: &ValueFrame, name: &'static str| {
             let keyset = &keyset;
-            let ctx = super::super::context(FfiValue::Array(vec![text("users"), text(name)]))
-                .expect("context");
+            let ctx = super::super::context(
+                &vitaminc_aead_frame::serde::to_vec(&("users", name)).expect("frames"),
+            )
+            .expect("context");
             let value = value.clone();
             async move {
                 super::super::term(keyset, &value, &IndexSpec::Equality, ctx)
@@ -1961,7 +1987,7 @@ mod tests {
                 Some(Logical::Decimal { scale: 0 }),
                 Physical::Int(Int::I64(34)),
             ),
-            vf(&FfiValue::Int32(34)),
+            vf(&Tree::Int32(34)),
             int(Int::U8(34)),
         ] {
             let term = ask("price", OpSpec::Eq, input).await.unwrap();
@@ -1976,7 +2002,7 @@ mod tests {
             ("at", OpSpec::Gt),
             ("price", OpSpec::Between),
         ] {
-            let refused = ask(name, operator, vf(&FfiValue::Int32(1))).await;
+            let refused = ask(name, operator, vf(&Tree::Int32(1))).await;
             assert!(
                 matches!(&refused, Err(error) if reason_of(error) == (Some(name), Some(Reason::OperatorNotAnswered))),
                 "{name} answers no ordering: {refused:?}"
@@ -2003,67 +2029,49 @@ mod tests {
         );
     }
 
-    /// A range is refused the wrong way round for every integer kind a
-    /// field can declare, and two values of different kinds have no order
-    /// here: the input was read as one kind first.
-    #[test]
-    fn a_range_is_ordered_within_each_integer_kind() {
-        let cases = [
-            (FfiValue::Int32(-1), FfiValue::Int32(1)),
-            (FfiValue::Int64(-1), FfiValue::Int64(1)),
-            (FfiValue::UInt32(1), FfiValue::UInt32(2)),
-            (FfiValue::UInt64(1), FfiValue::UInt64(2)),
-        ];
-        for (lo, hi) in cases {
-            let (lo, hi) = (vf(&lo), vf(&hi));
-            assert_eq!(integer_order(&lo, &hi), Some(Ordering::Less));
-            assert_eq!(integer_order(&hi, &lo), Some(Ordering::Greater));
-            assert_eq!(integer_order(&lo, &lo), Some(Ordering::Equal));
-        }
-        assert_eq!(
-            integer_order(&vf(&FfiValue::UInt32(1)), &vf(&FfiValue::UInt64(2))),
-            None
-        );
-        assert_eq!(integer_order(&vf(&text("a")), &vf(&text("b"))), None);
-        // Every width, the 128-bit edges included: a `u128` above
-        // `i128::MAX` and a negative `i128` order as the numbers do.
-        let int = |int: vitaminc_aead::plaintext::Int| {
-            ValueFrame::of(vitaminc_aead::plaintext::Raw(
-                None,
-                vitaminc_aead::plaintext::Physical::Int(int),
-            ))
-            .expect("a value")
+    /// A range whose low bound is above its high bound is not refused, as
+    /// SQL's `BETWEEN` is not: it is checked, and its terms derived, like
+    /// any other range, and matches nothing.
+    #[tokio::test]
+    async fn an_inverted_range_is_a_query_like_any_other() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        // `score` declares OPE alone, whose terms compare as bytes.
+        let inverted = Tree::Array(vec![Tree::Int64(65), Tree::Int64(18)]);
+        assert!(check_query(
+            &users(),
+            "score",
+            OpSpec::Between,
+            vf(&inverted),
+            &NoTargets
+        )
+        .is_ok());
+        let term = query(&keyset, "score", OpSpec::Between, inverted)
+            .await
+            .expect("derived");
+        let Operand::Range { lo, hi } = term.operand() else {
+            panic!("a range");
         };
-        use vitaminc_aead::plaintext::Int;
-        for (lo, hi) in [
-            (Int::I8(-1), Int::I8(1)),
-            (Int::I16(-1), Int::I16(1)),
-            (Int::I128(i128::MIN), Int::I128(i128::MAX)),
-            (Int::I128(-1), Int::I128(0)),
-            (Int::U8(1), Int::U8(2)),
-            (Int::U16(1), Int::U16(2)),
-            (Int::U128(i128::MAX as u128), Int::U128(u128::MAX)),
-        ] {
-            let (lo, hi) = (int(lo), int(hi));
-            assert_eq!(integer_order(&lo, &hi), Some(Ordering::Less));
-            assert_eq!(integer_order(&hi, &lo), Some(Ordering::Greater));
-            assert_eq!(integer_order(&lo, &lo), Some(Ordering::Equal));
-        }
-        assert_eq!(integer_order(&int(Int::I8(1)), &int(Int::I16(2))), None);
+        assert!(lo > hi, "the bounds as given, and the terms in their order");
     }
 
     #[test]
     fn a_count_is_read_at_any_width_and_never_negative() {
-        assert_eq!(unsigned(&FfiValue::Int32(7)), Some(7));
-        assert_eq!(unsigned(&FfiValue::Int64(7)), Some(7));
-        assert_eq!(unsigned(&FfiValue::UInt32(7)), Some(7));
-        assert_eq!(unsigned(&FfiValue::UInt64(7)), Some(7));
-        assert_eq!(unsigned(&FfiValue::Int32(-7)), None);
-        assert_eq!(unsigned(&FfiValue::Int64(-7)), None);
-        assert_eq!(unsigned(&FfiValue::Float64(7.0)), None);
-        let confidence = Stats::from_value(&FfiValue::Object(vec![
-            ("rows".into(), FfiValue::Int32(3)),
-            ("confidence".into(), FfiValue::Float32(0.5)),
+        let rows = |value: Tree| stats_frame(&Tree::Object(vec![("rows".into(), value)]));
+        for value in [
+            Tree::Int32(7),
+            Tree::Int64(7),
+            Tree::UInt32(7),
+            Tree::UInt64(7),
+        ] {
+            assert_eq!(rows(value).unwrap(), Stats::declared(7));
+        }
+        for value in [Tree::Int32(-7), Tree::Int64(-7), Tree::Float64(7.0)] {
+            assert!(rows(value).is_err());
+        }
+        let confidence = stats_frame(&Tree::Object(vec![
+            ("rows".into(), Tree::Int32(3)),
+            ("confidence".into(), Tree::Float32(0.5)),
         ]))
         .unwrap();
         assert_eq!(confidence, Stats::declared(3).with_confidence(0.5));
@@ -2072,10 +2080,10 @@ mod tests {
     #[test]
     fn a_limit_is_its_rows_or_null() {
         assert!(matches!(
-            limit_to_value(Limit::Rows(11)),
-            FfiValue::UInt64(11)
+            value_of(&Limit::Rows(11).rows()),
+            Tree::UInt64(11)
         ));
-        assert!(matches!(limit_to_value(Limit::Unbounded), FfiValue::Null));
+        assert!(matches!(value_of(&Limit::Unbounded.rows()), Tree::Null));
     }
 
     #[tokio::test]
@@ -2086,27 +2094,27 @@ mod tests {
             &keyset,
             "age",
             OpSpec::Between,
-            FfiValue::Array(vec![FfiValue::UInt32(1), FfiValue::UInt32(2)]),
+            Tree::Array(vec![Tree::UInt32(1), Tree::UInt32(2)]),
         )
         .await
         .unwrap();
-        let FfiValue::Object(entries) = term.to_value() else {
+        let Tree::Object(entries) = value_of(&term) else {
             panic!("an object");
         };
         let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(keys, ["operator", "fidelity", "index", "domain", "term"]);
-        assert!(matches!(&entries[0].1, FfiValue::String(s) if s.risky_ref() == b"between"));
-        assert!(matches!(&entries[1].1, FfiValue::String(s) if s.risky_ref() == b"exact"));
-        assert!(matches!(&entries[2].1, FfiValue::String(s) if s.risky_ref() == b"ore"));
-        assert!(matches!(&entries[3].1, FfiValue::Null));
+        assert!(matches!(&entries[0].1, Tree::String(s) if s.as_bytes() == b"between"));
+        assert!(matches!(&entries[1].1, Tree::String(s) if s.as_bytes() == b"exact"));
+        assert!(matches!(&entries[2].1, Tree::String(s) if s.as_bytes() == b"ore"));
+        assert!(matches!(&entries[3].1, Tree::Null));
         let Operand::Range { lo, hi } = term.operand() else {
             panic!("a range");
         };
         assert!(matches!(
             &entries[4].1,
-            FfiValue::Array(bounds) if matches!(
+            Tree::Array(bounds) if matches!(
                 bounds.as_slice(),
-                [FfiValue::Bytes(l), FfiValue::Bytes(h)] if l.risky_ref() == lo && h.risky_ref() == hi
+                [Tree::Bytes(l), Tree::Bytes(h)] if l.as_slice() == lo && h.as_slice() == hi
             )
         ));
     }
@@ -2175,23 +2183,23 @@ mod tests {
 
     #[test]
     fn a_targets_operators_are_listed_in_its_wire_form() {
-        let FfiValue::Object(entries) =
-            descriptor(Some(ValueKind::Int64), &["ore"], true, true).to_value()
+        let Tree::Object(entries) =
+            value_of(&descriptor(Some(ValueKind::Int64), &["ore"], true, true))
         else {
             panic!("an object");
         };
-        let (key, FfiValue::Array(operators)) = &entries[10] else {
+        let (key, Tree::Array(operators)) = &entries[10] else {
             panic!("a list");
         };
         assert_eq!(key, "operators");
         assert_eq!(operators.len(), 4);
-        let FfiValue::Object(first) = &operators[0] else {
+        let Tree::Object(first) = &operators[0] else {
             panic!("an object");
         };
         let first: Vec<(&str, &[u8])> = first
             .iter()
             .map(|(k, v)| match v {
-                FfiValue::String(s) => (k.as_str(), s.risky_ref()),
+                Tree::String(s) => (k.as_str(), s.as_bytes()),
                 _ => panic!("{k} is a string"),
             })
             .collect();
@@ -2217,10 +2225,10 @@ mod tests {
             let one = if kind == "string" {
                 text("alice smith")
             } else {
-                FfiValue::UInt32(7)
+                Tree::UInt32(7)
             };
             if op.takes_pair() {
-                FfiValue::Array(vec![one.clone(), one])
+                Tree::Array(vec![one.clone(), one])
             } else {
                 one
             }
@@ -2243,7 +2251,17 @@ mod tests {
                     (OpSpec::Between, IndexSpec::Ore),
                 ],
             ),
-            ("nickname", "string", vec![]),
+            (
+                "nickname",
+                "string",
+                vec![
+                    (OpSpec::Lt, IndexSpec::Ore),
+                    (OpSpec::Lte, IndexSpec::Ore),
+                    (OpSpec::Gt, IndexSpec::Ore),
+                    (OpSpec::Gte, IndexSpec::Ore),
+                    (OpSpec::Between, IndexSpec::Ore),
+                ],
+            ),
         ] {
             let listed = field_operators(&users(), name, &NoTargets).unwrap();
             assert_eq!(listed, want, "{name}");
@@ -2276,13 +2294,13 @@ mod tests {
 
     #[test]
     fn an_operator_is_written_with_every_key_in_order() {
-        let FfiValue::Object(entries) = operator_to_value(OpSpec::Between, &IndexSpec::Ope) else {
+        let Tree::Object(entries) = operator_value(OpSpec::Between, &IndexSpec::Ope) else {
             panic!("an object");
         };
         let entries: Vec<(&str, &[u8])> = entries
             .iter()
             .map(|(k, v)| match v {
-                FfiValue::String(s) => (k.as_str(), s.risky_ref()),
+                Tree::String(s) => (k.as_str(), s.as_bytes()),
                 _ => panic!("{k} is a string"),
             })
             .collect();
@@ -2295,13 +2313,13 @@ mod tests {
                 ("index", b"ope".as_slice())
             ]
         );
-        let FfiValue::Object(entries) =
-            operator_to_value(OpSpec::Matches, &IndexSpec::Match(MatchOptions::default()))
+        let Tree::Object(entries) =
+            operator_value(OpSpec::Matches, &IndexSpec::Match(MatchOptions::default()))
         else {
             panic!("an object");
         };
-        assert!(matches!(&entries[1].1, FfiValue::String(s) if s.risky_ref() == b"probabilistic"));
-        assert!(matches!(&entries[2].1, FfiValue::String(s) if s.risky_ref() == b"one"));
+        assert!(matches!(&entries[1].1, Tree::String(s) if s.as_bytes() == b"probabilistic"));
+        assert!(matches!(&entries[2].1, Tree::String(s) if s.as_bytes() == b"one"));
     }
 
     /// EQL's match options: not the default, so a test that passes under
@@ -2354,16 +2372,16 @@ mod tests {
 
     fn match_type_plan() -> Plan {
         record::plan_with(
-            FfiValue::Object(vec![(
+            &frame_of(&Tree::Object(vec![(
                 "name".into(),
-                FfiValue::Object(vec![
+                Tree::Object(vec![
                     (
                         "context".into(),
-                        FfiValue::Array(vec![text("users"), text("name")]),
+                        Tree::Array(vec![text("users"), text("name")]),
                     ),
                     ("target".into(), text("Some")),
                 ]),
-            )]),
+            )])),
             &MatchType,
         )
         .unwrap()
@@ -2439,7 +2457,7 @@ mod tests {
                 "name",
                 OpSpec::Matches,
                 text("ALICE"),
-                &[text("say alice nguyen"), text("alison"), FfiValue::Null],
+                &[text("say alice nguyen"), text("alison"), Tree::Null],
                 &MatchType,
             )
             .unwrap(),
@@ -2533,16 +2551,16 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = record::plan_with(
-            FfiValue::Object(vec![(
+            &frame_of(&Tree::Object(vec![(
                 "email".into(),
-                FfiValue::Object(vec![
+                Tree::Object(vec![
                     (
                         "context".into(),
-                        FfiValue::Array(vec![text("users"), text("email")]),
+                        Tree::Array(vec![text("users"), text("email")]),
                     ),
                     ("target".into(), text("Some")),
                 ]),
-            )]),
+            )])),
             &OneType,
         )
         .unwrap();
@@ -2573,7 +2591,7 @@ mod tests {
             "email",
             OpSpec::Eq,
             text("a"),
-            Vec::<FfiValue>::new(),
+            Vec::<Tree>::new(),
             &OneType,
         )
         .unwrap_err();
@@ -2582,4 +2600,186 @@ mod tests {
             (Some("email"), Some(Reason::ExactOperator))
         );
     }
+}
+
+/// The engine's answers, pinned byte for byte: these are the frames the
+/// Tree encoders wrote before the answers were written by serde, and a
+/// binding reads them.
+#[cfg(test)]
+mod wire_bytes {
+    use super::*;
+    use crate::sem::{MatchOptions, Tokenizer};
+    use vitaminc_aead_frame::serde::to_vec;
+
+    fn hex<T: Serialize>(value: &T) -> String {
+        to_vec(value)
+            .expect("frames")
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    fn indexes() -> Vec<IndexSpec> {
+        vec![
+            IndexSpec::Equality,
+            IndexSpec::Match(MatchOptions::default()),
+            IndexSpec::Match(MatchOptions {
+                tokenizer: Tokenizer::Standard,
+                downcase: false,
+                k: 4,
+                m: 512,
+            }),
+            IndexSpec::Match(MatchOptions {
+                tokenizer: Tokenizer::Ngram { length: 4 },
+                ..MatchOptions::default()
+            }),
+            IndexSpec::Ore,
+            IndexSpec::Ope,
+        ]
+    }
+
+    fn descriptor(
+        kind: Option<ValueKind>,
+        indexes: &[&str],
+        query: bool,
+        producible: bool,
+    ) -> TargetDescriptor {
+        TargetDescriptor::new(
+            "Some",
+            "some",
+            "",
+            kind,
+            "public.some",
+            indexes.iter().map(|i| (*i).to_owned()).collect(),
+            query.then(|| "SomeQuery".to_owned()),
+            query.then(|| "eql_v3.query_some".to_owned()),
+            producible,
+            (!producible).then(|| "not yet".to_owned()),
+        )
+    }
+
+    /// Every index, and every operator entry under it; three query terms,
+    /// one a range and one with a domain; four limits; three pages of
+    /// verdicts; four catalog entries.
+    #[test]
+    fn every_answer_writes_its_pinned_bytes() {
+        let mut written = Vec::new();
+        for index in indexes() {
+            written.push(hex(&index));
+            for op in OpSpec::ALL {
+                written.push(hex(&OperatorEntry::new(op, &index)));
+            }
+        }
+        for term in [
+            QueryTerm {
+                operator: OpSpec::Eq,
+                index: IndexSpec::Equality,
+                domain: None,
+                operand: Operand::One(vec![1, 2, 3]),
+            },
+            QueryTerm {
+                operator: OpSpec::Between,
+                index: IndexSpec::Ope,
+                domain: Some("eql_v4.query_int".to_owned()),
+                operand: Operand::Range {
+                    lo: vec![4],
+                    hi: vec![5, 6],
+                },
+            },
+            QueryTerm {
+                operator: OpSpec::Matches,
+                index: IndexSpec::Match(MatchOptions::default()),
+                domain: None,
+                operand: Operand::One(Vec::new()),
+            },
+        ] {
+            written.push(hex(&term));
+        }
+        for limit in [
+            Limit::Rows(0),
+            Limit::Rows(11),
+            Limit::Rows(u64::MAX),
+            Limit::Unbounded,
+        ] {
+            written.push(hex(&limit.rows()));
+        }
+        for page in [vec![], vec![true], vec![true, false, true]] {
+            written.push(hex(&page));
+        }
+        for target in [
+            descriptor(Some(ValueKind::String), &["eq", "match"], true, true),
+            descriptor(Some(ValueKind::String), &["eq", "match"], true, true)
+                .with_match_options(MatchOptions::default()),
+            descriptor(Some(ValueKind::Int64), &["ore"], true, true),
+            descriptor(None, &[], false, false),
+        ] {
+            written.push(hex(&target));
+        }
+        assert_eq!(written, PINNED);
+    }
+
+    const PINNED: [&str; 62] = [
+        "0a020000006571",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a020000006571",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "0a050000006d61746368",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f101000000050000006d61746368f10400000009000000746f6b656e697a65720a080000007374616e6461726408000000646f776e6361736502010000006b070400000000000000010000006d070002000000000000",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f101000000050000006d61746368f10400000009000000746f6b656e697a6572f101000000050000006e6772616d07040000000000000008000000646f776e6361736503010000006b070300000000000000010000006d070001000000000000",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d61746368",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "0a030000006f7265",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a030000006f7265",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "0a030000006f7065",
+        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a030000006f7065",
+        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
+        "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a05000000657861637405000000696e6465780a02000000657106000000646f6d61696e00040000007465726d0b03000000010203",
+        "f105000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a05000000657861637405000000696e6465780a030000006f706506000000646f6d61696e0a1000000065716c5f76342e71756572795f696e74040000007465726df0020000000b01000000040b020000000506",
+        "f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c697374696305000000696e6465780a050000006d6174636806000000646f6d61696e00040000007465726d0b00000000",
+        "070000000000000000",
+        "070b00000000000000",
+        "07ffffffffffffffff",
+        "00",
+        "f000000000",
+        "f00100000003",
+        "f003000000030203",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a06000000737472696e670a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0020000000a0200000065710a050000006d617463680500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f001000000f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a06000000737472696e670a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0020000000a0200000065710a050000006d617463680500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f002000000f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a05000000696e7436340a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0010000000a030000006f72650500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f004000000f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e74657874000a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f000000000050000007175657279001000000071756572795f73716c5f646f6d61696e000a00000070726f64756369626c650206000000726561736f6e0a070000006e6f7420796574090000006f70657261746f7273f000000000",
+    ];
 }

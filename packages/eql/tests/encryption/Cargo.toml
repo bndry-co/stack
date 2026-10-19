@@ -13,15 +13,21 @@ harness = false
 
 # Keep crypto/Postgres test dependencies out of eql-bindings' default test build.
 [dev-dependencies]
-eql-bindings = { path = "../../crates/eql-bindings", features = ["targets"] }
+# `chrono` and `rust_decimal`: the date, timestamp and decimal plaintexts
+# convert from those crates' values, which build the test values here.
+eql-bindings = { path = "../../crates/eql-bindings", features = ["targets", "chrono", "rust_decimal"] }
 # The parity oracle for the generated target table (tests/targets.rs): the
 # table must name every stored catalog domain, in catalog order.
 eql-domains = { path = "../../crates/eql-domains" }
 # `dynamic`: `ValueFrame`, the runtime plaintext the target dispatch takes,
 # as eql-bindings names it.
 stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic"] }
-# `plaintext::Sink`, for a plaintext type with its own `Encrypt` impl.
-vitaminc-aead = "0.6.0"
+# `plaintext::Sink`, for a plaintext type with its own `Encrypt` impl; and
+# chrono's and rust_decimal's own sources, which seal the leaf a date,
+# timestamp or decimal from any other producer seals.
+vitaminc-aead = { version = "0.6.0", features = ["chrono", "rust_decimal"] }
+chrono = { version = "0.4.44", default-features = false, features = ["std"] }
+rust_decimal = { version = "1", default-features = false, features = ["std"] }
 stack-kms = { path = "../../../stack-kms", default-features = false, features = ["test-support"] }
 serde = "1"
 serde_json = "1"
@@ -33,20 +39,19 @@ postgres = "0.19"
 # depend on lives in cipherstash-client, which protect-ffi encrypts through.
 # Its `JsonIndexer` runs offline over a supplied index key. The same exact pin
 # tests/sqlx names, so this workspace's lockfile gains no second copy.
-# protect-ffi resolves cipherstash-client from its own workspace and lockfile,
-# so the pin covers the version named here, not necessarily the one protect-ffi
-# ships: a protect-ffi bump is covered once this line moves to match it.
+# protect-ffi resolves cipherstash-client from its own workspace and lockfile;
+# scripts/__tests__/cipherstash-client-parity.test.mjs fails on every PR where
+# the two lockfiles disagree on cipherstash-client or cipherstash-config (the
+# crates that compute selectors), so a protect-ffi bump must move this line
+# (and tests/sqlx's) with it, and the pin then covers the versions of those two
+# crates protect-ffi ships. Primitive dependencies such as blake3 are not
+# compared.
 #
 # The EQL v4 range tests (tests/v4_range.rs) use it too: EQL compares
 # block-ORE and CLLW-OPE terms, which Stack Encrypt does not derive for EQL
 # yet, so cipherstash-client's `OreIndexer` / `OpeIndexer` write the order
 # terms of their rows and ranges, offline over the same index key.
-cipherstash-client = "=0.42.0"
-# The plaintexts of the date, timestamp and numeric rows in tests/v4_range.rs,
-# as cipherstash-client's `Plaintext` names them. Both are already in the
-# lockfile through cipherstash-client.
-chrono = { version = "0.4", default-features = false }
-rust_decimal = "1"
+cipherstash-client = "=0.42.3"
 # The tampering test decodes a stored body, changes one byte and re-encodes
 # it. The same line eql-bindings uses, so the lockfile gains no second copy.
 base64 = "0.22"

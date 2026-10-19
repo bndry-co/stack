@@ -96,6 +96,17 @@ exclude_re = [
   # `true` there refuses the same values with the same error. The guard stays
   # so the model says what it holds without leaning on the writer behind it.
   'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace match guard logical\.admits\(&value\) with true in model$',
+  # A serde visitor's `expecting` writes only the "expected ..." half of a
+  # serde error's message, and no caller of these three reads that message:
+  # a context, statistics and a plan's root are each refused with one fixed
+  # `Reason` (`ContextKind`, `NotStats`, `NotAnObject`), and the plan's
+  # field-level reasons are read from the error's path, so writing nothing
+  # refuses the same input with the same error.
+  'stack-encrypt/src/dynamic/(context|query|record)\.rs:\d+:\d+: replace <impl (Visitor<\x27de> for ContextVisitor|serde::Deserialize<\x27de> for Confidence>::deserialize::<impl serde::de::Visitor<\x27_> for V|Deserialize<\x27de> for PlanWire>::deserialize::<impl Visitor<\x27de> for V)>::expecting -> fmt::Result with Ok\(Default::default\(\)\)$',
+  # The same for the visitor that reads a refused plan's keys back
+  # (`entry_key`): its error is discarded (`.ok()`), so its message is never
+  # read at all.
+  'stack-encrypt/src/dynamic/record\.rs:\d+:\d+: replace entry_key::<impl Deserialize<\x27de> for Keys>::deserialize::<impl Visitor<\x27de> for V>::expecting -> fmt::Result with Ok\(Default::default\(\)\)$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is

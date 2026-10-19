@@ -413,23 +413,50 @@ fn render_range_query_struct(family: &DomainFamily, term: Term) -> TokenStream {
 
 /// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
 /// `stack-encrypt` derives: the storage and equality domains of every family
-/// whose plaintext the engine's value enum carries, and text match. Every
-/// other stored domain has a reason in [`encryption_gap`], and a test holds the two together so a new domain
+/// whose plaintext eql-bindings names (`plaintext_of`), the OPE-ordered
+/// domains (`ord`, `ord_ope`) of those whose order terms the engine derives,
+/// and text match. Every other stored domain has a reason in
+/// [`encryption_gap`], and a test holds the two together so a new domain
 /// cannot arrive without either a derive or a reason.
 pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("integer", ""),
     ("integer", "eq"),
+    ("integer", "ord"),
+    ("integer", "ord_ope"),
+    ("smallint", ""),
+    ("smallint", "eq"),
+    ("smallint", "ord"),
+    ("smallint", "ord_ope"),
     ("bigint", ""),
     ("bigint", "eq"),
+    ("bigint", "ord"),
+    ("bigint", "ord_ope"),
+    ("date", ""),
+    ("date", "eq"),
+    ("timestamp", ""),
+    ("timestamp", "eq"),
+    ("numeric", ""),
+    ("numeric", "eq"),
     ("text", ""),
     ("text", "eq"),
     ("text", "match"),
+    ("text", "ord"),
+    ("text", "ord_ope"),
     ("boolean", ""),
     ("real", ""),
     ("real", "eq"),
+    ("real", "ord"),
+    ("real", "ord_ope"),
     ("double", ""),
     ("double", "eq"),
+    ("double", "ord"),
+    ("double", "ord_ope"),
 ];
+
+/// The families whose plaintext is a vitaminc logical type (a date, a
+/// timestamp, a decimal) rather than a physical one. Their equality terms
+/// are derived; their order terms are not (`encryption_gap`).
+const ORDER_PENDING_FAMILIES: &[&str] = &["date", "timestamp", "numeric"];
 
 /// Why no `eql_v3` struct derives Stack Encrypt's traits.
 pub const V3_ENCRYPTION_GAP: &str =
@@ -438,16 +465,22 @@ pub const V3_ENCRYPTION_GAP: &str =
 
 /// The plaintext a family's v4 domains are produced from: the vitaminc
 /// `ValueKind` name a plan field's `"type"` key spells, and the Rust type the
-/// derive and the by-name dispatch name. `None` for a family the engine's
-/// value enum has no kind for.
+/// derive and the by-name dispatch name. `None` for a family eql-bindings
+/// names no Rust plaintext type for yet. A date, a timestamp and a decimal
+/// are eql-bindings' own types (`v4::plaintext`), which can be wiped where
+/// chrono's and rust_decimal's cannot.
 pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
     Some(match family {
         "text" => ("string", "String"),
+        "smallint" => ("int16", "i16"),
         "integer" => ("int32", "i32"),
         "bigint" => ("int64", "i64"),
         "boolean" => ("bool", "bool"),
         "real" => ("float32", "f32"),
         "double" => ("float64", "f64"),
+        "date" => ("date", "crate::v4::plaintext::Date"),
+        "timestamp" => ("timestamp", "crate::v4::plaintext::Timestamp"),
+        "numeric" => ("decimal", "crate::v4::plaintext::Decimal"),
         _ => return None,
     })
 }
@@ -473,18 +506,27 @@ pub fn encryption_gap(
         "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document \
          becomes one sealed leaf is not decided"
     } else if plaintext_of(family.name).is_none() {
-        "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 \
-         specifies the kind and its encodings (ADR-0002, #1144)"
+        "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK \
+         carry the kind"
+    } else if ORDER_PENDING_FAMILIES.contains(&family.name)
+        && (domain.terms.contains(&Term::Ope) || domain.terms.contains(&Term::Ore))
+    {
+        // Before the ORE branch: the engine derives no order term of either
+        // scheme for these kinds, so block ORE is not the first thing a
+        // `*OrdOre` type of these families waits for.
+        "the engine derives no order term for a date, timestamp or decimal yet: how they are \
+         ordered is not decided (#1236)"
     } else if domain.terms.contains(&Term::Ore) {
         "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"
-    } else if domain.terms.contains(&Term::Ope) && family.name == "text" {
-        "no EQL type is built from the engine's text order terms yet (#1131)"
-    } else if domain.terms.contains(&Term::Ope) {
-        "the engine does not yet derive this family's order terms over ADR-0002's order keys \
-         (#1236)"
+    } else if domain.terms.contains(&Term::Bloom) && domain.terms.contains(&Term::Ope) {
+        "every query of this type carries a match term, which text shorter than one 3-gram \
+         cannot make, so `=` or `<` on short text would be refused; how a query that is not a \
+         match leaves it out is not decided (#1131)"
     } else {
-        // Reached by an equality-only domain of a family whose plaintext is
-        // specified but which is not listed: nothing in the catalog today.
+        // Reached by any unlisted domain of a family whose plaintext is
+        // specified and whose terms are neither ORE nor match-and-order (an
+        // equality or OPE-ordered domain of a family that gains a plaintext,
+        // say): nothing in the catalog today.
         "this domain derives the way its family's other domains do; it is not listed in \
          ENCRYPTION_DOMAINS yet"
     })
@@ -510,10 +552,15 @@ fn encryption_attrs(
     let shown = rust.rsplit("::").next().unwrap_or(rust);
     let plaintext_doc = |named: &str| {
         if query {
-            let terms = if domain.terms.contains(&Term::Bloom) {
-                "match"
-            } else {
-                "equality"
+            let terms = match (
+                domain.terms.contains(&Term::Bloom),
+                domain.terms.contains(&Term::Hm),
+                domain.terms.contains(&Term::Ope),
+            ) {
+                (true, _, _) => "match",
+                (false, true, true) => "equality and order",
+                (false, false, true) => "order",
+                _ => "equality",
             };
             format!(
                 " Plaintext input: {named}. Implements `EncryptFrom<{shown}>` to build {terms} \
@@ -1823,17 +1870,20 @@ mod tests {
                     } else if family.name == "json" {
                         "tree of leaves"
                     } else if plaintext_of(family.name).is_none() {
-                        "no kind for this family"
+                        "no Rust plaintext type for this family"
+                    } else if ORDER_PENDING_FAMILIES.contains(&family.name) {
+                        "no order term for a date, timestamp or decimal"
                     } else if domain.terms.contains(&Term::Ore) {
                         "block ORE terms"
-                    } else if domain.terms.contains(&Term::Ope) {
-                        if family.name == "text" {
-                            "text order terms"
-                        } else {
-                            "order keys (#1236)"
-                        }
+                    } else if domain.terms.contains(&Term::Bloom)
+                        && domain.terms.contains(&Term::Ope)
+                    {
+                        "carries a match term"
                     } else {
-                        panic!("{full}: every specified, unordered domain is derived: {reason}")
+                        panic!(
+                            "{full}: every specified domain without ORE or a match-and-order \
+                             query is derived: {reason}"
+                        )
                     };
                     assert!(reason.contains(expected), "{full}: {reason}");
                 }

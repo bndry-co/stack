@@ -35,9 +35,32 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   implemented outside this module (a wrapper, or a fake in a generator's
   tests) changes its `Check` to return them; `enginetest.Static` shows the
   table.
+- **An `int8`, `uint8` or `byte` field takes no `ore` or `ope` index; drop
+  the index and run stashgen again.** With 256 values, an order term ranks
+  every row among 256, which a few known rows resolve to the values, the
+  leak a `bool`'s order term is already refused for. The engine refuses the
+  declaration as it refuses one on a `bool`, so stashgen stops at it. The
+  field keeps `equality` and `Eq`; a value that must order declares a wider
+  type.
+- **Every ORE and OPE term changes bytes; encrypt indexed rows again.**
+  Order terms now encrypt through cllw-ore's vitaminc schemes, for every
+  type: integers of every width, floats, text and bytes. A term v0.1.0-alpha.1
+  stored does not compare with one this release derives, and nothing
+  refuses it: `Lt`, `Between` or an `ORDER BY` over a column holding the
+  alpha's terms silently misses or misplaces rows. Re-derive a column's
+  order terms (encrypt its rows again) before querying it.
 
 ### Added
 
+- **The date, timestamp and numeric EQL v4 types are producible** (#1130):
+  `Date` and `DateEq` from an `encrypt.Date`, `Timestamp` and `TimestampEq`
+  from a `time.Time`, and `Numeric` and `NumericEq` from an
+  `encrypt.Decimal`, with `encrypt_into=`. The `Eq` types answer `Eq`:
+  `NumericEq` normalises the scale (`1.5 = 1.50`) and `TimestampEq` compares
+  to the microsecond (truncated, never rounded), while each value opens as it was sealed. A
+  `time.Time` seals its instant and opens in UTC. Their `Ord`, `OrdOpe` and
+  `OrdOre` types stay unproducible until the engine derives order terms
+  for these kinds (#1236).
 - **Every integer width, 128-bit integers, dates, timestamps and decimals
   as sealed fields** (#1144). Each integer type seals at its own width
   (`int8` as an int8, `uint16` as a uint16), so `record.Kind` and
@@ -47,8 +70,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `Decimal` are vitaminc's `vcvalue` types, with `encrypt.DateOf`,
   `ParseInt128`, `ParseUint128` and `ParseDecimal` (which refuses NaN and
   the infinities with `ErrNonFiniteDecimal`). Equality applies to all of
-  them, ORE and OPE to every integer width. stashgen refuses an order index
-  on a decimal, date or timestamp, naming #1236. The value-kinds fixture
+  them, ORE and OPE to every integer width but 8 bits. stashgen refuses an
+  order index on a decimal, date or timestamp, naming #1236. The value-kinds fixture
   test opens a record the Rust lowering sealed and derives the same terms.
 - **Any built-in Go integer field takes an integer EQL type** (ADR-0002):
   an `int16` or a `uint16` into `Integer`, an `int` into `Bigint`. The
@@ -83,13 +106,44 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `float32` or `float64` field tagged `encrypt_into=` one of them gets `Eq`.
   `=` compares as PostgreSQL compares the plain types: an integer has one
   term whatever its width, and for floats `-0.0 = 0.0` and `NaN = NaN`.
+- **`Smallint` and `SmallintEq`**: an `int16` field (or any Go integer
+  type, range checked as for `Integer`) tagged `encrypt_into=` one of them
+  seals at 16 bits; `SmallintEq` gets `Eq`, with the same equality term as
+  an integer of the same value under the same column.
+- **`IntegerOrd`, `SmallintOrd`, `BigintOrd`, `RealOrd`, `DoubleOrd`,
+  `TextOrd` and their `OrdOpe` twins**: a field tagged `encrypt_into=` one of them gets `Lt`,
+  `Lte`, `Gt` and `Gte`, and a text one `Eq` too. They store an OPE term
+  that orders by ADR-0002's order key: floats as PostgreSQL's `float8`
+  sorts them, text by its fold. No `Between` yet: it needs EQL v4's range
+  query domains.
+- **Ordering methods on text.** A string field with `index=ore` or
+  `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`. Text orders by its
+  folded form (ADR-0002: case and accents folded, under Unicode 16), so
+  `Café` and `cafe` tie and `alice` orders before `Zoe`.
+- **Ordering methods on floats.** A `float32` or `float64` field with
+  `index=ore` or `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`.
+  Floats order as PostgreSQL's `float8` does (ADR-0002): `-0.0` ties `0.0`,
+  and every NaN is one value, above `+Inf`. A `float32` orders as the
+  `float64` it widens to.
 - **stashgen notices an index no generated method queries**: an `ore` or
-  `ope` index on text, bytes or a float (the engine answers the orderings
-  over integers only), or the second of two order indexes on an integer.
+  `ope` index on bytes (the engine answers the orderings over integers,
+  floats and text only), or the second of two order indexes on a field.
   The index is still stored; the notice is on stderr and in the file.
 
 ### Changed
 
+- **A call whose context ends fails on its own and leaves the client
+  open.** A cancelled or timed-out call used to close the `encrypt.Client`,
+  or the `auth` profile behind its strategy, for every later caller, and a
+  request whose deadline passed while it waited for the client closed it
+  before running. Now a call waiting for the client leaves the queue with
+  the context's error; a ZeroKMS request in flight is cancelled, and the
+  error matches both the context's error and `ErrTransport`; a device
+  session's refresh in flight finishes in the background, for up to 10
+  seconds, so a rotated refresh token is never lost; and the client stays
+  open. A client or profile still closes itself (`ErrState`) when the
+  guest traps, or when a call runs on for 30 seconds after its context
+  ended.
 - **stashgen refuses a match index on an index-only field**
   (`stash:"name,index=match"` with no `encrypt`). A match query's rows are
   checked by decrypting them, and such a field stores no ciphertext.

@@ -1107,48 +1107,28 @@ async fn a_between_query_is_one_term_carrying_both_bounds() {
     assert!(typed_range.lo() < typed_range.hi());
 }
 
-/// A range whose low bound is above its high bound holds nothing, so it is
-/// refused when the query is awaited, before either bound's term is
-/// derived and before any keyset is loaded.
+/// A range whose low bound is above its high bound is not refused, as
+/// SQL's `BETWEEN` is not: both bounds' terms are derived like any other
+/// range's, in the order given, and the range matches nothing.
 #[tokio::test]
-async fn an_inverted_range_is_refused_before_any_term_or_keyset() {
-    let (cipher, loads) = loads_counting_cipher().await;
+async fn an_inverted_range_is_a_query_like_any_other() {
+    let cipher = stack_cipher().await;
     let plan = Plan::context("users/age")
         .with::<u32, _>(Ore)
         .build()
         .unwrap();
-    let refused = cipher
+    let inverted = cipher
         .query(op::Between, &(65u32, 18))
         .on(&plan)
-        .keyset("tenant")
-        .await;
-    assert!(matches!(
-        refused,
-        Err(Error::Term(TermError::InvertedRange))
-    ));
-    let refused = stack_encrypt::all((
-        cipher.query(op::Lt, &40u32).on(&plan),
-        cipher.query(op::Between, &(2u32, 1)).on(&plan),
-    ))
-    .await;
-    assert!(matches!(
-        refused,
-        Err(Error::Term(TermError::InvertedRange))
-    ));
-    assert_eq!(
-        loads.load(std::sync::atomic::Ordering::SeqCst),
-        0,
-        "refused before the named keyset is loaded"
-    );
-    assert_eq!(
-        TermError::InvertedRange.to_string(),
-        "the range's low bound is above its high bound"
-    );
-    assert!(cipher
+        .await
+        .unwrap();
+    assert!(inverted.lo() > inverted.hi(), "the bounds as given");
+    let one = cipher
         .query(op::Between, &(18u32, 18))
         .on(&plan)
         .await
-        .is_ok());
+        .unwrap();
+    assert_eq!(one.lo(), one.hi());
 }
 
 /// A field of a fields plan answers the orderings over its declared index,
@@ -1264,4 +1244,95 @@ async fn a_field_answers_the_orderings_through_its_declared_index() {
             expected: "u32"
         }
     );
+}
+
+/// Text orders by its order key, ADR-0002's fold: the orderings are
+/// answered over text, a query term of `Café` is the term of `cafe`, `alice`
+/// orders before `Zoe` and `élan` between `eclair` and `emu`.
+#[tokio::test]
+async fn text_orders_by_its_folded_key() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/surname")
+        .with::<String, _>((Ore, Ope))
+        .build()
+        .unwrap();
+    let lt = |text: &str| cipher.query(op::Lt, text).on(&plan);
+    let ope = |text: &str| cipher.query(op::Lt, text).via(Ope).on(&plan);
+    let cafe: OreTerm<String> = lt("cafe").await.unwrap();
+    for text in ["Caf\u{e9}", "CAF\u{c9}", "cafe\u{301}"] {
+        assert_eq!(lt(text).await.unwrap(), cafe, "{text:?}");
+    }
+
+    // OPE terms compare as bytes, so the order is visible here directly.
+    let order = ["alice", "eclair", "\u{c9}lan", "emu", "Zoe"];
+    let mut terms = Vec::new();
+    for text in order {
+        let term: OpeTerm<String> = ope(text).await.unwrap();
+        terms.push(term.as_bytes().to_vec());
+    }
+    assert!(terms.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
+    // And ORE terms compare through their own comparison.
+    let alice: OreTerm<String> = lt("alice").await.unwrap();
+    let zoe: OreTerm<String> = lt("Zoe").await.unwrap();
+    assert!(alice < zoe);
+
+    let between = |lo: &str, hi: &str| {
+        cipher
+            .query(op::Between, &(lo.to_owned(), hi.to_owned()))
+            .on(&plan)
+    };
+    let tie = between("A", "a").await.unwrap();
+    assert_eq!(tie.lo(), tie.hi(), "one folded value");
+    assert!(between("a", "B").await.is_ok());
+    assert!(
+        matches!(
+            between("a\u{378}", "b").await,
+            Err(Error::Term(TermError::Normalize(_)))
+        ),
+        "a bound with no fold"
+    );
+}
+
+/// Floats order by their ADR-0002 order key, as Postgres's `float8` does:
+/// the orderings are answered over `f64`, `-0.0` and `0.0` are one query
+/// term, and every NaN is one and sorts above `+Infinity`.
+#[tokio::test]
+async fn floats_order_by_their_order_key() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/score")
+        .with::<f64, _>((Ore, Ope))
+        .build()
+        .unwrap();
+    let lt = |value: f64| cipher.query(op::Lt, &value).on(&plan);
+    let ope = |value: f64| cipher.query(op::Lt, &value).via(Ope).on(&plan);
+    let zero: OreTerm<f64> = lt(0.0).await.unwrap();
+    assert_eq!(lt(-0.0).await.unwrap(), zero, "-0.0 is 0.0");
+    let nan: OreTerm<f64> = lt(f64::NAN).await.unwrap();
+    assert_eq!(lt(-f64::NAN).await.unwrap(), nan, "one NaN");
+
+    let order = [
+        f64::NEG_INFINITY,
+        -1.5,
+        0.0,
+        1e-300,
+        1.5,
+        f64::INFINITY,
+        f64::NAN,
+    ];
+    let mut terms = Vec::new();
+    for value in order {
+        let term: OpeTerm<f64> = ope(value).await.unwrap();
+        terms.push(term.as_bytes().to_vec());
+    }
+    assert!(terms.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
+    let low: OreTerm<f64> = lt(-1.5).await.unwrap();
+    assert!(low < zero && zero < nan);
+
+    let between = |lo: f64, hi: f64| cipher.query(op::Between, &(lo, hi)).on(&plan);
+    let from_nan = between(f64::NAN, f64::INFINITY).await.unwrap();
+    assert!(from_nan.lo() > from_nan.hi(), "NaN sorts last");
+    let one = between(0.0, -0.0).await.unwrap();
+    assert_eq!(one.lo(), one.hi(), "one value");
+    let range = between(-0.5, 2.5).await.unwrap();
+    assert!(range.lo() < range.hi());
 }

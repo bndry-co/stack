@@ -21,6 +21,10 @@
     "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"rank\"},\"hm\":\"54e9bd5b5c8620be147b65fe754240f64562d4ce62394b3e4390867f2ef483cc\"}"
   },
   "table": "profiles",
+  "tally": {
+    "plaintext": -12,
+    "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"tally\"},\"hm\":\"7aeb7ba10d7f88d1c6ec1e4d819e20aa0460e2467eaf1c5829437126ecc72db3\"}"
+  },
   "weight": {
     "plaintext": 1.5,
     "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"weight\"},\"hm\":\"96cc94054dd2785dd2592355d2478ca4470d29e09b47637a99f7a91066c93f8b\"}"

@@ -155,10 +155,18 @@ impl DomainType for BigintOrdOre {
     doc,
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptFrom<i64>` and `DecryptInto<i64>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = i64)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BigintOrd {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
     pub op: OpeCllw,
@@ -197,10 +205,18 @@ impl DomainType for BigintOrd {
     doc,
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptFrom<i64>` and `DecryptInto<i64>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = i64)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BigintOrdOpe {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
     pub op: OpeCllw,
@@ -329,10 +345,18 @@ impl DomainType for BigintOrdOreQuery {
     doc,
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input: [`i64`](i64). Implements `EncryptFrom<i64>` to build order query terms. Query operands do not decrypt.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom)]
+#[stash(plaintext = i64)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BigintOrdQuery {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub op: OpeCllw,
 }
@@ -370,10 +394,18 @@ impl DomainType for BigintOrdQuery {
     doc,
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input: [`i64`](i64). Implements `EncryptFrom<i64>` to build order query terms. Query operands do not decrypt.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom)]
+#[stash(plaintext = i64)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BigintOrdOpeQuery {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub op: OpeCllw,
 }

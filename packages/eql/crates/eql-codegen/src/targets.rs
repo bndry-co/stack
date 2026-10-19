@@ -18,12 +18,12 @@
 //! the derive, and [`target_gap`] is tested to agree with
 //! [`encryption_gap`](crate::bindings::encryption_gap) on every domain.
 //!
-//! The reasons a type is not producible, each naming the issue that tracks
-//! it: the engine's value enum has no kind for the family (#1144); the
-//! engine's order terms are not yet derived over ADR-0002's order keys
-//! (#1236) or, for text, no EQL type is built from them (#1131); EQL's ORE
-//! term is block ORE where the engine derives CLLW ORE (#1132); and the JSON
-//! index is a new engine operation (#1060).
+//! The reasons a type is not producible: eql-bindings names no Rust
+//! plaintext type for the family; the engine derives no order term for a
+//! date, timestamp or decimal; EQL's ORE term is block ORE where the engine
+//! derives CLLW ORE (#1132); a
+//! `TextSearch` query carries a match term that short text cannot make
+//! (#1131); and the JSON index is a new engine operation (#1060).
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -391,15 +391,13 @@ mod tests {
             target_gap(family, family.domain_by_name(name).expect("domain"))
         };
         let text = eql_domains::TEXT;
-        for producible in ["", "eq", "match"] {
+        for producible in ["", "eq", "match", "ord", "ord_ope"] {
             assert!(gap(&text, producible).is_none(), "text {producible:?}");
         }
-        for ordered in ["ord", "ord_ope", "search"] {
-            assert!(
-                gap(&text, ordered).unwrap().contains("text order terms"),
-                "{ordered}"
-            );
-        }
+        assert!(
+            gap(&text, "search").unwrap().contains("match term"),
+            "TextSearch waits on how a query leaves out its match term"
+        );
         for block_ore in ["ord_ore", "search_ore"] {
             assert!(
                 gap(&text, block_ore).unwrap().contains("block ORE"),
@@ -413,25 +411,36 @@ mod tests {
                 .find(|f| f.name == name)
                 .expect("family")
         };
-        for family_name in ["integer", "bigint", "real", "double"] {
+        for family_name in ["integer", "smallint", "bigint", "real", "double"] {
             let family = family(family_name);
             assert!(gap(family, "").is_none(), "{family_name}");
-            assert!(gap(family, "eq").is_none(), "{family_name}Eq is producible");
-            assert!(
-                gap(family, "ord").unwrap().contains("#1236"),
-                "{family_name}"
-            );
+            for producible in ["eq", "ord", "ord_ope"] {
+                assert!(
+                    gap(family, producible).is_none(),
+                    "{family_name} {producible}"
+                );
+            }
             assert!(
                 gap(family, "ord_ore").unwrap().contains("block ORE"),
                 "{family_name}"
             );
         }
-        assert!(gap(family("date"), "")
-            .unwrap()
-            .contains("no kind for this family"));
-        assert!(gap(family("smallint"), "eq")
-            .unwrap()
-            .contains("no kind for this family"));
+        // A date, a timestamp and a decimal are stored and compared for
+        // equality; every ordered domain of theirs waits for an order term,
+        // block ORE included, which waits for that first.
+        for family_name in ["date", "timestamp", "numeric"] {
+            let family = family(family_name);
+            assert!(gap(family, "").is_none(), "{family_name}");
+            assert!(gap(family, "eq").is_none(), "{family_name}Eq is producible");
+            for ordered in ["ord", "ord_ope", "ord_ore"] {
+                assert!(
+                    gap(family, ordered)
+                        .unwrap()
+                        .contains("no order term for a date, timestamp or decimal"),
+                    "{family_name} {ordered}"
+                );
+            }
+        }
         assert!(gap(family("json"), "").unwrap().contains("tree of leaves"));
     }
 

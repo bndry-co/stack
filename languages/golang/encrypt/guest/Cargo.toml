@@ -47,7 +47,7 @@ eql = ["dep:eql-bindings"]
 # HTTP comes from the host (see `wasm:wasi-check` in the suite root).
 stack-auth = { path = "../../../../packages/stack-auth", default-features = false }
 # `dynamic`: the runtime value model this guest speaks — contexts, index
-# terms and record plans over `FfiValue`, shared with every other binding.
+# terms and record plans read from frames, shared with every other binding.
 stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
 # The guest ABI every guest under bindings/go shares: the allocator and
 # buffer registry (and with them the `se_alloc`/`se_dealloc` exports), the
@@ -64,10 +64,10 @@ zerokms-protocol = "=0.12.31"
 # The transport frame and ciphertext codec, shared with vitaminc's own
 # guest — one codec, not a fork. Same vitaminc version stack-encrypt builds
 # against (see the comment in packages/stack-encrypt/Cargo.toml). A
-# different version here fails at the `FfiValue: Decrypt` bound, since the
+# different version here fails at the `ValueFrame: Decrypt` bound, since the
 # aead crate would be duplicated.
-vitaminc-aead-frame = "0.6.0"
-vitaminc-protected = "0.6.0"
+vitaminc-aead-frame = { version = "0.6.1", features = ["serde"] }
+vitaminc-protected = "0.6.1"
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 serde = "1"
@@ -76,6 +76,8 @@ uuid = "1"
 zeroize = "1"
 
 [dev-dependencies]
+# The test tree (`tests/support`) walks values through vitaminc's sinks.
+vitaminc-aead = "0.6.1"
 stack-kms = { path = "../../../../packages/stack-kms", default-features = false, features = ["test-support"] }
 # For minting a valid client-key fixture in the config tests.
 recipher = "=0.3.1"

@@ -107,22 +107,52 @@ The optional `stack-encrypt` feature enables `EncryptFrom<String>` for
 implements these traits. The derives are emitted by `eql-codegen`.
 
 The other v4 types Stack Encrypt produces take a Rust primitive as their
-plaintext:
+plaintext, or, for a date, a timestamp or a decimal, one of
+`eql_bindings::v4::plaintext`'s types:
 
 | v4 type | Plaintext |
 | --- | --- |
-| `Text`, `TextMatch` | `String` |
-| `Integer`, `IntegerEq` | `i32` |
-| `Bigint`, `BigintEq` | `i64` |
+| `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe` | `String` |
+| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe` | `i16` |
+| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe` | `i32` |
+| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe` | `i64` |
 | `Boolean` | `bool` |
-| `Real`, `RealEq` | `f32` |
-| `Double`, `DoubleEq` | `f64` |
+| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe` | `f32` |
+| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe` | `f64` |
+| `Date`, `DateEq` | `v4::plaintext::Date`: an `i32` of days since 1970-01-01 |
+| `Timestamp`, `TimestampEq` | `v4::plaintext::Timestamp`: `i64` Unix seconds and `u32` nanoseconds, UTC, no leap seconds |
+| `Numeric`, `NumericEq` | `v4::plaintext::Decimal`: an `i128` mantissa (below 2^96) and a `u8` scale (at most 28) |
+
+A date, a timestamp and a decimal have no Rust standard type, and chrono's
+and rust_decimal's types cannot be wiped, so these three are this crate's
+own. Each is built range checked (vitaminc's ranges, which are chrono's and
+rust_decimal's), refusing a value outside them with an error that does not
+show it, and wipes its integers when dropped. It is not `Copy`. The `chrono`
+and `rust_decimal` features convert to and from `NaiveDate`,
+`DateTime<Utc>` and rust_decimal's `Decimal`; the value converted to is the
+caller's, and is not wiped. Only a leap second, which a `DateTime<Utc>` can
+hold and a `Timestamp` cannot, is refused in a conversion. On `NumericEq`,
+`1.5 = 1.50` (the scale is normalised); on `TimestampEq`, an instant is truncated to the microsecond (the nanoseconds below it are dropped, not rounded), so two instants in the same microsecond are equal. Each opens as
+it was stored. The ordered date, timestamp and numeric types are refused
+until the engine derives their order terms.
 
 Each seals the same leaf the Go SDK seals for the same value, so values
 written here and by the Go SDK open each other. On the equality
 types, `=` behaves as Postgres's own does: an integer has one term whatever
 its width, and for floats `-0.0 = 0.0` and `NaN = NaN`. The ciphertext keeps
 the exact value.
+The `Ord` and `OrdOpe` types store an OPE term (`op`), which EQL compares as
+bytes, so `<`, `<=`, `>`, `>=` and `ORDER BY eql_v4.ord_term(col)` follow
+ADR-0002's order key: integers by value, floats as PostgreSQL's `float8`
+sorts them (`-0.0` ties `0.0`, every NaN is one value after `+Infinity`, and
+an `f32` orders as the `f64` it widens to), and text by its fold (case and
+accents folded, under Unicode 16). On a number column `=` compares the order
+term too. A text order type also stores `TextEq`'s equality term, and `=`
+reads that one, so `Café` and `cafe` are neither `<` nor `>` each other, and
+not `=` either. Text with a code point Unicode 16 does not assign has no
+order term and is refused, stored or queried. A family's `Ord` and `OrdOpe`
+types store the same term under one column. The query value carries one
+bound: `BETWEEN` needs EQL v4's range query domains and is not produced yet.
 `TextMatch` builds its filter under a configuration pinned in this crate
 (`EqlMatch`: 3-grams of the lower-cased text, `k = 6`, a 2048-bit filter) for
 stored values and queries alike. The configuration is part of the stored
@@ -132,10 +162,11 @@ where that matters. Write the stored column on the left, `col @@ query`: the
 other order finds nothing until #1171 is fixed. Text too short to make a
 3-gram (empty strings, two-letter codes) cannot be stored in a `TextMatch`
 column yet, and a `TextMatchQuery` for it is refused too: one filter type
-builds both, and an empty filter as a query would match every row. The
-ordering types wait for the engine's order keys (#1236), text's order types
-(#1131) and block ORE (#1132), and `Json` for a decision on sealing a
-document as one leaf.
+builds both, and an empty filter as a query would match every row. The ORE
+types (`*OrdOre`, `TextSearchOre`) wait for block ORE (#1132), `TextSearch`
+for how a query that is not a match leaves out its match term (#1131),
+`Date`, `Timestamp` and `Numeric` for a choice of their Rust plaintext types
+(#1130), and `Json` for a decision on sealing a document as one leaf.
 
 Each ordered v4 family also has two range query types, one per order term:
 `IntegerRangeOreQuery` and `IntegerRangeOpeQuery`, and so on

@@ -1,0 +1,334 @@
+{
+  "_comment": "Ranking rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below; the Rust suite opens and compares them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4OrderedRows, do not edit.",
+  "seed": "encrypt round-trip tests seed v1",
+  "table": "rankings",
+  "rows": [
+    {
+      "id": 1,
+      "plaintext": {
+        "level": -20,
+        "floor": -30,
+        "points": -5,
+        "total": -9,
+        "speed": -1.25,
+        "pace": -3.5,
+        "score": -2.5,
+        "mean": -0.25,
+        "title": "apple",
+        "handle": "Alice"
+      },
+      "stored": {
+        "floor": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "floor"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABn4yMF67G89OFjQZZuk7z/IAAPy1eGXRyPxy1IfAwzQCPlOMdditoc/8fNRNI2Iw3VQwJX+YR4eii1fcxB+KJtUD2cDQHwylkneQqa8OgbYJYiWTc=",
+          "op": "0068773fbf20d83c18c9e2c158d14a9601d12eab933e59d10e16311064f92eac47"
+        },
+        "handle": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "handle"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACao1GJ/o4L0iCBtDrzF6P4IADDycFng7kuIpwyCSaqaE7ZJDE3q+nAEKaMK9GelLdntgK3RJEIWuJIwJoaqe10CfLP0ObM8l+bgj/harYScfipBL4g",
+          "hm": "fd9e4ef66848b4dada73e4262e85c9994af16aff271638ef9ec695d460e55076",
+          "op": "00e169c8297d7be0a24e597d20e14036df866a797b2cf54c44b7ae8b5540f7055f407ed6f91137efd272331b242fbe1ba1"
+        },
+        "level": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "level"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADOELB7oFk4gGnte9gWUzX+IAA/eO5LaKSJjCCWDqc30OLhtVNEMuxqU8YpeFdvKCq/zwJuoJAKC6CVvRXxddKK93rVWrvRV5ZLBIdjTRO5wEkx4/M=",
+          "op": "00da028bda7156e277d149180f09a615bb7f3f45efabe00137a04f5514176bc162"
+        },
+        "mean": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "mean"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAXtGGpXlAfrs+IrloNwZO2IACelhdo3FYPTm2Ee6gu3+WpSHxU3IZtSHO2tiiQdtYltALT0WMwiFSu9v/C372nHnQ9Y2F5lQ+SJ9a6UGl7q1Wnzg6OavYb",
+          "op": "00fbce95d005970edd747e9dbff02f9824d8fedff874593ae7ddceabb8034978ead8b5f3a99c55793ed7912cb85f2cb5b600cc608ead9edfbf551e4d1544fff0d7"
+        },
+        "pace": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "pace"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADbT5WtnwkRYMqrlrr5MYHyIAB3uJpHJLZ4qKadvcMBxL3zAMxDkh86LddqQyvJSQAvugKLD9zlce2vNCOnYmInd4TrsCm94ahuAenaAUtKbFc5Fhk=",
+          "op": "00020a960d8eb4ca100a36cdccaca4b2685bcd7b343e092f8133a320b1d0cb6ec85408fb3485228c62b3512f97dc9b86ff4021b728ce7aec0b99f5bbe72a3fd870"
+        },
+        "points": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "points"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADE2rUct3jjTKCWivCCCvn+IACDxItrcNhNJjpoOqJKOryPLgDOg+vvfrH4031ThcjDcgL2v4cWtT1QKjil3dECXavlyHzUuyoinNxTfIYEdhSNTtbKxK1z",
+          "op": "00a53e38612eddc330547218dda2f5ee376e718061a8ea3af479e8473fadca71aef7476bd681e502cb239d515f23f7ef925e386904bfa7dcea145d06c9bcec551b"
+        },
+        "score": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "score"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAdcnRvoEEyjJO4SJ0QoQxyIAAWeon6kK0bnzHkJPNFV77QcE9ws0SBOC8udyFu1wQVVQJ2t+3/Rkek59/J7fRQYHVLNvDLxukNBbokL5IOQCiE/3SVDWb0",
+          "op": "004e3516c0d33a94c4ba52f438645a422d570ec9e8ff91214f13848b1eb09310c1a23351ac149e998374c4baea8eaf9247fcf7465dd3a946be01332c42889aeb49"
+        },
+        "speed": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "speed"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACQhhB1srtFMhmPGNU3YdsWIADsfyGa4Tr54eU6CvZPZuGD26cBMDuzAO68y/GPMEqBTALILPPKyY05f6gsuB1SdbmqiH4qDmgFT5U58X3BsRGNNfM=",
+          "op": "003c173a74a6502886339a78c9c32c6aae7ebde1d06257855d71e33b84651ef15d77ddbbc7980a6fa7634fb604fd5b2f52c248e3531b61f181a2a9662ae051aaff"
+        },
+        "title": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "title"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABDsM58wLdL/OmzeE1bqk6fIAAZc0G+IFRon1pJAfT2YQm7ENl+LSkdnO6ABKfec8JJOwIZax/COEcTjpdSfUvH35SFQKaypGbuq36W7Qkriuu7eEkm",
+          "hm": "3bb29d6ed8db30040350b25bdb47263cb156666c5214d96f991850a4672eefc0",
+          "op": "00344fe120b7abb89fdad4d2ac644367e74b2ca4e6a9b6d4115e85b5966136c35ca2f2645bf578d8d1fe730b1465312f27"
+        },
+        "total": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "total"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAATWgrbBtfjqeFUZIJyCg/TIADRzWl3oad1fwHQ28RfJWb4tEsJ+2+pskxX7xjJHYOtxwKaanS7nY7gY/0rP/z1BlJQivmSTGhqkM8GGU3HYF54RbD163HI",
+          "op": "007152e605e2cc13823bd1379c7733939403474f5dfe1a65fa73eb63ea134f4a0505668fc80076fb24aaefd4763b1d1a2be9bf875178cf8f4abdbdce26ef1e3d98"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "plaintext": {
+        "level": 10,
+        "floor": -3,
+        "points": 5000000000,
+        "total": -1,
+        "speed": 2.5,
+        "pace": -0.5,
+        "score": 9.75,
+        "mean": 0,
+        "title": "mango",
+        "handle": "Carol"
+      },
+      "stored": {
+        "floor": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "floor"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAD8EXObyO8iZAsGLtyoF8OzIAAUnZe1c/yU3tUu7btj/FmcuWh0G3VlpdjE4Y1DYkuXYwKjI6FNx98wap6YRPYq0Pr6xumDkjkem3g1aD9Bd15gGJE=",
+          "op": "0068773fbf20d83c18c9e2c158d14a9601d12eab933e59d10e163110e4f030377b"
+        },
+        "handle": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "handle"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAJSAHc0qCJ5PzM6mX2ijrQIAAOAb/DTu0ioK8DD+OJLmo37ro6p5goGfRbZvv+4GZmmwLyq1pNP+xziI6NvqEt7inQUrLLPhDVG8j3/FIywLlE/SJx",
+          "hm": "28fe3661678ecdba7c98355d901c9a8a591c1175c1d7b403bd3d1ec949c8b2e0",
+          "op": "00e169c8297d7be0a24e597d20e140b6a098c488dda2a5fab8b1a7071ff703df7f0880519d1ea23890b5c6a01066f62633"
+        },
+        "level": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "level"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAhOR6KLBknqtSBVRnlASoSIAAkxpt5V1/27p77EpAoxlp3ceWsCtSnFCzVx1mJZ9TRkwK8xMXduV+d2TMvfn7+P2QF8EnlLYAiRPNnN29ANmoVSts=",
+          "op": "0159d19c111791f639ba0638692ca6f6c53ecac713e356a7e8bf95fc2d839691f4"
+        },
+        "mean": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "mean"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAipqSO612avBu8ILwcZ4zfIAClyVXmOu93Sq1j8QZEePtr9Yn/DaGkc/jIzWIJfzRtqwJ1jc06IDRZmX8wTBKbh4NQUgAPFduL3qFTTmzXxfzmMverhaSn",
+          "op": "017bc9729378e320ff0c1504dc995074a7db7b05d24bed8a923f6944899e4517d213bba21ee639bb01063902e92cad61b3f3b0755b0dacc66fa5188b434c455360"
+        },
+        "pace": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "pace"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACSUbSNa21Cz2EdccB0dU93IAB5ZsgjlyQaH70IyAEmbajCC+g5pPkdckAlAyLzt31TpwJZCCAoMewAOd8y+7jLdEfzU5mQ3zdV4dpjHzvMNoIl6q0=",
+          "op": "00028af974e429d69504e291c6615487c98d3abbaf6a36a012b22bd60ddb569ba83f09243bb5f22d9df419926a7b9e31c7c4411c822471fd427c7a74ac57df0482"
+        },
+        "points": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "points"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAD7BDP9k+0Hn5JvKavkeIEeIACwwz3ffvBIoUS+WhQi678dNUBCkgT8GduW9s20XVgb7AKy1BxwBvFhYdWu8TjON31J/XFZE6F1lgnSVZLat6Po+utVYHS2",
+          "op": "0124da6c76e6a9d3572f27a08b17b843e6581a23213f34fea500706db6d0edf539fee6624d544ab352bbfcd0987056c61e7e2b808fcb36eef07e673ec3639e4235"
+        },
+        "score": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "score"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAC8mEb7pUk1HxVAoAej3DB3IABYatmLY126M9pYkSV/txgFWt8Dn0gqikv85rJxYY3DsAK7P9SKYcuFN3NNXWdqAQ301cj85RYYFUnxeu9PUP6Hv3Rc0TAf",
+          "op": "00cf2820721cd8c187f434f8986fd01c7eb126c713b0619086b0ca6d0b2120f8d322bbc60d5e40ac640ec49f271c0894a6965ab22b7da190f2e2af8f157a7b503f"
+        },
+        "speed": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "speed"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAu+yQLbuCeiI1Kc93l5gM9IABDnI3BuN2mIRVGQNCz+OT9g1NBNpy73iq+RyQMrDq2SgLdiotIJVKFxL7zjyPD19PobupEvKh4GhfipnC5MhqxmUc=",
+          "op": "00bbc2ac417a8cb6a4b5b69c9f81223f9016f7ffc9e250417dd5afa5cfd4844dac6f9f72bf972a4aba57ae0f7e64bc7ce315095aab620f1f0f7a567d525837af8c"
+        },
+        "title": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "title"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAB8xVf2YzyG2GIJsjlxprEhIAARLofbMnEJkC3zRNC1Liyue93ywxEK707OQBNyU3GRRAIR6N/Yy+L9m18gSMba81M6XZu9nnwSMGCjCFmC6FtEdAC0",
+          "hm": "96c9b4169dddc5b00a92aca4f2141eaa81586bb3c0459c9621c6152a938bccc2",
+          "op": "00344fe120b7abb89fdad4d2ace56e65d225dc12e1f08841a86ad18728afb74d36c3bdd298ed9a2e94e98a2e9328a2fa76"
+        },
+        "total": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "total"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABsGQzdwhlf/5JQSTVnel1lIADu5SaW0n7eTUy2k1WrssfM1qoPuD3RSy12zQc69AvRNwKYqTPivNDeEnZygzTBpFhBGNtG92Y0Kltt9qEE0OEUYseWMu0H",
+          "op": "007152e605e2cc13823bd1379c7733939403474f5dfe1a65fa73eb63ea134f4a0505668fc80076fb24aaefd4763b1d1a2be9bf875178cf8f4abdbdce276f071ed9"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "plaintext": {
+        "level": 99,
+        "floor": 4,
+        "points": 6000000000,
+        "total": 12,
+        "speed": 8,
+        "pace": 0.75,
+        "score": 100,
+        "mean": 3.5,
+        "title": "Zucchini",
+        "handle": "dave"
+      },
+      "stored": {
+        "floor": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "floor"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAahRXPLhcOhZalhxaRKtwfIACZJ24pqBpQ/xkQSjuIcUV0/DY8mrP3JugbZIjLooy/agJXmfRZQv8gd+32H9A96zYw31oM8RyIVpR/HrQbVP/a6vM=",
+          "op": "00e7a865a4a6a28052352a8eb6c1265f682958013daa3f37fce5f07022a097aa85"
+        },
+        "handle": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "handle"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACAaXkgSLAngfKw540Hh/cyIABUzHBgSmtLU4FEA1PiYLaeQb+T1nu8+sQyX6e1dXFFnAJ8t2RiTgBT5L5jai/lA/1J1ipI8gx72xi4G78HNRc8LzU=",
+          "hm": "ec1d4753450fceec15afd623ce671fff76c236cbbbc81af81cef9e694a493ac8",
+          "op": "00e169c8297d7be0a24e597d20e1c094556c47b21bced759dd8e83e5a075f1b02cf50ad54f524ee158"
+        },
+        "level": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "level"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAxIHgvAEtydMinzMsMC9maIABcXRm4Ec9fNHs/VMPHO2YcFzhLBtvGDaO5/vL94Up4DwKIvL/fnqO4f4Bu9W6FNibpKRmt9aQmi/P+igsXeqf1LXc=",
+          "op": "0159d19c111791f639ba0638692ca6f6c53ecac713e356a7e8c016099dca23df54"
+        },
+        "mean": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "mean"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAA3MuHYMxBxol/l3CWUUdMwIACBix0i7ecA6Ldg1y72uB17y+CSAZFHm7KMBeJIDB9SSQJr4639om/GxjhRNe96mH/k6IVqzDKdy1vQcaiHL6M/rhySzCh1",
+          "op": "017c49c16621a2476ed2e40c07fd2d0b35d8f722f0b0e7bca5a4681d69a349806e3554d39f0d13392b43cfe477aed64f8d13ba4fb8e786dbb8c60b454a8a50197c"
+        },
+        "pace": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "pace"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADsocba1ACUuZab/S3cR0ewIACbWZ1UAMwA6rnu+PuFd4RCwsXLXgkmZwavUB2HQ5lIMAKNgBydDXntlpuWxH4iE3ALX8ukrBS2pqIyrliA+pyNHzI=",
+          "op": "00822a022b1129809c146cada9cd22fa5208b482279f0e58376d67e7619bf3c39ab962520422fd56d4c43422be205365bfe363bf466ba709ced360af209fdf2c8c"
+        },
+        "points": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "points"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACyINaK+oMYBWGqilpz+Y8WIAAAAwXxsCfja/ehP5So7kKPSpDckgOjdWAFkQ0JFNatGgIjwqEjrceceNJS9EXjqbF+syMBx0UeigKdwBZvpKg1VJUetU8L",
+          "op": "0124da6c76e6a9d3572f27a08b17b843e6581a23213f34fea500706db6d0edf539ff65903adb0c33d49877a8393f339203152f20ddbf199339e4e940bf5754b804"
+        },
+        "score": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "score"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADLJrDpNuSIT1MzDrC3NqkdIADeidZb+K23yM3QNYs+J9lmB9ImCm/0mFW58UkeELUnfgLrLahFD5GGGpELE5j98cbiAvLw/UzqRHXRZdjAzrhSGvAhJpcP",
+          "op": "00cf2820721cd8c187f4b49ef818bca2626025cd2725b90a8daab1fff0d28e46031a6cf188bff7fd4095aac4fd74613c395a909cb2f6ee863ff59d364234862a3a"
+        },
+        "speed": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "speed"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACgW67nY8FTYuEOauFB2JqpIAB5N3v5rvteb1kWiSLlblOJ9Bvwa4mzUHOFsJbqvqlsrQL8ByKpYorieYyq9NnIkuVxcznI5zABTlD5OzN1KGkjl+M=",
+          "op": "00bbc2ac417a8cb6a4b5b71c87a011af4b942767664acfa469bbd491bf66466451a9ee3aac2b56a2f81fcdb0a2b6c84725f60ad5bb727b2c14eda1eb054fb92592"
+        },
+        "title": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "title"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACoLw9QzYPeYb2lWmo5koQrIAAWqW7Qj+fimzpnYilKdFOpSi5wedGlAhzFUlLDVfQXrgI200vJrAyvuyAWRolG7M4tS7aNYBt3umCJUE7DlkMSjIO3fe+U",
+          "hm": "0784eaafee80c50e6a9856e256e99dd536f50c9668cba8bfef433b7bf75e22d0",
+          "op": "00344fe120b7abb89fdad4d32c82054f71be09c4ac588f34f122f9c53b1fdf516a7cd4f4017f13ffd88a1757c19da753ff8eb398b6832378da3944d7e286e6cb345a82887f75e76591"
+        },
+        "total": {
+          "v": 4,
+          "i": {
+            "t": "rankings",
+            "c": "total"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADqzuNSUCG8WYJqEd0qG67nIAAN5uG4KA4yAHLXuPwfwCvXit4ti1MjxU/VymYIyK+Q9AKCtwW2fHKhvHt8T3IIrxXZAUpi7B02kqV6TuyK+8SRr5pGIgLH",
+          "op": "00f029fe2d68c79a0ca72ec21e5352a77673be1b39fae030898356ddae1d2cf9f0d771411be2b36c41f5215db20a3f965b37a8a6f7ff1e80c3be894eeb226759a2"
+        }
+      }
+    }
+  ]
+}

@@ -124,7 +124,7 @@ For `-type User`, the file `user_stash.go` holds:
 - `Fields`, with one entry for each sealed field.
   An opaque struct, or a struct with no sealed field outside an opaque one, gets no `Fields`: nothing in it is sealed on its own, so nothing can be queried.
   An entry encrypts one value, and has one query method for each operator the engine answers on the field: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` or `Matches`.
-  stashgen asks the embedded engine which operators each field answers, and which index answers each one, so it holds no copy of those rules: an equality index answers `Eq`, a match index on a string `Matches`, and an ORE or OPE index on an integer the four orderings and `Between`, through ORE when the field declares both.
+  stashgen asks the embedded engine which operators each field answers, and which index answers each one, so it holds no copy of those rules: an equality index answers `Eq`, a match index on a string `Matches`, and an ORE or OPE index on an integer, a float or a string the four orderings and `Between`, through ORE when the field declares both. A float orders as PostgreSQL's `float8` does (`-0.0` ties `0.0`, NaN sorts last), and a string by its folded form: case and accents folded, under Unicode 16.
   `encrypt_into=TextEq` answers `Eq`, which returns the type's query value, `eql.TextEqQuery`.
   `encrypt_into=TextMatch` answers `Matches`, which returns an `encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand, with `Verify` and `TargetLimit`.
   The query of `Matches` carries `Verify` and `TargetLimit`, because its answer can hold rows that do not match; an exact operator's query carries neither.
@@ -158,14 +158,20 @@ The engine produces these EQL types today, each from one Go field type:
 
 | `encrypt_into` | Go field |
 |---|---|
-| `TextEq`, `Text`, `TextMatch` | `string` |
-| `Integer`, `IntegerEq` | `int32`, or any Go integer type |
-| `Bigint`, `BigintEq` | `int64`, or any Go integer type |
+| `TextEq`, `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe` | `string` |
+| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe` | `int16`, or any Go integer type |
+| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe` | `int32`, or any Go integer type |
+| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe` | `int64`, or any Go integer type |
 | `Boolean` | `bool` |
-| `Real`, `RealEq` | `float32` |
-| `Double`, `DoubleEq` | `float64` |
+| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe` | `float32` |
+| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe` | `float64` |
+| `Date`, `DateEq` | `encrypt.Date` |
+| `Timestamp`, `TimestampEq` | `time.Time` |
+| `Numeric`, `NumericEq` | `encrypt.Decimal` |
 
-The `Eq` types answer `Eq`; `Text`, `Integer`, `Bigint`, `Boolean`, `Real` and `Double` are stored and read only, with no query method.
+The `Eq` types answer `Eq`; the `Ord` and `OrdOpe` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp` and `Numeric` are stored and read only, with no query method.
+The ordered date, timestamp and numeric types are refused: the engine derives no order term for these kinds yet.
+An ordered type has no `Between` method yet, because a `BETWEEN` operand needs EQL v4's range query domains.
 
 Any built-in Go integer field takes an integer type (ADR-0002) and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.
 A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index; its query refuses such text too.

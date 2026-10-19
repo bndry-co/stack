@@ -182,8 +182,8 @@ func (e Static) operators(ctx context.Context, d stashgen.Declaration) (map[stri
 
 // answeredBy mirrors OpSpec::answered_by in stack-encrypt: eq through an
 // equality index, matches through a match index, and the orderings through
-// ORE, or OPE when there is no ORE, over an integer alone; each only where
-// the index applies to the type.
+// ORE, or OPE when there is no ORE, over an integer or text; each only
+// where the index applies to the type.
 func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName) (stashgen.IndexName, bool) {
 	declared := func(want stashgen.IndexName) bool {
 		for _, idx := range indexes {
@@ -199,7 +199,8 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 	case "matches":
 		return stashgen.IndexMatch, declared(stashgen.IndexMatch)
 	}
-	if !integer(t) {
+	orderable := (integer(t) && !eightBit(t)) || t.Kind == stashgen.KindFloat || t.Kind == stashgen.KindString
+	if !orderable {
 		return "", false
 	}
 	if declared(stashgen.IndexOre) {
@@ -217,14 +218,25 @@ func integer(t stashgen.GoType) bool {
 	return false
 }
 
+// eightBit reports whether the type is an 8-bit integer (int8, uint8 or
+// byte, or a type defined over one), which has no order term.
+func eightBit(t stashgen.GoType) bool {
+	switch t.Basic {
+	case "int8", "uint8", "byte":
+		return true
+	}
+	return false
+}
+
 // indexApplies mirrors dynamic::admits in stack-encrypt: equality over
 // every kind vitaminc gives an equality domain (integers of every width,
 // floats, decimals, dates, timestamps, text and bytes; a boolean has none),
-// match over text alone, ORE and OPE over integers of every width, floats,
-// text and bytes. Not over a boolean, whose order term would reveal which
-// rows are true, and not yet over a decimal, date or timestamp, whose order
-// terms wait for new cllw-ore and ore-rs releases (#1236). The JSON index is
-// not in the engine yet.
+// match over text alone, ORE and OPE over integers of 16 bits and wider,
+// floats, text and bytes. Not over a boolean or an 8-bit integer, whose
+// order term would reveal which rows are true, or each row's rank among 256
+// values; and not yet over a decimal, date or timestamp, whose order terms
+// wait for new cllw-ore and ore-rs releases (#1236). The JSON index is not
+// in the engine yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
 	case stashgen.IndexEquality:
@@ -247,7 +259,7 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 		case stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
 			return fmt.Errorf("an order index on a decimal, date or timestamp waits for new cllw-ore and ore-rs releases (#1236)")
 		}
-		if integer(t) {
+		if integer(t) && !eightBit(t) {
 			return nil
 		}
 	case stashgen.IndexJSON:

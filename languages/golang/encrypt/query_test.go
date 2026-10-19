@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -112,11 +113,13 @@ func wireJSON(v any) any {
 }
 
 // queryPlan is the fixture's declaration: an email with equality, an age
-// with equality and ORE, a name with match, all under users.
+// with equality and ORE, a name with match, a score with ORE, all under
+// users.
 var queryPlan = &record.Plan{Context: []string{"users"}, Fields: []record.Field{
 	{Name: "email", Kind: record.String, Outputs: []record.Output{record.Ciphertext, record.Equality}},
 	{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Equality, record.Ore}},
 	{Name: "name", Kind: record.String, Outputs: []record.Output{record.Ciphertext, record.Match}},
+	{Name: "score", Kind: record.Float64, Outputs: []record.Output{record.Ciphertext, record.Ore}},
 }}
 
 func queryFixtureClient(t *testing.T, f queryFixture) *encrypt.Client {
@@ -137,9 +140,21 @@ func queryFixtureClient(t *testing.T, f queryFixture) *encrypt.Client {
 }
 
 // goInput is a fixture input as Go code passes it: text as a string, an
-// age as the field's uint32, a range as two of them.
+// age as the field's uint32, a score as its float64, a range as two of
+// them.
 func goInput(t *testing.T, field string, raw json.RawMessage) any {
 	t.Helper()
+	if field == "score" {
+		var f float64
+		if err := json.Unmarshal(raw, &f); err == nil {
+			return f
+		}
+		var pair [2]float64
+		if err := json.Unmarshal(raw, &pair); err != nil {
+			t.Fatal(err)
+		}
+		return []any{pair[0], pair[1]}
+	}
 	if field != "age" {
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
@@ -317,8 +332,9 @@ func TestAQueryTheFieldDoesNotAnswerIsRefused(t *testing.T) {
 			t.Fatalf("%s on %s: %v, want field %q and reason %q", tc.operator, tc.field, err, tc.field, tc.reason)
 		}
 	}
-	if _, err := cipher.QueryTerm(ctx, queryPlan, "age", "between", []any{uint32(65), uint32(18)}); !errors.Is(err, encrypt.ErrTerm) {
-		t.Fatalf("an inverted range: %v, want ErrTerm", err)
+	// An inverted range is not refused, as SQL's BETWEEN is not.
+	if _, err := cipher.QueryTerm(ctx, queryPlan, "age", "between", []any{uint32(65), uint32(18)}); err != nil {
+		t.Fatalf("an inverted range: %v", err)
 	}
 	if _, err := cipher.QueryTerm(ctx, queryPlan, "name", "matches", "al"); !errors.Is(err, encrypt.ErrTerm) {
 		t.Fatalf("text that cuts no token: %v, want ErrTerm", err)
@@ -366,7 +382,10 @@ func TestVerifyAndTargetLimitNeedNoCipher(t *testing.T) {
 }
 
 // The catalog reports, per EQL type, the operators the engine answers:
-// TextEq answers eq, exactly, through its equality index.
+// TextEq answers eq, exactly, through its equality index, and an OPE-ordered
+// type the four orderings of one value through its ope index (Between takes
+// a pair, which a type's one query value does not carry), and eq too when it
+// also stores an equality term.
 func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	wasm, err := encrypt.EmbeddedGuest()
 	if errors.Is(err, encrypt.ErrGuestNotBuilt) {
@@ -390,9 +409,20 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	}
 	for _, target := range targets {
 		switch {
-		case slices.Contains([]string{"TextEq", "IntegerEq", "BigintEq", "RealEq", "DoubleEq"}, target.Name):
+		case slices.Contains([]string{"TextEq", "IntegerEq", "SmallintEq", "BigintEq", "RealEq", "DoubleEq", "DateEq", "TimestampEq", "NumericEq"}, target.Name):
 			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
 			if len(target.Operators) != 1 || target.Operators[0] != want[0] {
+				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
+			}
+		case slices.Contains([]string{"IntegerOrd", "IntegerOrdOpe", "SmallintOrd", "SmallintOrdOpe", "BigintOrd", "BigintOrdOpe", "RealOrd", "RealOrdOpe", "DoubleOrd", "DoubleOrdOpe", "TextOrd", "TextOrdOpe"}, target.Name):
+			var want []record.Operator
+			if strings.HasPrefix(target.Name, "Text") {
+				want = append(want, record.Operator{Name: "eq", Fidelity: record.Exact, Index: record.Equality})
+			}
+			for _, name := range []string{"lt", "lte", "gt", "gte"} {
+				want = append(want, record.Operator{Name: name, Fidelity: record.Exact, Index: record.Ope})
+			}
+			if !slices.Equal(target.Operators, want) {
 				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
 			}
 		case target.Name == "TextMatch":
@@ -491,6 +521,28 @@ func TestGeneratedQueriesAreTheRustFixtures(t *testing.T) {
 	check("Age.Between high", between.High, err, bounds[1])
 	name, err := fields.Name.Matches(ctx, cipher, "alice")
 	check("Name.Matches", name.Term(), err, want("name", "matches")[0])
+	scoreLt, err := fields.Score.Lt(ctx, cipher, 1.5)
+	check("Score.Lt", scoreLt, err, want("score", "lt")[0])
+	scoreBetween, err := fields.Score.Between(ctx, cipher, -0.5, 2.5)
+	scoreBounds := want("score", "between")
+	check("Score.Between low", scoreBetween.Low, err, scoreBounds[0])
+	check("Score.Between high", scoreBetween.High, err, scoreBounds[1])
+	// A float orders as Postgres's float8 does: -0.0 is 0.0, and NaN sorts
+	// last, so a range from NaN is inverted and, as SQL's BETWEEN, matches
+	// nothing rather than being refused.
+	negZero, err := fields.Score.Lt(ctx, cipher, math.Copysign(0, -1))
+	if err != nil {
+		t.Fatalf("Score.Lt(-0.0): %v", err)
+	}
+	zero, err := fields.Score.Lt(ctx, cipher, 0)
+	check("Score.Lt(-0.0)", zero, err, negZero)
+	fromNaN, err := fields.Score.Between(ctx, cipher, math.NaN(), math.Inf(1))
+	if err != nil {
+		t.Fatalf("a range from NaN: %v", err)
+	}
+	if fromNaN.Low.Compare(fromNaN.High) <= 0 {
+		t.Errorf("a range from NaN: NaN should order above +Inf")
+	}
 
 	// Each query binds as a parameter: driver.Valuer gives the term's bytes.
 	for label, v := range map[string]driver.Valuer{"Eq": email, "Lt": lt, "Between.Low": between.Low, "Matches": name} {
@@ -499,9 +551,9 @@ func TestGeneratedQueriesAreTheRustFixtures(t *testing.T) {
 			t.Errorf("%s.Value() = %T %v", label, got, err)
 		}
 	}
-	// An inverted range is the typed path's refusal, from the engine.
-	if _, err := fields.Age.Between(ctx, cipher, 65, 18); !errors.Is(err, encrypt.ErrTerm) {
-		t.Errorf("an inverted range: %v, want ErrTerm", err)
+	// An inverted range is not refused, as SQL's BETWEEN is not.
+	if _, err := fields.Age.Between(ctx, cipher, 65, 18); err != nil {
+		t.Errorf("an inverted range: %v", err)
 	}
 }
 

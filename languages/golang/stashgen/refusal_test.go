@@ -93,7 +93,7 @@ func TestRefusals(t *testing.T) {
 		{"an opaque struct with an interface", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAny any"), stashgen.Request{Type: "User"}, "Any", "is not a type JSON carries"},
 		{"an opaque struct with a struct JSON would truncate", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tTx hidden") + "\ntype hidden struct {\n\tA int\n\tb int\n}\n", stashgen.Request{Type: "User"}, "Tx", "JSON would drop"},
 		{"an opaque struct with a map keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tM map[hidden]int") + "\ntype hidden struct{ A int }\n", stashgen.Request{Type: "User"}, "M", "map key that is not a string or an integer"},
-		{"an EQL type the engine cannot produce yet", user(ctx + "\tAge int32 `stash:\"age,encrypt_into=IntegerOrd\"`"), stashgen.Request{Type: "User"}, "Age", "has no EQL type IntegerOrd"},
+		{"an EQL type the engine cannot produce yet", user(ctx + "\tAge int32 `stash:\"age,encrypt_into=IntegerOrdOre\"`"), stashgen.Request{Type: "User"}, "Age", "has no EQL type IntegerOrdOre"},
 		{"an index on a composite", user(ctx + "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`"), stashgen.Request{Type: "User"}, "Attrs", "seals only as part of an opaque struct"},
 		{"the json index, not in the engine yet", user(ctx + "\tAttrs string `stash:\"attrs,index=json\"`"), stashgen.Request{Type: "User"}, "Attrs", "cannot derive the json index yet"},
 		{"an index option a query term cannot use", user(ctx + "\tEmail string `stash:\"email,encrypt,index=match(k=3)\"`"), stashgen.Request{Type: "User"}, "Email", "a query term uses only the default index options"},
@@ -273,6 +273,9 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"equality on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=equality\"`", "the engine refuses the declaration"},
 		{"order on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=ore\"`", "the engine refuses the declaration"},
 		{"ope on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=ope\"`", "the engine refuses the declaration"},
+		{"order on an int8", "Rank", "\tRank int8 `stash:\"rank,encrypt,index=ore\"`", "the engine refuses the declaration"},
+		{"ope on a uint8", "Rank", "\tRank uint8 `stash:\"rank,encrypt,index=ope\"`", "the engine refuses the declaration"},
+		{"order on a byte", "Rank", "\tRank byte `stash:\"rank,encrypt,index=equality;ore\"`", "the engine refuses the declaration"},
 		{"match on an integer", "Age", "\tAge int32 `stash:\"age,encrypt,index=match\"`", "the engine refuses the declaration"},
 		{"encrypt_into, no EQL type in this build", "Email", "\tEmail string `stash:\"email,encrypt_into=TextEq\"`", "EQL types are not available yet"},
 	} {
@@ -294,6 +297,9 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 	for _, c := range []struct{ name, line string }{
 		{"equality on a bool", "\tDone bool `stash:\"done,encrypt,index=equality\"`"},
 		{"order on a bool", "\tDone bool `stash:\"done,encrypt,index=ore\"`"},
+		{"order on an int8", "\tRank int8 `stash:\"rank,encrypt,index=ore\"`"},
+		{"ope on a uint8", "\tRank uint8 `stash:\"rank,encrypt,index=ope\"`"},
+		{"equality on an int8", "\tRank int8 `stash:\"rank,encrypt,index=equality\"`"},
 		{"equality on a float", "\tScore float64 `stash:\"score,encrypt,index=equality\"`"},
 		{"a declaration the engine runs", "\tAge uint32 `stash:\"age,encrypt,index=equality;ore\"`\n\tName string `stash:\"name,encrypt,index=match\"`"},
 		{"every index on an integer", "\tScore int64 `stash:\"score,encrypt,index=equality;ore;ope\"`\n\tRank int32 `stash:\"rank,index=ope\"`"},
@@ -341,28 +347,36 @@ func TestTheWholeDeclarationIsCheckedAgainstTheEmbeddedEngine(t *testing.T) {
 }
 
 // An index no generated method queries is stored, and the generator says
-// so, on stderr and in the file: an order index on text, bytes or a float,
-// and the second of two order indexes on an integer.
+// so, on stderr and in the file: an order index on bytes, and the second
+// of two order indexes on an integer, a float or text. An order index on
+// text or a float answers the orderings, so it gets methods and no notice.
 func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
-	src := user(ctx + "\tName string `stash:\"name,encrypt,index=match;ope\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`\n\tAge int64 `stash:\"age,encrypt,index=ore;ope\"`\n\tRank int32 `stash:\"rank,encrypt,index=ope\"`")
+	src := user(ctx + "\tName string `stash:\"name,encrypt,index=match;ope\"`\n\tBlob []byte `stash:\"blob,encrypt,index=ope\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`\n\tAge int64 `stash:\"age,encrypt,index=ore;ope\"`\n\tRank int32 `stash:\"rank,encrypt,index=ope\"`")
 	file, err := generate(t, src, stashgen.Request{Type: "User"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	notices := strings.Join(file.Notices, "\n")
 	for _, want := range []string{
-		"stashgen: User.Name: stores ope terms that no generated method queries",
-		"stashgen: User.Score: stores ore terms that no generated method queries",
+		"stashgen: User.Blob: stores ope terms that no generated method queries",
 		"stashgen: User.Age: stores ope terms that no generated method queries: the engine answers no query through the ope index on this field (int64): the ore index already answers",
 	} {
 		if !strings.Contains(notices, want) {
 			t.Errorf("notices lack %q:\n%s", want, notices)
 		}
 	}
-	if strings.Contains(notices, "User.Rank") {
-		t.Errorf("an ope index that answers the orderings got a notice:\n%s", notices)
+	for _, field := range []string{"User.Name", "User.Rank", "User.Score"} {
+		if strings.Contains(notices, field) {
+			t.Errorf("an order index that answers the orderings got a notice (%s):\n%s", field, notices)
+		}
 	}
-	if !strings.Contains(string(file.Content), "// Name: stores ope terms that no generated method queries") {
+	if !strings.Contains(string(file.Content), "// Blob: stores ope terms that no generated method queries") {
 		t.Errorf("the file does not carry the notice:\n%s", file.Content)
+	}
+	if !strings.Contains(string(file.Content), "func (f NameField) Lt(") {
+		t.Errorf("a text field with ope has no Lt:\n%s", file.Content)
+	}
+	if !strings.Contains(string(file.Content), "func (f ScoreField) Between(") {
+		t.Errorf("a float field with ore has no Between:\n%s", file.Content)
 	}
 }

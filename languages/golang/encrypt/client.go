@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
-	"sync"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
@@ -20,6 +20,15 @@ import (
 // concurrent use; calls are serialised internally, because a wasm instance
 // is single-threaded. Close it when done, as with any resource.
 //
+// A call whose context ends fails with the context's error, and only that
+// call: one request's cancellation or deadline never closes the client for
+// the others sharing it. A call waiting its turn leaves the queue when its
+// context ends; a call waiting on ZeroKMS has its request cancelled, and
+// the error matches both the context's error and [ErrTransport]. The
+// client closes itself, and every later call is [ErrState], only when the
+// guest's state is unknown: it trapped, or it went on running long after
+// its caller gave up, which is a bug.
+//
 // Its key material lives in the guest's linear memory, which this package
 // supplies: reserved once so it never moves, locked in RAM and excluded
 // from core dumps where the platform allows, and wiped before it is
@@ -29,13 +38,17 @@ import (
 // where the protection lives. [Client.MemoryLocked] reports whether the
 // lock was granted.
 type Client struct {
-	mu        sync.Mutex
+	mu        guest.Lock
 	inst      *instance
 	transport *transport
-	// closed refuses further calls: either Close ran, or an interrupted
-	// call took the module down under us (see Client.call). released is
-	// the runtime's own state, tracked apart from it because those two
-	// things come apart: an interrupted call closes the module — and so
+	// stuck is how long a call may run on after its context ends before
+	// the guest is treated as stuck and closed. guest.StuckAfter; tests
+	// shorten it.
+	stuck time.Duration
+	// closed refuses further calls: either Close ran, or a stuck or
+	// trapped call took the module down under us (see Client.call).
+	// released is the runtime's own state, tracked apart from it because
+	// those two things come apart: a stuck call closes the module — and so
 	// the client — while the runtime and the host modules beside it are
 	// still allocated. Close is what frees those, so it must do its work
 	// even on a client that is already closed.
@@ -175,7 +188,7 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	c.releaseCredentials = resolved.Close
 	c.credentialsLockErr = resolved.MemoryLockError
 	owned = true
-	out, err := c.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.cipherInit, buf(encoded))
 	})
 	if err != nil {
@@ -217,7 +230,7 @@ func consumeUnresolved(creds Credentials) {
 // instance, not the client: a cleanup whose argument reaches its object
 // keeps that object alive forever.
 func newClient(inst *instance, t *transport) *Client {
-	c := &Client{inst: inst, transport: t}
+	c := &Client{inst: inst, transport: t, stuck: guest.StuckAfter}
 	c.cleanup = runtime.AddCleanup(c, func(inst *instance) { _ = inst.release() }, inst)
 	return c
 }
@@ -323,8 +336,8 @@ func encodeConfig(cfg initConfig) ([]byte, error) {
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// Idempotency turns on the runtime, not on the client: a client an
-	// interrupted call already closed has never released its runtime.
+	// Idempotency turns on the runtime, not on the client: a client a
+	// stuck call already closed has never released its runtime.
 	if c.released {
 		return nil
 	}
@@ -368,7 +381,7 @@ func (c *Client) resolveKeyset(ctx context.Context, sel KeysetSelector) (KeysetI
 	if err != nil {
 		return KeysetID{}, err
 	}
-	out, err := c.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.keyset, buf(encoded))
 	})
 	if err != nil {
@@ -382,18 +395,27 @@ func (c *Client) resolveKeyset(ctx context.Context, sel KeysetSelector) (KeysetI
 	return id, nil
 }
 
-// call runs f on the instance under the client's lock.
+// call runs f on the instance under the client's lock. f must run its
+// guest call under the context it is given, never the caller's.
 //
-// A call interrupted by its context (the runtime closes the module on a
-// deadline or cancellation, see newInstance) leaves the instance closed:
-// its key material is gone with its memory and no further call can run.
-// The client is then closed, so later calls are ErrState rather than a
-// runtime error, and Close releases the runtime without a shutdown call.
-// A guest that trapped is closed the same way, by this method: the guest
-// builds with panic-as-abort, so a trap is an abort mid-export, after
-// which its state is unknown and its keys are better wiped than reused.
-func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([]byte, error) {
-	c.mu.Lock()
+// The caller's context bounds the wait for the lock, and is refused if it
+// has already ended, so a request that timed out in the queue never
+// reaches the guest. The guest then runs under guest.Detach: the caller's
+// context reaches the host functions, where it cancels a ZeroKMS request
+// or a token fetch, and the guest returns through its ordinary error path
+// with the client intact. The error matches the context's error too.
+//
+// The client is closed, so later calls are ErrState rather than a runtime
+// error, when the guest's state is unknown. A guest that trapped is one:
+// it builds with panic-as-abort, so a trap is an abort mid-export, after
+// which its keys are better wiped than reused. A guest still running
+// c.stuck after its caller's context ended is the other: Detach's context
+// ends, the runtime closes the module (WithCloseOnContextDone, see
+// newInstance), and its key material goes with its memory.
+func (c *Client) call(ctx context.Context, f func(context.Context, *instance) ([]byte, error)) ([]byte, error) {
+	if err := c.mu.Acquire(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if c.closed || c.inst.module.IsClosed() {
 		c.closed = true
@@ -403,14 +425,16 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 	if c.transport != nil {
 		c.transport.tokenErr = nil
 	}
-	out, err := f(c.inst)
+	run, done := guest.Detach(ctx, c.stuck)
+	out, err := f(run, c.inst)
+	done()
 	switch {
 	case c.inst.module.IsClosed():
 		c.closed = true
 		if err == nil {
 			err = ErrState
 		}
-		err = fmt.Errorf("%w: interrupted call closed the client", err)
+		err = fmt.Errorf("%w: the guest ran on after its caller's context ended, and the client is closed", err)
 	case errors.Is(err, errGuestTrap):
 		// No guest code is running (f has returned), so the close is
 		// immediate: the module's memory is wiped and freed here.
@@ -438,8 +462,23 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 			err = fmt.Errorf("%w (token source: %w)", err, c.transport.tokenErr)
 		}
 	}
+	// A call that failed after its context ended failed because of it, or
+	// as good as: the caller asks errors.Is(err, context.Canceled) or
+	// DeadlineExceeded, and the cause (ErrTransport for a cancelled
+	// request) stays matchable too.
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+			err = fmt.Errorf("%w: %w", ctxErr, err)
+		}
 		return nil, err
+	}
+	// A call that succeeded after its context ended fails too: work the
+	// guest does without the network (a query term, a batch under a
+	// cached key) runs on through a cancellation, and the caller was
+	// promised the context's error. The output nobody will read is wiped.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		wipe(out)
+		return nil, ctxErr
 	}
 	return out, nil
 }

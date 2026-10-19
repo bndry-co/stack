@@ -57,7 +57,7 @@ func (k *Checker) engineCheck(ctx context.Context, plan *record.Plan) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	_, err = k.c.call(ctx, func(inst *instance) ([]byte, error) {
+	_, err = k.c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.planCheck, buf(encoded))
 	})
 	return err
@@ -66,7 +66,7 @@ func (k *Checker) engineCheck(ctx context.Context, plan *record.Plan) error {
 // Targets lists the EQL types this build of the engine produces: none until
 // the EQL target dispatch lands.
 func (k *Checker) Targets(ctx context.Context) ([]record.Target, error) {
-	out, err := k.c.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := k.c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.targets)
 	})
 	if err != nil {
@@ -93,7 +93,7 @@ func (k *Checker) Operators(ctx context.Context, plan *record.Plan, field string
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	out, err := k.c.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := k.c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.operators, buf(encoded), buf([]byte(field)))
 	})
 	if err != nil {

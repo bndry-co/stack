@@ -21,19 +21,18 @@ mod common;
 
 use std::path::PathBuf;
 
+use common::frames::{frame as value_of, object, payload};
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{
-    context, query_term, Error, FfiValue, NoTargets, OpSpec, Operand, Reason, Scope, ValueFrame,
-    ValueKind,
+    context, query_term, Error, NoTargets, OpSpec, Operand, Reason, Scope, ValueFrame, ValueKind,
 };
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{CipherText, KeysetCipher, SealedValue, StackCipher, StackCipherText};
 use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
 use vitaminc_aead::plaintext::{MapSink, Sink};
 use vitaminc_aead::{Encrypt, FrameWriter};
-use vitaminc_protected::{Controlled, Protected};
 
 const SEED: [u8; 32] = *b"stack-encrypt value kinds v1    ";
 
@@ -83,7 +82,7 @@ fn kinds() -> Vec<Kind> {
         Kind {
             field: "i8",
             kind: ValueKind::Int8,
-            outputs: &["c", "eq", "ore"],
+            outputs: &["c", "eq"],
             text: "-8",
             value: int(Int::I8(-8)),
         },
@@ -97,7 +96,7 @@ fn kinds() -> Vec<Kind> {
         Kind {
             field: "u8",
             kind: ValueKind::UInt8,
-            outputs: &["c", "eq", "ore"],
+            outputs: &["c", "eq"],
             text: "200",
             value: int(Int::U8(200)),
         },
@@ -172,27 +171,20 @@ fn data_plan_json() -> Json {
 }
 
 fn data_plan() -> DataPlan {
-    let text = |s: &str| FfiValue::String(s.into());
     let fields = kinds()
         .into_iter()
         .map(|kind| {
             (
-                kind.field.to_string(),
-                FfiValue::Object(vec![
-                    (
-                        "context".into(),
-                        FfiValue::Array(vec![text("value_kinds"), text(kind.field)]),
-                    ),
-                    (
-                        "outputs".into(),
-                        FfiValue::Array(kind.outputs.iter().map(|o| text(o)).collect()),
-                    ),
-                    ("type".into(), text(kind.kind.name())),
+                kind.field,
+                object(vec![
+                    ("context", value_of(vec!["value_kinds", kind.field])),
+                    ("outputs", value_of(kind.outputs.to_vec())),
+                    ("type", value_of(kind.kind.name())),
                 ]),
             )
         })
         .collect();
-    record::plan(FfiValue::Object(fields)).expect("the data plan parses")
+    record::plan(object(fields).risky_ref()).expect("the data plan parses")
 }
 
 /// The source as a binding hands it over: one frame, a map of the fields in
@@ -233,10 +225,9 @@ fn term_bytes(node: StackCipherText) -> Vec<u8> {
     let CipherText::Passthrough(payload) = node else {
         panic!("a term rides as a passthrough");
     };
-    match FfiValue::from_frame(&payload.0).expect("a value") {
-        FfiValue::Bytes(bytes) => bytes.risky_ref().to_vec(),
-        other => panic!("a term is bytes, not {other:?}"),
-    }
+    vitaminc_aead_frame::serde::from_slice::<&[u8]>(&payload.0)
+        .expect("a term is bytes")
+        .to_vec()
 }
 
 /// A stored record as JSON: `"c"` is the leaf's frozen bytes and a term its
@@ -279,12 +270,7 @@ fn record_of_json(record: &Json) -> StackCipherText {
                         let node = if key == "c" {
                             CipherText::Single(SealedValue::from_bytes(&bytes).expect("a leaf"))
                         } else {
-                            CipherText::Passthrough(stack_encrypt::PassthroughFrame(
-                                FfiValue::Bytes(Protected::new(bytes))
-                                    .to_frame()
-                                    .expect("frames")
-                                    .risky_unwrap(),
-                            ))
+                            CipherText::Passthrough(stack_encrypt::PassthroughFrame(payload(bytes)))
                         };
                         (key.clone(), node)
                     })
@@ -378,10 +364,9 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
             "{} eq: the query is the stored term",
             kind.field
         );
-        let ctx = context(FfiValue::Array(vec![
-            FfiValue::String("value_kinds".into()),
-            FfiValue::String(kind.field.into()),
-        ]))
+        let ctx = context(
+            &vitaminc_aead_frame::serde::to_vec(&("value_kinds", kind.field)).expect("frames"),
+        )
         .expect("context");
         let typed_eq = keyset
             .equality_term(kind.value, ctx.clone())
@@ -445,23 +430,17 @@ async fn a_value_of_another_width_is_refused_when_sealed() {
         "an int32 is not an int8: {:?}",
         refused.err()
     );
-    let ore_on_a_date = record::plan(FfiValue::Object(vec![(
-        "day".into(),
-        FfiValue::Object(vec![
-            (
-                "context".into(),
-                FfiValue::Array(vec![
-                    FfiValue::String("value_kinds".into()),
-                    FfiValue::String("day".into()),
-                ]),
-            ),
-            (
-                "outputs".into(),
-                FfiValue::Array(vec![FfiValue::String("ore".into())]),
-            ),
-            ("type".into(), FfiValue::String("date".into())),
-        ]),
-    )]));
+    let ore_on_a_date = record::plan(
+        object(vec![(
+            "day",
+            object(vec![
+                ("context", value_of(vec!["value_kinds", "day"])),
+                ("outputs", value_of(vec!["ore"])),
+                ("type", value_of("date")),
+            ]),
+        )])
+        .risky_ref(),
+    );
     assert!(matches!(
         ore_on_a_date,
         Err(Error::Plan {

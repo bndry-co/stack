@@ -18,11 +18,13 @@ mod common;
 
 use std::path::PathBuf;
 
+use common::frames::{frame, object};
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Value as Json};
-use stack_encrypt::dynamic::{self, record, FfiValue, NoTargets, OpSpec, Operand, QueryTerm};
+use stack_encrypt::dynamic::{self, record, NoTargets, OpSpec, Operand, QueryTerm, ValueFrame};
 use stack_encrypt::op::{self, Limit, Probabilistic, Stats};
 use stack_encrypt::{Equality, KeysetCipher, Match, Ore, Plan, StackCipher};
+use vitaminc_aead::plaintext::{Physical, Raw};
 
 const SEED: [u8; 32] = *b"stack-encrypt record fixture v1 ";
 
@@ -31,7 +33,8 @@ fn plan_json() -> Json {
     json!({
         "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
         "age": { "context": ["users", "age"], "outputs": ["c", "eq", "ore"], "type": "uint32" },
-        "name": { "context": ["users", "name"], "outputs": ["c", "match"], "type": "string" }
+        "name": { "context": ["users", "name"], "outputs": ["c", "match"], "type": "string" },
+        "score": { "context": ["users", "score"], "outputs": ["c", "ore"], "type": "float64" }
     })
 }
 
@@ -47,6 +50,8 @@ fn queries() -> Vec<(&'static str, OpSpec, Json)> {
         ("age", OpSpec::Between, json!([18, 65])),
         ("name", OpSpec::Matches, json!("alice")),
         ("name", OpSpec::Matches, json!("ali")),
+        ("score", OpSpec::Lt, json!(1.5)),
+        ("score", OpSpec::Between, json!([-0.5, 2.5])),
     ]
 }
 
@@ -70,22 +75,29 @@ fn stats_cases() -> Vec<(Json, Stats)> {
     ]
 }
 
-fn ffi_of_json(value: &Json) -> FfiValue {
+/// A plan written as JSON, as frame bytes: what a binding sends.
+fn frame_of_json(value: &Json) -> Vec<u8> {
+    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+}
+
+/// A JSON value as the frame a binding sends: a number is a `u64` when it
+/// is one, else an `f64`.
+fn frame_of_value(value: &Json) -> ValueFrame {
     match value {
-        Json::Null => FfiValue::Null,
-        Json::String(s) => FfiValue::String(s.as_str().into()),
-        Json::Array(items) => FfiValue::Array(items.iter().map(ffi_of_json).collect()),
-        Json::Object(entries) => FfiValue::Object(
+        Json::Null => frame(Raw(None, Physical::Null)),
+        Json::String(s) => frame(s.as_str()),
+        Json::Array(items) => frame(items.iter().map(frame_of_value).collect::<Vec<_>>()),
+        Json::Object(entries) => object(
             entries
                 .iter()
-                .map(|(k, v)| (k.clone(), ffi_of_json(v)))
+                .map(|(k, v)| (k.as_str(), frame_of_value(v)))
                 .collect(),
         ),
         Json::Number(n) => match n.as_u64() {
-            Some(n) => FfiValue::UInt64(n),
-            None => FfiValue::Float64(n.as_f64().expect("a number")),
+            Some(n) => frame(n),
+            None => frame(n.as_f64().expect("a number")),
         },
-        Json::Bool(b) => FfiValue::Bool(*b),
+        Json::Bool(b) => frame(*b),
     }
 }
 
@@ -182,6 +194,33 @@ async fn typed_operand(
             }
         }
         ("name", OpSpec::Matches) => one(typed_match(cipher, &text(input)).await.to_bytes()),
+        ("score", operator) => {
+            let float = |value: &Json| value.as_f64().expect("a number");
+            let score = Plan::context("users/score")
+                .with::<f64, _>(Ore)
+                .build()
+                .expect("plan");
+            match operator {
+                OpSpec::Lt => one(cipher
+                    .query(op::Lt, &float(input))
+                    .on(&score)
+                    .await
+                    .expect("lt")
+                    .to_bytes()),
+                OpSpec::Between => {
+                    let range = cipher
+                        .query(op::Between, &(float(&input[0]), float(&input[1])))
+                        .on(&score)
+                        .await
+                        .expect("between");
+                    Operand::Range {
+                        lo: range.lo().to_bytes(),
+                        hi: range.hi().to_bytes(),
+                    }
+                }
+                other => panic!("no typed score query for {other}"),
+            }
+        }
         other => panic!("no typed query for {other:?}"),
     }
 }
@@ -213,7 +252,7 @@ async fn data_term(
         plan,
         field,
         operator,
-        ffi_of_json(input),
+        frame_of_value(input),
         &NoTargets,
     )
     .expect("the query is answered")
@@ -226,7 +265,7 @@ async fn data_term(
 async fn derived() -> Json {
     let cipher = deterministic_cipher(SEED).await;
     let keyset = cipher.default_keyset();
-    let plan = record::plan(ffi_of_json(&plan_json())).expect("the plan parses");
+    let plan = record::plan(&frame_of_json(&plan_json())).expect("the plan parses");
 
     let mut terms = Vec::new();
     for (field, operator, input) in queries() {
@@ -245,17 +284,17 @@ async fn derived() -> Json {
     }
 
     let typed = typed_match(&cipher, "alice").await;
-    let values: Vec<FfiValue> = page()
+    let values: Vec<ValueFrame> = page()
         .as_array()
         .expect("a list")
         .iter()
-        .map(ffi_of_json)
+        .map(frame_of_value)
         .collect();
     let verified = dynamic::verify(
         &plan,
         "name",
         OpSpec::Matches,
-        ffi_of_json(&json!("alice")),
+        frame_of_value(&json!("alice")),
         &values,
         &NoTargets,
     )
@@ -276,7 +315,8 @@ async fn derived() -> Json {
         };
         let typed = typed_match(&cipher, input).await;
         for (stats_json, stats) in stats_cases() {
-            let read = Stats::from_value(&ffi_of_json(&stats_json)).expect("stats read");
+            let read =
+                Stats::from_frame(frame_of_value(&stats_json).risky_ref()).expect("stats read");
             assert_eq!(read, stats, "the wire form reads as the typed stats");
             let limit =
                 dynamic::target_limit(&plan, "name", OpSpec::Matches, bytes, 10, &read, &NoTargets)

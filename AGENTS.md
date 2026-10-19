@@ -570,17 +570,33 @@ monorepo, which is where the silent failures are.
   `fixtures::v3_doc_integer::field_op_selector` and
   `fixtures::v3_ste_vec::hello_op_selector`, which apply a written rule to the
   loaded fixture and fail, listing every candidate, when zero or several
-  selectors match. `tests/sqlx/tests/selector_literal_guard.rs` fails on a
-  random-looking standalone 32-hex run anywhere in the crate's source, SQL and
-  escaped JSON strings included, and runs DB-free in `mise run test:schema` so
-  fork PRs get it too; a forged selector must be
-  visibly fake (`"00000000000000000000000000000001"`). The suite passes against
-  any workspace. That a keyset and path still produce the same selector bytes is
-  pinned separately, in the encryption test crate
+  selectors match. The jsonb_entry matrix resolves the selector at runtime and
+  queries the literal `payload -> '<sel>'::text` customers write.
+  `tests/sqlx/tests/selector_literal_guard.rs` fails on a random-looking
+  standalone 32-hex run, in any case, in any `.rs` file under the crate's `src/`
+  and `tests/`, SQL and escaped JSON inside Rust strings included, and counts a
+  string escape (`\n`, `\x`), a `0x` prefix or an integer suffix (`0x…u128`)
+  as a boundary. It does not catch a selector split into pieces, such as a
+  `[u8; 16]` array of `0x..` bytes; the generated
+  `fixtures/*.sql` files hold real selectors and are not scanned. It runs
+  DB-free in `mise run test:schema` so fork PRs get it too; a forged selector
+  must be visibly fake (`"00000000000000000000000000000001"`). The suite passes
+  against any workspace. That a keyset and path still produce the same selector
+  bytes is pinned separately, in the encryption test crate
   (`packages/eql/tests/encryption/tests/ste_vec_selectors.rs`, regenerated only
-  with `EQL_UPDATE_STE_VEC_SELECTORS=1`). It pins the cipherstash-client version
-  the EQL workspace resolves; protect-ffi resolves its own from its own
-  lockfile, so the pin covers protect-ffi's only while the two versions agree.
+  with `EQL_UPDATE_STE_VEC_SELECTORS=1`, exactly `1`). It pins the index config
+  production really sends for an EQL v3 JSON column, the unrewritten
+  `prefix: "enabled"` sentinel included (#1203: a fix there changes every stored
+  v3 JSON selector and is meant to fail the pin). It also records the fake index
+  key it derives under: a changed key fails first, with a message naming it a
+  stack-kms test-infrastructure change rather than a stored-data break. It pins
+  the cipherstash-client and cipherstash-config (the crates that compute the
+  selectors) the EQL workspace resolves; protect-ffi resolves its own from its
+  own lockfile, and `scripts/__tests__/cipherstash-client-parity.test.mjs`
+  (`pnpm run test:scripts`, every PR) fails when the two lockfiles disagree on
+  the version, source or checksum of either, so a protect-ffi bump has to move the EQL pins with it. Primitive
+  dependencies such as blake3 are not compared, and already differ at patch
+  level.
 - **`FROZEN_PUBLISHERS` is what stops this repo publishing a package whose
   publisher lives elsewhere, and it is a mechanism, not a status.** `scripts/release-gate.mjs` carries a map of every
   package that lives here but is published from another repository. For each,
@@ -974,6 +990,39 @@ pnpm changeset:publish
 
    A skills-only change is **not** internal: `skills/` ships inside the
    `stash` tarball, so it needs a `stash` patch changeset.
+
+## Review guidelines
+
+These apply to every agent that reviews a pull request here, human-prompted
+or automated (Codex, Copilot, CodeRabbit, Claude Code's `/code-review`).
+
+### Known non-findings
+
+These are deliberate design decisions, recorded in ADRs. Do not report them
+as defects or security issues, and do not change code to "fix" them. If a
+change seems to need one reversed, say so and link the ADR.
+
+- **A sealed container's membership, order and length are not
+  authenticated.** Each leaf is bound to its context, its map key, its role
+  (single value or sequence element), its type tag and the wire version. But
+  which entries a stored map holds, and a stored sequence's order, length
+  and duplicates, are deliberately not bound: stored values are database
+  rows and columns, which come back in any order and in part. A target that
+  refuses a container's shape (a missing field, say) is a shape mismatch,
+  `Error::OpenedType`, not tampering, `Error::Aead`. Stricter authentication
+  will be opt-in, through named types. See
+  `packages/stack-encrypt/docs/adr/0010-what-a-stored-value-authenticates.md`
+  and vitaminc's ADR 0002.
+- **A passthrough field is not authenticated.** It is stored in the clear,
+  by definition, and comes back as the store holds it. A plan's context
+  field is the exception: every other field is sealed under it, so a change
+  to it is caught. Same ADR.
+- **Two leaves sealed under the same context are interchangeable between
+  rows.** Binding a value to its row is the caller's choice of context (a
+  row id or tenant in it). Same ADR.
+
+A finding that a *leaf* is not bound to its context, key, role, type or
+version is a real defect: report it.
 
 ## Useful Links
 

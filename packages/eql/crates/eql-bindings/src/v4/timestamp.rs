@@ -14,10 +14,18 @@ use ts_rs::TS;
     doc,
     doc = " See the [EQL timestamp reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input and decrypted output: [`Timestamp`](crate::v4::plaintext::Timestamp). Implements `EncryptFrom<Timestamp>` and `DecryptInto<Timestamp>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = crate::v4::plaintext::Timestamp)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Timestamp {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
 }
@@ -55,10 +63,18 @@ impl DomainType for Timestamp {
     doc,
     doc = " See the [EQL timestamp reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input and decrypted output: [`Timestamp`](crate::v4::plaintext::Timestamp). Implements `EncryptFrom<Timestamp>` and `DecryptInto<Timestamp>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = crate::v4::plaintext::Timestamp)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TimestampEq {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
     pub hm: Hmac256,
@@ -223,10 +239,18 @@ impl DomainType for TimestampOrdOpe {
     doc,
     doc = " See the [EQL timestamp reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input: [`Timestamp`](crate::v4::plaintext::Timestamp). Implements `EncryptFrom<Timestamp>` to build equality query terms. Query operands do not decrypt.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom)]
+#[stash(plaintext = crate::v4::plaintext::Timestamp)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TimestampEqQuery {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub hm: Hmac256,
 }

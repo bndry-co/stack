@@ -21,12 +21,13 @@
 //! indexed by walking its frame into the encrypting sink and the term
 //! derivers; and a record opens straight into a frame (vitaminc ADR 0001: a
 //! value describes itself once, and sinks consume it). A binding's control
-//! data (a plan, a context, options, a configuration, whose credentials are
-//! secret) is an [`FfiValue`] tree, with its text and bytes wiped.
+//! data (a plan, a context, query statistics) is read from its frame by
+//! serde (`vitaminc_aead_frame::serde`) into a typed message, with no tree
+//! built.
 //!
 //! # What is here
 //!
-//! * [`context`](context()) — an [`FfiValue`] read as an encryption context.
+//! * [`context`](context()) — a frame read as an encryption context.
 //! * [`ValueFrame`] — the engine's plaintext for a value whose type is known
 //!   only at run time, and the value model it holds.
 //! * [`term`](term()) — one index term for a value, derived at the one
@@ -85,36 +86,30 @@
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
-mod ffi_value;
 mod kind;
 mod query;
 pub mod record;
 mod target;
 mod term;
+#[cfg(test)]
+mod test_frame;
 mod value_frame;
 
 use std::fmt;
 
 pub use context::{borrowed, context};
-/// The tree a binding's control data decodes into, and the value kinds, the
-/// type a plan field declares in its `"type"` key. A kind's names are frozen
-/// wire format; see [`admits`] and [`read`] for what a kind means to this
-/// engine. Control data crosses a binding's boundary as a transport frame
-/// ([`FfiValue::to_frame`], [`FfiValue::from_frame`]); a plaintext crosses
-/// as one too, and stays one ([`ValueFrame`]).
-pub use ffi_value::{
-    Element, Entry, FfiValue, FromFrameError, ParseValueKindError, Put, Root, Utf8String,
-    ValueKind, ValueMap, ValueSeq, ValueSink,
-};
-pub use kind::{admits, not_admitted, read};
+/// The value kinds, the type a plan field declares in its `"type"` key. A
+/// kind's names are frozen wire format; see [`admits`] and [`read`] for what
+/// a kind means to this engine.
+pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
 pub use query::{
-    check_query, field_operators, limit_to_value, operator_to_value, query_term, target_limit,
-    verify, Fidelity, OpSpec, Operand, QueryTerm,
+    check_query, field_operators, query_term, target_limit, verify, Fidelity, OpSpec, Operand,
+    OperatorEntry, QueryTerm,
 };
 pub use record::{FieldPlan, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
 pub use term::{term, TermBytes};
-pub use value_frame::{Children, Modeled, Opening, ValueFrame};
+pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
 
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
@@ -157,10 +152,13 @@ impl<K> fmt::Debug for Scope<'_, K> {
     }
 }
 
-/// The UTF-8 inside a string leaf. Valid by `Utf8String`'s construction
-/// invariant; checked rather than assumed because this is boundary code.
-fn utf8(s: &Utf8String) -> Option<&str> {
-    std::str::from_utf8(s.risky_ref()).ok()
+/// Bytes, written as a frame's bytes leaf rather than a list of integers.
+struct WireBytes<'a>(&'a [u8]);
+
+impl serde::Serialize for WireBytes<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_bytes(self.0)
+    }
 }
 
 /// What went wrong in a dynamic operation.
@@ -484,7 +482,9 @@ reasons! {
         /// A context value is of a kind a context cannot hold: a boolean,
         /// float, null, object or passthrough.
         ContextKind => "context_kind", "a boolean, float, null, object or passthrough cannot be a context";
-        /// A context string is not UTF-8.
+        /// A context string is not UTF-8. No longer produced: a frame's
+        /// text is UTF-8 by construction. Kept so a binding that switches on
+        /// it still compiles.
         ContextNotUtf8 => "context_not_utf8", "a context string is not UTF-8";
         /// A context renders empty.
         EmptyContext => "empty_context", "the context renders empty";
@@ -588,7 +588,7 @@ reasons! {
         /// The term is not one the field's index derives for the operator.
         NotAQueryTerm => "not_a_query_term", "the term is not one the field's index derives for the operator";
         /// Statistics are not a row count with an optional histogram and
-        /// confidence ([`Stats::from_value`](crate::op::Stats::from_value)).
+        /// confidence ([`Stats::from_frame`](crate::op::Stats::from_frame)).
         NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
     }
 }

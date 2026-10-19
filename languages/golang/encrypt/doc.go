@@ -21,14 +21,21 @@
 //	}
 //
 // encrypt_into names the EQL type the field is stored as. The Go field type
-// must match it: TextEq, TextMatch and Text take a string, Integer and
-// IntegerEq an int32, Bigint and BigintEq an int64, Boolean a bool, Real and
-// RealEq a float32, and Double and DoubleEq a float64. An integer EQL type
+// must match it: TextEq, TextMatch and Text take a string, Smallint and
+// SmallintEq an int16, Integer and IntegerEq an int32, Bigint and BigintEq
+// an int64, Boolean a bool, Real and RealEq a float32, Double and DoubleEq a
+// float64, Date and DateEq a [Date], Timestamp and TimestampEq a time.Time,
+// and Numeric and NumericEq a [Decimal]. An integer EQL type
 // also takes any other built-in Go integer type, sealed at the type's width:
 // one every value of which fits it (an int16 into Integer) always seals, and
 // a wider one (an int64 into Integer) is range checked, a value that does not
-// fit refused with [ErrEncoding]. The *Eq types answer Eq; Integer, Bigint,
-// Boolean, Real, Double and Text are stored and read only.
+// fit refused with [ErrEncoding]. The *Eq types answer Eq; the *Ord and
+// *OrdOpe types (IntegerOrd, SmallintOrd, BigintOrd, RealOrd, DoubleOrd,
+// TextOrd and their OrdOpe twins) answer Lt, Lte, Gt and Gte, and Eq too on
+// text; Smallint, Integer, Bigint, Boolean, Real, Double, Text, Date,
+// Timestamp and Numeric are stored and read only. NumericEq compares
+// decimals with their scale normalised (1.5 = 1.50), and TimestampEq
+// compares instants to the microsecond, truncated, never rounded.
 //
 // 3. Run the generator. It writes user_stash.go beside the struct:
 //
@@ -152,7 +159,11 @@
 //
 // Eq returns an [EqualityTerm] (or, for a field with encrypt_into, the EQL
 // type's query value), an ordering an [OreTerm] or [OpeTerm], and Between a
-// [Range] of two. Their answers are exact. Matches returns a [MatchQuery],
+// [Range] of two. Their answers are exact. The orderings are answered on
+// integers, on floats, which order as PostgreSQL's float8 does (-0.0 ties
+// 0.0, NaN sorts last), and on text, which orders by its folded form (case
+// and accents folded, under Unicode 16), so Café and cafe tie and alice
+// orders before Zoe. Matches returns a [MatchQuery],
 // whose answer can hold rows that do not match: size the fetch with
 // [MatchQuery.TargetLimit], then decrypt the rows and keep those
 // [MatchQuery.Verify] reports true, one call into the engine for the page.
@@ -183,6 +194,27 @@
 // tokens again in the engine. Go cannot wipe a string, so the text stays in
 // memory until the garbage collector reclaims it; a MatchQuery never prints
 // it.
+//
+// # Cancellation
+//
+// Every call takes a [context.Context], and a call whose context is
+// cancelled or passes its deadline fails with that context's error. Only
+// that call fails: one Client is shared by every request in a service, and
+// one request giving up never closes it for the others. A call waiting
+// for the client, which runs one call at a time, leaves the queue when its
+// context ends and never starts. A call waiting on ZeroKMS has that request
+// cancelled; its error matches both the context's error and
+// [ErrTransport]. A call waiting on its auth strategy for a token returns
+// too, with the context's error. If the strategy is refreshing a device
+// session, the refresh finishes in the background, for up to 10 seconds:
+// the service rotates the refresh token when it answers, and dropping that
+// answer would leave the strategy unable to refresh.
+//
+// A Client closes itself, and every later call returns [ErrState], only
+// when the guest's state is unknown: the guest trapped, or a call ran on
+// for 30 seconds after its context ended, which means a bug, not a caller
+// that gave up. A service that sees ErrState from a client it did not
+// close builds a new one.
 //
 // # Transport and auth
 //
@@ -216,7 +248,8 @@
 //
 // The generator and the compiler find a mistake in a declaration, so no call
 // returns an error for one. A call returns an error for a key, for the
-// network, or for stored data: [ErrForeignKeyset] when a *Cipher is given a
+// network, or for stored data, or because its context ended (see
+// Cancellation): [ErrForeignKeyset] when a *Cipher is given a
 // record another keyset sealed, [ErrAuthentication] or [ErrForbidden] for a
 // ciphertext that does not open under its field's context, [ErrEncoding] for
 // a stored value that does not fit its declaration. Read the kind with

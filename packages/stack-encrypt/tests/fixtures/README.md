@@ -2,7 +2,7 @@
 
 One declaration, two authors, one engine. A Rust chain
 (`cipher.encrypt(&user).context("users").fields()…`, over fields of type
-`stack_encrypt::dynamic::FfiValue`, the plaintext type a binding's values have)
+`stack_encrypt::dynamic::ValueFrame`, the frame a binding's values arrive as)
 and the data-plan lowering (`stack_encrypt::dynamic::record`, what a
 language binding calls) each sealed the same plaintext under the same
 declaration. The fixture holds both records, with their term bytes, sealed
@@ -130,12 +130,14 @@ file changes only when a derivation does: regenerate it with
 - **`queries`.** Each query as a binding sends it, and its term in the wire
   form `QueryTerm::to_value` writes, the bytes in hex: one term, or for
   `between` the low bound's then the high's. An input is JSON, read as the
-  field's declared type, so `40` queries the `uint32` field `age`.
+  field's declared type, so `40` queries the `uint32` field `age` and
+  `1.5` the `float64` field `score`, whose terms are cllw-ore's
+  encryption of the float's ADR-0002 order key.
 - **`verify`.** A page of decrypted values, null for an empty field, and the
   boolean `verify` answers for each, which is what the typed `MatchQuery`
   answers.
 - **`target_limit`.** A match term's bytes, the statistics in the wire form
-  `Stats::from_value` reads (an absent histogram is the declared prior), and
+  `Stats::from_frame` reads (an absent histogram is the declared prior), and
   the limit, null when no finite fetch can be promised, which is what the
   typed `MatchQuery` answers.
 
@@ -199,9 +201,10 @@ runs; the frames and the terms must not. Do not edit the file by hand.
 Rows the `next` build stored, which every later build must still read. The
 fixtures above prove that two authors of one record agree *today*, and are
 regenerated when the encoding moves. This one is the opposite: it is written
-once and **never regenerated or edited**. A change that alters the bytes of a
-stored row (the leaf encoding, the AAD, a term derivation, the stored tree's
-shape) fails `tests/stored_rows.rs` instead of being regenerated away.
+once and **never regenerated**, and edited only as the exception below allows.
+A change that alters the bytes of a stored row (the leaf encoding, the AAD, a
+term derivation, the stored tree's shape) fails `tests/stored_rows.rs` instead
+of being regenerated away.
 
 `tests/stored_rows.rs` checks every case two ways:
 
@@ -212,14 +215,49 @@ shape) fails `tests/stored_rows.rs` instead of being regenerated away.
   order, the same terms and the same passthroughs.
 
 Nothing reads `STACK_ENCRYPT_UPDATE_FIXTURES` for this file. The one test that
-writes it, `write_stored_rows_v1`, is `#[ignore]`d and refuses to run when the
-file exists. The rows depend on `stack_kms::DeterministicSource` and the seed
-below; both are part of the frozen contract.
+creates it, `write_stored_rows_v1`, is `#[ignore]`d and refuses to run when the
+file exists. The check rewrites it only under
+`STACK_ENCRYPT_REFREEZE_ORDER_TERMS=1`, for the exception below. The rows
+depend on `stack_kms::DeterministicSource` and the seed below; both are part
+of the frozen contract.
 
 **If this test fails, the change broke stored data.** Do not regenerate the
 file. Either fix the change, or, for a deliberate change to the stored
 format, add `stored_rows_v2.json` (and a `write_stored_rows_v2`) beside this
 one, keep v1, and say in the CHANGELOG how v1 rows migrate.
+
+**Order terms are the one exception, until stack-encrypt 1.0.**
+Until then a deliberate change to how an ORE or OPE term is derived may
+re-freeze the `ore` and `ope` passthroughs that moved, and nothing else:
+the leaves, the AAD, every other term and the shape stay as written. Run
+
+```bash
+STACK_ENCRYPT_REFREEZE_ORDER_TERMS=1 mise x --env test -- \
+  cargo nextest run -p stack-encrypt --all-features --test stored_rows
+```
+
+It checks that every row opens as it did and that the resealed tree matches
+the stored one in everything but its order terms' bytes, and only then
+copies the new order terms over the old. Any other difference fails it and
+nothing is written.
+
+The change must also say in the CHANGELOG's `Breaking` section that its
+order terms changed bytes, which released versions wrote the old ones, and
+that a column holding them is to be encrypted again. That matters more than
+the word "exception" suggests. An order term is never opened, only
+compared, so a stale one is not refused: every `<`, `BETWEEN` and
+`ORDER BY` over the column silently misses or misplaces rows, where a leaf
+that no longer opens fails loudly. stack-encrypt 0.1.0 and 0.2.0 and the Go
+module's v0.1.0-alpha.1 already shipped order terms. The exception rests on
+those being pre-1.0 and pre-release, not on nobody holding one.
+
+The exception has been used once beyond re-freezing: when `u8` and `i8`
+lost their order term (a 256-value domain ranks every row, the leak a
+`bool`'s order term is refused for), the `every_kind` case dropped the
+`ore` terms of its `i8` and `u8` fields and its `i8_ope` and `u8_ope`
+twin fields, which held only an OPE term. Its plan and source lost those
+entries with them; every leaf, equality term and other order term is as it
+was written.
 
 ## Schema
 

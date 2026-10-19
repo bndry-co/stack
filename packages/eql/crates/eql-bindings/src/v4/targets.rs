@@ -3,6 +3,9 @@
 use crate::encryption::targets::{
     open_target, refuse, refuse_query, run_target, Opener, Target, TargetError,
 };
+use crate::v4::plaintext::Date;
+use crate::v4::plaintext::Decimal;
+use crate::v4::plaintext::Timestamp;
 use crate::Identifier;
 use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
@@ -58,10 +61,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("IntegerOrdQuery"),
         query_sql_domain: Some("eql_v4.query_integer_ord"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "IntegerOrdOpe",
@@ -72,80 +73,70 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("IntegerOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_integer_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Smallint",
         family: "smallint",
         suffix: "",
-        plaintext: None,
+        plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint",
         indexes: &[],
         query: None,
         query_sql_domain: None,
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "SmallintEq",
         family: "smallint",
         suffix: "Eq",
-        plaintext: None,
+        plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint_eq",
         indexes: &["eq"],
         query: Some("SmallintEqQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_eq"),
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "SmallintOrdOre",
         family: "smallint",
         suffix: "OrdOre",
-        plaintext: None,
+        plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint_ord_ore",
         indexes: &["ore"],
         query: Some("SmallintOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_ord_ore"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
         ),
     },
     Target {
         name: "SmallintOrd",
         family: "smallint",
         suffix: "Ord",
-        plaintext: None,
+        plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint_ord",
         indexes: &["ope"],
         query: Some("SmallintOrdQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_ord"),
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "SmallintOrdOpe",
         family: "smallint",
         suffix: "OrdOpe",
-        plaintext: None,
+        plaintext: Some("int16"),
         sql_domain: "public.eql_v4_smallint_ord_ope",
         indexes: &["ope"],
         query: Some("SmallintOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_smallint_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Bigint",
@@ -194,10 +185,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("BigintOrdQuery"),
         query_sql_domain: Some("eql_v4.query_bigint_ord"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "BigintOrdOpe",
@@ -208,219 +197,205 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("BigintOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_bigint_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Date",
         family: "date",
         suffix: "",
-        plaintext: None,
+        plaintext: Some("date"),
         sql_domain: "public.eql_v4_date",
         indexes: &[],
         query: None,
         query_sql_domain: None,
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "DateEq",
         family: "date",
         suffix: "Eq",
-        plaintext: None,
+        plaintext: Some("date"),
         sql_domain: "public.eql_v4_date_eq",
         indexes: &["eq"],
         query: Some("DateEqQuery"),
         query_sql_domain: Some("eql_v4.query_date_eq"),
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "DateOrdOre",
         family: "date",
         suffix: "OrdOre",
-        plaintext: None,
+        plaintext: Some("date"),
         sql_domain: "public.eql_v4_date_ord_ore",
         indexes: &["ore"],
         query: Some("DateOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_date_ord_ore"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
         ),
     },
     Target {
         name: "DateOrd",
         family: "date",
         suffix: "Ord",
-        plaintext: None,
+        plaintext: Some("date"),
         sql_domain: "public.eql_v4_date_ord",
         indexes: &["ope"],
         query: Some("DateOrdQuery"),
         query_sql_domain: Some("eql_v4.query_date_ord"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
         ),
     },
     Target {
         name: "DateOrdOpe",
         family: "date",
         suffix: "OrdOpe",
-        plaintext: None,
+        plaintext: Some("date"),
         sql_domain: "public.eql_v4_date_ord_ope",
         indexes: &["ope"],
         query: Some("DateOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_date_ord_ope"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
         ),
     },
     Target {
         name: "Timestamp",
         family: "timestamp",
         suffix: "",
-        plaintext: None,
+        plaintext: Some("timestamp"),
         sql_domain: "public.eql_v4_timestamp",
         indexes: &[],
         query: None,
         query_sql_domain: None,
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TimestampEq",
         family: "timestamp",
         suffix: "Eq",
-        plaintext: None,
+        plaintext: Some("timestamp"),
         sql_domain: "public.eql_v4_timestamp_eq",
         indexes: &["eq"],
         query: Some("TimestampEqQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_eq"),
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TimestampOrdOre",
         family: "timestamp",
         suffix: "OrdOre",
-        plaintext: None,
+        plaintext: Some("timestamp"),
         sql_domain: "public.eql_v4_timestamp_ord_ore",
         indexes: &["ore"],
         query: Some("TimestampOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ore"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
         ),
     },
     Target {
         name: "TimestampOrd",
         family: "timestamp",
         suffix: "Ord",
-        plaintext: None,
+        plaintext: Some("timestamp"),
         sql_domain: "public.eql_v4_timestamp_ord",
         indexes: &["ope"],
         query: Some("TimestampOrdQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_ord"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
         ),
     },
     Target {
         name: "TimestampOrdOpe",
         family: "timestamp",
         suffix: "OrdOpe",
-        plaintext: None,
+        plaintext: Some("timestamp"),
         sql_domain: "public.eql_v4_timestamp_ord_ope",
         indexes: &["ope"],
         query: Some("TimestampOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ope"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
         ),
     },
     Target {
         name: "Numeric",
         family: "numeric",
         suffix: "",
-        plaintext: None,
+        plaintext: Some("decimal"),
         sql_domain: "public.eql_v4_numeric",
         indexes: &[],
         query: None,
         query_sql_domain: None,
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "NumericEq",
         family: "numeric",
         suffix: "Eq",
-        plaintext: None,
+        plaintext: Some("decimal"),
         sql_domain: "public.eql_v4_numeric_eq",
         indexes: &["eq"],
         query: Some("NumericEqQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_eq"),
-        producible: false,
-        reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "NumericOrdOre",
         family: "numeric",
         suffix: "OrdOre",
-        plaintext: None,
+        plaintext: Some("decimal"),
         sql_domain: "public.eql_v4_numeric_ord_ore",
         indexes: &["ore"],
         query: Some("NumericOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_ord_ore"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
         ),
     },
     Target {
         name: "NumericOrd",
         family: "numeric",
         suffix: "Ord",
-        plaintext: None,
+        plaintext: Some("decimal"),
         sql_domain: "public.eql_v4_numeric_ord",
         indexes: &["ope"],
         query: Some("NumericOrdQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_ord"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
         ),
     },
     Target {
         name: "NumericOrdOpe",
         family: "numeric",
         suffix: "OrdOpe",
-        plaintext: None,
+        plaintext: Some("decimal"),
         sql_domain: "public.eql_v4_numeric_ord_ope",
         indexes: &["ope"],
         query: Some("NumericOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_ord_ope"),
         producible: false,
         reason: Some(
-            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
+            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
         ),
     },
     Target {
@@ -482,10 +457,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["eq", "ope"],
         query: Some("TextOrdQuery"),
         query_sql_domain: Some("eql_v4.query_text_ord"),
-        producible: false,
-        reason: Some(
-            "no EQL type is built from the engine's text order terms yet (#1131)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TextOrdOpe",
@@ -496,10 +469,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["eq", "ope"],
         query: Some("TextOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_text_ord_ope"),
-        producible: false,
-        reason: Some(
-            "no EQL type is built from the engine's text order terms yet (#1131)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TextSearchOre",
@@ -526,7 +497,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_text_search"),
         producible: false,
         reason: Some(
-            "no EQL type is built from the engine's text order terms yet (#1131)",
+            "every query of this type carries a match term, which text shorter than one 3-gram cannot make, so `=` or `<` on short text would be refused; how a query that is not a match leaves it out is not decided (#1131)",
         ),
     },
     Target {
@@ -588,10 +559,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("RealOrdQuery"),
         query_sql_domain: Some("eql_v4.query_real_ord"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "RealOrdOpe",
@@ -602,10 +571,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("RealOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_real_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Double",
@@ -654,10 +621,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("DoubleOrdQuery"),
         query_sql_domain: Some("eql_v4.query_double_ord"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "DoubleOrdOpe",
@@ -668,10 +633,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("DoubleOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_double_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "SteVecDocument",
@@ -716,12 +679,77 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "IntegerEq" => {
             run_target::<super::integer::IntegerEq, i32, K>("IntegerEq", keyset, column, plaintext)
         }
+        "IntegerOrd" => run_target::<super::integer::IntegerOrd, i32, K>(
+            "IntegerOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "IntegerOrdOpe" => run_target::<super::integer::IntegerOrdOpe, i32, K>(
+            "IntegerOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "Smallint" => {
+            run_target::<super::smallint::Smallint, i16, K>("Smallint", keyset, column, plaintext)
+        }
+        "SmallintEq" => run_target::<super::smallint::SmallintEq, i16, K>(
+            "SmallintEq",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "SmallintOrd" => run_target::<super::smallint::SmallintOrd, i16, K>(
+            "SmallintOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "SmallintOrdOpe" => run_target::<super::smallint::SmallintOrdOpe, i16, K>(
+            "SmallintOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "Bigint" => {
             run_target::<super::bigint::Bigint, i64, K>("Bigint", keyset, column, plaintext)
         }
         "BigintEq" => {
             run_target::<super::bigint::BigintEq, i64, K>("BigintEq", keyset, column, plaintext)
         }
+        "BigintOrd" => {
+            run_target::<super::bigint::BigintOrd, i64, K>("BigintOrd", keyset, column, plaintext)
+        }
+        "BigintOrdOpe" => run_target::<super::bigint::BigintOrdOpe, i64, K>(
+            "BigintOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "Date" => run_target::<super::date::Date, Date, K>("Date", keyset, column, plaintext),
+        "DateEq" => run_target::<super::date::DateEq, Date, K>("DateEq", keyset, column, plaintext),
+        "Timestamp" => run_target::<super::timestamp::Timestamp, Timestamp, K>(
+            "Timestamp",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TimestampEq" => run_target::<super::timestamp::TimestampEq, Timestamp, K>(
+            "TimestampEq",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "Numeric" => {
+            run_target::<super::numeric::Numeric, Decimal, K>("Numeric", keyset, column, plaintext)
+        }
+        "NumericEq" => run_target::<super::numeric::NumericEq, Decimal, K>(
+            "NumericEq",
+            keyset,
+            column,
+            plaintext,
+        ),
         "Text" => run_target::<super::text::Text, String, K>("Text", keyset, column, plaintext),
         "TextEq" => {
             run_target::<super::text::TextEq, String, K>("TextEq", keyset, column, plaintext)
@@ -729,17 +757,41 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "TextMatch" => {
             run_target::<super::text::TextMatch, String, K>("TextMatch", keyset, column, plaintext)
         }
+        "TextOrd" => {
+            run_target::<super::text::TextOrd, String, K>("TextOrd", keyset, column, plaintext)
+        }
+        "TextOrdOpe" => run_target::<super::text::TextOrdOpe, String, K>(
+            "TextOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "Boolean" => {
             run_target::<super::boolean::Boolean, bool, K>("Boolean", keyset, column, plaintext)
         }
         "Real" => run_target::<super::real::Real, f32, K>("Real", keyset, column, plaintext),
         "RealEq" => run_target::<super::real::RealEq, f32, K>("RealEq", keyset, column, plaintext),
+        "RealOrd" => {
+            run_target::<super::real::RealOrd, f32, K>("RealOrd", keyset, column, plaintext)
+        }
+        "RealOrdOpe" => {
+            run_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", keyset, column, plaintext)
+        }
         "Double" => {
             run_target::<super::double::Double, f64, K>("Double", keyset, column, plaintext)
         }
         "DoubleEq" => {
             run_target::<super::double::DoubleEq, f64, K>("DoubleEq", keyset, column, plaintext)
         }
+        "DoubleOrd" => {
+            run_target::<super::double::DoubleOrd, f64, K>("DoubleOrd", keyset, column, plaintext)
+        }
+        "DoubleOrdOpe" => run_target::<super::double::DoubleOrdOpe, f64, K>(
+            "DoubleOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         _ => Err(refuse(name)),
     }
 }
@@ -758,24 +810,102 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "IntegerEq" => {
             open_target::<super::integer::IntegerEq, i32, K>("IntegerEq", opener, column, stored)
         }
+        "IntegerOrd" => {
+            open_target::<super::integer::IntegerOrd, i32, K>("IntegerOrd", opener, column, stored)
+        }
+        "IntegerOrdOpe" => open_target::<super::integer::IntegerOrdOpe, i32, K>(
+            "IntegerOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
+        "Smallint" => {
+            open_target::<super::smallint::Smallint, i16, K>("Smallint", opener, column, stored)
+        }
+        "SmallintEq" => {
+            open_target::<super::smallint::SmallintEq, i16, K>("SmallintEq", opener, column, stored)
+        }
+        "SmallintOrd" => open_target::<super::smallint::SmallintOrd, i16, K>(
+            "SmallintOrd",
+            opener,
+            column,
+            stored,
+        ),
+        "SmallintOrdOpe" => open_target::<super::smallint::SmallintOrdOpe, i16, K>(
+            "SmallintOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
         "Bigint" => open_target::<super::bigint::Bigint, i64, K>("Bigint", opener, column, stored),
         "BigintEq" => {
             open_target::<super::bigint::BigintEq, i64, K>("BigintEq", opener, column, stored)
         }
+        "BigintOrd" => {
+            open_target::<super::bigint::BigintOrd, i64, K>("BigintOrd", opener, column, stored)
+        }
+        "BigintOrdOpe" => open_target::<super::bigint::BigintOrdOpe, i64, K>(
+            "BigintOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
+        "Date" => open_target::<super::date::Date, Date, K>("Date", opener, column, stored),
+        "DateEq" => open_target::<super::date::DateEq, Date, K>("DateEq", opener, column, stored),
+        "Timestamp" => open_target::<super::timestamp::Timestamp, Timestamp, K>(
+            "Timestamp",
+            opener,
+            column,
+            stored,
+        ),
+        "TimestampEq" => open_target::<super::timestamp::TimestampEq, Timestamp, K>(
+            "TimestampEq",
+            opener,
+            column,
+            stored,
+        ),
+        "Numeric" => {
+            open_target::<super::numeric::Numeric, Decimal, K>("Numeric", opener, column, stored)
+        }
+        "NumericEq" => open_target::<super::numeric::NumericEq, Decimal, K>(
+            "NumericEq",
+            opener,
+            column,
+            stored,
+        ),
         "Text" => open_target::<super::text::Text, String, K>("Text", opener, column, stored),
         "TextEq" => open_target::<super::text::TextEq, String, K>("TextEq", opener, column, stored),
         "TextMatch" => {
             open_target::<super::text::TextMatch, String, K>("TextMatch", opener, column, stored)
+        }
+        "TextOrd" => {
+            open_target::<super::text::TextOrd, String, K>("TextOrd", opener, column, stored)
+        }
+        "TextOrdOpe" => {
+            open_target::<super::text::TextOrdOpe, String, K>("TextOrdOpe", opener, column, stored)
         }
         "Boolean" => {
             open_target::<super::boolean::Boolean, bool, K>("Boolean", opener, column, stored)
         }
         "Real" => open_target::<super::real::Real, f32, K>("Real", opener, column, stored),
         "RealEq" => open_target::<super::real::RealEq, f32, K>("RealEq", opener, column, stored),
+        "RealOrd" => open_target::<super::real::RealOrd, f32, K>("RealOrd", opener, column, stored),
+        "RealOrdOpe" => {
+            open_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", opener, column, stored)
+        }
         "Double" => open_target::<super::double::Double, f64, K>("Double", opener, column, stored),
         "DoubleEq" => {
             open_target::<super::double::DoubleEq, f64, K>("DoubleEq", opener, column, stored)
         }
+        "DoubleOrd" => {
+            open_target::<super::double::DoubleOrd, f64, K>("DoubleOrd", opener, column, stored)
+        }
+        "DoubleOrdOpe" => open_target::<super::double::DoubleOrdOpe, f64, K>(
+            "DoubleOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
         _ => Err(refuse(name)),
     }
 }
@@ -795,8 +925,65 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
+        "IntegerOrd" => run_target::<super::integer::IntegerOrdQuery, i32, K>(
+            "IntegerOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "IntegerOrdOpe" => run_target::<super::integer::IntegerOrdOpeQuery, i32, K>(
+            "IntegerOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "SmallintEq" => run_target::<super::smallint::SmallintEqQuery, i16, K>(
+            "SmallintEq",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "SmallintOrd" => run_target::<super::smallint::SmallintOrdQuery, i16, K>(
+            "SmallintOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "SmallintOrdOpe" => run_target::<super::smallint::SmallintOrdOpeQuery, i16, K>(
+            "SmallintOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "BigintEq" => run_target::<super::bigint::BigintEqQuery, i64, K>(
             "BigintEq", keyset, column, plaintext,
+        ),
+        "BigintOrd" => run_target::<super::bigint::BigintOrdQuery, i64, K>(
+            "BigintOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "BigintOrdOpe" => run_target::<super::bigint::BigintOrdOpeQuery, i64, K>(
+            "BigintOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "DateEq" => {
+            run_target::<super::date::DateEqQuery, Date, K>("DateEq", keyset, column, plaintext)
+        }
+        "TimestampEq" => run_target::<super::timestamp::TimestampEqQuery, Timestamp, K>(
+            "TimestampEq",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericEq" => run_target::<super::numeric::NumericEqQuery, Decimal, K>(
+            "NumericEq",
+            keyset,
+            column,
+            plaintext,
         ),
         "TextEq" => {
             run_target::<super::text::TextEqQuery, String, K>("TextEq", keyset, column, plaintext)
@@ -807,11 +994,41 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
+        "TextOrd" => {
+            run_target::<super::text::TextOrdQuery, String, K>("TextOrd", keyset, column, plaintext)
+        }
+        "TextOrdOpe" => run_target::<super::text::TextOrdOpeQuery, String, K>(
+            "TextOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "RealEq" => {
             run_target::<super::real::RealEqQuery, f32, K>("RealEq", keyset, column, plaintext)
         }
+        "RealOrd" => {
+            run_target::<super::real::RealOrdQuery, f32, K>("RealOrd", keyset, column, plaintext)
+        }
+        "RealOrdOpe" => run_target::<super::real::RealOrdOpeQuery, f32, K>(
+            "RealOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "DoubleEq" => run_target::<super::double::DoubleEqQuery, f64, K>(
             "DoubleEq", keyset, column, plaintext,
+        ),
+        "DoubleOrd" => run_target::<super::double::DoubleOrdQuery, f64, K>(
+            "DoubleOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "DoubleOrdOpe" => run_target::<super::double::DoubleOrdOpeQuery, f64, K>(
+            "DoubleOrdOpe",
+            keyset,
+            column,
+            plaintext,
         ),
         _ => Err(refuse_query(name)),
     }

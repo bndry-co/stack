@@ -8,9 +8,8 @@
 //!
 //! The vocabulary is [`ValueKind`], whose
 //! [`name`](ValueKind::name)s (`"uint64"`, `"string"`, …, `"array"`,
-//! `"object"`) are frozen wire format, and whose
-//! [`holds`](ValueKind::holds), [`FfiValue::kind`](super::FfiValue::kind) and
-//! [`ValueFrame::kind`] say whether a value is of a kind. Beside it, this module adds two rules:
+//! `"object"`) are frozen wire format; [`ValueFrame::kind`] says which kind
+//! a value is. Beside it, this module adds two rules:
 //!
 //! - [`admits`]: which indexes a kind is defined for, so a plan asking for
 //!   match on an integer or equality on a boolean is refused when it is
@@ -36,11 +35,14 @@
 //! field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field). A field that only seals, or
 //! only carries its value through, may leave it out: no term derives from it.
+use std::fmt;
+use std::str::FromStr;
+
 use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw, TimeUnit};
 use vitaminc_aead::Encrypt;
 
 use super::term::OneScalar;
-use super::{ValueFrame, ValueKind};
+use super::ValueFrame;
 
 use super::{Error, Reason};
 use crate::target::IndexSpec;
@@ -53,8 +55,10 @@ use crate::target::IndexSpec;
 /// `vitaminc-normalize` gives an equality domain, which is every integer
 /// of every width, both floats, a decimal, a date, a timestamp, text and
 /// bytes, and not a boolean. The rest are this crate's: match over text
-/// alone, and ORE and OPE over every integer, both floats, text and bytes.
-/// A boolean has no order term, which would reveal which rows are `true`.
+/// alone, and ORE and OPE over the integers of 16 bits and wider, both
+/// floats, text and bytes. A boolean and an 8-bit integer have no order
+/// term: over so small a domain it would reveal which rows are `true`, or
+/// each row's rank among 256 values.
 /// A decimal, a date and a timestamp have none yet: their order encodings
 /// wait for new cllw-ore and ore-rs releases (#1236), and [`not_admitted`]
 /// names that reason. A composite (`array`, `object`) has no term. Only the
@@ -66,7 +70,9 @@ use crate::target::IndexSpec;
 /// use stack_encrypt::target::IndexSpec;
 ///
 /// assert!(admits(ValueKind::UInt64, &IndexSpec::Equality));
-/// assert!(admits(ValueKind::Int8, &IndexSpec::Ore));
+/// assert!(admits(ValueKind::Int16, &IndexSpec::Ore));
+/// assert!(admits(ValueKind::Int8, &IndexSpec::Equality));
+/// assert!(!admits(ValueKind::Int8, &IndexSpec::Ore));
 /// assert!(admits(ValueKind::Date, &IndexSpec::Equality));
 /// assert!(!admits(ValueKind::Date, &IndexSpec::Ore));
 /// assert!(!admits(ValueKind::Bool, &IndexSpec::Equality));
@@ -175,17 +181,16 @@ fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
 /// (`query(v).using(&plan)`) is tracked in #1057.
 ///
 /// ```
-/// use stack_encrypt::dynamic::{read, FfiValue, ValueKind};
-/// use vitaminc_protected::Controlled;
+/// use stack_encrypt::dynamic::{read, ValueFrame, ValueKind};
 ///
 /// // A JavaScript number is a float; against a `uint64` field it is 34.
-/// let value = read(ValueKind::UInt64, FfiValue::Float64(34.0))?;
+/// let value = read(ValueKind::UInt64, 34.0f64)?;
 /// assert_eq!(value.kind(), Some(ValueKind::UInt64));
-/// assert_eq!(value.risky_ref(), FfiValue::UInt64(34).to_frame()?.risky_ref());
-/// assert!(read(ValueKind::UInt64, FfiValue::Float64(34.5)).is_err());
+/// assert_eq!(value.risky_ref(), ValueFrame::of(34u64)?.risky_ref());
+/// assert!(read(ValueKind::UInt64, 34.5f64).is_err());
 /// // Against an `int8` field, 34 is the 8-bit integer; 300 does not fit.
-/// assert_eq!(read(ValueKind::Int8, FfiValue::Int64(34))?.kind(), Some(ValueKind::Int8));
-/// assert!(read(ValueKind::Int8, FfiValue::Int64(300)).is_err());
+/// assert_eq!(read(ValueKind::Int8, 34i64)?.kind(), Some(ValueKind::Int8));
+/// assert!(read(ValueKind::Int8, 300i64).is_err());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
@@ -343,16 +348,192 @@ impl Number {
     }
 }
 
+/// The kind of a value: the type vocabulary a plan field declares in its
+/// `"type"` key, and what [`ValueFrame::kind`] reports.
+///
+/// `Null`, `Undefined` and `Passthrough` have no kind: each null is a type
+/// with one value, so declaring a field as one says nothing, and a
+/// passthrough is a transport choice, not a type.
+///
+/// # Names are wire format
+///
+/// [`name`](Self::name) (also its [`Display`](fmt::Display) and [`FromStr`]
+/// form) is how a binding spells a kind. The names are frozen: matched
+/// exactly, case-sensitively, and never renamed.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ValueKind {
+    /// `"bool"`.
+    Bool,
+    /// `"int8"`.
+    Int8,
+    /// `"int16"`.
+    Int16,
+    /// `"int32"`.
+    Int32,
+    /// `"int64"`.
+    Int64,
+    /// `"int128"`.
+    Int128,
+    /// `"uint8"`.
+    UInt8,
+    /// `"uint16"`.
+    UInt16,
+    /// `"uint32"`.
+    UInt32,
+    /// `"uint64"`.
+    UInt64,
+    /// `"uint128"`.
+    UInt128,
+    /// `"float32"`.
+    Float32,
+    /// `"float64"`.
+    Float64,
+    /// `"decimal"`: vitaminc's `Decimal` logical type, a mantissa and a
+    /// scale.
+    Decimal,
+    /// `"date"`: vitaminc's `Date` logical type, a calendar date with no
+    /// time or zone.
+    Date,
+    /// `"timestamp"`: vitaminc's `Timestamp` logical type, an instant in
+    /// UTC, to the nanosecond.
+    Timestamp,
+    /// `"string"`.
+    String,
+    /// `"bytes"`.
+    Bytes,
+    /// `"array"`. Says nothing about the elements' kinds.
+    Array,
+    /// `"object"`. Says nothing about the entries' kinds.
+    Object,
+}
+
+impl ValueKind {
+    /// Every kind, in declaration order.
+    pub const ALL: [ValueKind; 20] = [
+        ValueKind::Bool,
+        ValueKind::Int8,
+        ValueKind::Int16,
+        ValueKind::Int32,
+        ValueKind::Int64,
+        ValueKind::Int128,
+        ValueKind::UInt8,
+        ValueKind::UInt16,
+        ValueKind::UInt32,
+        ValueKind::UInt64,
+        ValueKind::UInt128,
+        ValueKind::Float32,
+        ValueKind::Float64,
+        ValueKind::Decimal,
+        ValueKind::Date,
+        ValueKind::Timestamp,
+        ValueKind::String,
+        ValueKind::Bytes,
+        ValueKind::Array,
+        ValueKind::Object,
+    ];
+
+    /// How a declaration spells this kind: `"bool"`, `"int8"`, `"int16"`,
+    /// `"int32"`, `"int64"`, `"int128"`, `"uint8"`, `"uint16"`, `"uint32"`,
+    /// `"uint64"`, `"uint128"`, `"float32"`, `"float64"`, `"decimal"`,
+    /// `"date"`, `"timestamp"`, `"string"`, `"bytes"`, `"array"` or
+    /// `"object"`. Frozen wire format.
+    pub const fn name(self) -> &'static str {
+        match self {
+            ValueKind::Bool => "bool",
+            ValueKind::Int8 => "int8",
+            ValueKind::Int16 => "int16",
+            ValueKind::Int32 => "int32",
+            ValueKind::Int64 => "int64",
+            ValueKind::Int128 => "int128",
+            ValueKind::UInt8 => "uint8",
+            ValueKind::UInt16 => "uint16",
+            ValueKind::UInt32 => "uint32",
+            ValueKind::UInt64 => "uint64",
+            ValueKind::UInt128 => "uint128",
+            ValueKind::Float32 => "float32",
+            ValueKind::Float64 => "float64",
+            ValueKind::Decimal => "decimal",
+            ValueKind::Date => "date",
+            ValueKind::Timestamp => "timestamp",
+            ValueKind::String => "string",
+            ValueKind::Bytes => "bytes",
+            ValueKind::Array => "array",
+            ValueKind::Object => "object",
+        }
+    }
+}
+
+impl fmt::Display for ValueKind {
+    /// Writes [`name`](Self::name).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl FromStr for ValueKind {
+    type Err = ParseValueKindError;
+
+    /// Parses a [`name`](Self::name), exactly: `"uint64"`, not `"UInt64"`,
+    /// `"u64"` or `" uint64"`. `"null"` and `"undefined"` are not kinds.
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        ValueKind::ALL
+            .into_iter()
+            .find(|kind| kind.name() == name)
+            .ok_or(ParseValueKindError)
+    }
+}
+
+/// The error from parsing a string that is not a [`ValueKind::name`].
+/// Carries no detail: the caller holds the string it tried to parse.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, thiserror::Error)]
+#[error("not a value kind")]
+pub struct ParseValueKindError;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dynamic::FfiValue;
+    use crate::dynamic::test_frame::Tree;
     use crate::sem::{MatchOptions, Tokenizer};
     use vitaminc_aead::plaintext::Raw;
-    use vitaminc_protected::Protected;
 
-    // What a kind is, its name and its tags, and which values it holds are
-    // vitaminc's to test (`ValueKind`). These test the two rules this crate
+    #[test]
+    fn kind_names_parse_back_exactly() {
+        let names: Vec<&str> = ValueKind::ALL.iter().map(|kind| kind.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "bool",
+                "int8",
+                "int16",
+                "int32",
+                "int64",
+                "int128",
+                "uint8",
+                "uint16",
+                "uint32",
+                "uint64",
+                "uint128",
+                "float32",
+                "float64",
+                "decimal",
+                "date",
+                "timestamp",
+                "string",
+                "bytes",
+                "array",
+                "object"
+            ],
+            "the frozen names"
+        );
+        for kind in ValueKind::ALL {
+            assert_eq!(kind.name().parse::<ValueKind>(), Ok(kind));
+            assert_eq!(kind.to_string(), kind.name());
+        }
+        assert_eq!("UInt64".parse::<ValueKind>(), Err(ParseValueKindError));
+        assert_eq!("null".parse::<ValueKind>(), Err(ParseValueKindError));
+    }
+
+    // Beside the frozen names (above), these test the two rules this crate
     // adds over the vocabulary.
 
     /// A scalar as the engine holds it: its frame.
@@ -364,26 +545,26 @@ mod tests {
         scalar(None, Physical::Int(int))
     }
 
-    fn tree(value: FfiValue) -> ValueFrame {
+    fn tree(value: Tree) -> ValueFrame {
         ValueFrame::of(&value).expect("in the value model")
     }
 
     /// One value of every kind.
     fn sample(kind: ValueKind) -> ValueFrame {
         match kind {
-            ValueKind::Bool => tree(FfiValue::Bool(true)),
+            ValueKind::Bool => tree(Tree::Bool(true)),
             ValueKind::Int8 => int(Int::I8(-1)),
             ValueKind::Int16 => int(Int::I16(-2)),
-            ValueKind::Int32 => tree(FfiValue::Int32(-3)),
-            ValueKind::Int64 => tree(FfiValue::Int64(-4)),
+            ValueKind::Int32 => tree(Tree::Int32(-3)),
+            ValueKind::Int64 => tree(Tree::Int64(-4)),
             ValueKind::Int128 => int(Int::I128(i128::MIN)),
             ValueKind::UInt8 => int(Int::U8(32)),
             ValueKind::UInt16 => int(Int::U16(33)),
-            ValueKind::UInt32 => tree(FfiValue::UInt32(34)),
-            ValueKind::UInt64 => tree(FfiValue::UInt64(35)),
+            ValueKind::UInt32 => tree(Tree::UInt32(34)),
+            ValueKind::UInt64 => tree(Tree::UInt64(35)),
             ValueKind::UInt128 => int(Int::U128(u128::MAX)),
-            ValueKind::Float32 => tree(FfiValue::Float32(1.5)),
-            ValueKind::Float64 => tree(FfiValue::Float64(2.5)),
+            ValueKind::Float32 => tree(Tree::Float32(1.5)),
+            ValueKind::Float64 => tree(Tree::Float64(2.5)),
             ValueKind::Decimal => scalar(
                 Some(Logical::Decimal { scale: 2 }),
                 Physical::Int(Int::I64(150)),
@@ -393,13 +574,10 @@ mod tests {
                 Some(Logical::Timestamp(TimeUnit::Nanos)),
                 Physical::Int(Int::I128(1_760_662_923_123_456_789)),
             ),
-            ValueKind::String => tree(FfiValue::String("alice".into())),
-            ValueKind::Bytes => tree(FfiValue::Bytes(Protected::new(b"ab".to_vec()))),
-            ValueKind::Array => tree(FfiValue::Array(vec![FfiValue::UInt32(1)])),
-            ValueKind::Object => tree(FfiValue::Object(vec![(
-                "k".to_string(),
-                FfiValue::UInt32(1),
-            )])),
+            ValueKind::String => tree(Tree::String("alice".into())),
+            ValueKind::Bytes => tree(Tree::Bytes(b"ab".to_vec())),
+            ValueKind::Array => tree(Tree::Array(vec![Tree::UInt32(1)])),
+            ValueKind::Object => tree(Tree::Object(vec![("k".to_string(), Tree::UInt32(1))])),
         }
     }
 
@@ -483,15 +661,13 @@ mod tests {
     }
 
     /// The new kinds' rows, spelled out: equality on every one, order on
-    /// every integer width and on none of the decimal, date and timestamp,
-    /// match on none.
+    /// every integer width but 8 bits and on none of the decimal, date and
+    /// timestamp, match on none.
     #[test]
     fn admits_the_new_kinds_where_their_terms_exist() {
         let integers = [
-            ValueKind::Int8,
             ValueKind::Int16,
             ValueKind::Int128,
-            ValueKind::UInt8,
             ValueKind::UInt16,
             ValueKind::UInt128,
         ];
@@ -502,6 +678,19 @@ mod tests {
             assert!(admits(kind, &IndexSpec::Ore), "{kind} ore");
             assert!(admits(kind, &IndexSpec::Ope), "{kind} ope");
             assert!(!admits(kind, &matched), "{kind} match");
+        }
+        // An 8-bit integer keeps its equality term and, like a boolean,
+        // has no order term: 256 values are too few to rank.
+        for kind in [ValueKind::Int8, ValueKind::UInt8] {
+            assert!(admits(kind, &IndexSpec::Equality), "{kind} equality");
+            assert!(!admits(kind, &IndexSpec::Ore), "{kind} ore");
+            assert!(!admits(kind, &IndexSpec::Ope), "{kind} ope");
+            assert!(!admits(kind, &matched), "{kind} match");
+            assert_eq!(
+                not_admitted(kind, &IndexSpec::Ore),
+                Some(Reason::IndexNotAdmitted),
+                "{kind} ore is refused as a boolean's is, not as pending"
+            );
         }
         for kind in logical {
             assert!(admits(kind, &IndexSpec::Equality), "{kind} equality");
@@ -548,7 +737,11 @@ mod tests {
             not_admitted(ValueKind::Date, &IndexSpec::Match(MatchOptions::default())),
             Some(Reason::IndexNotAdmitted)
         );
-        assert_eq!(not_admitted(ValueKind::Int8, &IndexSpec::Ore), None);
+        assert_eq!(not_admitted(ValueKind::Int16, &IndexSpec::Ore), None);
+        assert_eq!(
+            not_admitted(ValueKind::Int8, &IndexSpec::Ore),
+            Some(Reason::IndexNotAdmitted)
+        );
         assert!(Reason::OrderTermPending.to_string().contains("#1236"));
     }
 
@@ -558,16 +751,16 @@ mod tests {
     fn read_converts_between_every_integer_width() {
         assert!(reads_as(
             ValueKind::Int8,
-            FfiValue::Int64(-128),
+            Tree::Int64(-128),
             int(Int::I8(-128))
         ));
-        assert!(read_frame(ValueKind::Int8, FfiValue::Int64(128)).is_none());
+        assert!(read_frame(ValueKind::Int8, Tree::Int64(128)).is_none());
         assert!(reads_as(
             ValueKind::Int16,
             int(Int::U8(200)),
             int(Int::I16(200))
         ));
-        assert!(read_frame(ValueKind::Int16, FfiValue::Int32(40_000)).is_none());
+        assert!(read_frame(ValueKind::Int16, Tree::Int32(40_000)).is_none());
         assert!(reads_as(
             ValueKind::UInt8,
             int(Int::I16(255)),
@@ -579,10 +772,10 @@ mod tests {
             int(Int::U128(65_535)),
             int(Int::U16(65_535))
         ));
-        assert!(read_frame(ValueKind::UInt16, FfiValue::UInt32(65_536)).is_none());
+        assert!(read_frame(ValueKind::UInt16, Tree::UInt32(65_536)).is_none());
         assert!(reads_as(
             ValueKind::Int128,
-            FfiValue::UInt64(u64::MAX),
+            Tree::UInt64(u64::MAX),
             int(Int::I128(u64::MAX.into()))
         ));
         assert!(reads_as(
@@ -625,32 +818,32 @@ mod tests {
     fn read_refuses_a_number_past_the_128_bit_ranges() {
         let two_127 = 170_141_183_460_469_231_731_687_303_715_884_105_728.0_f64;
         let two_128 = 340_282_366_920_938_463_463_374_607_431_768_211_456.0_f64;
-        assert!(read_frame(ValueKind::Int128, FfiValue::Float64(two_127)).is_none());
+        assert!(read_frame(ValueKind::Int128, Tree::Float64(two_127)).is_none());
         assert!(reads_as(
             ValueKind::Int128,
-            FfiValue::Float64(-two_127),
+            Tree::Float64(-two_127),
             int(Int::I128(i128::MIN))
         ));
-        assert!(read_frame(ValueKind::UInt128, FfiValue::Float64(two_128)).is_none());
+        assert!(read_frame(ValueKind::UInt128, Tree::Float64(two_128)).is_none());
         assert!(reads_as(
             ValueKind::UInt128,
-            FfiValue::Float64(two_127),
+            Tree::Float64(two_127),
             int(Int::U128(1 << 127))
         ));
-        assert!(read_frame(ValueKind::UInt128, FfiValue::Float64(-1.0)).is_none());
-        assert!(read_frame(ValueKind::UInt128, FfiValue::Float64(0.5)).is_none());
-        assert!(read_frame(ValueKind::UInt128, FfiValue::Float64(f64::NAN)).is_none());
+        assert!(read_frame(ValueKind::UInt128, Tree::Float64(-1.0)).is_none());
+        assert!(read_frame(ValueKind::UInt128, Tree::Float64(0.5)).is_none());
+        assert!(read_frame(ValueKind::UInt128, Tree::Float64(f64::NAN)).is_none());
         assert!(read_frame(ValueKind::Float64, int(Int::I128(i128::MAX))).is_none());
         assert!(read_frame(ValueKind::Float64, int(Int::U128(u128::MAX))).is_none());
         assert!(reads_as(
             ValueKind::Float64,
             int(Int::I128(i128::MIN)),
-            tree(FfiValue::Float64(-two_127))
+            tree(Tree::Float64(-two_127))
         ));
         assert!(reads_as(
             ValueKind::Float64,
             int(Int::U128(1 << 127)),
-            tree(FfiValue::Float64(two_127))
+            tree(Tree::Float64(two_127))
         ));
         assert!(read_frame(ValueKind::Float32, int(Int::U128((1 << 24) + 1))).is_none());
     }
@@ -666,17 +859,13 @@ mod tests {
                 Physical::Int(Int::I128(mantissa)),
             )
         };
-        assert!(reads_as(
-            ValueKind::Decimal,
-            FfiValue::Int64(-34),
-            decimal(-34)
-        ));
+        assert!(reads_as(ValueKind::Decimal, Tree::Int64(-34), decimal(-34)));
         assert!(reads_as(ValueKind::Decimal, int(Int::U8(34)), decimal(34)));
         assert!(read_frame(ValueKind::Decimal, int(Int::I128(1 << 96))).is_none());
         assert!(read_frame(ValueKind::Decimal, int(Int::U128(u128::MAX))).is_none());
-        assert!(read_frame(ValueKind::Decimal, FfiValue::Float64(1.0)).is_none());
-        assert!(read_frame(ValueKind::Date, FfiValue::Int32(19_782)).is_none());
-        assert!(read_frame(ValueKind::Timestamp, FfiValue::Int64(1)).is_none());
+        assert!(read_frame(ValueKind::Decimal, Tree::Float64(1.0)).is_none());
+        assert!(read_frame(ValueKind::Date, Tree::Int32(19_782)).is_none());
+        assert!(read_frame(ValueKind::Timestamp, Tree::Int64(1)).is_none());
         for kind in [ValueKind::Decimal, ValueKind::Date, ValueKind::Timestamp] {
             for target in [ValueKind::Int128, ValueKind::Float64, ValueKind::String] {
                 assert!(
@@ -689,9 +878,9 @@ mod tests {
 
     /// `read`, with the frame it writes read back as a value tree to
     /// compare.
-    fn read_ok(kind: ValueKind, value: FfiValue) -> Option<FfiValue> {
+    fn read_ok(kind: ValueKind, value: Tree) -> Option<Tree> {
         let read = read(kind, value).ok()?;
-        Some(FfiValue::from_frame(read.risky_ref()).expect("a value"))
+        Some(Tree::from_frame(read.risky_ref()).expect("a value"))
     }
 
     /// `read` from any source, as the frame it writes, for the kinds a
@@ -719,10 +908,10 @@ mod tests {
         // Already of the kind: returned as it is, not converted, so a NaN
         // the host sent as the field's own float kind is not refused here.
         assert!(
-            matches!(read_ok(ValueKind::Float32, FfiValue::Float32(f32::NAN)), Some(FfiValue::Float32(f)) if f.is_nan())
+            matches!(read_ok(ValueKind::Float32, Tree::Float32(f32::NAN)), Some(Tree::Float32(f)) if f.is_nan())
         );
         assert!(
-            matches!(read_ok(ValueKind::Float64, FfiValue::Float64(f64::NAN)), Some(FfiValue::Float64(f)) if f.is_nan())
+            matches!(read_ok(ValueKind::Float64, Tree::Float64(f64::NAN)), Some(Tree::Float64(f)) if f.is_nan())
         );
     }
 
@@ -730,63 +919,63 @@ mod tests {
     fn read_converts_an_exact_number_to_an_integer_kind() {
         // Every numeric variant is a source, each read into another width.
         assert!(matches!(
-            read_ok(ValueKind::Int64, FfiValue::Int32(-5)),
-            Some(FfiValue::Int64(-5))
+            read_ok(ValueKind::Int64, Tree::Int32(-5)),
+            Some(Tree::Int64(-5))
         ));
         assert!(matches!(
-            read_ok(ValueKind::Int32, FfiValue::UInt64(5)),
-            Some(FfiValue::Int32(5))
+            read_ok(ValueKind::Int32, Tree::UInt64(5)),
+            Some(Tree::Int32(5))
         ));
         assert!(
-            matches!(read_ok(ValueKind::Float64, FfiValue::Int32(-5)), Some(FfiValue::Float64(f)) if f == -5.0)
+            matches!(read_ok(ValueKind::Float64, Tree::Int32(-5)), Some(Tree::Float64(f)) if f == -5.0)
         );
         // A JavaScript number is a float.
         assert!(matches!(
-            read_ok(ValueKind::UInt64, FfiValue::Float64(34.0)),
-            Some(FfiValue::UInt64(34))
+            read_ok(ValueKind::UInt64, Tree::Float64(34.0)),
+            Some(Tree::UInt64(34))
         ));
         assert!(matches!(
-            read_ok(ValueKind::Int32, FfiValue::Float32(-2.0)),
-            Some(FfiValue::Int32(-2))
+            read_ok(ValueKind::Int32, Tree::Float32(-2.0)),
+            Some(Tree::Int32(-2))
         ));
         assert!(matches!(
-            read_ok(ValueKind::Int64, FfiValue::UInt32(7)),
-            Some(FfiValue::Int64(7))
+            read_ok(ValueKind::Int64, Tree::UInt32(7)),
+            Some(Tree::Int64(7))
         ));
         assert!(matches!(
-            read_ok(ValueKind::UInt32, FfiValue::Int64(7)),
-            Some(FfiValue::UInt32(7))
+            read_ok(ValueKind::UInt32, Tree::Int64(7)),
+            Some(Tree::UInt32(7))
         ));
         assert!(matches!(
-            read_ok(ValueKind::Int64, FfiValue::Float64(-0.0)),
-            Some(FfiValue::Int64(0))
+            read_ok(ValueKind::Int64, Tree::Float64(-0.0)),
+            Some(Tree::Int64(0))
         ));
         assert!(matches!(
-            read_ok(ValueKind::UInt64, FfiValue::Int64(i64::MAX)),
-            Some(FfiValue::UInt64(v)) if v == i64::MAX as u64
+            read_ok(ValueKind::UInt64, Tree::Int64(i64::MAX)),
+            Some(Tree::UInt64(v)) if v == i64::MAX as u64
         ));
         assert!(matches!(
-            read_ok(ValueKind::Int32, FfiValue::Int64(i32::MIN.into())),
-            Some(FfiValue::Int32(i32::MIN))
+            read_ok(ValueKind::Int32, Tree::Int64(i32::MIN.into())),
+            Some(Tree::Int32(i32::MIN))
         ));
         assert!(matches!(
-            read_ok(ValueKind::UInt32, FfiValue::UInt64(u32::MAX.into())),
-            Some(FfiValue::UInt32(u32::MAX))
+            read_ok(ValueKind::UInt32, Tree::UInt64(u32::MAX.into())),
+            Some(Tree::UInt32(u32::MAX))
         ));
     }
 
     #[test]
     fn read_refuses_an_inexact_or_out_of_range_integer() {
         let refused = [
-            (ValueKind::UInt64, FfiValue::Float64(34.5)),
-            (ValueKind::Int64, FfiValue::Float64(f64::NAN)),
-            (ValueKind::Int64, FfiValue::Float64(f64::INFINITY)),
-            (ValueKind::Int64, FfiValue::Float64(1e30)),
-            (ValueKind::UInt64, FfiValue::Int64(-1)),
-            (ValueKind::UInt32, FfiValue::UInt64(u64::from(u32::MAX) + 1)),
-            (ValueKind::Int32, FfiValue::Int64(i64::from(i32::MAX) + 1)),
-            (ValueKind::Int32, FfiValue::Int64(i64::from(i32::MIN) - 1)),
-            (ValueKind::Int64, FfiValue::UInt64(u64::MAX)),
+            (ValueKind::UInt64, Tree::Float64(34.5)),
+            (ValueKind::Int64, Tree::Float64(f64::NAN)),
+            (ValueKind::Int64, Tree::Float64(f64::INFINITY)),
+            (ValueKind::Int64, Tree::Float64(1e30)),
+            (ValueKind::UInt64, Tree::Int64(-1)),
+            (ValueKind::UInt32, Tree::UInt64(u64::from(u32::MAX) + 1)),
+            (ValueKind::Int32, Tree::Int64(i64::from(i32::MAX) + 1)),
+            (ValueKind::Int32, Tree::Int64(i64::from(i32::MIN) - 1)),
+            (ValueKind::Int64, Tree::UInt64(u64::MAX)),
         ];
         for (at, (kind, value)) in refused.into_iter().enumerate() {
             assert!(
@@ -804,53 +993,53 @@ mod tests {
     fn read_refuses_a_float_at_the_first_value_past_an_integer_range() {
         let two_63 = 9_223_372_036_854_775_808.0_f64;
         let two_64 = 18_446_744_073_709_551_616.0_f64;
-        assert!(read_ok(ValueKind::Int64, FfiValue::Float64(two_63)).is_none());
+        assert!(read_ok(ValueKind::Int64, Tree::Float64(two_63)).is_none());
         assert!(matches!(
-            read_ok(ValueKind::Int64, FfiValue::Float64(-two_63)),
-            Some(FfiValue::Int64(i64::MIN))
+            read_ok(ValueKind::Int64, Tree::Float64(-two_63)),
+            Some(Tree::Int64(i64::MIN))
         ));
-        assert!(read_ok(ValueKind::UInt64, FfiValue::Float64(two_64)).is_none());
+        assert!(read_ok(ValueKind::UInt64, Tree::Float64(two_64)).is_none());
         assert!(matches!(
             read_ok(
                 ValueKind::UInt64,
-                FfiValue::Float64(18_446_744_073_709_549_568.0)
+                Tree::Float64(18_446_744_073_709_549_568.0)
             ),
-            Some(FfiValue::UInt64(18_446_744_073_709_549_568))
+            Some(Tree::UInt64(18_446_744_073_709_549_568))
         ));
-        assert!(read_ok(ValueKind::UInt32, FfiValue::Float64(4_294_967_296.0)).is_none());
+        assert!(read_ok(ValueKind::UInt32, Tree::Float64(4_294_967_296.0)).is_none());
         assert!(matches!(
-            read_ok(ValueKind::UInt32, FfiValue::Float64(4_294_967_295.0)),
-            Some(FfiValue::UInt32(u32::MAX))
+            read_ok(ValueKind::UInt32, Tree::Float64(4_294_967_295.0)),
+            Some(Tree::UInt32(u32::MAX))
         ));
     }
 
     #[test]
     fn read_converts_an_exactly_representable_number_to_a_float_kind() {
         assert!(
-            matches!(read_ok(ValueKind::Float64, FfiValue::Int64(34)), Some(FfiValue::Float64(f)) if f == 34.0)
+            matches!(read_ok(ValueKind::Float64, Tree::Int64(34)), Some(Tree::Float64(f)) if f == 34.0)
         );
         assert!(
-            matches!(read_ok(ValueKind::Float64, FfiValue::Float32(1.5)), Some(FfiValue::Float64(f)) if f == 1.5)
+            matches!(read_ok(ValueKind::Float64, Tree::Float32(1.5)), Some(Tree::Float64(f)) if f == 1.5)
         );
         assert!(
-            matches!(read_ok(ValueKind::Float32, FfiValue::Float64(1.5)), Some(FfiValue::Float32(f)) if f == 1.5)
+            matches!(read_ok(ValueKind::Float32, Tree::Float64(1.5)), Some(Tree::Float32(f)) if f == 1.5)
         );
         assert!(
-            matches!(read_ok(ValueKind::Float32, FfiValue::UInt32(16_777_216)), Some(FfiValue::Float32(f)) if f == 16_777_216.0)
+            matches!(read_ok(ValueKind::Float32, Tree::UInt32(16_777_216)), Some(Tree::Float32(f)) if f == 16_777_216.0)
         );
         assert!(matches!(
-            read_ok(ValueKind::Float64, FfiValue::UInt64(1 << 53)),
-            Some(FfiValue::Float64(f)) if f == 9_007_199_254_740_992.0
+            read_ok(ValueKind::Float64, Tree::UInt64(1 << 53)),
+            Some(Tree::Float64(f)) if f == 9_007_199_254_740_992.0
         ));
     }
 
     #[test]
     fn read_refuses_a_number_a_float_kind_would_round() {
         let refused = [
-            (ValueKind::Float64, FfiValue::UInt64((1 << 53) + 1)),
-            (ValueKind::Float64, FfiValue::UInt64(u64::MAX)),
-            (ValueKind::Float32, FfiValue::UInt32(16_777_217)),
-            (ValueKind::Float32, FfiValue::Float64(0.1)),
+            (ValueKind::Float64, Tree::UInt64((1 << 53) + 1)),
+            (ValueKind::Float64, Tree::UInt64(u64::MAX)),
+            (ValueKind::Float32, Tree::UInt32(16_777_217)),
+            (ValueKind::Float32, Tree::Float64(0.1)),
         ];
         for (at, (kind, value)) in refused.into_iter().enumerate() {
             assert!(
@@ -865,11 +1054,11 @@ mod tests {
     #[test]
     fn read_refuses_a_nan_in_both_float_directions() {
         assert!(matches!(
-            read(ValueKind::Float32, FfiValue::Float64(f64::NAN)),
+            read(ValueKind::Float32, Tree::Float64(f64::NAN)),
             Err(Error::Source { .. })
         ));
         assert!(matches!(
-            read(ValueKind::Float64, FfiValue::Float32(f32::NAN)),
+            read(ValueKind::Float64, Tree::Float32(f32::NAN)),
             Err(Error::Source { .. })
         ));
     }
@@ -877,19 +1066,16 @@ mod tests {
     #[test]
     fn read_never_converts_across_kinds() {
         let refused = [
-            (ValueKind::UInt64, FfiValue::String("34".into())),
-            (ValueKind::String, FfiValue::UInt64(34)),
-            (ValueKind::Bool, FfiValue::UInt32(1)),
-            (ValueKind::UInt32, FfiValue::Bool(true)),
-            (ValueKind::Bytes, FfiValue::String("ab".into())),
-            (
-                ValueKind::String,
-                FfiValue::Bytes(Protected::new(b"ab".to_vec())),
-            ),
-            (ValueKind::Array, FfiValue::Object(vec![])),
-            (ValueKind::Object, FfiValue::Array(vec![])),
-            (ValueKind::UInt32, FfiValue::Null),
-            (ValueKind::Bool, FfiValue::Float64(1.0)),
+            (ValueKind::UInt64, Tree::String("34".into())),
+            (ValueKind::String, Tree::UInt64(34)),
+            (ValueKind::Bool, Tree::UInt32(1)),
+            (ValueKind::UInt32, Tree::Bool(true)),
+            (ValueKind::Bytes, Tree::String("ab".into())),
+            (ValueKind::String, Tree::Bytes(b"ab".to_vec())),
+            (ValueKind::Array, Tree::Object(vec![])),
+            (ValueKind::Object, Tree::Array(vec![])),
+            (ValueKind::UInt32, Tree::Null),
+            (ValueKind::Bool, Tree::Float64(1.0)),
         ];
         for (at, (kind, value)) in refused.into_iter().enumerate() {
             assert!(

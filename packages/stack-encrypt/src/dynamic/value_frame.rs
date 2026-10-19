@@ -73,6 +73,17 @@ use crate::{Label, LabelError};
 #[derive(OpaqueDebug)]
 pub struct ValueFrame(Protected<Vec<u8>>);
 
+/// Why [`ValueFrame::from_bytes`] or [`ValueFrame::check`] refused its bytes.
+#[derive(Debug, thiserror::Error)]
+pub enum FromFrameError {
+    /// The bytes are not exactly one well-formed frame.
+    #[error(transparent)]
+    Frame(FrameError),
+    /// The frame holds a value outside the value model.
+    #[error(transparent)]
+    Value(DecodeError),
+}
+
 impl ValueFrame {
     /// The frame of any source, in the value model.
     ///
@@ -91,13 +102,13 @@ impl ValueFrame {
     ///
     /// # Errors
     ///
-    /// [`FromFrameError::Frame`](super::FromFrameError::Frame) when the
+    /// [`FromFrameError::Frame`] when the
     /// bytes are not exactly one frame, and
-    /// [`FromFrameError::Value`](super::FromFrameError::Value) as
+    /// [`FromFrameError::Value`] as
     /// [`of`](Self::of) refuses a value.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, super::FromFrameError> {
-        let frame = Frame::parse(bytes).map_err(super::FromFrameError::Frame)?;
-        Self::of(frame).map_err(super::FromFrameError::Value)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, FromFrameError> {
+        let frame = Frame::parse(bytes).map_err(FromFrameError::Frame)?;
+        Self::of(frame).map_err(FromFrameError::Value)
     }
 
     /// Check frame bytes a host handed over as [`from_bytes`](Self::from_bytes)
@@ -114,9 +125,9 @@ impl ValueFrame {
     /// # Errors
     ///
     /// As [`from_bytes`](Self::from_bytes).
-    pub fn check(bytes: &[u8]) -> Result<Frame<'_>, super::FromFrameError> {
-        let frame = Frame::parse(bytes).map_err(super::FromFrameError::Frame)?;
-        frame.visit(Check).map_err(super::FromFrameError::Value)?;
+    pub fn check(bytes: &[u8]) -> Result<Frame<'_>, FromFrameError> {
+        let frame = Frame::parse(bytes).map_err(FromFrameError::Frame)?;
+        frame.visit(Check).map_err(FromFrameError::Value)?;
         Ok(frame)
     }
 
@@ -1130,38 +1141,35 @@ impl<O: PutRow> MapSink for RowMap<O> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dynamic::FfiValue;
+    use crate::dynamic::test_frame::Tree;
 
-    fn s(value: &str) -> FfiValue {
-        FfiValue::String(value.into())
+    fn s(value: &str) -> Tree {
+        Tree::String(value.into())
     }
 
-    fn frame_of(value: &FfiValue) -> ValueFrame {
+    fn frame_of(value: &Tree) -> ValueFrame {
         ValueFrame::of(value).expect("in the model")
     }
 
-    fn every_variant() -> FfiValue {
-        FfiValue::Object(vec![
-            ("n".to_string(), FfiValue::Null),
-            ("u".to_string(), FfiValue::Undefined),
-            ("b".to_string(), FfiValue::Bool(true)),
-            ("i32".to_string(), FfiValue::Int32(-3)),
-            ("i64".to_string(), FfiValue::Int64(-4)),
-            ("u32".to_string(), FfiValue::UInt32(34)),
-            ("u64".to_string(), FfiValue::UInt64(u64::MAX)),
-            ("f32".to_string(), FfiValue::Float32(-0.0)),
-            ("f64".to_string(), FfiValue::Float64(f64::NAN)),
+    fn every_variant() -> Tree {
+        Tree::Object(vec![
+            ("n".to_string(), Tree::Null),
+            ("u".to_string(), Tree::Undefined),
+            ("b".to_string(), Tree::Bool(true)),
+            ("i32".to_string(), Tree::Int32(-3)),
+            ("i64".to_string(), Tree::Int64(-4)),
+            ("u32".to_string(), Tree::UInt32(34)),
+            ("u64".to_string(), Tree::UInt64(u64::MAX)),
+            ("f32".to_string(), Tree::Float32(-0.0)),
+            ("f64".to_string(), Tree::Float64(f64::NAN)),
             ("s".to_string(), s("alice")),
-            (
-                "bytes".to_string(),
-                FfiValue::Bytes(Protected::new(vec![1, 2, 3])),
-            ),
+            ("bytes".to_string(), Tree::Bytes(vec![1, 2, 3])),
             (
                 "list".to_string(),
-                FfiValue::Array(vec![s("a"), FfiValue::Passthrough(Box::new(s("p")))]),
+                Tree::Array(vec![s("a"), Tree::Passthrough(Box::new(s("p")))]),
             ),
-            ("empty".to_string(), FfiValue::Array(vec![])),
-            ("none".to_string(), FfiValue::Object(vec![])),
+            ("empty".to_string(), Tree::Array(vec![])),
+            ("none".to_string(), Tree::Object(vec![])),
         ])
     }
 
@@ -1175,7 +1183,7 @@ mod tests {
             frame.risky_ref(),
             value.to_frame().expect("frames").risky_ref()
         );
-        let back = FfiValue::from_frame(frame.risky_ref()).expect("reads back");
+        let back = Tree::from_frame(frame.risky_ref()).expect("reads back");
         assert_eq!(back, value);
         let copy = frame.clone();
         assert_eq!(copy.risky_ref(), frame.risky_ref());
@@ -1286,20 +1294,16 @@ mod tests {
         for refused in [hidden.risky_ref(), uuid.risky_ref()] {
             assert!(matches!(
                 ValueFrame::check(refused),
-                Err(super::super::FromFrameError::Value(DecodeError::Expected(
-                    _
-                )))
+                Err(super::FromFrameError::Value(DecodeError::Expected(_)))
             ));
             assert!(matches!(
                 ValueFrame::from_bytes(refused),
-                Err(super::super::FromFrameError::Value(DecodeError::Expected(
-                    _
-                )))
+                Err(super::FromFrameError::Value(DecodeError::Expected(_)))
             ));
         }
         assert!(matches!(
             ValueFrame::check(&[]),
-            Err(super::super::FromFrameError::Frame(_))
+            Err(super::FromFrameError::Frame(_))
         ));
     }
 
@@ -1347,7 +1351,7 @@ mod tests {
             ValueFrame::of(vec![Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16]))]),
             Err(DecodeError::Expected(_))
         ));
-        let hidden = FfiValue::Passthrough(Box::new(FfiValue::Null));
+        let hidden = Tree::Passthrough(Box::new(Tree::Null));
         assert!(ValueFrame::of(&hidden).is_ok());
         // Inside a passthrough too, and refused the same way.
         let hidden = Hidden(vitaminc_aead::plaintext::Raw(
@@ -1358,25 +1362,20 @@ mod tests {
             ValueFrame::of(hidden),
             Err(DecodeError::Expected(_))
         ));
-        let repeated = FfiValue::Object(vec![
-            ("k".into(), FfiValue::Null),
-            ("k".into(), FfiValue::Null),
-        ]);
+        let repeated = Tree::Object(vec![("k".into(), Tree::Null), ("k".into(), Tree::Null)]);
         assert!(matches!(
             ValueFrame::of(&repeated),
             Err(DecodeError::DuplicateKey(key)) if key == "k"
         ));
         assert!(matches!(
             ValueFrame::from_bytes(&[]),
-            Err(super::super::FromFrameError::Frame(_))
+            Err(super::FromFrameError::Frame(_))
         ));
         let uuid = vitaminc_aead::to_frame(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16])))
             .expect("frames");
         assert!(matches!(
             ValueFrame::from_bytes(uuid.risky_ref()),
-            Err(super::super::FromFrameError::Value(DecodeError::Expected(
-                _
-            )))
+            Err(super::FromFrameError::Value(DecodeError::Expected(_)))
         ));
     }
 
@@ -1387,17 +1386,14 @@ mod tests {
         let value = every_variant();
         let opened = (&value).visit(ValueFrame::sink()).expect("opens");
         assert_eq!(opened.risky_ref(), frame_of(&value).risky_ref());
-        for scalar in [s("x"), FfiValue::Null, FfiValue::Int64(1)] {
+        for scalar in [s("x"), Tree::Null, Tree::Int64(1)] {
             let opened = (&scalar).visit(ValueFrame::sink()).expect("opens");
             assert_eq!(opened.risky_ref(), frame_of(&scalar).risky_ref());
         }
-        let passthrough = FfiValue::Passthrough(Box::new(s("p")));
+        let passthrough = Tree::Passthrough(Box::new(s("p")));
         let opened = (&passthrough).visit(ValueFrame::sink()).expect("opens");
         assert_eq!(opened.risky_ref(), frame_of(&passthrough).risky_ref());
-        let repeated = FfiValue::Object(vec![
-            ("k".into(), FfiValue::Null),
-            ("k".into(), FfiValue::Null),
-        ]);
+        let repeated = Tree::Object(vec![("k".into(), Tree::Null), ("k".into(), Tree::Null)]);
         assert!(matches!(
             (&repeated).visit(ValueFrame::sink()),
             Err(DecodeError::DuplicateKey(key)) if key == "k"
@@ -1407,26 +1403,23 @@ mod tests {
     #[test]
     fn a_frame_names_its_kind() {
         let cases = [
-            (FfiValue::Null, None),
-            (FfiValue::Undefined, None),
-            (FfiValue::Bool(true), Some(ValueKind::Bool)),
-            (FfiValue::Int32(1), Some(ValueKind::Int32)),
-            (FfiValue::Int64(1), Some(ValueKind::Int64)),
-            (FfiValue::UInt32(1), Some(ValueKind::UInt32)),
-            (FfiValue::UInt64(1), Some(ValueKind::UInt64)),
-            (FfiValue::Float32(1.0), Some(ValueKind::Float32)),
-            (FfiValue::Float64(1.0), Some(ValueKind::Float64)),
+            (Tree::Null, None),
+            (Tree::Undefined, None),
+            (Tree::Bool(true), Some(ValueKind::Bool)),
+            (Tree::Int32(1), Some(ValueKind::Int32)),
+            (Tree::Int64(1), Some(ValueKind::Int64)),
+            (Tree::UInt32(1), Some(ValueKind::UInt32)),
+            (Tree::UInt64(1), Some(ValueKind::UInt64)),
+            (Tree::Float32(1.0), Some(ValueKind::Float32)),
+            (Tree::Float64(1.0), Some(ValueKind::Float64)),
             (s("a"), Some(ValueKind::String)),
+            (Tree::Bytes(vec![1]), Some(ValueKind::Bytes)),
+            (Tree::Array(vec![s("a")]), Some(ValueKind::Array)),
             (
-                FfiValue::Bytes(Protected::new(vec![1])),
-                Some(ValueKind::Bytes),
-            ),
-            (FfiValue::Array(vec![s("a")]), Some(ValueKind::Array)),
-            (
-                FfiValue::Object(vec![("k".into(), s("a"))]),
+                Tree::Object(vec![("k".into(), s("a"))]),
                 Some(ValueKind::Object),
             ),
-            (FfiValue::Passthrough(Box::new(s("p"))), None),
+            (Tree::Passthrough(Box::new(s("p"))), None),
         ];
         for (value, kind) in cases {
             assert_eq!(frame_of(&value).kind(), kind, "{value:?}");
@@ -1452,7 +1445,7 @@ mod tests {
     /// A sequence's parts are its elements' own frames, in order.
     #[test]
     fn parts_are_the_childrens_frames() {
-        let Parts::Seq(items) = frame_of(&FfiValue::Array(vec![s("a"), FfiValue::Int32(1)]))
+        let Parts::Seq(items) = frame_of(&Tree::Array(vec![s("a"), Tree::Int32(1)]))
             .parts()
             .expect("parts")
         else {
@@ -1461,19 +1454,19 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].risky_ref(), frame_of(&s("a")).risky_ref());
         assert!(matches!(
-            frame_of(&FfiValue::Object(vec![("k".into(), s("a"))])).parts(),
+            frame_of(&Tree::Object(vec![("k".into(), s("a"))])).parts(),
             Ok(Parts::Map)
         ));
         assert!(matches!(frame_of(&s("a")).parts(), Ok(Parts::Scalar)));
         assert_eq!(
-            frame_of(&FfiValue::Array(vec![s("a")]))
+            frame_of(&Tree::Array(vec![s("a")]))
                 .elements()
                 .map(|items| items.len()),
             Some(1)
         );
         assert!(frame_of(&s("a")).elements().is_none());
         assert!(matches!(
-            frame_of(&FfiValue::Passthrough(Box::new(s("p")))).parts(),
+            frame_of(&Tree::Passthrough(Box::new(s("p")))).parts(),
             Ok(Parts::Passthrough)
         ));
     }
@@ -1483,8 +1476,8 @@ mod tests {
         assert!(frame_of(&every_variant()).kind().is_some());
         assert!(frame_of(&every_variant()).has_passthrough());
         assert!(!frame_of(&s("a")).has_passthrough());
-        assert!(frame_of(&FfiValue::Passthrough(Box::new(s("p")))).has_passthrough());
-        assert!(!frame_of(&FfiValue::Object(vec![("k".into(), s("a"))])).has_passthrough());
+        assert!(frame_of(&Tree::Passthrough(Box::new(s("p")))).has_passthrough());
+        assert!(!frame_of(&Tree::Object(vec![("k".into(), s("a"))])).has_passthrough());
     }
 
     #[test]
@@ -1494,7 +1487,7 @@ mod tests {
             Label::parse("tenants/acme").expect("a label")
         );
         assert!(matches!(
-            frame_of(&FfiValue::UInt32(7)).into_label(),
+            frame_of(&Tree::UInt32(7)).into_label(),
             Err(LabelError::NotText)
         ));
         assert!(frame_of(&s("")).into_label().is_err());
