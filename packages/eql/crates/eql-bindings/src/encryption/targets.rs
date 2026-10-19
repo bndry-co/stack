@@ -280,17 +280,9 @@ impl Identifier {
     ///
     /// [`TargetError::Context`] for a label of any other length.
     pub fn from_label(label: &Label) -> Result<NonEmpty<Self>, TargetError> {
-        let context = || TargetError::Context {
+        Identifier::column_of(label).ok_or_else(|| TargetError::Context {
             label: label.to_string(),
-        };
-        let mut segments = label.segments();
-        let (Some(table), Some(column), None) = (segments.next(), segments.next(), segments.next())
-        else {
-            return Err(context());
-        };
-        // A label segment is plain, so never empty; the `Err` arm is the
-        // type's, not a case this function can reach.
-        Identifier::for_column(table, column).map_err(|_| context())
+        })
     }
 }
 

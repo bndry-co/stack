@@ -408,7 +408,8 @@ fn records_plan<K: 'static>() -> Plan<TenantRecord, K> {
 /// A context refused at the call (missing, given twice, not a label, or a
 /// context field that disagrees with the one expected) is refused before
 /// the keyset the chain names is loaded, for every plan kind and for a
-/// `Vec` as for one value.
+/// `Vec` as for one value, and for a query whether the plan resolves its
+/// index or the call names one with `.via(..)`.
 #[tokio::test]
 async fn a_context_refused_at_the_call_never_loads_the_keyset_it_names() {
     let (cipher, loads) = loads_counting_cipher().await;
@@ -516,6 +517,25 @@ async fn a_context_refused_at_the_call_never_loads_the_keyset_it_names() {
     assert_eq!(plan_error(refused), PlanError::NoContext);
     let refused = cipher.open(pairs).using(&pair_plan).keyset("tenant").await;
     assert_eq!(plan_error(refused), PlanError::NoContext);
+
+    // A query: the call context that is not a label is the refusal, whether
+    // the plan resolves the index or the call names it, and neither derives
+    // a term under it.
+    let refused = cipher
+        .query(op::Eq, &7u32)
+        .context("ages//x")
+        .on(&age_plan)
+        .keyset("tenant")
+        .await;
+    assert!(matches!(plan_error(refused), PlanError::ContextLabel(_)));
+    let refused = cipher
+        .query(op::Eq, &7u32)
+        .via(Equality)
+        .context("ages//x")
+        .on(&age_plan)
+        .keyset("tenant")
+        .await;
+    assert!(matches!(plan_error(refused), PlanError::ContextLabel(_)));
     assert_eq!(loads.load(Ordering::SeqCst), 0, "no keyset was loaded");
 }
 

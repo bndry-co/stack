@@ -89,6 +89,8 @@
 //! require::<TextEq>();
 //! ```
 
+pub mod query;
+
 // The by-name dispatch over the EQL v4 types (`targets` feature). A plain
 // comment: a doc comment here would resolve the module's own links from
 // this scope.
@@ -102,7 +104,7 @@ use stack_encrypt::sem::{
     EqualityTerm, MatchConfig, MatchOptions, OpeTerm, Orderable, TermError, Tokenizer,
 };
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
-use stack_encrypt::target::{self, AeadContext, CallerContext};
+use stack_encrypt::target::{self, AeadContext, CallerContext, IndexSpec};
 use stack_encrypt::{
     CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
     Describe, Description, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
@@ -133,6 +135,20 @@ impl Identifier {
             t: table.into(),
             c: column.into(),
         })
+    }
+
+    /// The column a two-segment label names, table then column, or `None`
+    /// for a label of any other length. One reading of a label for the
+    /// by-name dispatch (`targets::Identifier::from_label`) and the typed
+    /// query chain ([`query`]).
+    pub(crate) fn column_of(label: &stack_encrypt::Label) -> Option<NonEmpty<Self>> {
+        let mut segments = label.segments();
+        let (Some(table), Some(column), None) = (segments.next(), segments.next(), segments.next())
+        else {
+            return None;
+        };
+        // A label segment is plain, so never empty.
+        Self::for_column(table, column).ok()
     }
 }
 
@@ -242,8 +258,14 @@ pub struct EqualityVisitor;
 impl Visitor for EqualityVisitor {
     type Value = Hmac256;
     fn equality(self, term: EqualityTerm) -> Result<Self::Value, Error> {
-        Ok(Hmac256(hex::encode(term.as_bytes())))
+        Ok(hmac256(&term))
     }
+}
+
+/// EQL's `hm` for an equality term: the HMAC, hex encoded. One encoding for
+/// stored values and query twins alike.
+fn hmac256(term: &EqualityTerm) -> Hmac256 {
+    Hmac256(hex::encode(term.as_bytes()))
 }
 impl Transcode for Hmac256 {
     type Visitor = EqualityVisitor;
@@ -258,6 +280,11 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for Hmac256 {
         S: 's,
     {
         target::equality().transcode()
+    }
+    /// The equality index: a plan for a type holding an `hm` answers
+    /// `op::Eq` through it.
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Equality]
     }
 }
 impl Decryptable for Hmac256 {
@@ -321,21 +348,26 @@ impl Visitor for MatchVisitor {
         if terms.positions().is_empty() {
             return Err(Error::Term(TermError::EmptyTermText));
         }
-        terms
-            .positions()
-            .iter()
-            .map(|&position| {
-                i16::try_from(position).map_err(|_| {
-                    Error::Other(
-                        "a match position does not fit a smallint; EQL's bloom filter stores \
-                         filters of at most 32768 bits"
-                            .into(),
-                    )
-                })
-            })
-            .collect::<Result<_, _>>()
-            .map(BloomFilter)
+        bloom_filter(terms.positions())
     }
+}
+
+/// EQL's `bf` for a filter's set positions, each as a `smallint`. One
+/// encoding for stored values and query twins alike.
+fn bloom_filter(positions: &[u16]) -> Result<BloomFilter, Error> {
+    positions
+        .iter()
+        .map(|&position| {
+            i16::try_from(position).map_err(|_| {
+                Error::Other(
+                    "a match position does not fit a smallint; EQL's bloom filter stores \
+                     filters of at most 32768 bits"
+                        .into(),
+                )
+            })
+        })
+        .collect::<Result<_, _>>()
+        .map(BloomFilter)
 }
 impl Transcode for BloomFilter {
     type Visitor = MatchVisitor;
@@ -356,6 +388,11 @@ impl<S: AsRef<str>> EncryptFrom<S> for BloomFilter {
         #[allow(deprecated)]
         let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
         terms.transcode()
+    }
+    /// The match index under [`EqlMatch`]: a plan for a type holding a
+    /// `bf` answers `op::Matches` through it.
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Match(EqlMatch::options())]
     }
 }
 impl Decryptable for BloomFilter {
