@@ -45,7 +45,7 @@ type Kinds struct {
 	S   string        `stash:"s,encrypt,index=equality;match"`
 	E   Email         `stash:"e,encrypt,index=equality;match;ore"`
 	Bo  bool          `stash:"bo,encrypt"`
-	I8  int8          `stash:"i8,encrypt,index=equality;ore"`
+	I8  int8          `stash:"i8,encrypt,index=equality"`
 	I16 int16         `stash:"i16,encrypt,index=ope"`
 	I32 int32         `stash:"i32,encrypt,index=equality"`
 	I   int           `stash:"i,encrypt,index=ore"`
@@ -79,13 +79,14 @@ type Kinds struct {
 // context, identities and indexes of the plan in
 // packages/stack-encrypt/tests/fixtures/value_kinds.json, so the generated
 // code opens the record Rust sealed there and derives the same terms. Every
-// integer seals at its own width; the order indexes of a date, timestamp or
-// decimal wait for #1236, so those three carry equality alone.
+// integer seals at its own width; an 8-bit integer has no order term, and
+// the order indexes of a date, timestamp or decimal wait for #1236, so
+// those five carry equality alone.
 type ValueKinds struct {
 	_      struct{}        `stash:"context=value_kinds"`
-	I8     int8            `stash:"i8,encrypt,index=equality;ore"`
+	I8     int8            `stash:"i8,encrypt,index=equality"`
 	I16    int16           `stash:"i16,encrypt,index=equality;ore"`
-	U8     uint8           `stash:"u8,encrypt,index=equality;ore"`
+	U8     uint8           `stash:"u8,encrypt,index=equality"`
 	U16    uint16          `stash:"u16,encrypt,index=equality;ope"`
 	I128   encrypt.Int128  `stash:"i128,encrypt,index=equality;ore"`
 	U128   encrypt.Uint128 `stash:"u128,encrypt,index=equality;ope"`

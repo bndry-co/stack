@@ -82,7 +82,7 @@ fn kinds() -> Vec<Kind> {
         Kind {
             field: "i8",
             kind: ValueKind::Int8,
-            outputs: &["c", "eq", "ore"],
+            outputs: &["c", "eq"],
             text: "-8",
             value: int(Int::I8(-8)),
         },
@@ -96,7 +96,7 @@ fn kinds() -> Vec<Kind> {
         Kind {
             field: "u8",
             kind: ValueKind::UInt8,
-            outputs: &["c", "eq", "ore"],
+            outputs: &["c", "eq"],
             text: "200",
             value: int(Int::U8(200)),
         },

@@ -75,7 +75,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "lt",
-        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a126a606d6d336"
+        "term": "758821c792265d942f89fa1dad016fb71b326f756e62950367e5d12f636d8b78"
       }
     },
     {
@@ -87,7 +87,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "lte",
-        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a126a606d6d336"
+        "term": "758821c792265d942f89fa1dad016fb71b326f756e62950367e5d12f636d8b78"
       }
     },
     {
@@ -99,7 +99,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "gt",
-        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a1256421f2eba6"
+        "term": "758821c792265d942f89fa1dad016fb71b326f756e62950367e5d060dbfcceb5"
       }
     },
     {
@@ -111,7 +111,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "gte",
-        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a1256421f2eba6"
+        "term": "758821c792265d942f89fa1dad016fb71b326f756e62950367e5d060dbfcceb5"
       }
     },
     {
@@ -127,8 +127,8 @@
         "index": "ore",
         "operator": "between",
         "term": [
-          "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a1256421f2eba6",
-          "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a20bc4002878be"
+          "758821c792265d942f89fa1dad016fb71b326f756e62950367e5d060dbfcceb5",
+          "758821c792265d942f89fa1dad016fb71b326f756e62950367e6377200eec06b"
         ]
       }
     },

@@ -104,14 +104,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The ordering operators, and `Between` as one term.** `op::Lt`, `Lte`,
   `Gt` and `Gte` take one value and `op::Between` a pair of bounds,
   `cipher.query(op::Between, &(18, 65)).on(&age_plan)`, inclusive at both
-  ends. They are answered over the integer types (`op::Ordered`) by the
-  `Ore` index by default and by `Ope` through `.via(Ope)`; an ordering on
-  text does not compile. A comparison's query term is the index's own term
+  ends. They are answered over the integer types and text (`op::Ordered`)
+  by the `Ore` index by default and by `Ope` through `.via(Ope)`; an
+  ordering on bytes or a float does not compile. A comparison's query term is the index's own term
   for the value (`OreTerm`, `OpeTerm`); a range's is one `sem::RangeQuery`
   carrying both bounds' terms, read with `lo()` and `hi()`, so no statement
   can pair the low bound of one query with the high bound of another. A
-  range whose low bound is above its high bound is refused when the query
-  is awaited, before either term is derived (`TermError::InvertedRange`).
+  range whose low bound is above its high bound is not refused: as SQL's
+  `BETWEEN`, it matches nothing.
   What a query takes is the operator's `op::Arity` (`op::One` or
   `op::Pair`), and `op::Input` relates the value given to the plaintext the
   plan is checked against (ADR-0009, decision 7).
@@ -260,6 +260,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from a raw frame), the record decrypt (with a nested field), `query_term`
   and `verify` under an allocator that fails the test on any freed block
   still holding plaintext.
+- **Order terms encrypt through cllw-ore's vitaminc schemes, and text is
+  ordered.** An ORE or OPE term is now cllw-ore 0.5.2-rc.1's
+  `vitaminc::Ore`/`vitaminc::Ope` encryption of the value's `vitaminc-ore`
+  order encoding: the engine passes the value through and names its type's
+  target (`sem::Orderable`: integers at their own width, `f32`/`f64` as
+  `F64`, text as `Text`, bytes as `Bytes`), and cllw-ore does the encoding.
+  Text is ordered by the system ADR-0002's fold (Unicode 16 NFC with case
+  and accents folded), so `Café`, `cafe`, `CAFÉ` and `cafe` with a
+  combining accent are one term and tie, `alice` orders before `Zoe`, and
+  `é` orders with `e`, not after `z`. Every order term changes bytes: the
+  key labels move to `/v2`, the column salt binds the scheme and the
+  target, and text and bytes go in behind cllw-ore's marker byte. An order
+  term written by 0.1.0 or 0.2.0 (or by the Go module's v0.1.0-alpha.1)
+  does not compare with one this release derives, and nothing refuses it:
+  a `<`, `BETWEEN` or `ORDER BY` over a column holding the old terms
+  silently misses or misplaces rows. Re-derive a column's ORE and OPE terms
+  (encrypt its rows again) before querying it with this release. Every source type's term is one ciphertext type,
+  `OreCllw8VariableV1` or `OpeCllw8VariableV1`; `OreTerm<T>` and
+  `OpeTerm<T>` keep `T` to name the source, and `new`, `inner` and
+  `into_inner`, `KeysetCipher::ore_term` and `ope_term` take or return those
+  types. `sem::CllwOreEncrypt` and `sem::CllwOpeEncrypt` are no longer
+  re-exported, and the term bounds are `sem::Orderable`: a sealed trait
+  with one item, `const TARGET: OrderTarget`, the `vitaminc-ore` target a
+  type's values are encoded as. The value goes to the scheme as the
+  `vitaminc-aead` `Encrypt` source it is, by reference, and the engine
+  holds the one copy in a `Zeroizing` and wipes it; so an order term's
+  source is an owned `String` or `Vec<u8>`, and `&'static str`,
+  `&'static [u8]`, `Zeroizing<String>` and `Zeroizing<Vec<u8>>` are no
+  longer sources. Text holding a code point Unicode 16 does not assign has
+  no order term (`TermError::Normalize`), on write and on query. The
+  ordering operators are answered on text, on the typed path
+  (`op::Ordered` for `String`) and on the data-plan path, so a binding
+  generates them too.
+- **A `u8` and an `i8` have no order term, as a `bool` has none.** An order
+  term over 256 values ranks every row among 256, which a few known rows
+  resolve to the values, the leak the crate already refuses for a boolean's
+  two. `u8` and `i8` leave `op::Ordered` and `sem::Orderable`, so
+  `OreTerm<u8>`, `OpeTerm<i8>` and an `Ore` or `Ope` index on either do not
+  compile; `dynamic::admits` refuses ORE and OPE on `int8` and `uint8`
+  (`Reason::IndexNotAdmitted`, as for a boolean), and a data plan naming
+  one is refused when it is built. Both keep their equality term. The
+  refusal is a compile error now, so `TermError::NoOrderTerm` (code
+  `stack_encrypt::no_order_term`), which `bool` raised at run time, is
+  gone. The `value_kinds.json` fixture's `i8` and `u8` fields carry
+  equality alone, and the frozen `stored_rows_v1.json` loses its four
+  8-bit order terms under the order-term exception; every other stored
+  byte is as it was.
 
 - **A binding's control data is read from its frame with serde, not
   decoded into an `FfiValue`** (`dynamic` feature). Each message is a typed
@@ -341,11 +388,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Match text is tokenized in the same normal form, and refused the same
   way. Every equality and match term changes
   bytes (the domains move to `/v2`); ORE and OPE terms do not. No stored
-  term existed to keep; the record fixture is regenerated. ORE and OPE
-  text is still ordered as its raw UTF-8, not normalized, so on a column
-  with both an equality and an order index two forms of `café` are one
-  value to `=` and two to an ordering. This is a known gap, to be closed
-  with block ORE (#1140).
+  term existed to keep; the record fixture is regenerated. Text order
+  terms are encoded in the same normal form, folded further (see "Order
+  terms encrypt through cllw-ore's vitaminc schemes" above), so equality
+  and ordering agree on two forms of `café`.
 - **`dynamic::Value` and `dynamic::Scalar` are gone.** A field lowered from
   data holds an `FfiValue`, which is now `Clone` (a deep copy into fresh
   `Protected` payloads, as `Value`'s was) and reads as a context label.
@@ -417,10 +463,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it refuses text that cuts no token (`TermError::EmptyTermText`); and it
     compiles only for a configuration that implements `op::MatchCase`. A
     configuration without one needs that one-line impl to be queried.
-  - `query_index(Ore, text)` and `query_index(Ope, text)` have no
-    replacement: an ordering over text does not compile until the order of
-    text is settled (ADR-0009). A text column can still store ORE and OPE
-    terms.
+  - `query_index(Ore, text)` and `query_index(Ope, text)` are
+    `query(op::Lt, text)` and `query(op::Lt, text).via(Ope)` (or any
+    ordering), whose term is the text's folded order term (see "Order terms
+    encrypt through cllw-ore's vitaminc schemes" above).
 - **`op::Supports`, `op::Answers` and `op::DefaultIndex` are keyed by the
   query's input**, `Supports<Op, In>` with `In: Input<Op::Arity>`, in
   place of the plaintext; for every operator but `Between` the input is

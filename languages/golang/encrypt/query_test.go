@@ -317,8 +317,9 @@ func TestAQueryTheFieldDoesNotAnswerIsRefused(t *testing.T) {
 			t.Fatalf("%s on %s: %v, want field %q and reason %q", tc.operator, tc.field, err, tc.field, tc.reason)
 		}
 	}
-	if _, err := cipher.QueryTerm(ctx, queryPlan, "age", "between", []any{uint32(65), uint32(18)}); !errors.Is(err, encrypt.ErrTerm) {
-		t.Fatalf("an inverted range: %v, want ErrTerm", err)
+	// An inverted range is not refused, as SQL's BETWEEN is not.
+	if _, err := cipher.QueryTerm(ctx, queryPlan, "age", "between", []any{uint32(65), uint32(18)}); err != nil {
+		t.Fatalf("an inverted range: %v", err)
 	}
 	if _, err := cipher.QueryTerm(ctx, queryPlan, "name", "matches", "al"); !errors.Is(err, encrypt.ErrTerm) {
 		t.Fatalf("text that cuts no token: %v, want ErrTerm", err)
@@ -499,9 +500,9 @@ func TestGeneratedQueriesAreTheRustFixtures(t *testing.T) {
 			t.Errorf("%s.Value() = %T %v", label, got, err)
 		}
 	}
-	// An inverted range is the typed path's refusal, from the engine.
-	if _, err := fields.Age.Between(ctx, cipher, 65, 18); !errors.Is(err, encrypt.ErrTerm) {
-		t.Errorf("an inverted range: %v, want ErrTerm", err)
+	// An inverted range is not refused, as SQL's BETWEEN is not.
+	if _, err := fields.Age.Between(ctx, cipher, 65, 18); err != nil {
+		t.Errorf("an inverted range: %v", err)
 	}
 }
 

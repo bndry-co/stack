@@ -32,7 +32,6 @@ type EncryptedValueKinds struct {
 type EncryptedValueKindsI8 struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
-	Ore        encrypt.OreTerm
 }
 
 type EncryptedValueKindsI16 struct {
@@ -44,7 +43,6 @@ type EncryptedValueKindsI16 struct {
 type EncryptedValueKindsU8 struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
-	Ore        encrypt.OreTerm
 }
 
 type EncryptedValueKindsU16 struct {
@@ -105,9 +103,9 @@ type valueKindsShape struct {
 }
 
 var valueKindsDeclaration = gensupport.Declare("value_kinds").
-	EncryptIndex("i8", gensupport.Int8, encrypt.Equality, encrypt.Ore).
+	EncryptIndex("i8", gensupport.Int8, encrypt.Equality).
 	EncryptIndex("i16", gensupport.Int16, encrypt.Equality, encrypt.Ore).
-	EncryptIndex("u8", gensupport.Uint8, encrypt.Equality, encrypt.Ore).
+	EncryptIndex("u8", gensupport.Uint8, encrypt.Equality).
 	EncryptIndex("u16", gensupport.Uint16, encrypt.Equality, encrypt.Ope).
 	EncryptIndex("i128", gensupport.Int128, encrypt.Equality, encrypt.Ore).
 	EncryptIndex("u128", gensupport.Uint128, encrypt.Equality, encrypt.Ope).
@@ -137,7 +135,6 @@ var valueKindsCodec = gensupport.New(gensupport.Generated[ValueKinds, EncryptedV
 		e.I8 = EncryptedValueKindsI8{
 			Ciphertext: rec["i8"].Ciphertext,
 			Equality:   rec["i8"].Equality,
-			Ore:        rec["i8"].Ore,
 		}
 		e.I16 = EncryptedValueKindsI16{
 			Ciphertext: rec["i16"].Ciphertext,
@@ -147,7 +144,6 @@ var valueKindsCodec = gensupport.New(gensupport.Generated[ValueKinds, EncryptedV
 		e.U8 = EncryptedValueKindsU8{
 			Ciphertext: rec["u8"].Ciphertext,
 			Equality:   rec["u8"].Equality,
-			Ore:        rec["u8"].Ore,
 		}
 		e.U16 = EncryptedValueKindsU16{
 			Ciphertext: rec["u16"].Ciphertext,
@@ -180,9 +176,9 @@ var valueKindsCodec = gensupport.New(gensupport.Generated[ValueKinds, EncryptedV
 	},
 	Open: func(e EncryptedValueKinds) gensupport.Record {
 		return gensupport.Record{
-			"i8":     {Ciphertext: e.I8.Ciphertext, Equality: e.I8.Equality, Ore: e.I8.Ore},
+			"i8":     {Ciphertext: e.I8.Ciphertext, Equality: e.I8.Equality},
 			"i16":    {Ciphertext: e.I16.Ciphertext, Equality: e.I16.Equality, Ore: e.I16.Ore},
-			"u8":     {Ciphertext: e.U8.Ciphertext, Equality: e.U8.Equality, Ore: e.U8.Ore},
+			"u8":     {Ciphertext: e.U8.Ciphertext, Equality: e.U8.Equality},
 			"u16":    {Ciphertext: e.U16.Ciphertext, Equality: e.U16.Equality, Ope: e.U16.Ope},
 			"i128":   {Ciphertext: e.I128.Ciphertext, Equality: e.I128.Equality, Ore: e.I128.Ore},
 			"u128":   {Ciphertext: e.U128.Ciphertext, Equality: e.U128.Equality, Ope: e.U128.Ope},
@@ -269,37 +265,12 @@ func (f ValueKindsI8Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int
 	if err != nil {
 		return EncryptedValueKindsI8{}, err
 	}
-	return EncryptedValueKindsI8{Ciphertext: out.Ciphertext, Equality: out.Equality, Ore: out.Ore}, nil
+	return EncryptedValueKindsI8{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
 func (f ValueKindsI8Field) Eq(ctx context.Context, c *encrypt.Cipher, v int8) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
 	return encrypt.EqualityTerm(term), err
-}
-
-func (f ValueKindsI8Field) Lt(ctx context.Context, c *encrypt.Cipher, v int8) (encrypt.OreTerm, error) {
-	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
-}
-
-func (f ValueKindsI8Field) Lte(ctx context.Context, c *encrypt.Cipher, v int8) (encrypt.OreTerm, error) {
-	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
-}
-
-func (f ValueKindsI8Field) Gt(ctx context.Context, c *encrypt.Cipher, v int8) (encrypt.OreTerm, error) {
-	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
-}
-
-func (f ValueKindsI8Field) Gte(ctx context.Context, c *encrypt.Cipher, v int8) (encrypt.OreTerm, error) {
-	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
-}
-
-func (f ValueKindsI8Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi int8) (encrypt.Range[encrypt.OreTerm], error) {
-	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 type ValueKindsI16Field struct {
@@ -353,37 +324,12 @@ func (f ValueKindsU8Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uin
 	if err != nil {
 		return EncryptedValueKindsU8{}, err
 	}
-	return EncryptedValueKindsU8{Ciphertext: out.Ciphertext, Equality: out.Equality, Ore: out.Ore}, nil
+	return EncryptedValueKindsU8{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
 func (f ValueKindsU8Field) Eq(ctx context.Context, c *encrypt.Cipher, v uint8) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
 	return encrypt.EqualityTerm(term), err
-}
-
-func (f ValueKindsU8Field) Lt(ctx context.Context, c *encrypt.Cipher, v uint8) (encrypt.OreTerm, error) {
-	term, err := f.field.Term(ctx, c, "lt", v)
-	return encrypt.OreTerm(term), err
-}
-
-func (f ValueKindsU8Field) Lte(ctx context.Context, c *encrypt.Cipher, v uint8) (encrypt.OreTerm, error) {
-	term, err := f.field.Term(ctx, c, "lte", v)
-	return encrypt.OreTerm(term), err
-}
-
-func (f ValueKindsU8Field) Gt(ctx context.Context, c *encrypt.Cipher, v uint8) (encrypt.OreTerm, error) {
-	term, err := f.field.Term(ctx, c, "gt", v)
-	return encrypt.OreTerm(term), err
-}
-
-func (f ValueKindsU8Field) Gte(ctx context.Context, c *encrypt.Cipher, v uint8) (encrypt.OreTerm, error) {
-	term, err := f.field.Term(ctx, c, "gte", v)
-	return encrypt.OreTerm(term), err
-}
-
-func (f ValueKindsU8Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi uint8) (encrypt.Range[encrypt.OreTerm], error) {
-	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
-	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 type ValueKindsU16Field struct {

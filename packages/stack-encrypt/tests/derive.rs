@@ -8,8 +8,8 @@ mod common;
 
 use std::sync::atomic::Ordering as AtomicOrdering;
 
-use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, recording_cipher, stack_cipher};
+use stack_encrypt::sem::Orderable;
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OreTerm, TermError};
 use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto, Encrypted};
 use stack_encrypt::{
@@ -105,7 +105,7 @@ struct BorrowedSource<'__source, '__source_> {
 /// by its source. A generic record's one-ciphertext check runs when the
 /// record is first used rather than where it is defined.
 #[derive(EncryptFrom, DecryptInto)]
-struct Tagged<T: CllwOreEncrypt> {
+struct Tagged<T: Orderable> {
     c: StackCipherText,
     ob: OreTerm<T>,
 }

@@ -203,9 +203,18 @@ transform and its version is named in the domain label, for example
   UTC calendar day.
 - **Text fold, v1**: NFD, then full Unicode case folding (`CaseFolding.txt`
   statuses C and F, so `ß` becomes `ss`), then NFD again, then removal of
-  every code point with General_Category `Mn`, then NFC. The order of the
-  steps is part of the transform, because folding can produce text that is
-  no longer normalised and the steps do not commute.
+  every accent, then NFC. An accent is a mark (General_Category `Mn`, `Mc`
+  or `Me`) with a non-zero canonical combining class: the acute in `é`, the
+  umlaut in `ö`, a Devanagari virama. A mark of class zero is a letter of
+  its own in its script, such as a Thai or Devanagari vowel sign (U+0E31,
+  U+0901), and is kept. The order of the steps is part of the transform,
+  because folding can produce text that is no longer normalised and the
+  steps do not commute.
+  *Amended 2026-10-19:* this step said "every code point with
+  General_Category `Mn`", which would also drop class-zero vowel signs and
+  so tie different words. The fold that ships, `vitaminc-ore`'s
+  `vitaminc/ore/value/text-folded/unicode-16/v1`, keeps them, and this
+  bullet now describes it.
 - **Prefix truncation**: a number of code points kept after any other
   transform. Alphabet packing, if ever built, is a transform of the same
   kind.
@@ -219,6 +228,13 @@ write. The cost is that two strings using characters added after the pin,
 which a later Unicode would treat as equivalent, may not match. Moving the
 pin is a new label: existing columns keep the label they were written under
 and stay queryable, and a column moves only by re-encryption.
+*Amended 2026-10-18:* vitaminc 0.6 refuses a code point unassigned in the
+pinned version instead of passing it through. `vitaminc-normalize` (equality
+and match terms) and `vitaminc-ore`'s fold (order terms) both return
+`UnassignedCodePoint`, so text holding one has no term, and writing it to an
+indexed column or querying with it is refused. The refusal is the same on
+every path and in every language, so the transform is still a fixed
+function of the text it accepts, and moving the pin is still a new label.
 
 Order terms fold case and accents because code-point order puts `é` after
 `z`; a fixed fold approximates the first level of Unicode collation without

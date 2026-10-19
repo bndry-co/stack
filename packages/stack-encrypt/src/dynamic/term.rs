@@ -15,11 +15,12 @@
 //!   compared in Unicode 16 NFC, and a date, timestamp, decimal or uuid has
 //!   a domain of its own. A boolean has none.
 //! - **Match** takes text only, cut in Unicode 16 NFC.
-//! - **ORE and OPE** take an integer of any width, a float, text or bytes,
-//!   each handed to cllw-ore as the Rust type the typed path would have
-//!   named: an `i8` as an `i8`, a `u128` as a `u128`. A boolean has no
-//!   order term: with two values, its order term would tell anyone holding
-//!   the column which rows are `true`. A decimal, a date and a timestamp
+//! - **ORE and OPE** take an integer of 16 bits or wider, a float, text or
+//!   bytes, each handed to cllw-ore as the Rust type the typed path would
+//!   have named: an `i16` as an `i16`, a `u128` as a `u128`. A boolean, a
+//!   `u8` and an `i8` have no order term: over a domain that small (two
+//!   values, or 256) it would tell anyone holding the column which rows are
+//!   `true`, or rank every row among 256. A decimal, a date and a timestamp
 //!   have none yet: cllw-ore 0.5 does not encode them the ADR-0002 way, and
 //!   their order terms wait for new cllw-ore and ore-rs releases (#1236).
 //!
@@ -39,14 +40,11 @@ use vitaminc_aead::plaintext::{
     Error as SinkError, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use vitaminc_normalize::{domain_of, normalize, NormalizeError};
-use zeroize::Zeroizing;
 
 use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Error, Reason};
-use crate::sem::{
-    CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, MatchOptions, QueryTokens, TermError, Tokenizer,
-};
+use crate::sem::{DefaultMatch, MatchOptions, Orderable, QueryTokens, TermError, Tokenizer};
 use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 
@@ -155,15 +153,17 @@ impl IndexSpec {
     }
 }
 
-/// Whether CLLW ORE and OPE order this scalar: an integer of any width, a
-/// float, text or bytes. Not a boolean, which would reveal which rows hold
-/// `true`, and not a null. The caller has already refused a scalar under a
-/// logical type: a decimal, date or timestamp's order term waits for
-/// #1236.
+/// Whether CLLW ORE and OPE order this scalar: an integer of 16 bits or
+/// wider, a float, text or bytes. Not a boolean, and not an 8-bit integer:
+/// an order term over so small a domain reveals too much, which rows hold
+/// `true`, or each row's rank among 256 values, which a few known rows
+/// resolve to the values. Not a null. The caller has already refused a
+/// scalar under a logical type: a decimal, date or timestamp's order term
+/// waits for a later release.
 fn ordered(value: &Physical<'_>) -> bool {
     match value {
+        Physical::Int(Int::I8(_) | Int::U8(_)) | Physical::Null | Physical::Bool(_) => false,
         Physical::Int(_) | Physical::Float(_) | Physical::Text(_) | Physical::Bytes(_) => true,
-        Physical::Null | Physical::Bool(_) => false,
     }
 }
 
@@ -487,16 +487,16 @@ where
 /// Rust type the typed path would have named; `None` for a scalar it does
 /// not order ([`ordered`]).
 ///
-/// Text and bytes are copied out of the walk into a `Zeroizing` wrapper,
-/// and the encryptor is handed the wrapper itself: the CLLW encryptors take
-/// their value by `'static` ownership (the visitor carries it), so a bare
-/// `String` or `Vec<u8>` would be freed with the plaintext still in it, in
-/// a guest's linear memory, where the host can read it.
+/// Text and bytes are copied out of the walk into an owned `String` or
+/// `Vec<u8>` and moved to the encryptor, which wraps the one copy in a
+/// `Zeroizing` on receipt: the order term takes its value by ownership
+/// (the visitor carries it) and wipes it, so nothing is freed with the
+/// plaintext still in it, in a guest's linear memory, where the host can
+/// read it.
 ///
-/// Text is ordered as its raw UTF-8, not in the Unicode 16 NFC that
-/// equality and match terms use: `café` written precomposed and with a
-/// combining accent is one value to `=` and two to an ordering. A known
-/// gap, to close with block ORE (#1140).
+/// Each scalar is encoded at the target of the Rust type named here
+/// ([`Orderable`]), as on the typed path: text by the system ADR-0002's
+/// fold, so `café` precomposed or with a combining accent, and `Café`, tie.
 fn ore_of<'a, 'c, K: 'static, D>(
     cipher: &'a KeysetCipher<'_, K>,
     value: Physical<'_>,
@@ -506,20 +506,18 @@ where
     D: IntoPrfContext<'c>,
 {
     Some(match value {
-        Physical::Int(Int::I8(v)) => ore(cipher, v, context),
         Physical::Int(Int::I16(v)) => ore(cipher, v, context),
         Physical::Int(Int::I32(v)) => ore(cipher, v, context),
         Physical::Int(Int::I64(v)) => ore(cipher, v, context),
         Physical::Int(Int::I128(v)) => ore(cipher, v, context),
-        Physical::Int(Int::U8(v)) => ore(cipher, v, context),
         Physical::Int(Int::U16(v)) => ore(cipher, v, context),
         Physical::Int(Int::U32(v)) => ore(cipher, v, context),
         Physical::Int(Int::U64(v)) => ore(cipher, v, context),
         Physical::Int(Int::U128(v)) => ore(cipher, v, context),
         Physical::Float(Float::F32(v)) => ore(cipher, v, context),
         Physical::Float(Float::F64(v)) => ore(cipher, v, context),
-        Physical::Text(t) => ore(cipher, Zeroizing::new(t.to_owned()), context),
-        Physical::Bytes(b) => ore(cipher, Zeroizing::new(b.to_vec()), context),
+        Physical::Text(t) => ore(cipher, t.to_owned(), context),
+        Physical::Bytes(b) => ore(cipher, b.to_vec(), context),
         _ => return None,
     })
 }
@@ -534,34 +532,30 @@ where
     D: IntoPrfContext<'c>,
 {
     Some(match value {
-        Physical::Int(Int::I8(v)) => ope(cipher, v, context),
         Physical::Int(Int::I16(v)) => ope(cipher, v, context),
         Physical::Int(Int::I32(v)) => ope(cipher, v, context),
         Physical::Int(Int::I64(v)) => ope(cipher, v, context),
         Physical::Int(Int::I128(v)) => ope(cipher, v, context),
-        Physical::Int(Int::U8(v)) => ope(cipher, v, context),
         Physical::Int(Int::U16(v)) => ope(cipher, v, context),
         Physical::Int(Int::U32(v)) => ope(cipher, v, context),
         Physical::Int(Int::U64(v)) => ope(cipher, v, context),
         Physical::Int(Int::U128(v)) => ope(cipher, v, context),
         Physical::Float(Float::F32(v)) => ope(cipher, v, context),
         Physical::Float(Float::F64(v)) => ope(cipher, v, context),
-        Physical::Text(t) => ope(cipher, Zeroizing::new(t.to_owned()), context),
-        Physical::Bytes(b) => ope(cipher, Zeroizing::new(b.to_vec()), context),
+        Physical::Text(t) => ope(cipher, t.to_owned(), context),
+        Physical::Bytes(b) => ope(cipher, b.to_vec(), context),
         _ => return None,
     })
 }
 
-/// The `AsRef<[u8]>` on the output is what turns the typed CLLW ciphertext
-/// into the frozen raw-bytes encoding.
+/// The term's raw bytes are its frozen encoding.
 fn ore<'a, 'c, K: 'static, T, D>(
     cipher: &'a KeysetCipher<'_, K>,
     value: T,
     context: NonEmpty<D>,
 ) -> Pending<'a, TermBytes, K>
 where
-    T: CllwOreEncrypt + Send + 'static,
-    T::Output: AsRef<[u8]> + Send + 'static,
+    T: Orderable,
     D: IntoPrfContext<'c>,
 {
     cipher
@@ -576,8 +570,7 @@ fn ope<'a, 'c, K: 'static, T, D>(
     context: NonEmpty<D>,
 ) -> Pending<'a, TermBytes, K>
 where
-    T: CllwOpeEncrypt + Send + 'static,
-    T::Output: AsRef<[u8]> + Send + 'static,
+    T: Orderable,
     D: IntoPrfContext<'c>,
 {
     cipher
@@ -990,6 +983,8 @@ mod tests {
     fn every_scalar() -> Vec<(&'static str, Tree)> {
         vec![
             ("a bool", Tree::Bool(true)),
+            ("an i8", Tree::Int8(-8)),
+            ("a u8", Tree::UInt8(200)),
             ("an i32", Tree::Int32(-3)),
             ("an i64", Tree::Int64(-4)),
             ("a u32", Tree::UInt32(34)),
@@ -1051,9 +1046,9 @@ mod tests {
                 "text match"
             );
 
-            // The ordering schemes take every scalar but a boolean; the
-            // typed side is spelled once per variant because each is its
-            // own type.
+            // The ordering schemes take every scalar but a boolean and an
+            // 8-bit integer; the typed side is spelled once per variant
+            // because each is its own type.
             macro_rules! ordered {
                 ($value:expr, $leaf:expr, $label:literal) => {
                     let typed = keyset.ore_term($value, nonempty!("users/x")).await;
@@ -1176,33 +1171,15 @@ mod tests {
                     );
                 };
             }
-            typed!(-8i8, "i8");
             typed!(-300i16, "i16");
             typed!(300u16, "u16");
             typed!(34u64, "u64");
             typed!(i128::MIN, "i128");
             typed!(u128::MAX, "u128");
             // The `UINT8` tag and its byte: no Rust source walks a `u8` as an
-            // int, but a host's frame can carry one, and it is the `u8` term.
+            // int, but a host's frame can carry one. It has the `u8`
+            // equality term, which is every width's, and no order term.
             let frame = vec![vitaminc_aead::tags::UINT8, 200];
-            assert_eq!(
-                derive(frame.clone(), IndexSpec::Ore).await,
-                keyset
-                    .ore_term(200u8, nonempty!("users/x"))
-                    .await
-                    .expect("typed")
-                    .as_ref()
-                    .to_vec()
-            );
-            assert_eq!(
-                derive(frame.clone(), IndexSpec::Ope).await,
-                keyset
-                    .ope_term(200u8, nonempty!("users/x"))
-                    .await
-                    .expect("typed")
-                    .as_ref()
-                    .to_vec()
-            );
             assert_eq!(
                 derive(frame, IndexSpec::Equality).await,
                 derive(
@@ -1215,6 +1192,19 @@ mod tests {
                 .await,
                 "one equality term per number, whatever its width"
             );
+            for (label, frame) in [
+                ("u8", vec![vitaminc_aead::tags::UINT8, 200]),
+                ("i8", vec![vitaminc_aead::tags::INT8, 0xf8]),
+            ] {
+                for kind in [IndexSpec::Ore, IndexSpec::Ope] {
+                    let frame = vitaminc_aead::Frame::parse(&frame).expect("a frame");
+                    let result = term(&keyset, frame, &kind, ctx.clone()).await;
+                    assert!(
+                        matches!(&result, Err(Error::Term { kind: k, .. }) if *k == kind),
+                        "an {label} has no {kind} term: {result:?}"
+                    );
+                }
+            }
             // A date, a timestamp and a decimal have equality terms only,
             // the ones their frame's own value derives.
             for value in [date(19_782), instant(-1), decimal(-150, 2)] {
@@ -1287,15 +1277,16 @@ mod tests {
         fn defines_is_true() {
             for (label, leaf) in every_scalar() {
                 let not_bool = !matches!(leaf, Tree::Bool(_));
+                let wide = not_bool && !matches!(leaf, Tree::Int8(_) | Tree::UInt8(_));
                 assert_eq!(
                     IndexSpec::Ore.defines(&leaf),
-                    not_bool,
-                    "{label} takes an ore term exactly when it is not a boolean"
+                    wide,
+                    "{label} takes an ore term exactly when it is not a boolean or 8 bits wide"
                 );
                 assert_eq!(
                     IndexSpec::Ope.defines(&leaf),
-                    not_bool,
-                    "{label} takes an ope term exactly when it is not a boolean"
+                    wide,
+                    "{label} takes an ope term exactly when it is not a boolean or 8 bits wide"
                 );
                 assert_eq!(
                     IndexSpec::Equality.defines(&leaf),
@@ -1328,6 +1319,8 @@ mod tests {
                 ("bytes", bytes(b"ab"), default_match()),
                 ("a bool", Tree::Bool(true), IndexSpec::Ore),
                 ("a bool", Tree::Bool(false), IndexSpec::Ope),
+                ("an i8", Tree::Int8(-8), IndexSpec::Ore),
+                ("a u8", Tree::UInt8(200), IndexSpec::Ope),
             ];
             for (label, leaf, kind) in refused {
                 assert!(!kind.defines(&leaf), "{label} must not take a {kind} term");

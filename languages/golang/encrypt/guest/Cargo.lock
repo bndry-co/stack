@@ -338,15 +338,17 @@ dependencies = [
 
 [[package]]
 name = "cllw-ore"
-version = "0.5.0"
+version = "0.5.2-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "476f300d37a5029d3d9dd57145d4db50a23f40ae9b4d1374c44543978b906191"
+checksum = "24eb4a774d070a6c2b52175b98273cd7193c61e1bda39c1a98b50b7a2d91375a"
 dependencies = [
  "blake3",
  "hex",
  "subtle",
  "thiserror 1.0.69",
  "unicode-normalization",
+ "vitaminc-ore",
+ "vitaminc-protected 0.6.1",
  "zeroize",
 ]
 
@@ -2087,6 +2089,7 @@ dependencies = [
  "vitaminc-encrypt 0.6.1",
  "vitaminc-hmac",
  "vitaminc-normalize",
+ "vitaminc-ore",
  "vitaminc-prf",
  "vitaminc-protected 0.6.1",
  "zeroize",
@@ -2777,6 +2780,21 @@ dependencies = [
  "unicode-general-category",
  "unicode-normalization",
  "vitaminc-aead 0.6.1",
+ "vitaminc-protected 0.6.1",
+]
+
+[[package]]
+name = "vitaminc-ore"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed88c54b5f06f2177ecbfb7666812adf645406f6fb555f4e2f0fd7fa218e71c4"
+dependencies = [
+ "thiserror 2.0.20",
+ "unicode-general-category",
+ "unicode-normalization",
+ "vitaminc-aead 0.6.1",
+ "vitaminc-context 0.6.1",
+ "vitaminc-normalize",
  "vitaminc-protected 0.6.1",
 ]
 

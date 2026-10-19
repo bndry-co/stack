@@ -465,8 +465,9 @@ pub unsafe extern "C" fn se_plan_check(plan_ptr: *const u8, plan_len: u32) -> u6
 /// term's codec-encoded object out. An operator the field does not answer
 /// is `STATUS_ENCODING` naming the field, as a mistyped value is, before
 /// the cipher is consulted; the refusals the typed path makes before a term
-/// exists (a range the wrong way round, match text that cuts no token or
-/// does not normalize) are `STATUS_TERM`, also before the cipher. The input
+/// exists (match text that cuts no token or does not normalize) are
+/// `STATUS_TERM`, also before the cipher. A range the wrong way round is
+/// not refused: it matches no row, as SQL's `BETWEEN` does. The input
 /// buffer is wiped in place.
 ///
 /// # Safety

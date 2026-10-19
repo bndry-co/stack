@@ -27,6 +27,7 @@ use std::sync::Mutex;
 
 use common::frames::{frame, object};
 use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, OpSpec, Scope, ValueFrame};
+use stack_encrypt::nonempty;
 use vitaminc_aead::plaintext::{Physical, Raw};
 use vitaminc_aead::Frame;
 
@@ -272,6 +273,39 @@ fn a_query_term_leaves_no_plaintext_on_the_heap() {
             drop(query);
         });
     }
+}
+
+/// An order term takes its plaintext by value, so the engine owns the
+/// `String` or `Vec<u8>` it is handed (a clone of the caller's, on the
+/// target path) and must wipe it. Both paths hand a bare one; the engine
+/// wraps it in `Zeroizing` on receipt, before anything can fail.
+#[test]
+fn an_order_term_of_owned_text_or_bytes_leaves_no_plaintext_on_the_heap() {
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    // Each plaintext is built before its watch: building one can free a
+    // partly written copy, which is the test's own residue, not the term's.
+    let text = marked("order");
+    watched("ore_term (String)", || {
+        rt.block_on(async { keyset.ore_term(text, nonempty!("users/surname")).await })
+            .unwrap();
+    });
+    let text = marked("order");
+    watched("ope_term (String)", || {
+        rt.block_on(async { keyset.ope_term(text, nonempty!("users/surname")).await })
+            .unwrap();
+    });
+    let bytes = marked("order").into_bytes();
+    watched("ore_term (Vec<u8>)", || {
+        rt.block_on(async { keyset.ore_term(bytes, nonempty!("users/blob")).await })
+            .unwrap();
+    });
+    let bytes = marked("order").into_bytes();
+    watched("ope_term (Vec<u8>)", || {
+        rt.block_on(async { keyset.ope_term(bytes, nonempty!("users/blob")).await })
+            .unwrap();
+    });
 }
 
 #[test]

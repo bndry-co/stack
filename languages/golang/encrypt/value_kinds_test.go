@@ -164,9 +164,9 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 
 	rec := f.Record
 	stored := testusers.EncryptedValueKinds{
-		I8:     testusers.EncryptedValueKindsI8{Ciphertext: hexField(t, rec, "i8", "c"), Equality: hexField(t, rec, "i8", "eq"), Ore: hexField(t, rec, "i8", "ore")},
+		I8:     testusers.EncryptedValueKindsI8{Ciphertext: hexField(t, rec, "i8", "c"), Equality: hexField(t, rec, "i8", "eq")},
 		I16:    testusers.EncryptedValueKindsI16{Ciphertext: hexField(t, rec, "i16", "c"), Equality: hexField(t, rec, "i16", "eq"), Ore: hexField(t, rec, "i16", "ore")},
-		U8:     testusers.EncryptedValueKindsU8{Ciphertext: hexField(t, rec, "u8", "c"), Equality: hexField(t, rec, "u8", "eq"), Ore: hexField(t, rec, "u8", "ore")},
+		U8:     testusers.EncryptedValueKindsU8{Ciphertext: hexField(t, rec, "u8", "c"), Equality: hexField(t, rec, "u8", "eq")},
 		U16:    testusers.EncryptedValueKindsU16{Ciphertext: hexField(t, rec, "u16", "c"), Equality: hexField(t, rec, "u16", "eq"), Ope: hexField(t, rec, "u16", "ope")},
 		I128:   testusers.EncryptedValueKindsI128{Ciphertext: hexField(t, rec, "i128", "c"), Equality: hexField(t, rec, "i128", "eq"), Ore: hexField(t, rec, "i128", "ore")},
 		U128:   testusers.EncryptedValueKindsU128{Ciphertext: hexField(t, rec, "u128", "c"), Equality: hexField(t, rec, "u128", "eq"), Ope: hexField(t, rec, "u128", "ope")},
@@ -211,9 +211,7 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 		}
 	}
 	orders := map[string]func() ([]byte, error){
-		"i8:ore":   func() ([]byte, error) { return fields.I8.Lt(ctx, cipher, want.I8) },
 		"i16:ore":  func() ([]byte, error) { return fields.I16.Lt(ctx, cipher, want.I16) },
-		"u8:ore":   func() ([]byte, error) { return fields.U8.Lt(ctx, cipher, want.U8) },
 		"u16:ope":  func() ([]byte, error) { return fields.U16.Lt(ctx, cipher, want.U16) },
 		"i128:ore": func() ([]byte, error) { return fields.I128.Lt(ctx, cipher, want.I128) },
 		"u128:ope": func() ([]byte, error) { return fields.U128.Lt(ctx, cipher, want.U128) },
@@ -304,9 +302,9 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 // fixture's output names.
 func valueKindsTerms(e testusers.EncryptedValueKinds) map[string]map[string][]byte {
 	return map[string]map[string][]byte{
-		"i8":     {"eq": e.I8.Equality, "ore": e.I8.Ore},
+		"i8":     {"eq": e.I8.Equality},
 		"i16":    {"eq": e.I16.Equality, "ore": e.I16.Ore},
-		"u8":     {"eq": e.U8.Equality, "ore": e.U8.Ore},
+		"u8":     {"eq": e.U8.Equality},
 		"u16":    {"eq": e.U16.Equality, "ope": e.U16.Ope},
 		"i128":   {"eq": e.I128.Equality, "ore": e.I128.Ore},
 		"u128":   {"eq": e.U128.Equality, "ope": e.U128.Ope},

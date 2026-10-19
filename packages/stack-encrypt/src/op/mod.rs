@@ -55,22 +55,21 @@
 //! does.
 //!
 //! What the types can see is checked at compile time: a match query on an
-//! integer, an ordering on text, an operator a target type does not answer,
+//! integer, an ordering on bytes, an operator a target type does not answer,
 //! and, on a one-value plan, an index the plan does not hold or a
 //! case-sensitive match against a case-folding index. A field of a fields
 //! plan is data, so there an index the field does not declare, or declares
 //! with other options, is refused when the query is awaited, before any
 //! key is requested. So is a match configuration whose [`MatchCase`]
-//! disagrees with its options, and so are the two query values the library
+//! disagrees with its options, and so is the one query value the library
 //! refuses: match text that cuts no token under the index's tokenizer,
-//! whose filter would match every row ([`TermError::EmptyTermText`]), and
-//! a `Between` whose low bound is above its high bound
-//! ([`TermError::InvertedRange`]). The stored side has no such refusal: a
-//! value with no tokens is stored as the empty filter, which no query
-//! matches.
+//! whose filter would match every row ([`TermError::EmptyTermText`]). The
+//! stored side has no such refusal: a value with no tokens is stored as
+//! the empty filter, which no query matches. A `Between` whose low bound is
+//! above its high bound is not refused either: as SQL's `BETWEEN`, it
+//! matches nothing.
 //!
 //! [`TermError::EmptyTermText`]: crate::sem::TermError::EmptyTermText
-//! [`TermError::InvertedRange`]: crate::sem::TermError::InvertedRange
 //! [`RangeQuery`]: crate::sem::RangeQuery
 //!
 //! The module is meant to be used by path (`op::Eq`): an imported `Eq`
@@ -87,8 +86,8 @@ pub(crate) mod stats;
 pub use stats::{Limit, Stats, DEFAULT_CONFIDENCE, MAX_ROWS};
 
 use crate::sem::{
-    CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, EqualityTerm, MatchConfig, MatchQuery,
-    MatchTerms, OpeTerm, OreTerm, QueryTokens, RangeQuery, TermError,
+    DefaultMatch, EqualityTerm, MatchConfig, MatchQuery, MatchTerms, OpeTerm, Orderable, OreTerm,
+    QueryTokens, RangeQuery,
 };
 use crate::target::{DeclaredContext, Equality, Index, Match, Ope, Ore, Owned, Pending};
 use crate::{Error, KeysetCipher, Label, NonEmpty, PlanError};
@@ -133,10 +132,9 @@ pub struct Gte;
 /// at both ends. It takes a [`Pair`], `cipher.query(op::Between, &(lo, hi))`,
 /// derives both bounds under one context, and sends them as one term
 /// ([`RangeQuery`]), so no statement can pair the
-/// low bound of one query with the high bound of another. A pair whose low
-/// bound is above its high bound is refused when the query is awaited
-/// ([`TermError::InvertedRange`]); one
-/// value is `(v, v)`.
+/// low bound of one query with the high bound of another. One value is
+/// `(v, v)`. A pair whose low bound is above its high bound is not
+/// refused: as SQL's `BETWEEN`, it matches nothing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Between;
 
@@ -342,59 +340,42 @@ impl<S: 'static> Input<Pair> for (S, S) {
 }
 
 /// A plaintext the ordering operators ([`Lt`], [`Lte`], [`Gt`], [`Gte`],
-/// [`Between`]) are answered over: the integer types, whose ORE and OPE
-/// terms order as the values do and whose order key is the value itself.
-/// Text is not one: its order term is a catalog question (ADR-0009, ADR-0002),
-/// and an ordering on a text plan does not compile.
+/// [`Between`]) are answered over: the integers of 16 bits and wider, and
+/// text (`String`). Not `u8` or `i8`, which have no order term
+/// ([`Orderable`] says why), as `bool` has none.
+/// Each is encoded as its [`Orderable`] target and its terms order as
+/// cllw-ore orders that encoding: integers as numbers, text by the system
+/// ADR-0002's fold, Unicode 16 NFC with case and accents folded, so `Café`,
+/// `cafe` and `CAFÉ` tie and `alice` orders before `Zoe` (ADR-0009).
 ///
-/// Sealed: `Between` refuses an inverted range with the type's `PartialOrd`
-/// while the server compares ORE terms, so a type whose two orders could
-/// disagree (a newtype over folded text, say) must not be able to join. A
-/// type that meets every other bound is still refused:
+/// Sealed: a type joins only when the order its terms compare in is the
+/// one its operators promise, so a type whose terms could order otherwise
+/// (a newtype over folded text, say) must not be able to join. A type that
+/// meets every other bound is still refused:
 ///
 /// ```compile_fail
-/// # use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt, Error, Key};
 /// use stack_encrypt::op::Ordered;
 ///
-/// #[derive(PartialEq, PartialOrd)]
 /// struct Folded(u32);
-/// # impl CllwOreEncrypt for Folded {
-/// #     type Output = <u32 as CllwOreEncrypt>::Output;
-/// #     fn encrypt_with_salt(self, key: &Key, salt: Option<&[u8]>) -> Result<Self::Output, Error> {
-/// #         self.0.encrypt_with_salt(key, salt)
-/// #     }
-/// # }
-/// # impl CllwOpeEncrypt for Folded {
-/// #     type Output = <u32 as CllwOpeEncrypt>::Output;
-/// #     fn encrypt_ope_with_salt(self, key: &Key, salt: Option<&[u8]>) -> Result<Self::Output, Error> {
-/// #         self.0.encrypt_ope_with_salt(key, salt)
-/// #     }
-/// # }
 ///
 /// impl Ordered for Folded {} // `Ordered` is sealed
 /// ```
+///
+/// [`Orderable`]: crate::sem::Orderable
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not ordered: the ordering operators are answered over the integer types only",
+    message = "`{Self}` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, and text",
     label = "no ordering operator over this type",
-    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128` or `i8` to `i128`; the order of text is not settled (ADR-0009), so an ordering over text does not compile"
+    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, or a `String`; a `u8`, an `i8` and a `bool` have no order term"
 )]
-pub trait Ordered:
-    sealed::Sealed
-    + PartialOrd
-    + CllwOreEncrypt<Output: Send + 'static>
-    + CllwOpeEncrypt<Output: Send + 'static>
-    + Send
-    + 'static
-{
-}
+pub trait Ordered: sealed::Sealed + Orderable {}
 
 macro_rules! ordered {
-    ($($int:ty),+ $(,)?) => {$(
-        impl sealed::Sealed for $int {}
-        impl Ordered for $int {}
+    ($($ty:ty),+ $(,)?) => {$(
+        impl sealed::Sealed for $ty {}
+        impl Ordered for $ty {}
     )+};
 }
-ordered!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+ordered!(u16, u32, u64, u128, i16, i32, i64, i128, String);
 
 /// Text search: rows whose text contains the query's tokens, under the
 /// match index's tokenizer. Not containment: a Bloom match is order- and
@@ -530,8 +511,8 @@ pub trait QueryTerm {}
 
 impl QueryTerm for EqualityTerm {}
 impl<O> QueryTerm for MatchQuery<O> {}
-impl<S: CllwOreEncrypt> QueryTerm for OreTerm<S> {}
-impl<S: CllwOpeEncrypt> QueryTerm for OpeTerm<S> {}
+impl<S: Orderable> QueryTerm for OreTerm<S> {}
+impl<S: Orderable> QueryTerm for OpeTerm<S> {}
 impl<T: QueryTerm> QueryTerm for RangeQuery<T> {}
 
 /// A query term whose answer can hold **false positives and no false
@@ -644,9 +625,8 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     /// Why this index cannot answer `Op` as configured, or for `input`, if
     /// it cannot: a match index whose [`MatchCase`] disagrees with its
     /// options ([`PlanError::MatchCase`]), a match query of text that cuts
-    /// no token ([`TermError::EmptyTermText`]), whose filter would match
-    /// every row, or a range whose low bound is above its high bound
-    /// ([`TermError::InvertedRange`]).
+    /// no token ([`TermError::EmptyTermText`](crate::sem::TermError::EmptyTermText)),
+    /// whose filter would match every row.
     /// Run when the query is awaited, before any key is requested; an
     /// index that refuses nothing returns `Ok(())`.
     fn check(&self, input: &In) -> Result<(), Error>;
@@ -744,12 +724,8 @@ macro_rules! orders {
         impl<S: Ordered> Supports<Between, (S, S)> for $index {
             type Query = RangeQuery<$term<S>>;
             type Verifier = ();
-            fn check(&self, (lo, hi): &(S, S)) -> Result<(), Error> {
-                if lo > hi {
-                    Err(TermError::InvertedRange.into())
-                } else {
-                    Ok(())
-                }
+            fn check(&self, _: &(S, S)) -> Result<(), Error> {
+                Ok(())
             }
             fn verifier(&self, _: &(S, S)) {}
             fn query((): (), (lo, hi): ($term<S>, $term<S>), _: QueryToken) -> Self::Query {
@@ -940,19 +916,16 @@ mod tests {
         arity::<AtPath<Between>, Pathed<Pair>>();
     }
 
-    /// The ordering operators default to ORE, and a range is refused only
-    /// when its bounds are the wrong way round: `(v, v)` is one value.
+    /// An ordering refuses no value: a range whose bounds are the wrong way
+    /// round matches nothing, as SQL's `BETWEEN` does.
     #[test]
-    fn a_range_is_checked_before_any_term_is_derived() {
+    fn an_ordering_refuses_no_value() {
         let ok = |pair: (u32, u32)| Supports::<Between, (u32, u32)>::check(&Ore, &pair).is_ok();
         assert!(ok((1, 2)));
         assert!(ok((2, 2)));
-        assert!(!ok((3, 2)));
-        assert!(matches!(
-            Supports::<Between, (i64, i64)>::check(&Ope, &(1, -1)),
-            Err(Error::Term(TermError::InvertedRange))
-        ));
-        assert!(Supports::<Lt, u8>::check(&Ore, &7).is_ok());
+        assert!(ok((3, 2)));
+        assert!(Supports::<Between, (i64, i64)>::check(&Ope, &(1, -1)).is_ok());
+        assert!(Supports::<Lt, u16>::check(&Ore, &7).is_ok());
         assert!(Supports::<Gte, i128>::check(&Ope, &-7).is_ok());
     }
 }
