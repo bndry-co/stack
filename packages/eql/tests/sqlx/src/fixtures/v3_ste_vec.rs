@@ -144,6 +144,7 @@ pub async fn generate() -> Result<()> {
 mod tests {
     use super::*;
 
+    /// The documents have the shape the `$.hello` rule and the leaf tests rely on.
     #[test]
     fn documents_are_ten_rows_with_distinct_hello_and_varying_number() {
         let docs = documents();

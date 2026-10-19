@@ -30,6 +30,7 @@ impl sqlx::Type<sqlx::Postgres> for JsonbEntryInteger {
 }
 
 impl<'r> sqlx::Decode<'r, sqlx::Postgres> for JsonbEntryInteger {
+    /// Decodes the wrapped integer, the same as `i32`.
     fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         Ok(JsonbEntryInteger(
             <i32 as sqlx::Decode<sqlx::Postgres>>::decode(value)?,
@@ -139,6 +140,7 @@ impl OrderedScalar for JsonbEntryInteger {
 mod tests {
     use super::*;
 
+    /// The entry oracle is the integer oracle, wrapped.
     #[test]
     fn delegates_oracle_to_integer() {
         // Same forward result set as i32 for a representative op/pivot.

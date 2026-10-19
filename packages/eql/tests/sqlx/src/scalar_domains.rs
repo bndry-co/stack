@@ -1392,6 +1392,7 @@ pub struct ScalarDomainSpec {
 }
 
 impl ScalarDomainSpec {
+    /// The spec for scalar `T` under `variant`, read from `T`'s `ScalarType` methods.
     pub fn new<T: ScalarType>(variant: Variant) -> Self {
         Self {
             sql_domain: T::sql_domain(variant),
@@ -1698,6 +1699,7 @@ mod helper_panic_tests {
         let _ = commute_op("@>");
     }
 
+    /// The forward oracle refuses an operator it has no rule for.
     #[test]
     #[should_panic(expected = "expected_forward: unsupported operator")]
     fn expected_forward_panics_on_unsupported() {

@@ -39,6 +39,7 @@ pub struct OpSelectorCandidate {
 }
 
 impl std::fmt::Display for OpSelectorCandidate {
+    /// One candidate per line in `pick_one`'s listing: the selector, then its profile.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -160,11 +161,13 @@ pub(crate) fn test_candidate(
 mod tests {
     use super::*;
 
+    /// A candidate in a 10-row fixture with one (132) or two (132/148) op lengths.
     fn candidate(selector: &str, rows: i64, lengths: i64) -> OpSelectorCandidate {
         let (max, rows_at_max) = if lengths > 1 { (148, 1) } else { (132, rows) };
         test_candidate(selector, rows, 10, lengths, 132, max, rows_at_max)
     }
 
+    /// A sample selection rule for the `pick_one` tests.
     fn two_lengths_on_every_row(c: &OpSelectorCandidate) -> bool {
         c.rows == c.total_rows && c.distinct_op_lengths == 2
     }
@@ -212,6 +215,7 @@ mod tests {
         assert!(err.contains("no op-carrying sv entry"), "{err}");
     }
 
+    /// The candidate SQL reads the table it is given, as bare jsonb.
     #[test]
     fn candidate_sql_reads_the_named_table() {
         let sql = op_selector_candidates_sql("fixtures.v3_ste_vec");

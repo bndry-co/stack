@@ -155,6 +155,8 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The guard itself: no `.rs` file under `src/` or `tests/` holds a
+/// random-looking standalone 32-hex run.
 #[test]
 fn no_workspace_keyed_selector_literals() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -224,6 +226,7 @@ mod classifier {
         assert_eq!(selector_literals(&escaped), vec![r.as_str()]);
     }
 
+    /// A run with a word character on either side is part of something longer.
     #[test]
     fn ignores_a_run_inside_a_longer_word() {
         let r = random_looking();
@@ -345,6 +348,7 @@ mod classifier {
         }
     }
 
+    /// Only exactly 32 hex characters is selector-shaped.
     #[test]
     fn ignores_other_lengths() {
         let r = random_looking();
