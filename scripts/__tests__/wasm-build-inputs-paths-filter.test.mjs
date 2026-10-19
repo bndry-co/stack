@@ -327,14 +327,39 @@ function compilesFfiRust(relPath) {
  * one. `tests.yml` and `tests-rust.yml` are both half-cases: `push` is
  * `branches: [main]` with no filter, so only their `pull_request` lists are
  * here. `tests.yml`'s is `'**'` with one negation, which `filterCovers` reads.
-
+ *
+ * `tests.yml` also gates its live jobs inside the run, through its `changes`
+ * job (see `dornyGate`), and that list is the one that decides whether the
+ * binding's suites start on a pull request. It is checked here too, as the
+ * `pull_request (changes job)` event.
  */
 function filteredEvents(relPath) {
   const wf = readWorkflow(relPath)
   const on = wf?.on ?? wf?.[true]
-  return FILTERED_EVENTS.filter((event) =>
+  const events = FILTERED_EVENTS.filter((event) =>
     Array.isArray(on?.[event]?.paths),
   ).map((event) => ({ relPath, event, paths: on[event].paths }))
+  const gate = dornyGate(wf)
+  if (gate)
+    events.push({ relPath, event: 'pull_request (changes job)', paths: gate })
+  return events
+}
+
+/**
+ * A `changes` job splitting its question into a `rest` list (`**` minus
+ * exclusions, `predicate-quantifier: every`) and a `direct` list re-including
+ * paths inside them, as one ordered `paths:`-style list: later entries win, so
+ * appending `direct` re-includes exactly what it names.
+ * tests-workflow-gate.test.mjs holds the shape this relies on.
+ */
+function dornyGate(wf) {
+  const steps = wf?.jobs?.changes?.steps ?? []
+  const list = (id) =>
+    yaml.load(steps.find((step) => step.id === id)?.with?.filters ?? '')?.js
+  const rest = list('rest')
+  const direct = list('direct')
+  if (!Array.isArray(rest) || !Array.isArray(direct)) return null
+  return [...rest, ...direct]
 }
 
 const ALL_WORKFLOWS = workflowFiles()
