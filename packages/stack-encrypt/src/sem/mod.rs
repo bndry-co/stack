@@ -244,18 +244,56 @@ pub enum TermError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Bytes(#[from] TermBytesError),
+    /// A JSON accessor's path is not one the JSON index addresses — see
+    /// [`JsonPathError`](crate::json::JsonPathError).
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    JsonPath(#[from] crate::json::JsonPathError),
+    /// A JSON document nests deeper than the JSON index walks.
+    #[error("the JSON document nests too deep for the JSON index")]
+    #[diagnostic(
+        code(stack_encrypt::json_too_deep),
+        help("The JSON index walks a document 512 levels deep. Flatten the document, or store it as a ciphertext without the index.")
+    )]
+    JsonTooDeep,
+    /// A JSON array has more elements than the JSON index numbers.
+    #[error("a JSON array is too wide for the JSON index")]
+    #[diagnostic(code(stack_encrypt::json_too_wide))]
+    JsonTooWide,
+    /// A subtree key was asked for the root, or a path whose first step is
+    /// a wildcard, of a JSON index whose root is sealed: no token exists
+    /// for the root, by design, and the document opens whole instead.
+    #[error("the sealed root of a JSON document has no subtree token")]
+    #[diagnostic(
+        code(stack_encrypt::json_sealed_root),
+        help("Under the sealed root (the default) the chain starts at the top-level fields: walk a subtree from `$.field` down, or open the whole document.")
+    )]
+    JsonSealedRoot,
+    /// An ordering at a JSON path was asked with a value that is neither a
+    /// number nor a string, the only leaves the index orders.
+    #[error("an ordering at a JSON path takes a number or a string")]
+    #[diagnostic(
+        code(stack_encrypt::json_leaf_not_ordered),
+        help("The JSON index derives an ordering term for number and string leaves only: query `op::AtPath(op::Eq)` for a boolean or a null.")
+    )]
+    JsonLeafNotOrdered,
 }
 
 impl crate::ErrorPayload for TermError {
     fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
         match self {
             Self::Bytes(error) => error.payload(),
+            Self::JsonPath(error) => error.payload(),
             Self::Prf(_)
             | Self::Ore(_)
             | Self::InvalidOptions(_)
             | Self::EmptyTermText
             | Self::NoEqualityTerm
-            | Self::Normalize(_) => serde_json::Map::new(),
+            | Self::Normalize(_)
+            | Self::JsonTooDeep
+            | Self::JsonTooWide
+            | Self::JsonSealedRoot
+            | Self::JsonLeafNotOrdered => serde_json::Map::new(),
         }
     }
 }
@@ -325,7 +363,7 @@ impl crate::ErrorPayload for TermBytesError {
 }
 
 impl TermError {
-    fn from_prf<E>(err: PrfError<E>) -> Self
+    pub(crate) fn from_prf<E>(err: PrfError<E>) -> Self
     where
         E: std::error::Error + Send + Sync + 'static,
     {
@@ -1424,8 +1462,10 @@ fn ore<T: Orderable>(
 }
 
 /// Derive an OPE term — as [`ore`], under the OPE domain so the two schemes
-/// never share a key.
-fn ope<T: Orderable>(
+/// never share a key. Crate-visible: the JSON index derives its leaf
+/// ordering terms through it, under the column's context, so a leaf's `op`
+/// is the term the scalar `Ope` index would store for the same value.
+pub(crate) fn ope<T: Orderable>(
     prf: &HmacSha256Prf,
     value: T,
     context: Context<'_>,

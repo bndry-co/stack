@@ -1,6 +1,7 @@
-//! The JSON operators are declared and answered by no index: this crate has
-//! no JSON index, so a containment query and a query at a path do not
-//! compile on any plan.
+//! The JSON operators are answered by the JSON index alone, over a
+//! `serde_json::Value`: on a plan over text with an equality index, a
+//! containment query and a query at a path do not compile, because the plan
+//! declares no index that answers them and its plaintext is not a document.
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::op;
 use stack_encrypt::{Equality, Plan, StackCipher};

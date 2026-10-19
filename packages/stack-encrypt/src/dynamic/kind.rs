@@ -103,6 +103,9 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
     if admits(kind, index) {
         return None;
     }
+    if matches!(index, IndexSpec::Json(_)) {
+        return Some(Reason::JsonIndexPending);
+    }
     let ordering = matches!(index, IndexSpec::Ore | IndexSpec::Ope);
     let pending = matches!(
         kind,

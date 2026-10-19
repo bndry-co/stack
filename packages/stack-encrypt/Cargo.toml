@@ -46,8 +46,14 @@ vitaminc-protected = { workspace = true }
 # control data (statistics, options, a plan) into typed messages.
 vitaminc-aead-frame = { workspace = true, optional = true, features = ["serde"] }
 serde = { workspace = true }
-# `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
+# `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS,
+# and the JSON index's ciphertext and header fields on the wire.
 base64ct = { version = "1.7", features = ["alloc"] }
+# The JSON index's token chain: SHA-256 is what links a node to its
+# children, because core PostgreSQL computes `sha256(bytea)` and can walk
+# the chain server-side (`json` module). The same version vitaminc-hmac
+# already builds, so nothing new is compiled.
+sha2 = "0.11"
 
 cllw-ore = { workspace = true }
 # Every error derives `miette::Diagnostic` (a code, and help where a caller

@@ -7,12 +7,26 @@ error[E0277]: `u32` is not what a query of arity `Pair` takes
    |                    required by a bound introduced by this call
    |
    = help: the trait `Input<Pair>` is not implemented for `u32`
-   = note: an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes no input yet: it arrives with the JSON index
-help: the trait `Input<Pair>` is implemented for `(S, S)`
+   = note: an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes a path and the leaf's input, `&("$.a", value)` or `&("$.a", (lo, hi))`
+help: the following other types implement trait `Input<A>`
   --> src/op/mod.rs
    |
-   | impl<S: 'static> Input<Pair> for (S, S) {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |   impl<S: 'static> Input<Pair> for (S, S) {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(S, S)` implements `Input<Pair>`
+   |
+  ::: src/json/query.rs
+   |
+   | / impl<P, V> Input<Pathed<One>> for (P, V)
+   | | where
+   | |     P: AsRef<str> + 'static,
+   | |     V: Into<Value> + 'static,
+   | |_____________________________^ `(P, V)` implements `Input<Pathed<stack_encrypt::op::One>>`
+...
+   | / impl<P, V> Input<Pathed<Pair>> for (P, (V, V))
+   | | where
+   | |     P: AsRef<str> + 'static,
+   | |     V: Into<Value> + 'static,
+   | |_____________________________^ `(P, (V, V))` implements `Input<Pathed<Pair>>`
 note: required by a bound in `plan::chain::<impl StackCipher<K>>::query`
   --> src/plan/chain.rs
    |

@@ -274,6 +274,7 @@ mod codes;
 pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
+pub mod json;
 pub mod keyset;
 pub mod op;
 pub mod plan;
@@ -300,8 +301,8 @@ pub use stack_kms as kms;
 pub use stack_kms::{diagnostic, ErrorPayload};
 pub use target::{
     CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption,
-    EncryptFrom, EncryptInto, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Match,
-    Ope, Ore, Pending, PendingFuture, Request, Responses, TermSet,
+    EncryptFrom, EncryptInto, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Json,
+    Match, Ope, Ore, Pending, PendingFuture, Request, Responses, TermSet,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they

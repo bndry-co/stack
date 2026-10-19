@@ -1997,6 +1997,7 @@ dependencies = [
  "miette",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "stack-encrypt-derive",
  "stack-kms",
  "thiserror 1.0.69",

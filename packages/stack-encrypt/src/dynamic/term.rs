@@ -44,6 +44,7 @@ use vitaminc_normalize::{domain_of, normalize, NormalizeError};
 use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Error, Reason};
+use crate::json::JsonOptions;
 use crate::sem::{DefaultMatch, MatchOptions, Orderable, QueryTokens, TermError, Tokenizer};
 use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
@@ -69,13 +70,24 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 /// Every option is optional and defaults to [`MatchOptions::default`]'s
 /// value; an unknown option, an option given twice, or options that fail
 /// the match scheme's bounds (`k` in `3..=16`, `m` a power of two in
-/// `[32, 65536]`, a non-zero n-gram length) are refused. The other three
+/// `[32, 65536]`, a non-zero n-gram length) are refused.
+///
+/// A JSON index is `"json"`, or an object mapping `"json"` to its options:
+///
+/// ```text
+/// { "json": { "sealed_root": <bool> } }
+/// ```
+///
+/// `sealed_root` defaults to `true` ([`JsonOptions::default`]). A data plan
+/// reads and writes the JSON index and refuses to run it
+/// ([`Reason::JsonIndexPending`]): the engine's typed path produces a JSON
+/// document, and the binding's half is not written yet. The other three
 /// indexes have no options and no object form.
 ///
 /// Serialized (it is `Serialize`), an index writes the string whenever the
-/// options are the defaults and the object, with all four options,
-/// otherwise, so a default plan is byte-for-byte what it was before options
-/// had a wire form.
+/// options are the defaults and the object, with every option, otherwise,
+/// so a default plan is byte-for-byte what it was before options had a
+/// wire form.
 impl IndexSpec {
     /// The index a bare key names, under default options, or `None` for a
     /// string that is not an index key.
@@ -85,6 +97,7 @@ impl IndexSpec {
             "match" => IndexSpec::Match(MatchOptions::default()),
             "ore" => IndexSpec::Ore,
             "ope" => IndexSpec::Ope,
+            "json" => IndexSpec::Json(JsonOptions::default()),
             _ => return None,
         })
     }
@@ -149,6 +162,9 @@ impl IndexSpec {
             IndexSpec::Equality => domain_of(ty, value).is_some(),
             IndexSpec::Match(_) => ty.is_none() && matches!(value, Physical::Text(_)),
             IndexSpec::Ore | IndexSpec::Ope => ty.is_none() && ordered(value),
+            // A document, not a scalar: the dynamic path has no term for it
+            // yet, and the typed path takes a `serde_json::Value`.
+            IndexSpec::Json(_) => false,
         }
     }
 }
@@ -181,6 +197,13 @@ impl Serialize for IndexSpec {
             Match(MatchOut),
             Ore,
             Ope,
+            #[serde(rename = "json")]
+            DefaultJson,
+            Json(JsonOut),
+        }
+        #[derive(Serialize)]
+        struct JsonOut {
+            sealed_root: bool,
         }
         #[derive(Serialize)]
         struct MatchOut {
@@ -209,15 +232,20 @@ impl Serialize for IndexSpec {
             }),
             IndexSpec::Ore => Out::Ore,
             IndexSpec::Ope => Out::Ope,
+            IndexSpec::Json(options) if *options == JsonOptions::default() => Out::DefaultJson,
+            IndexSpec::Json(options) => Out::Json(JsonOut {
+                sealed_root: options.sealed_root,
+            }),
         }
         .serialize(s)
     }
 }
 
 /// An index in its wire form, as serde reads it from a frame (see
-/// [`IndexSpec`'s docs](IndexSpec#wire-form)): a key, or for a match index a
-/// one-entry object mapping `"match"` to its options. A bare `"match"`, and
-/// `{"match": null}`, are the default options.
+/// [`IndexSpec`'s docs](IndexSpec#wire-form)): a key, or for a match or
+/// JSON index a one-entry object mapping its key to its options. A bare
+/// `"match"`, and `{"match": null}`, are the default match options, and
+/// likewise `"json"`.
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(super) enum IndexWire {
@@ -225,6 +253,7 @@ pub(super) enum IndexWire {
     Match(Option<MatchWire>),
     Ore,
     Ope,
+    Json(Option<JsonWire>),
 }
 
 impl From<IndexWire> for IndexSpec {
@@ -234,7 +263,35 @@ impl From<IndexWire> for IndexSpec {
             IndexWire::Match(options) => IndexSpec::Match(options.map(|o| o.0).unwrap_or_default()),
             IndexWire::Ore => IndexSpec::Ore,
             IndexWire::Ope => IndexSpec::Ope,
+            IndexWire::Json(options) => IndexSpec::Json(options.map(|o| o.0).unwrap_or_default()),
         }
+    }
+}
+
+/// A JSON index's options object: each option optional, defaulting to
+/// [`JsonOptions::default`]'s.
+#[derive(Deserialize)]
+#[serde(from = "JsonOptionsWire")]
+pub(super) struct JsonWire(pub(super) JsonOptions);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct JsonOptionsWire {
+    sealed_root: bool,
+}
+
+impl Default for JsonOptionsWire {
+    fn default() -> Self {
+        let JsonOptions { sealed_root } = JsonOptions::default();
+        Self { sealed_root }
+    }
+}
+
+impl From<JsonOptionsWire> for JsonWire {
+    fn from(wire: JsonOptionsWire) -> Self {
+        JsonWire(JsonOptions {
+            sealed_root: wire.sealed_root,
+        })
     }
 }
 
@@ -480,6 +537,8 @@ where
         }
         IndexSpec::Ore => ore_of(cipher, value, context).ok_or(None),
         IndexSpec::Ope => ope_of(cipher, value, context).ok_or(None),
+        // `takes` refused it above: no scalar is a document.
+        IndexSpec::Json(_) => Err(None),
     }
 }
 

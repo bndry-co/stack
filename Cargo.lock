@@ -3276,6 +3276,7 @@ dependencies = [
  "miette",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "stack-auth",
  "stack-encrypt-derive",
  "stack-kms",

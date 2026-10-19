@@ -534,6 +534,11 @@ reasons! {
         /// releases that encode them the ADR-0002 way (#1236); equality on
         /// them works today.
         OrderTermPending => "order_term_pending", "an order index on a decimal, date or timestamp waits for new cllw-ore and ore-rs releases (#1236)";
+        /// The field declares the JSON index, which a data plan names but
+        /// cannot run yet: the engine's typed path produces a JSON
+        /// document, and the binding's half, a document plaintext and its
+        /// EQL target, is not written.
+        JsonIndexPending => "json_index_pending", "the JSON index has no data-plan form yet";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";
         /// The plan has no field of the name asked for.

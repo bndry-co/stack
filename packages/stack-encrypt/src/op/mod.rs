@@ -6,9 +6,9 @@
 //! plan it runs on finds the index that answers it. The operator is a unit
 //! type passed by value, as an index is (`.via(Ore)`), and it decides what
 //! the query takes: one value for most, a pair of bounds for `Between`, a
-//! path and the leaf operator's input for `AtPath`. No index answers the
-//! JSON operators yet: this crate has no JSON index, so a query with one
-//! does not compile until that index exists.
+//! path and the leaf operator's input for `AtPath`. The JSON operators are
+//! answered by the [`Json`](struct@crate::target::Json) index, over a
+//! `serde_json::Value`.
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
@@ -51,8 +51,8 @@
 //! operator's input ([`Pathed<A>`](Pathed), where `A` is the leaf's arity).
 //! [`Input<A>`] says, for the value a query is given, which plaintext the
 //! index is declared over (`S` for `(S, S)`), so the plan's type is checked
-//! against it. No input of a `Pathed` arity exists until the JSON index
-//! does.
+//! against it. An input of a `Pathed` arity is a path and the leaf's input,
+//! `("$.address.city", "Sydney")`, over the JSON index's document.
 //!
 //! What the types can see is checked at compile time: a match query on an
 //! integer, an ordering on bytes, an operator a target type does not answer,
@@ -155,14 +155,14 @@ impl Operator for Between {
 }
 
 /// JSON containment: rows whose document contains the query's document
-/// (`@>`). Exact. Declared by ADR-0009 and answered by no index yet: this
-/// crate has no JSON index, so a query with it does not compile until one
-/// exists.
+/// (`@>`). Exact, as PostgreSQL's own `jsonb @>` is, across array elements
+/// included: answered by the [`Json`](struct@crate::target::Json) index with a
+/// [`JsonQuery`](crate::json::JsonQuery).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Contains;
 
 /// JSON containment the other way: rows whose document is contained by
-/// the query's (`<@`). Exact, and answered by no index yet, as
+/// the query's (`<@`). Exact, and answered by the JSON index, as
 /// [`Contains`] is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ContainedBy;
@@ -177,10 +177,13 @@ pub struct ContainedBy;
 /// since neither is one selector and value.
 ///
 /// Its arity is [`Pathed<Op::Arity>`](Pathed), so `AtPath<Eq>` (a path and
-/// a value) and `AtPath<Between>` (a path and a pair of bounds) take
-/// different inputs. No input of it exists yet: the path becomes a
-/// selector only a JSON index can derive, and this crate has none, so a
-/// query with `AtPath` does not compile until that index exists.
+/// a value, `("$.address.city", "Sydney")`) and `AtPath<Between>` (a path
+/// and a pair of bounds, `("$.score", (10, 20))`) take different inputs.
+/// The path is parsed when the query is checked
+/// ([`JsonPath`](crate::json::JsonPath)); the JSON index answers `Eq` with
+/// containment and the orderings with a leaf term. `AtPath<Matches>` is
+/// declared and answered by nothing: the index derives no match term at a
+/// leaf.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct AtPath<Op>(pub Op);
 
@@ -238,8 +241,9 @@ pub struct Pair;
 /// A path and a leaf operator's input, of the leaf's arity `A`: what
 /// [`AtPath<Op>`] takes. `Pathed<One>` is a path and a value,
 /// `Pathed<Pair>` a path and a pair of bounds, so an input can derive one
-/// term or two as the leaf needs. No [`Input`] of this arity exists yet;
-/// it arrives with the JSON index, whose selector the path becomes.
+/// term or two as the leaf needs. Its [`Input`]s are `(P, V)` and `(P, (V,
+/// V))` for any path text `P` and any `V` that converts into a
+/// `serde_json::Value`, over the JSON index's document.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Pathed<A>(PhantomData<A>);
 
@@ -254,13 +258,15 @@ impl LeafArity for Pair {}
 /// an input of [`Pair`] over `S`. The chain's value type is the input, and
 /// the plan is checked against the plaintext.
 ///
-/// Those are the two impls; an input of [`Pathed`] arrives with the JSON
-/// index. The arity decides how the chain derives terms from the input,
-/// which is what [`derive`](Self::derive) does.
+/// A `(P, V)` is an input of [`Pathed<One>`] over a `serde_json::Value`,
+/// and a `(P, (V, V))` of [`Pathed<Pair>`]: the path and the value become
+/// the document that holds the value at the path, and the JSON index's
+/// terms of it. The arity decides how the chain derives terms from the
+/// input, which is what [`derive`](Self::derive) does.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not what a query of arity `{A}` takes",
     label = "the operator takes another input",
-    note = "an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes no input yet: it arrives with the JSON index"
+    note = "an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes a path and the leaf's input, `&(\"$.a\", value)` or `&(\"$.a\", (lo, hi))`"
 )]
 pub trait Input<A: Arity>: Sized + 'static {
     /// The plaintext the index is declared over.
@@ -832,7 +838,7 @@ impl<Op: Operator, In: Input<Op::Arity>, T: Answers<Op, In>> Answers<Op, In>
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no default index given `{In}`",
     label = "no default index answers this operator here",
-    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; name another index, such as `Ope`, with `.via(index)`; no index answers `op::Contains`, `op::ContainedBy` or `op::AtPath` yet, since this crate has no JSON index"
+    note = "`op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; name another index, such as `Ope`, with `.via(index)`; `op::Contains`, `op::ContainedBy` and `op::AtPath` default to `Json` over a `serde_json::Value`"
 )]
 pub trait DefaultIndex<In: Input<Self::Arity>>: Operator {
     /// The index. An index is a unit type, so its `Default` is the index.
