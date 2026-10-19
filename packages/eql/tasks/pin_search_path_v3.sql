@@ -12,7 +12,7 @@
 --! satisfying Supabase splinter's `function_search_path_mutable` lint.
 --!
 --! @note A SET clause disables SQL-function inlining. The inline-critical SEM
---!       helpers (ore_block_256_*, ope_cllw, hmac_256, bloom_filter over
+--!       helpers ({{ore_block}}_*, ope_cllw, hmac_256, bloom_filter over
 --!       jsonb) and the encrypted-domain family (recognised structurally,
 --!       including public user-column domains) are deliberately left
 --!       unpinned.
@@ -43,9 +43,9 @@ BEGIN
   WHERE n.nspname = ANY({{prefix}}_internal.owned_schemas())
     AND (
       (p.pronargs = 2
-        AND p.proname IN ('ore_block_256_eq', 'ore_block_256_neq',
-                          'ore_block_256_lt', 'ore_block_256_lte',
-                          'ore_block_256_gt', 'ore_block_256_gte'))
+        AND p.proname IN ('{{ore_block}}_eq', '{{ore_block}}_neq',
+                          '{{ore_block}}_lt', '{{ore_block}}_lte',
+                          '{{ore_block}}_gt', '{{ore_block}}_gte'))
       -- The CLLW-OPE surface is the extractor alone: {{prefix}}_internal.ope_cllw is a
       -- domain over bytea (native comparison operators and btree opclass),
       -- so there are no ope-specific comparison functions to keep inlinable.

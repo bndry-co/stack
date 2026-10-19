@@ -21,14 +21,14 @@
 --! the public `{{prefix}}` surface.
 --!
 --! @param r {{prefix}}.query_double_range_ore Range query operand
---! @return {{prefix}}_internal.ore_block_256 The low bound's term (included in the range), or NULL for a NULL range
+--! @return {{prefix}}_internal.{{ore_block}} The low bound's term (included in the range), or NULL for a NULL range
 --! @note IMMUTABLE and STRICT. It is evaluated once per query when
 --!       `{{prefix}}.between` is served by an index, since its argument is the
 --!       query's parameter, not a column.
 CREATE FUNCTION {{prefix}}_internal.lo(r {{prefix}}.query_double_range_ore)
-RETURNS {{prefix}}_internal.ore_block_256
+RETURNS {{prefix}}_internal.{{ore_block}}
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}_internal.ore_block_256(jsonb_build_object('ob', r::jsonb -> 'lo')) $$;
+AS $$ SELECT {{prefix}}_internal.{{ore_block}}(jsonb_build_object('ob', r::jsonb -> 'lo')) $$;
 
 --! @brief The high bound of a {{prefix}}.query_double_range_ore, as a block ORE term.
 --!
@@ -38,14 +38,14 @@ AS $$ SELECT {{prefix}}_internal.ore_block_256(jsonb_build_object('ob', r::jsonb
 --! the public `{{prefix}}` surface.
 --!
 --! @param r {{prefix}}.query_double_range_ore Range query operand
---! @return {{prefix}}_internal.ore_block_256 The high bound's term (included in the range), or NULL for a NULL range
+--! @return {{prefix}}_internal.{{ore_block}} The high bound's term (included in the range), or NULL for a NULL range
 --! @note IMMUTABLE and STRICT. It is evaluated once per query when
 --!       `{{prefix}}.between` is served by an index, since its argument is the
 --!       query's parameter, not a column.
 CREATE FUNCTION {{prefix}}_internal.hi(r {{prefix}}.query_double_range_ore)
-RETURNS {{prefix}}_internal.ore_block_256
+RETURNS {{prefix}}_internal.{{ore_block}}
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}_internal.ore_block_256(jsonb_build_object('ob', r::jsonb -> 'hi')) $$;
+AS $$ SELECT {{prefix}}_internal.{{ore_block}}(jsonb_build_object('ob', r::jsonb -> 'hi')) $$;
 
 --! @brief The low bound of a {{prefix}}.query_double_range_ope, as a CLLW OPE term.
 --!
@@ -97,7 +97,7 @@ AS $$ SELECT {{prefix}}_internal.ope_cllw(jsonb_build_object('op', r::jsonb -> '
 --!       stop inlining. Inlined, the planner sees two comparisons on
 --!       `{{prefix}}.ord_term_ore(a)`, which a btree index on that expression
 --!       serves as one range scan. For this ORE range that index needs the
---!       default btree operator class on {{prefix}}_internal.ore_block_256, which the
+--!       default btree operator class on {{prefix}}_internal.{{ore_block}}, which the
 --!       installer creates only with superuser privileges. Without it (on Supabase,
 --!       for instance) the installer disables the ORE column domains and this ORE range,
 --!       so use an OPE column (`public.{{prefix}}_double_ord`, `public.{{prefix}}_double_ord_ope`)

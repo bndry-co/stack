@@ -48,6 +48,23 @@ pub(crate) const PUBLIC_TYPNAME_PREFIX: &str = "{{prefix}}_";
 /// The payload version every domain CHECK compares `VALUE->>'v'` against.
 pub(crate) const EQL_VERSION: &str = "{{eql_version}}";
 
+/// The block ORE term type's name, which differs between the versions:
+/// `ore_block_256` in `eql_v3`, `ore_block_v2` in `eql_v4`
+/// ([`crate::render`]). [`eql_domains::Term::ctor`] stays the `eql_v3` name,
+/// which the Rust bindings and the catalog dump report; the generated SQL
+/// writes this placeholder in its place ([`sql_ctor`]).
+pub(crate) const ORE_BLOCK: &str = "{{ore_block}}";
+
+/// The constructor name a term's generated SQL calls: [`ORE_BLOCK`] for the
+/// block ORE term, whose name follows the version, and
+/// [`eql_domains::Term::ctor`] for the rest.
+pub(crate) fn sql_ctor(term: eql_domains::Term) -> &'static str {
+    match term {
+        eql_domains::Term::Ore => ORE_BLOCK,
+        other => other.ctor(),
+    }
+}
+
 /// Always-present payload keys checked for presence in every domain CHECK.
 /// Term-specific keys are appended after these by `context::domain_block`.
 /// Defined in the catalog (`eql_domains::ENVELOPE_KEYS`) so the CHECKs and

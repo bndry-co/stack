@@ -995,7 +995,7 @@ impl Drop for NonSuperuserDatabase {
 
 /// Needs an EQL v4 installation, and a superuser on `EQL_TEST_DATABASE_URL`
 /// who can create a role and a database. A non-superuser install skips the
-/// `ore_block_256` btree opclass, and `ore_fallback.sql` disables the
+/// block ORE btree opclass, and `ore_fallback.sql` disables the
 /// single-bound ORE domains. Every ORE range domain is disabled the same way,
 /// naming its family's OPE range, which stays usable. The bundle is the one
 /// `mise run test:encryption:postgres` builds and installs.
@@ -1017,7 +1017,7 @@ fn postgres_a_non_superuser_install_disables_the_ore_ranges() {
             "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_opclass c
                JOIN pg_catalog.pg_am am ON am.oid = c.opcmethod
               WHERE am.amname = 'btree' AND c.opcdefault
-                AND c.opcintype = 'eql_v4_internal.ore_block_256'::pg_catalog.regtype)",
+                AND c.opcintype = 'eql_v4_internal.ore_block_v2'::pg_catalog.regtype)",
             &[],
         )
         .unwrap()
