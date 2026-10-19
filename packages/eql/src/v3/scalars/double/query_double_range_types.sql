@@ -46,7 +46,11 @@ BEGIN
         AND jsonb_array_length(VALUE -> 'lo') > 0
         AND jsonb_typeof(VALUE -> 'hi') = 'array'
         AND jsonb_array_length(VALUE -> 'hi') > 0
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL range still passes (no row
+        -- matches it). The comparison keeps the one form the v4 isolation
+        -- gate accepts.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 
@@ -67,7 +71,11 @@ BEGIN
         AND NOT (VALUE ? 'c')
         AND jsonb_typeof(VALUE -> 'lo') = 'string'
         AND jsonb_typeof(VALUE -> 'hi') = 'string'
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL range still passes (no row
+        -- matches it). The comparison keeps the one form the v4 isolation
+        -- gate accepts.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 

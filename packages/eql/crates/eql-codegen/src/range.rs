@@ -393,7 +393,7 @@ mod tests {
             "jsonb_array_length(VALUE -> 'lo') > 0",
             "jsonb_typeof(VALUE -> 'hi') = 'array'",
             "jsonb_array_length(VALUE -> 'hi') > 0",
-            "VALUE->>'v' = '4'",
+            "COALESCE(VALUE->>'v' = '4', VALUE IS NULL)",
         ] {
             assert!(ore.contains(clause), "ORE range lacks {clause}:\n{ore}");
         }

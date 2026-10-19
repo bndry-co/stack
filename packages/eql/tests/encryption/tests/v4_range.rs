@@ -629,6 +629,16 @@ fn postgres_range_domains_check_their_shape() {
                 "EQL v4 only",
             ),
             (
+                with(&ore, &|v| v["v"] = json!(null)),
+                "query_integer_range_ore",
+                "a JSON null version is not v4",
+            ),
+            (
+                with(&ope, &|v| v["v"] = json!(null)),
+                "query_integer_range_ope",
+                "a JSON null version is not v4",
+            ),
+            (
                 with(&ore, &|v| {
                     v.as_object_mut().unwrap().remove("hi");
                 }),
