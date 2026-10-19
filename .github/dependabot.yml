@@ -299,7 +299,7 @@ updates:
       - dependency-name: "recipher"
       - dependency-name: "cllw-ore"
       # vitaminc is pinned at 0.5.0 across the crates and the guests; the
-      # guests' `FfiValue: Decrypt` bound fails if two versions resolve.
+      # guests' `ValueFrame: Decrypt` bound fails if two versions resolve.
       - dependency-name: "vitaminc*"
       # Major bumps are reviewed and applied manually, not by Dependabot.
       - dependency-name: "*"

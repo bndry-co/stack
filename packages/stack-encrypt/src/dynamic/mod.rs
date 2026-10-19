@@ -86,7 +86,6 @@
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
-mod ffi_value;
 mod kind;
 mod query;
 pub mod record;
@@ -99,17 +98,10 @@ mod value_frame;
 use std::fmt;
 
 pub use context::{borrowed, context};
-/// The tree a binding's control data decodes into, and the value kinds, the
-/// type a plan field declares in its `"type"` key. A kind's names are frozen
-/// wire format; see [`admits`] and [`read`] for what a kind means to this
-/// engine. Control data crosses a binding's boundary as a transport frame
-/// ([`FfiValue::to_frame`], [`FfiValue::from_frame`]); a plaintext crosses
-/// as one too, and stays one ([`ValueFrame`]).
-pub use ffi_value::{
-    Element, Entry, FfiValue, FromFrameError, ParseValueKindError, Put, Root, Utf8String,
-    ValueKind, ValueMap, ValueSeq, ValueSink,
-};
-pub use kind::{admits, not_admitted, read};
+/// The value kinds, the type a plan field declares in its `"type"` key. A
+/// kind's names are frozen wire format; see [`admits`] and [`read`] for what
+/// a kind means to this engine.
+pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
 pub use query::{
     check_query, field_operators, query_term, target_limit, verify, Fidelity, OpSpec, Operand,
     OperatorEntry, QueryTerm,
@@ -117,7 +109,7 @@ pub use query::{
 pub use record::{FieldPlan, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
 pub use term::{term, TermBytes};
-pub use value_frame::{Children, Modeled, Opening, ValueFrame};
+pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
 
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
@@ -158,13 +150,6 @@ impl<K> fmt::Debug for Scope<'_, K> {
             Scope::Keyset(keyset) => f.debug_tuple("Keyset").field(keyset).finish(),
         }
     }
-}
-
-/// The UTF-8 inside a string leaf, for tests. Valid by `Utf8String`'s
-/// construction invariant; checked rather than assumed.
-#[cfg(test)]
-fn utf8(s: &Utf8String) -> Option<&str> {
-    std::str::from_utf8(s.risky_ref()).ok()
 }
 
 /// Bytes, written as a frame's bytes leaf rather than a list of integers.

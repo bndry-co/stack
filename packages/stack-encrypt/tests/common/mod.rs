@@ -250,3 +250,41 @@ pub fn passthrough_u32(payload: &stack_encrypt::PassthroughFrame) -> u32 {
     let frame = payload.parse().expect("one frame");
     vitaminc_aead::Encrypt::visit(frame, u32::sink()).expect("a u32")
 }
+
+/// Values as a binding sends them: Rust values written as frames, and an
+/// object of them in the order a test writes it.
+#[cfg(feature = "dynamic")]
+pub mod frames {
+    use stack_encrypt::dynamic::ValueFrame;
+    use stack_encrypt::Encrypt;
+    use vitaminc_aead::plaintext::{visit_map, Sink};
+    use vitaminc_protected::Controlled;
+
+    /// A Rust value as its frame.
+    pub fn frame<T: Encrypt>(value: T) -> ValueFrame {
+        ValueFrame::of(value).expect("a value in the model")
+    }
+
+    /// An object of `entries`, in order.
+    pub fn object<K: AsRef<str>>(entries: Vec<(K, ValueFrame)>) -> ValueFrame {
+        frame(Object(entries))
+    }
+
+    /// A value as a passthrough node's payload: its frame, in the clear.
+    pub fn payload<T: Encrypt>(value: T) -> Vec<u8> {
+        frame(value).into_inner().risky_unwrap()
+    }
+
+    struct Object<K>(Vec<(K, ValueFrame)>);
+
+    impl<K: AsRef<str>> Encrypt for Object<K> {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let len = Some(self.0.len());
+            visit_map(
+                sink,
+                len,
+                self.0.iter().map(|(key, value)| (key.as_ref(), value)),
+            )
+        }
+    }
+}

@@ -699,7 +699,7 @@ pub fn check_query(
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{query_term, record, FfiValue, NoTargets, OpSpec, Operand};
+/// use stack_encrypt::dynamic::{query_term, record, NoTargets, OpSpec, Operand};
 /// use stack_encrypt::kms::FakeDataKeySource;
 /// use stack_encrypt::{op, Ore, Plan, StackCipher};
 ///
@@ -710,7 +710,7 @@ pub fn check_query(
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint32" },
 /// }))?)?;
 ///
-/// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, FfiValue::UInt32(40), &NoTargets)?.await?;
+/// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, 40u32, &NoTargets)?.await?;
 ///
 /// // The typed path's term for the same query.
 /// let typed_plan = Plan::context("users/age").with::<u32, _>(Ore).build()?;
@@ -1015,15 +1015,15 @@ impl<'de> serde::Deserialize<'de> for Confidence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dynamic::test_frame::Tree;
     use crate::dynamic::test_frame::{frame_of, value_of};
-    use crate::dynamic::FfiValue;
 
-    fn operator_value(operator: OpSpec, index: &IndexSpec) -> FfiValue {
+    fn operator_value(operator: OpSpec, index: &IndexSpec) -> Tree {
         value_of(&OperatorEntry::new(operator, index))
     }
 
     /// Statistics as a binding sends them.
-    fn stats_frame(value: &FfiValue) -> Result<Stats, Error> {
+    fn stats_frame(value: &Tree) -> Result<Stats, Error> {
         Stats::from_frame(&crate::dynamic::test_frame::frame_of(value))
     }
     use crate::dynamic::{record, NoTargets, TargetError};
@@ -1031,7 +1031,6 @@ mod tests {
     use crate::sem::MatchTerms;
     use crate::{Equality, Label, Match, Ope, Ore, StackCipher};
     use stack_kms::FakeDataKeySource;
-    use vitaminc_protected::Controlled;
 
     async fn cipher() -> StackCipher<FakeDataKeySource> {
         StackCipher::builder()
@@ -1041,24 +1040,24 @@ mod tests {
             .expect("build cipher")
     }
 
-    fn text(s: &str) -> FfiValue {
-        FfiValue::String(s.into())
+    fn text(s: &str) -> Tree {
+        Tree::String(s.into())
     }
 
-    fn vf(value: &FfiValue) -> ValueFrame {
+    fn vf(value: &Tree) -> ValueFrame {
         ValueFrame::of(value).expect("a value")
     }
 
     /// One field of `users`, as a binding spells it.
-    fn field(name: &str, kind: &str, outputs: Vec<FfiValue>) -> (String, FfiValue) {
+    fn field(name: &str, kind: &str, outputs: Vec<Tree>) -> (String, Tree) {
         (
             name.to_owned(),
-            FfiValue::Object(vec![
+            Tree::Object(vec![
                 (
                     "context".into(),
-                    FfiValue::Array(vec![text("users"), text(name)]),
+                    Tree::Array(vec![text("users"), text(name)]),
                 ),
-                ("outputs".into(), FfiValue::Array(outputs)),
+                ("outputs".into(), Tree::Array(outputs)),
                 ("type".into(), text(kind)),
             ]),
         )
@@ -1068,11 +1067,11 @@ mod tests {
     /// match, an age with ORE and OPE, a score with OPE alone, a nickname
     /// with ORE over text, and a case-sensitive handle.
     fn users() -> Plan {
-        let case_sensitive = FfiValue::Object(vec![(
+        let case_sensitive = Tree::Object(vec![(
             "match".into(),
-            FfiValue::Object(vec![("downcase".into(), FfiValue::Bool(false))]),
+            Tree::Object(vec![("downcase".into(), Tree::Bool(false))]),
         )]);
-        record::plan(&frame_of(&FfiValue::Object(vec![
+        record::plan(&frame_of(&Tree::Object(vec![
             field("email", "string", vec![text("c"), text("eq")]),
             field("name", "string", vec![text("c"), text("match")]),
             field("age", "uint32", vec![text("c"), text("ope"), text("ore")]),
@@ -1087,7 +1086,7 @@ mod tests {
         keyset: &KeysetCipher<'_, FakeDataKeySource>,
         name: &str,
         operator: OpSpec,
-        input: FfiValue,
+        input: Tree,
     ) -> Result<QueryTerm, Error> {
         query_term(keyset, &users(), name, operator, input, &NoTargets)?
             .await
@@ -1260,11 +1259,7 @@ mod tests {
             .build()
             .unwrap();
         let typed = cipher.query(op::Lt, &40u32).on(&plan).await.unwrap();
-        for input in [
-            FfiValue::UInt32(40),
-            FfiValue::Float64(40.0),
-            FfiValue::Int64(40),
-        ] {
+        for input in [Tree::UInt32(40), Tree::Float64(40.0), Tree::Int64(40)] {
             let term = query(&keyset, "age", OpSpec::Lt, input).await.unwrap();
             assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
             assert_eq!(term.index(), &IndexSpec::Ore, "ORE before OPE");
@@ -1288,7 +1283,7 @@ mod tests {
             &keyset,
             "age",
             OpSpec::Between,
-            FfiValue::Array(vec![FfiValue::UInt32(18), FfiValue::UInt32(65)]),
+            Tree::Array(vec![Tree::UInt32(18), Tree::UInt32(65)]),
         )
         .await
         .unwrap();
@@ -1303,7 +1298,7 @@ mod tests {
             &keyset,
             "age",
             OpSpec::Between,
-            FfiValue::Array(vec![FfiValue::UInt32(7), FfiValue::UInt32(7)]),
+            Tree::Array(vec![Tree::UInt32(7), Tree::UInt32(7)]),
         )
         .await;
         assert!(one.is_ok(), "(v, v) is one value: {one:?}");
@@ -1322,7 +1317,7 @@ mod tests {
             &keyset,
             "score",
             OpSpec::Between,
-            FfiValue::Array(vec![FfiValue::Int64(-5), FfiValue::Int64(5)]),
+            Tree::Array(vec![Tree::Int64(-5), Tree::Int64(5)]),
         )
         .await
         .unwrap();
@@ -1377,32 +1372,22 @@ mod tests {
             (
                 "age",
                 OpSpec::Eq,
-                FfiValue::UInt32(1),
+                Tree::UInt32(1),
                 Reason::OperatorNotAnswered,
             ),
             ("age", OpSpec::Lt, text("40"), Reason::FieldType),
-            (
-                "age",
-                OpSpec::Lt,
-                FfiValue::Float64(40.5),
-                Reason::FieldType,
-            ),
+            ("age", OpSpec::Lt, Tree::Float64(40.5), Reason::FieldType),
+            ("age", OpSpec::Between, Tree::UInt32(40), Reason::NotARange),
             (
                 "age",
                 OpSpec::Between,
-                FfiValue::UInt32(40),
+                Tree::Array(vec![Tree::UInt32(1)]),
                 Reason::NotARange,
             ),
             (
                 "age",
                 OpSpec::Between,
-                FfiValue::Array(vec![FfiValue::UInt32(1)]),
-                Reason::NotARange,
-            ),
-            (
-                "age",
-                OpSpec::Between,
-                FfiValue::Array(vec![FfiValue::UInt32(1), text("2")]),
+                Tree::Array(vec![Tree::UInt32(1), text("2")]),
                 Reason::FieldType,
             ),
         ];
@@ -1432,7 +1417,7 @@ mod tests {
     async fn the_typed_paths_query_refusals_are_made_before_any_term() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let pair = |lo, hi| FfiValue::Array(vec![FfiValue::UInt32(lo), FfiValue::UInt32(hi)]);
+        let pair = |lo, hi| Tree::Array(vec![Tree::UInt32(lo), Tree::UInt32(hi)]);
         let cases = [
             ("age", OpSpec::Between, pair(65, 18), "inverted"),
             ("name", OpSpec::Matches, text("al"), "empty"),
@@ -1465,14 +1450,14 @@ mod tests {
         let one = |name: &str, kind: &str, output: &str| {
             (
                 name.to_owned(),
-                FfiValue::Object(vec![
-                    ("context".into(), FfiValue::Array(vec![text(name)])),
-                    ("outputs".into(), FfiValue::Array(vec![text(output)])),
+                Tree::Object(vec![
+                    ("context".into(), Tree::Array(vec![text(name)])),
+                    ("outputs".into(), Tree::Array(vec![text(output)])),
                     ("type".into(), text(kind)),
                 ]),
             )
         };
-        let plan = record::plan(&frame_of(&FfiValue::Object(vec![
+        let plan = record::plan(&frame_of(&Tree::Object(vec![
             ("context_field".into(), text("tenant")),
             one("tenant", "string", "passthrough"),
             one("email", "string", "eq"),
@@ -1496,7 +1481,7 @@ mod tests {
             "email",
             OpSpec::Eq,
             text("a"),
-            Vec::<FfiValue>::new(),
+            Vec::<Tree>::new(),
             &NoTargets,
         )
         .unwrap_err();
@@ -1518,7 +1503,7 @@ mod tests {
             .unwrap();
         let typed = cipher.query(op::Matches, "alice").on(&plan).await.unwrap();
         let page = ["Alice Smith", "alicia", "Bob", "MALICE", "", "ali ce"];
-        let values: Vec<FfiValue> = page.iter().map(|v| text(v)).collect();
+        let values: Vec<Tree> = page.iter().map(|v| text(v)).collect();
         let verified = verify(
             &users(),
             "name",
@@ -1540,7 +1525,7 @@ mod tests {
             "name",
             OpSpec::Matches,
             text("alice"),
-            &[FfiValue::Null],
+            &[Tree::Null],
             &NoTargets,
         )
         .unwrap();
@@ -1550,7 +1535,7 @@ mod tests {
             "name",
             OpSpec::Matches,
             text("alice"),
-            Vec::<FfiValue>::new(),
+            Vec::<Tree>::new(),
             &NoTargets,
         )
         .unwrap();
@@ -1589,7 +1574,7 @@ mod tests {
 
     #[test]
     fn verify_refuses_what_it_cannot_answer() {
-        let refused = |name: &str, op: OpSpec, input: FfiValue, values: &[FfiValue]| {
+        let refused = |name: &str, op: OpSpec, input: Tree, values: &[Tree]| {
             verify(&users(), name, op, input, values, &NoTargets).unwrap_err()
         };
         let error = refused("email", OpSpec::Eq, text("a"), &[text("a")]);
@@ -1597,7 +1582,7 @@ mod tests {
             reason_of(&error),
             (Some("email"), Some(Reason::ExactOperator))
         );
-        let error = refused("age", OpSpec::Lt, FfiValue::UInt32(1), &[]);
+        let error = refused("age", OpSpec::Lt, Tree::UInt32(1), &[]);
         assert_eq!(
             reason_of(&error),
             (Some("age"), Some(Reason::ExactOperator))
@@ -1607,14 +1592,9 @@ mod tests {
             reason_of(&error),
             (Some("email"), Some(Reason::OperatorNotAnswered))
         );
-        let error = refused(
-            "name",
-            OpSpec::Matches,
-            text("alice"),
-            &[FfiValue::UInt32(1)],
-        );
+        let error = refused("name", OpSpec::Matches, text("alice"), &[Tree::UInt32(1)]);
         assert_eq!(reason_of(&error), (Some("name"), Some(Reason::FieldType)));
-        let error = refused("name", OpSpec::Matches, FfiValue::UInt32(1), &[]);
+        let error = refused("name", OpSpec::Matches, Tree::UInt32(1), &[]);
         assert_eq!(reason_of(&error), (Some("name"), Some(Reason::FieldType)));
         let error = refused("name", OpSpec::Matches, text("al"), &[text("al")]);
         assert!(
@@ -1757,87 +1737,76 @@ mod tests {
 
     #[test]
     fn statistics_read_from_their_wire_form() {
-        let object = |entries: Vec<(&str, FfiValue)>| {
-            FfiValue::Object(
+        let object = |entries: Vec<(&str, Tree)>| {
+            Tree::Object(
                 entries
                     .into_iter()
                     .map(|(k, v)| (k.to_owned(), v))
                     .collect(),
             )
         };
-        let pair = |bits: u32, rows: u64| {
-            FfiValue::Array(vec![FfiValue::UInt32(bits), FfiValue::UInt64(rows)])
-        };
+        let pair = |bits: u32, rows: u64| Tree::Array(vec![Tree::UInt32(bits), Tree::UInt64(rows)]);
         assert_eq!(
-            stats_frame(&object(vec![("rows", FfiValue::UInt64(9))])).unwrap(),
+            stats_frame(&object(vec![("rows", Tree::UInt64(9))])).unwrap(),
             Stats::declared(9)
         );
         assert_eq!(
             stats_frame(&object(vec![
-                ("rows", FfiValue::Int64(9)),
-                ("histogram", FfiValue::Null),
-                ("confidence", FfiValue::Null),
+                ("rows", Tree::Int64(9)),
+                ("histogram", Tree::Null),
+                ("confidence", Tree::Null),
             ]))
             .unwrap(),
             Stats::declared(9)
         );
         assert_eq!(
             stats_frame(&object(vec![
-                ("histogram", FfiValue::Array(vec![pair(3, 4), pair(5, 6)])),
-                ("confidence", FfiValue::Float64(0.9)),
-                ("rows", FfiValue::UInt32(10)),
+                ("histogram", Tree::Array(vec![pair(3, 4), pair(5, 6)])),
+                ("confidence", Tree::Float64(0.9)),
+                ("rows", Tree::UInt32(10)),
             ]))
             .unwrap(),
             Stats::measured(10, [(3, 4), (5, 6)]).with_confidence(0.9)
         );
         for (what, bad) in [
-            ("not an object", FfiValue::UInt64(9)),
-            (
-                "an array by position",
-                FfiValue::Array(vec![FfiValue::UInt64(9)]),
-            ),
+            ("not an object", Tree::UInt64(9)),
+            ("an array by position", Tree::Array(vec![Tree::UInt64(9)])),
             (
                 "every key by position",
-                FfiValue::Array(vec![
-                    FfiValue::UInt64(9),
-                    FfiValue::Array(vec![pair(3, 4)]),
-                    FfiValue::Float64(0.5),
+                Tree::Array(vec![
+                    Tree::UInt64(9),
+                    Tree::Array(vec![pair(3, 4)]),
+                    Tree::Float64(0.5),
                 ]),
             ),
             ("no rows", object(vec![])),
-            ("null rows", object(vec![("rows", FfiValue::Null)])),
-            ("negative rows", object(vec![("rows", FfiValue::Int64(-1))])),
-            ("float rows", object(vec![("rows", FfiValue::Float64(9.0))])),
+            ("null rows", object(vec![("rows", Tree::Null)])),
+            ("negative rows", object(vec![("rows", Tree::Int64(-1))])),
+            ("float rows", object(vec![("rows", Tree::Float64(9.0))])),
             (
                 "rows twice",
-                object(vec![
-                    ("rows", FfiValue::UInt64(1)),
-                    ("rows", FfiValue::UInt64(1)),
-                ]),
+                object(vec![("rows", Tree::UInt64(1)), ("rows", Tree::UInt64(1))]),
             ),
             (
                 "unknown key",
-                object(vec![
-                    ("rows", FfiValue::UInt64(1)),
-                    ("want", FfiValue::Null),
-                ]),
+                object(vec![("rows", Tree::UInt64(1)), ("want", Tree::Null)]),
             ),
             (
                 "bucket not a pair",
                 object(vec![
-                    ("rows", FfiValue::UInt64(1)),
-                    ("histogram", FfiValue::Array(vec![FfiValue::UInt32(3)])),
+                    ("rows", Tree::UInt64(1)),
+                    ("histogram", Tree::Array(vec![Tree::UInt32(3)])),
                 ]),
             ),
             (
                 "bits too wide",
                 object(vec![
-                    ("rows", FfiValue::UInt64(1)),
+                    ("rows", Tree::UInt64(1)),
                     (
                         "histogram",
-                        FfiValue::Array(vec![FfiValue::Array(vec![
-                            FfiValue::UInt64(u64::from(u32::MAX) + 1),
-                            FfiValue::UInt64(1),
+                        Tree::Array(vec![Tree::Array(vec![
+                            Tree::UInt64(u64::from(u32::MAX) + 1),
+                            Tree::UInt64(1),
                         ])]),
                     ),
                 ]),
@@ -1845,15 +1814,15 @@ mod tests {
             (
                 "confidence as text",
                 object(vec![
-                    ("rows", FfiValue::UInt64(1)),
+                    ("rows", Tree::UInt64(1)),
                     ("confidence", text("high")),
                 ]),
             ),
             (
                 "confidence as an integer",
                 object(vec![
-                    ("rows", FfiValue::UInt64(1)),
-                    ("confidence", FfiValue::UInt64(1)),
+                    ("rows", Tree::UInt64(1)),
+                    ("confidence", Tree::UInt64(1)),
                 ]),
             ),
         ] {
@@ -1873,7 +1842,7 @@ mod tests {
         use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = record::plan(&frame_of(&FfiValue::Object(vec![
+        let plan = record::plan(&frame_of(&Tree::Object(vec![
             field("tiny", "int8", vec![text("c"), text("ore")]),
             field("huge", "int128", vec![text("c"), text("ope")]),
             field("day", "date", vec![text("c"), text("eq")]),
@@ -1902,13 +1871,13 @@ mod tests {
         let typed = cipher.query(op::Lt, &-8i8).on(&tiny).await.unwrap();
         for input in [
             int(Int::I8(-8)),
-            vf(&FfiValue::Int64(-8)),
-            vf(&FfiValue::Float64(-8.0)),
+            vf(&Tree::Int64(-8)),
+            vf(&Tree::Float64(-8.0)),
         ] {
             let term = ask("tiny", OpSpec::Lt, input).await.unwrap();
             assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
         }
-        let refused = ask("tiny", OpSpec::Lt, vf(&FfiValue::Int64(300))).await;
+        let refused = ask("tiny", OpSpec::Lt, vf(&Tree::Int64(300))).await;
         assert!(
             matches!(&refused, Err(error) if reason_of(error) == (Some("tiny"), Some(Reason::FieldType))),
             "300 is no int8: {refused:?}"
@@ -1979,7 +1948,7 @@ mod tests {
                 Some(Logical::Decimal { scale: 0 }),
                 Physical::Int(Int::I64(34)),
             ),
-            vf(&FfiValue::Int32(34)),
+            vf(&Tree::Int32(34)),
             int(Int::U8(34)),
         ] {
             let term = ask("price", OpSpec::Eq, input).await.unwrap();
@@ -1994,7 +1963,7 @@ mod tests {
             ("at", OpSpec::Gt),
             ("price", OpSpec::Between),
         ] {
-            let refused = ask(name, operator, vf(&FfiValue::Int32(1))).await;
+            let refused = ask(name, operator, vf(&Tree::Int32(1))).await;
             assert!(
                 matches!(&refused, Err(error) if reason_of(error) == (Some(name), Some(Reason::OperatorNotAnswered))),
                 "{name} answers no ordering: {refused:?}"
@@ -2027,10 +1996,10 @@ mod tests {
     #[test]
     fn a_range_is_ordered_within_each_integer_kind() {
         let cases = [
-            (FfiValue::Int32(-1), FfiValue::Int32(1)),
-            (FfiValue::Int64(-1), FfiValue::Int64(1)),
-            (FfiValue::UInt32(1), FfiValue::UInt32(2)),
-            (FfiValue::UInt64(1), FfiValue::UInt64(2)),
+            (Tree::Int32(-1), Tree::Int32(1)),
+            (Tree::Int64(-1), Tree::Int64(1)),
+            (Tree::UInt32(1), Tree::UInt32(2)),
+            (Tree::UInt64(1), Tree::UInt64(2)),
         ];
         for (lo, hi) in cases {
             let (lo, hi) = (vf(&lo), vf(&hi));
@@ -2039,7 +2008,7 @@ mod tests {
             assert_eq!(integer_order(&lo, &lo), Some(Ordering::Equal));
         }
         assert_eq!(
-            integer_order(&vf(&FfiValue::UInt32(1)), &vf(&FfiValue::UInt64(2))),
+            integer_order(&vf(&Tree::UInt32(1)), &vf(&Tree::UInt64(2))),
             None
         );
         assert_eq!(integer_order(&vf(&text("a")), &vf(&text("b"))), None);
@@ -2072,25 +2041,21 @@ mod tests {
 
     #[test]
     fn a_count_is_read_at_any_width_and_never_negative() {
-        let rows = |value: FfiValue| stats_frame(&FfiValue::Object(vec![("rows".into(), value)]));
+        let rows = |value: Tree| stats_frame(&Tree::Object(vec![("rows".into(), value)]));
         for value in [
-            FfiValue::Int32(7),
-            FfiValue::Int64(7),
-            FfiValue::UInt32(7),
-            FfiValue::UInt64(7),
+            Tree::Int32(7),
+            Tree::Int64(7),
+            Tree::UInt32(7),
+            Tree::UInt64(7),
         ] {
             assert_eq!(rows(value).unwrap(), Stats::declared(7));
         }
-        for value in [
-            FfiValue::Int32(-7),
-            FfiValue::Int64(-7),
-            FfiValue::Float64(7.0),
-        ] {
+        for value in [Tree::Int32(-7), Tree::Int64(-7), Tree::Float64(7.0)] {
             assert!(rows(value).is_err());
         }
-        let confidence = stats_frame(&FfiValue::Object(vec![
-            ("rows".into(), FfiValue::Int32(3)),
-            ("confidence".into(), FfiValue::Float32(0.5)),
+        let confidence = stats_frame(&Tree::Object(vec![
+            ("rows".into(), Tree::Int32(3)),
+            ("confidence".into(), Tree::Float32(0.5)),
         ]))
         .unwrap();
         assert_eq!(confidence, Stats::declared(3).with_confidence(0.5));
@@ -2100,9 +2065,9 @@ mod tests {
     fn a_limit_is_its_rows_or_null() {
         assert!(matches!(
             value_of(&Limit::Rows(11).rows()),
-            FfiValue::UInt64(11)
+            Tree::UInt64(11)
         ));
-        assert!(matches!(value_of(&Limit::Unbounded.rows()), FfiValue::Null));
+        assert!(matches!(value_of(&Limit::Unbounded.rows()), Tree::Null));
     }
 
     #[tokio::test]
@@ -2113,27 +2078,27 @@ mod tests {
             &keyset,
             "age",
             OpSpec::Between,
-            FfiValue::Array(vec![FfiValue::UInt32(1), FfiValue::UInt32(2)]),
+            Tree::Array(vec![Tree::UInt32(1), Tree::UInt32(2)]),
         )
         .await
         .unwrap();
-        let FfiValue::Object(entries) = value_of(&term) else {
+        let Tree::Object(entries) = value_of(&term) else {
             panic!("an object");
         };
         let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(keys, ["operator", "fidelity", "index", "domain", "term"]);
-        assert!(matches!(&entries[0].1, FfiValue::String(s) if s.risky_ref() == b"between"));
-        assert!(matches!(&entries[1].1, FfiValue::String(s) if s.risky_ref() == b"exact"));
-        assert!(matches!(&entries[2].1, FfiValue::String(s) if s.risky_ref() == b"ore"));
-        assert!(matches!(&entries[3].1, FfiValue::Null));
+        assert!(matches!(&entries[0].1, Tree::String(s) if s.as_bytes() == b"between"));
+        assert!(matches!(&entries[1].1, Tree::String(s) if s.as_bytes() == b"exact"));
+        assert!(matches!(&entries[2].1, Tree::String(s) if s.as_bytes() == b"ore"));
+        assert!(matches!(&entries[3].1, Tree::Null));
         let Operand::Range { lo, hi } = term.operand() else {
             panic!("a range");
         };
         assert!(matches!(
             &entries[4].1,
-            FfiValue::Array(bounds) if matches!(
+            Tree::Array(bounds) if matches!(
                 bounds.as_slice(),
-                [FfiValue::Bytes(l), FfiValue::Bytes(h)] if l.risky_ref() == lo && h.risky_ref() == hi
+                [Tree::Bytes(l), Tree::Bytes(h)] if l.as_slice() == lo && h.as_slice() == hi
             )
         ));
     }
@@ -2202,23 +2167,23 @@ mod tests {
 
     #[test]
     fn a_targets_operators_are_listed_in_its_wire_form() {
-        let FfiValue::Object(entries) =
+        let Tree::Object(entries) =
             value_of(&descriptor(Some(ValueKind::Int64), &["ore"], true, true))
         else {
             panic!("an object");
         };
-        let (key, FfiValue::Array(operators)) = &entries[10] else {
+        let (key, Tree::Array(operators)) = &entries[10] else {
             panic!("a list");
         };
         assert_eq!(key, "operators");
         assert_eq!(operators.len(), 4);
-        let FfiValue::Object(first) = &operators[0] else {
+        let Tree::Object(first) = &operators[0] else {
             panic!("an object");
         };
         let first: Vec<(&str, &[u8])> = first
             .iter()
             .map(|(k, v)| match v {
-                FfiValue::String(s) => (k.as_str(), s.risky_ref()),
+                Tree::String(s) => (k.as_str(), s.as_bytes()),
                 _ => panic!("{k} is a string"),
             })
             .collect();
@@ -2244,10 +2209,10 @@ mod tests {
             let one = if kind == "string" {
                 text("alice smith")
             } else {
-                FfiValue::UInt32(7)
+                Tree::UInt32(7)
             };
             if op.takes_pair() {
-                FfiValue::Array(vec![one.clone(), one])
+                Tree::Array(vec![one.clone(), one])
             } else {
                 one
             }
@@ -2303,13 +2268,13 @@ mod tests {
 
     #[test]
     fn an_operator_is_written_with_every_key_in_order() {
-        let FfiValue::Object(entries) = operator_value(OpSpec::Between, &IndexSpec::Ope) else {
+        let Tree::Object(entries) = operator_value(OpSpec::Between, &IndexSpec::Ope) else {
             panic!("an object");
         };
         let entries: Vec<(&str, &[u8])> = entries
             .iter()
             .map(|(k, v)| match v {
-                FfiValue::String(s) => (k.as_str(), s.risky_ref()),
+                Tree::String(s) => (k.as_str(), s.as_bytes()),
                 _ => panic!("{k} is a string"),
             })
             .collect();
@@ -2322,13 +2287,13 @@ mod tests {
                 ("index", b"ope".as_slice())
             ]
         );
-        let FfiValue::Object(entries) =
+        let Tree::Object(entries) =
             operator_value(OpSpec::Matches, &IndexSpec::Match(MatchOptions::default()))
         else {
             panic!("an object");
         };
-        assert!(matches!(&entries[1].1, FfiValue::String(s) if s.risky_ref() == b"probabilistic"));
-        assert!(matches!(&entries[2].1, FfiValue::String(s) if s.risky_ref() == b"one"));
+        assert!(matches!(&entries[1].1, Tree::String(s) if s.as_bytes() == b"probabilistic"));
+        assert!(matches!(&entries[2].1, Tree::String(s) if s.as_bytes() == b"one"));
     }
 
     /// EQL's match options: not the default, so a test that passes under
@@ -2381,12 +2346,12 @@ mod tests {
 
     fn match_type_plan() -> Plan {
         record::plan_with(
-            &frame_of(&FfiValue::Object(vec![(
+            &frame_of(&Tree::Object(vec![(
                 "name".into(),
-                FfiValue::Object(vec![
+                Tree::Object(vec![
                     (
                         "context".into(),
-                        FfiValue::Array(vec![text("users"), text("name")]),
+                        Tree::Array(vec![text("users"), text("name")]),
                     ),
                     ("target".into(), text("Some")),
                 ]),
@@ -2466,7 +2431,7 @@ mod tests {
                 "name",
                 OpSpec::Matches,
                 text("ALICE"),
-                &[text("say alice nguyen"), text("alison"), FfiValue::Null],
+                &[text("say alice nguyen"), text("alison"), Tree::Null],
                 &MatchType,
             )
             .unwrap(),
@@ -2560,12 +2525,12 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = record::plan_with(
-            &frame_of(&FfiValue::Object(vec![(
+            &frame_of(&Tree::Object(vec![(
                 "email".into(),
-                FfiValue::Object(vec![
+                Tree::Object(vec![
                     (
                         "context".into(),
-                        FfiValue::Array(vec![text("users"), text("email")]),
+                        Tree::Array(vec![text("users"), text("email")]),
                     ),
                     ("target".into(), text("Some")),
                 ]),
@@ -2600,7 +2565,7 @@ mod tests {
             "email",
             OpSpec::Eq,
             text("a"),
-            Vec::<FfiValue>::new(),
+            Vec::<Tree>::new(),
             &OneType,
         )
         .unwrap_err();
@@ -2612,7 +2577,7 @@ mod tests {
 }
 
 /// The engine's answers, pinned byte for byte: these are the frames the
-/// FfiValue encoders wrote before the answers were written by serde, and a
+/// Tree encoders wrote before the answers were written by serde, and a
 /// binding reads them.
 #[cfg(test)]
 mod wire_bytes {

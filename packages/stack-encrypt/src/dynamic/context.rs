@@ -225,17 +225,16 @@ pub fn borrowed<'b>(piece: &'b ContextPiece<'_>) -> ContextPiece<'b> {
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::frame_of;
-    use crate::dynamic::FfiValue;
+    use crate::dynamic::test_frame::Tree;
     use crate::{nonempty, Descriptor, IntoAad, IntoPrfContext};
     use vitaminc_aead_frame::serde::to_vec;
-    use vitaminc_protected::Protected;
 
-    fn s(value: &str) -> FfiValue {
-        FfiValue::String(value.into())
+    fn s(value: &str) -> Tree {
+        Tree::String(value.into())
     }
 
     /// The context `value` spells, read from its frame.
-    fn ctx(value: FfiValue) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
+    fn ctx(value: Tree) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
         context(&frame_of(&value))
     }
 
@@ -301,8 +300,8 @@ mod tests {
 
     #[test]
     fn a_list_encodes_as_the_tuple_on_both_sides() {
-        let parsed = ctx(FfiValue::Array(vec![s("users/age"), FfiValue::UInt64(7)]))
-            .expect("extended context");
+        let parsed =
+            ctx(Tree::Array(vec![s("users/age"), Tree::UInt64(7)])).expect("extended context");
         let tuple = nonempty!("users/age").with(7u64);
         assert_eq!(
             parsed.clone().into_inner().into_aad().as_bytes(),
@@ -318,7 +317,7 @@ mod tests {
 
     #[test]
     fn a_list_renders_the_descriptor_the_tuple_does() {
-        let parsed = ctx(FfiValue::Array(vec![s("users"), s("age")])).expect("a pair");
+        let parsed = ctx(Tree::Array(vec![s("users"), s("age")])).expect("a pair");
         assert_eq!(
             Descriptor::of(parsed.into_inner()).as_str(),
             "users/age",
@@ -329,9 +328,9 @@ mod tests {
             "users/age",
             "the tuple renders the same descriptor"
         );
-        let parsed = ctx(FfiValue::Array(vec![
-            FfiValue::Array(vec![s("users"), s("age")]),
-            FfiValue::UInt64(7),
+        let parsed = ctx(Tree::Array(vec![
+            Tree::Array(vec![s("users"), s("age")]),
+            Tree::UInt64(7),
         ]))
         .expect("an extended pair");
         assert_eq!(
@@ -347,9 +346,9 @@ mod tests {
 
     #[test]
     fn a_nested_list_encodes_as_the_nested_tuple() {
-        let parsed = ctx(FfiValue::Array(vec![
+        let parsed = ctx(Tree::Array(vec![
             s("users/age"),
-            FfiValue::Array(vec![s("t"), FfiValue::Int32(-3)]),
+            Tree::Array(vec![s("t"), Tree::Int32(-3)]),
         ]))
         .expect("nested context");
         let tuple = ("users/age", ("t", -3i32));
@@ -368,12 +367,9 @@ mod tests {
     /// The borrowed view is the same context as the owned tree.
     #[test]
     fn the_borrowed_view_encodes_as_the_owned_tree() {
-        let parsed = ctx(FfiValue::Array(vec![
+        let parsed = ctx(Tree::Array(vec![
             s("users/age"),
-            FfiValue::Array(vec![
-                FfiValue::Bytes(Protected::new(b"k".to_vec())),
-                FfiValue::Int64(-1),
-            ]),
+            Tree::Array(vec![Tree::Bytes(b"k".to_vec()), Tree::Int64(-1)]),
         ]))
         .expect("context");
         let owned = parsed.clone().into_inner();
@@ -397,13 +393,13 @@ mod tests {
     #[test]
     fn a_left_nested_list_is_the_with_chain() {
         let chain = nonempty!("a").with(7u64).with("eu");
-        let nested = ctx(FfiValue::Array(vec![
-            FfiValue::Array(vec![s("a"), FfiValue::UInt64(7)]),
+        let nested = ctx(Tree::Array(vec![
+            Tree::Array(vec![s("a"), Tree::UInt64(7)]),
             s("eu"),
         ]))
         .expect("nested")
         .into_inner();
-        let flat = ctx(FfiValue::Array(vec![s("a"), FfiValue::UInt64(7), s("eu")]))
+        let flat = ctx(Tree::Array(vec![s("a"), Tree::UInt64(7), s("eu")]))
             .expect("flat")
             .into_inner();
         assert_eq!(
@@ -432,7 +428,7 @@ mod tests {
     /// (vitaminc 0.4.0 made the `Option` PRF context follow its parts view).
     #[test]
     fn a_one_element_list_is_some() {
-        let list = ctx(FfiValue::Array(vec![FfiValue::UInt64(7)]))
+        let list = ctx(Tree::Array(vec![Tree::UInt64(7)]))
             .expect("list")
             .into_inner();
         let some = Some(7u64);
@@ -455,7 +451,7 @@ mod tests {
 
     #[test]
     fn a_one_element_list_is_not_the_bare_part() {
-        let list = ctx(FfiValue::Array(vec![s("a")])).expect("list");
+        let list = ctx(Tree::Array(vec![s("a")])).expect("list");
         let bare = ctx(s("a")).expect("bare");
         assert_ne!(
             list.clone().into_inner().into_aad().as_bytes(),
@@ -474,7 +470,7 @@ mod tests {
     #[test]
     fn text_and_bytes_are_distinct_contexts_on_both_sides() {
         let text = ctx(s("ab")).expect("text").into_inner();
-        let bytes = ctx(FfiValue::Bytes(Protected::new(b"ab".to_vec())))
+        let bytes = ctx(Tree::Bytes(b"ab".to_vec()))
             .expect("bytes")
             .into_inner();
         assert_ne!(
@@ -493,12 +489,12 @@ mod tests {
     fn emptiness_follows_the_tuple_rule() {
         for (label, empty) in [
             ("an empty string", s("")),
-            ("empty bytes", FfiValue::Bytes(Protected::new(Vec::new()))),
-            ("an empty list", FfiValue::Array(vec![])),
-            ("a list of one empty string", FfiValue::Array(vec![s("")])),
+            ("empty bytes", Tree::Bytes(Vec::new())),
+            ("an empty list", Tree::Array(vec![])),
+            ("a list of one empty string", Tree::Array(vec![s("")])),
             (
                 "a list of empties",
-                FfiValue::Array(vec![FfiValue::Array(vec![]), s("")]),
+                Tree::Array(vec![Tree::Array(vec![]), s("")]),
             ),
         ] {
             assert!(
@@ -507,14 +503,14 @@ mod tests {
             );
         }
         for (label, non_empty) in [
-            ("a zero integer", FfiValue::UInt64(0)),
+            ("a zero integer", Tree::UInt64(0)),
             (
                 "an empty string beside an integer",
-                FfiValue::Array(vec![s(""), FfiValue::Int32(0)]),
+                Tree::Array(vec![s(""), Tree::Int32(0)]),
             ),
             (
                 "a nested non-empty list",
-                FfiValue::Array(vec![FfiValue::Array(vec![s("x")])]),
+                Tree::Array(vec![Tree::Array(vec![s("x")])]),
             ),
         ] {
             assert!(
@@ -527,18 +523,15 @@ mod tests {
     #[test]
     fn non_context_values_are_encoding_errors() {
         for (label, bad) in [
-            ("null", FfiValue::Null),
-            ("undefined", FfiValue::Undefined),
-            ("a boolean", FfiValue::Bool(true)),
-            ("a float32", FfiValue::Float32(1.0)),
-            ("a float64", FfiValue::Float64(1.0)),
-            (
-                "an object",
-                FfiValue::Object(vec![("k".to_string(), s("v"))]),
-            ),
+            ("null", Tree::Null),
+            ("undefined", Tree::Undefined),
+            ("a boolean", Tree::Bool(true)),
+            ("a float32", Tree::Float32(1.0)),
+            ("a float64", Tree::Float64(1.0)),
+            ("an object", Tree::Object(vec![("k".to_string(), s("v"))])),
             (
                 "a list with a boolean in it",
-                FfiValue::Array(vec![s("ok"), FfiValue::Bool(false)]),
+                Tree::Array(vec![s("ok"), Tree::Bool(false)]),
             ),
         ] {
             assert!(

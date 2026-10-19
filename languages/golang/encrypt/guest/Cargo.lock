@@ -2117,6 +2117,7 @@ dependencies = [
  "stack-guest-abi",
  "stack-kms",
  "uuid",
+ "vitaminc-aead 0.6.1",
  "vitaminc-aead-frame",
  "vitaminc-protected 0.6.1",
  "zeroize",

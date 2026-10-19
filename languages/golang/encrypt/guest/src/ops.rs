@@ -653,8 +653,8 @@ fn tree_encoded_len(tree: &BytesTree) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stack_encrypt::dynamic::FfiValue;
-    use vitaminc_protected::{Controlled, Protected};
+    use crate::support::Tree;
+    use vitaminc_protected::Controlled;
 
     // `tree_encoded_len` re-derives the codec's arithmetic; the codec exports
     // no `encoded_len` of its own, so this pin is the only thing that fails if
@@ -699,7 +699,7 @@ mod tests {
                 ),
             ]),
             CipherText::Passthrough(stack_encrypt::PassthroughFrame(
-                FfiValue::Bytes(Protected::new(vec![1, 2, 3]))
+                Tree::Bytes(vec![1, 2, 3])
                     .to_frame()
                     .expect("a frame")
                     .risky_unwrap(),
@@ -715,16 +715,16 @@ mod tests {
 
     // ---- the EQL target path, native, over FakeDataKeySource -----------------
 
-    fn encoded(value: FfiValue) -> Vec<u8> {
+    fn encoded(value: Tree) -> Vec<u8> {
         value.to_frame().expect("encode").risky_unwrap()
     }
 
-    fn text(value: &str) -> FfiValue {
-        FfiValue::String(value.into())
+    fn text(value: &str) -> Tree {
+        Tree::String(value.into())
     }
 
-    fn object(entries: Vec<(&str, FfiValue)>) -> FfiValue {
-        FfiValue::Object(
+    fn object(entries: Vec<(&str, Tree)>) -> Tree {
+        Tree::Object(
             entries
                 .into_iter()
                 .map(|(k, v)| (k.to_string(), v))
@@ -739,10 +739,7 @@ mod tests {
             (
                 "email",
                 object(vec![
-                    (
-                        "context",
-                        FfiValue::Array(vec![text("users"), text("email")]),
-                    ),
+                    ("context", Tree::Array(vec![text("users"), text("email")])),
                     ("target", text("TextEq")),
                     ("type", text("string")),
                 ]),
@@ -750,11 +747,8 @@ mod tests {
             (
                 "notes",
                 object(vec![
-                    (
-                        "context",
-                        FfiValue::Array(vec![text("users"), text("notes")]),
-                    ),
-                    ("outputs", FfiValue::Array(vec![text("c")])),
+                    ("context", Tree::Array(vec![text("users"), text("notes")])),
+                    ("outputs", Tree::Array(vec![text("c")])),
                     ("type", text("string")),
                 ]),
             ),
@@ -764,22 +758,22 @@ mod tests {
     #[test]
     fn targets_lists_what_this_build_holds_in_the_wire_shape() {
         let out = targets().expect("encodes");
-        let FfiValue::Object(entries) = FfiValue::from_frame(&out).expect("decodes") else {
+        let Tree::Object(entries) = Tree::from_frame(&out).expect("decodes") else {
             panic!("an object");
         };
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "targets");
-        let FfiValue::Array(items) = &entries[0].1 else {
+        let Tree::Array(items) = &entries[0].1 else {
             panic!("a list");
         };
         if !crate::targets::HOLDS_EQL {
             assert!(items.is_empty(), "the build without EQL types lists none");
             return;
         }
-        let FfiValue::Object(text_eq) = items
+        let Tree::Object(text_eq) = items
             .iter()
             .find(|item| {
-                matches!(item, FfiValue::Object(fields) if fields.iter().any(|(k, v)| k == "name" && matches!(v, FfiValue::String(s) if s.risky_ref() == b"TextEq")))
+                matches!(item, Tree::Object(fields) if fields.iter().any(|(k, v)| k == "name" && matches!(v, Tree::String(s) if s.as_bytes() == b"TextEq")))
             })
             .expect("TextEq is listed")
         else {
@@ -802,9 +796,9 @@ mod tests {
                 "operators"
             ]
         );
-        assert!(matches!(text_eq[8].1, FfiValue::Bool(true)));
+        assert!(matches!(text_eq[8].1, Tree::Bool(true)));
         assert!(
-            matches!(&text_eq[10].1, FfiValue::Array(operators) if operators.len() == 1),
+            matches!(&text_eq[10].1, Tree::Array(operators) if operators.len() == 1),
             "TextEq answers one operator"
         );
     }
@@ -820,10 +814,7 @@ mod tests {
                 let refused = encoded(object(vec![(
                     "email",
                     object(vec![
-                        (
-                            "context",
-                            FfiValue::Array(vec![text("users"), text("email")]),
-                        ),
+                        ("context", Tree::Array(vec![text("users"), text("email")])),
                         ("target", text(name)),
                     ]),
                 )]));
@@ -874,10 +865,10 @@ mod tests {
         let CipherText::Passthrough(payload) = &outputs[0].1 else {
             panic!("a passthrough")
         };
-        let FfiValue::Bytes(bytes) = FfiValue::from_frame(&payload.0).expect("a value") else {
+        let Tree::Bytes(bytes) = Tree::from_frame(&payload.0).expect("a value") else {
             panic!("bytes")
         };
-        let eql: serde_json::Value = serde_json::from_slice(bytes.risky_ref()).expect("JSON");
+        let eql: serde_json::Value = serde_json::from_slice(bytes.as_slice()).expect("JSON");
         assert_eq!(eql["v"], 4, "Stack Encrypt writes EQL v4");
         assert_eq!(eql["i"], serde_json::json!({"t": "users", "c": "email"}));
         assert!(eql["c"].as_str().unwrap().starts_with("stack-encrypt:1:"));
@@ -887,30 +878,26 @@ mod tests {
         validate::record_tree(&sealed, &plan, None).expect("the tree fits");
         let opened =
             block_on(decrypt_record(Scope::Client(&cipher), &sealed, &plan, None)).expect("opens");
-        let FfiValue::Object(values) = FfiValue::from_frame(&opened).expect("a value") else {
+        let Tree::Object(values) = Tree::from_frame(&opened).expect("a value") else {
             panic!("an object")
         };
-        assert!(
-            matches!(&values[0].1, FfiValue::String(s) if s.risky_ref() == b"alice@example.com")
-        );
-        assert!(matches!(&values[1].1, FfiValue::String(s) if s.risky_ref() == b"likes cats"));
+        assert!(matches!(&values[0].1, Tree::String(s) if s.as_bytes() == b"alice@example.com"));
+        assert!(matches!(&values[1].1, Tree::String(s) if s.as_bytes() == b"likes cats"));
 
         // The eq query's term is the type's query value, and it matches the
         // stored term.
         let probe = encoded(text("alice@example.com"));
         validate::query_term(&probe, &plan, b"email", b"eq").expect("a target field answers eq");
         let term = block_on(query_term(&keyset, &probe, &plan, b"email", b"eq")).expect("derives");
-        let FfiValue::Object(term) = FfiValue::from_frame(&term).expect("a value") else {
+        let Tree::Object(term) = Tree::from_frame(&term).expect("a value") else {
             panic!("a query term is an object")
         };
-        assert!(
-            matches!(&term[3].1, FfiValue::String(s) if s.risky_ref() == b"eql_v4.query_text_eq")
-        );
-        let FfiValue::Bytes(query_bytes) = &term[4].1 else {
+        assert!(matches!(&term[3].1, Tree::String(s) if s.as_bytes() == b"eql_v4.query_text_eq"));
+        let Tree::Bytes(query_bytes) = &term[4].1 else {
             panic!("the term is the query value's bytes")
         };
         let probe_json: serde_json::Value =
-            serde_json::from_slice(query_bytes.risky_ref()).expect("JSON");
+            serde_json::from_slice(query_bytes.as_slice()).expect("JSON");
         assert_eq!(
             probe_json["hm"], eql["hm"],
             "the query matches the stored value"
@@ -930,7 +917,7 @@ mod tests {
             Err(STATUS_ENCODING)
         );
         assert_eq!(
-            validate::query_term(&encoded(FfiValue::UInt32(1)), &plan, b"email", b"eq"),
+            validate::query_term(&encoded(Tree::UInt32(1)), &plan, b"email", b"eq"),
             Err(STATUS_ENCODING)
         );
     }

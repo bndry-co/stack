@@ -25,9 +25,9 @@ use std::cell::Cell;
 use std::ffi::c_void;
 use std::sync::Mutex;
 
-use stack_encrypt::dynamic::{
-    query_term, record, verify, FfiValue, NoTargets, OpSpec, Scope, ValueFrame,
-};
+use common::frames::{frame, object};
+use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, OpSpec, Scope, ValueFrame};
+use vitaminc_aead::plaintext::{Physical, Raw};
 use vitaminc_aead::Frame;
 
 /// What every plaintext under test carries.
@@ -132,58 +132,53 @@ fn marked(tail: &str) -> String {
     format!("{}-{tail}", std::str::from_utf8(MARK).unwrap())
 }
 
-fn s(value: &str) -> FfiValue {
-    FfiValue::String(value.into())
+fn null() -> ValueFrame {
+    frame(Raw(None, Physical::Null))
 }
 
-fn strings(values: &[&str]) -> FfiValue {
-    FfiValue::Array(values.iter().map(|value| s(value)).collect())
-}
-
-fn spec(field: &str, outputs: &[&str], ty: Option<&str>) -> (String, FfiValue) {
+fn spec<'a>(field: &'a str, outputs: &[&str], ty: Option<&str>) -> (&'a str, ValueFrame) {
     let mut entries = vec![
-        ("context".to_string(), strings(&["users", field])),
-        ("outputs".to_string(), strings(outputs)),
+        ("context", frame(vec!["users", field])),
+        ("outputs", frame(outputs.to_vec())),
     ];
     if let Some(ty) = ty {
-        entries.push(("type".to_string(), s(ty)));
+        entries.push(("type", frame(ty)));
     }
-    (field.to_string(), FfiValue::Object(entries))
+    (field, object(entries))
 }
 
 fn plan() -> record::Plan {
-    record::plan(&ffi_frame(&FfiValue::Object(vec![
-        spec("email", &["c", "eq", "match", "ore"], Some("string")),
-        spec("doc", &["c"], None),
-        spec("id", &["passthrough"], None),
-    ])))
+    record::plan(
+        object(vec![
+            spec("email", &["c", "eq", "match", "ore"], Some("string")),
+            spec("doc", &["c"], None),
+            spec("id", &["passthrough"], None),
+        ])
+        .risky_ref(),
+    )
     .unwrap()
 }
 
 /// A row with a marked scalar field, a marked nested object field, and a
-/// passthrough, as its frame. The `FfiValue` it is built from is dropped
-/// before anything is watched: it is the test's input, not the engine's.
+/// passthrough, as its frame. The strings it is built from are dropped
+/// before anything is watched: they are the test's input, not the engine's.
 ///
 /// The nested object ends with a value of several KiB after its marked
 /// children, so the buffer its frame is joined into grows while it already
 /// holds plaintext.
 fn row() -> ValueFrame {
-    let row = FfiValue::Object(vec![
-        ("email".into(), s(&marked("email"))),
+    object(vec![
+        ("email", frame(marked("email"))),
         (
-            "doc".into(),
-            FfiValue::Object(vec![
-                ("k".into(), s(&marked("doc"))),
-                (
-                    "n".into(),
-                    FfiValue::Array(vec![s(&marked("nested")), FfiValue::Null]),
-                ),
-                ("big".into(), s(&"x".repeat(8 * 1024))),
+            "doc",
+            object(vec![
+                ("k", frame(marked("doc"))),
+                ("n", frame(vec![frame(marked("nested")), null()])),
+                ("big", frame("x".repeat(8 * 1024))),
             ]),
         ),
-        ("id".into(), FfiValue::UInt64(7)),
-    ]);
-    ValueFrame::of(&row).unwrap()
+        ("id", frame(7u64)),
+    ])
 }
 
 fn runtime() -> tokio::runtime::Runtime {
@@ -266,7 +261,7 @@ fn a_query_term_leaves_no_plaintext_on_the_heap() {
     // The order operators answer over integers alone, which carry no
     // marker; equality and match read text.
     for operator in [OpSpec::Eq, OpSpec::Matches] {
-        let query = ValueFrame::of(s(&marked("query"))).unwrap();
+        let query = frame(marked("query"));
         watched(&format!("query_term ({operator:?})"), || {
             rt.block_on(async {
                 query_term(&keyset, &plan, "email", operator, &query, &NoTargets)
@@ -282,8 +277,8 @@ fn a_query_term_leaves_no_plaintext_on_the_heap() {
 #[test]
 fn verify_leaves_no_plaintext_on_the_heap() {
     let plan = plan();
-    let query = ValueFrame::of(s(&marked("query"))).unwrap();
-    let page = ValueFrame::of(FfiValue::Array(vec![s(&marked("page")), FfiValue::Null])).unwrap();
+    let query = frame(marked("query"));
+    let page = frame(vec![frame(marked("page")), null()]);
     watched("verify", || {
         let values = page.elements().unwrap();
         let matched = verify(&plan, "email", OpSpec::Matches, &query, values, &NoTargets).unwrap();
@@ -301,9 +296,4 @@ fn verify_leaves_no_plaintext_on_the_heap() {
 fn the_spy_sees_an_unwiped_free() {
     let text = marked("control");
     watched("control", || drop(text));
-}
-
-/// A plan as frame bytes: what a binding sends.
-fn ffi_frame(value: &FfiValue) -> Vec<u8> {
-    vitaminc_protected::Controlled::risky_unwrap(value.to_frame().expect("frames"))
 }

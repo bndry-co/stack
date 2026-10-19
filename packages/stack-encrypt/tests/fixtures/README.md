@@ -2,7 +2,7 @@
 
 One declaration, two authors, one engine. A Rust chain
 (`cipher.encrypt(&user).context("users").fields()…`, over fields of type
-`stack_encrypt::dynamic::FfiValue`, the plaintext type a binding's values have)
+`stack_encrypt::dynamic::ValueFrame`, the frame a binding's values arrive as)
 and the data-plan lowering (`stack_encrypt::dynamic::record`, what a
 language binding calls) each sealed the same plaintext under the same
 declaration. The fixture holds both records, with their term bytes, sealed

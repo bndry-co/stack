@@ -2068,6 +2068,7 @@ dependencies = [
  "libfuzzer-sys",
  "stack-encrypt",
  "uuid",
+ "vitaminc-aead 0.6.1",
  "vitaminc-protected 0.6.1",
 ]
 

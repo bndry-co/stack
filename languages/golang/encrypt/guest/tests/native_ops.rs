@@ -17,7 +17,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use std::future::IntoFuture;
 
-use stack_encrypt::dynamic::FfiValue;
+mod support;
+
 use stack_encrypt::dynamic::Scope;
 use stack_encrypt::sem::DefaultMatch;
 use stack_encrypt::{
@@ -32,6 +33,7 @@ use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IndexKeySource,
     RetrieveKeyPayload,
 };
+use support::Tree;
 use uuid::Uuid;
 use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext};
 use vitaminc_protected::{Controlled, Protected};
@@ -96,12 +98,12 @@ fn cipher() -> StackCipher<Counting> {
     block_on(StackCipher::builder().kms(Counting::default()).init()).expect("build cipher")
 }
 
-fn encode(value: FfiValue) -> Vec<u8> {
+fn encode(value: Tree) -> Vec<u8> {
     value.to_frame().expect("encode value").risky_unwrap()
 }
 
-fn decode(bytes: &[u8]) -> FfiValue {
-    FfiValue::from_frame(bytes).expect("decode value")
+fn decode(bytes: &[u8]) -> Tree {
+    Tree::from_frame(bytes).expect("decode value")
 }
 
 /// Decode a guest ciphertext buffer with its leaves as bytes, so tests can
@@ -118,38 +120,39 @@ fn encode_tree(tree: &Node<Vec<u8>>) -> Vec<u8> {
 }
 
 /// A value as a passthrough node: its frame, in the clear.
-fn clear(value: FfiValue) -> Node<Vec<u8>> {
+fn clear(value: Tree) -> Node<Vec<u8>> {
     CipherText::Passthrough(PassthroughFrame(encode(value)))
 }
 
-fn text(value: &FfiValue) -> &str {
+fn text(value: &Tree) -> &str {
     match value {
-        FfiValue::String(s) => std::str::from_utf8(s.risky_ref()).expect("utf8"),
+        Tree::String(s) => std::str::from_utf8(s.as_bytes()).expect("utf8"),
         other => panic!("expected a string, got {}", kind(other)),
     }
 }
 
-fn kind(value: &FfiValue) -> &'static str {
+fn kind(value: &Tree) -> &'static str {
     match value {
-        FfiValue::Null => "null",
-        FfiValue::Undefined => "undefined",
-        FfiValue::Bool(_) => "bool",
-        FfiValue::Int32(_) => "i32",
-        FfiValue::Int64(_) => "i64",
-        FfiValue::UInt32(_) => "u32",
-        FfiValue::UInt64(_) => "u64",
-        FfiValue::Float32(_) => "f32",
-        FfiValue::Float64(_) => "f64",
-        FfiValue::String(_) => "string",
-        FfiValue::Bytes(_) => "bytes",
-        FfiValue::Array(_) => "array",
-        FfiValue::Object(_) => "object",
-        FfiValue::Passthrough(_) => "passthrough",
+        Tree::Null => "null",
+        Tree::Undefined => "undefined",
+        Tree::Bool(_) => "bool",
+        Tree::Int32(_) => "i32",
+        Tree::Int64(_) => "i64",
+        Tree::UInt32(_) => "u32",
+        Tree::UInt64(_) => "u64",
+        Tree::Float32(_) => "f32",
+        Tree::Float64(_) => "f64",
+        Tree::String(_) => "string",
+        Tree::Bytes(_) => "bytes",
+        Tree::Array(_) => "array",
+        Tree::Object(_) => "object",
+        Tree::Passthrough(_) => "passthrough",
+        _ => "another scalar",
     }
 }
 
-fn obj(entries: Vec<(&str, FfiValue)>) -> FfiValue {
-    FfiValue::Object(
+fn obj(entries: Vec<(&str, Tree)>) -> Tree {
+    Tree::Object(
         entries
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
@@ -157,26 +160,26 @@ fn obj(entries: Vec<(&str, FfiValue)>) -> FfiValue {
     )
 }
 
-fn s(value: &str) -> FfiValue {
-    FfiValue::String(value.into())
+fn s(value: &str) -> Tree {
+    Tree::String(value.into())
 }
 
 /// The label `users/<field>` as a plan field spells its context: a list of
 /// plain segments, what a Go `label=users/<field>` tag sends.
-fn label(field: &str) -> FfiValue {
-    FfiValue::Array(vec![s("users"), s(field)])
+fn label(field: &str) -> Tree {
+    Tree::Array(vec![s("users"), s(field)])
 }
 
 /// The plan shape the record tests share — an ORE-indexed integer and a
 /// match-indexed string, both stored — under whatever context `ctx` gives
 /// each field. Output order is fixed here, and the tests index into it.
-fn plan_under(ctx: impl Fn(&str) -> FfiValue) -> Vec<u8> {
+fn plan_under(ctx: impl Fn(&str) -> Tree) -> Vec<u8> {
     encode(obj(vec![
         (
             "age",
             obj(vec![
                 ("context", ctx("age")),
-                ("outputs", FfiValue::Array(vec![s("c"), s("eq"), s("ore")])),
+                ("outputs", Tree::Array(vec![s("c"), s("eq"), s("ore")])),
                 ("type", s("uint32")),
             ]),
         ),
@@ -184,7 +187,7 @@ fn plan_under(ctx: impl Fn(&str) -> FfiValue) -> Vec<u8> {
             "name",
             obj(vec![
                 ("context", ctx("name")),
-                ("outputs", FfiValue::Array(vec![s("c"), s("match")])),
+                ("outputs", Tree::Array(vec![s("c"), s("match")])),
                 ("type", s("string")),
             ]),
         ),
@@ -197,12 +200,12 @@ fn plan() -> Vec<u8> {
 }
 
 /// A one-field plan storing only the ciphertext, under `context`.
-fn single_field_plan(field: &str, context: FfiValue) -> Vec<u8> {
+fn single_field_plan(field: &str, context: Tree) -> Vec<u8> {
     encode(obj(vec![(
         field,
         obj(vec![
             ("context", context),
-            ("outputs", FfiValue::Array(vec![s("c")])),
+            ("outputs", Tree::Array(vec![s("c")])),
         ]),
     )]))
 }
@@ -212,14 +215,14 @@ fn term_bytes(node: &Node<Vec<u8>>) -> Vec<u8> {
     let CipherText::Passthrough(frame) = node else {
         panic!("expected a passthrough term node");
     };
-    let FfiValue::Bytes(b) = decode(&frame.0) else {
+    let Tree::Bytes(b) = decode(&frame.0) else {
         panic!("expected a passthrough bytes term node");
     };
-    b.risky_ref().to_vec()
+    b.as_slice().to_vec()
 }
 
-fn row(age: u32, name: &str) -> FfiValue {
-    obj(vec![("age", FfiValue::UInt32(age)), ("name", s(name))])
+fn row(age: u32, name: &str) -> Tree {
+    obj(vec![("age", Tree::UInt32(age)), ("name", s(name))])
 }
 
 // =============================================================================
@@ -237,7 +240,7 @@ fn guest_terms_match_the_native_sem_derivations() {
 
     let eq = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(FfiValue::UInt32(42)),
+        &encode(Tree::UInt32(42)),
         &ctx,
         TERM_EQUALITY,
     ))
@@ -252,7 +255,7 @@ fn guest_terms_match_the_native_sem_derivations() {
 
     let ore = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(FfiValue::UInt32(42)),
+        &encode(Tree::UInt32(42)),
         &ctx,
         TERM_ORE,
     ))
@@ -267,7 +270,7 @@ fn guest_terms_match_the_native_sem_derivations() {
 
     let ope = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(FfiValue::UInt32(42)),
+        &encode(Tree::UInt32(42)),
         &ctx,
         TERM_OPE,
     ))
@@ -306,7 +309,7 @@ fn guest_terms_match_the_native_sem_derivations() {
     .expect("text term");
     let eq_bytes = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(FfiValue::Bytes(Protected::new(b"ab".to_vec()))),
+        &encode(Tree::Bytes(b"ab".to_vec())),
         &encode(s("f")),
         TERM_EQUALITY,
     ))
@@ -351,13 +354,13 @@ fn unsupported_term_inputs_are_encoding_errors() {
     // containers have no term semantics; kinds outside the table and empty
     // contexts are rejected.
     for (value, kind) in [
-        (FfiValue::Bool(true), TERM_EQUALITY),
-        (FfiValue::Bool(true), TERM_ORE),
-        (FfiValue::Bool(false), TERM_OPE),
-        (FfiValue::UInt32(1), TERM_MATCH),
-        (FfiValue::Array(vec![]), TERM_ORE),
-        (FfiValue::Null, TERM_EQUALITY),
-        (FfiValue::UInt32(1), 99),
+        (Tree::Bool(true), TERM_EQUALITY),
+        (Tree::Bool(true), TERM_ORE),
+        (Tree::Bool(false), TERM_OPE),
+        (Tree::UInt32(1), TERM_MATCH),
+        (Tree::Array(vec![]), TERM_ORE),
+        (Tree::Null, TERM_EQUALITY),
+        (Tree::UInt32(1), 99),
     ] {
         assert_eq!(
             block_on(ops::term(
@@ -373,7 +376,7 @@ fn unsupported_term_inputs_are_encoding_errors() {
     assert_eq!(
         block_on(ops::term(
             &cipher.default_keyset(),
-            &encode(FfiValue::UInt32(1)),
+            &encode(Tree::UInt32(1)),
             &encode(s("")),
             TERM_EQUALITY
         )),
@@ -386,13 +389,13 @@ fn unsupported_term_inputs_are_encoding_errors() {
     // codec value that is not a context must be refused too.
     for (label, context) in [
         ("raw utf-8 bytes", b"f".to_vec()),
-        ("a boolean", encode(FfiValue::Bool(true))),
+        ("a boolean", encode(Tree::Bool(true))),
         ("an object", encode(obj(vec![("k", s("v"))]))),
     ] {
         assert_eq!(
             block_on(ops::term(
                 &cipher.default_keyset(),
-                &encode(FfiValue::UInt32(1)),
+                &encode(Tree::UInt32(1)),
                 &context,
                 TERM_EQUALITY
             )),
@@ -409,7 +412,7 @@ fn unsupported_term_inputs_are_encoding_errors() {
 #[test]
 fn a_record_batch_encrypts_in_one_call_and_round_trips() {
     let cipher = cipher();
-    let source = encode(FfiValue::Array(vec![
+    let source = encode(Tree::Array(vec![
         row(29, "alice smith"),
         row(34, "bob jones"),
         row(41, "carol park"),
@@ -433,15 +436,15 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
     .expect("decrypt records");
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 1);
 
-    let FfiValue::Array(rows) = decode(&pt) else {
+    let Tree::Array(rows) = decode(&pt) else {
         panic!("expected an array of rows back");
     };
     assert_eq!(rows.len(), 3);
-    let FfiValue::Object(fields) = &rows[1] else {
+    let Tree::Object(fields) = &rows[1] else {
         panic!("expected an object row");
     };
     assert_eq!(fields[0].0, "age");
-    assert!(matches!(fields[0].1, FfiValue::UInt32(34)));
+    assert!(matches!(fields[0].1, Tree::UInt32(34)));
     assert_eq!(fields[1].0, "name");
     assert_eq!(text(&fields[1].1), "bob jones");
 }
@@ -474,7 +477,7 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
         };
         for (key, slot) in outputs.iter_mut() {
             if key == "c" {
-                *slot = clear(FfiValue::UInt32(99));
+                *slot = clear(Tree::UInt32(99));
             }
         }
     }
@@ -499,8 +502,8 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
 fn a_passthrough_source_value_is_refused_a_ciphertext_slot() {
     let cipher = cipher();
     for age in [
-        FfiValue::Passthrough(Box::new(FfiValue::UInt32(29))),
-        FfiValue::Array(vec![FfiValue::Passthrough(Box::new(FfiValue::UInt32(29)))]),
+        Tree::Passthrough(Box::new(Tree::UInt32(29))),
+        Tree::Array(vec![Tree::Passthrough(Box::new(Tree::UInt32(29)))]),
     ] {
         // A ciphertext-only plan, so the term path's own scalar rejection
         // cannot mask the one under test.
@@ -508,7 +511,7 @@ fn a_passthrough_source_value_is_refused_a_ciphertext_slot() {
             "age",
             obj(vec![
                 ("context", label("age")),
-                ("outputs", FfiValue::Array(vec![s("c")])),
+                ("outputs", Tree::Array(vec![s("c")])),
             ]),
         )]));
         let source = encode(obj(vec![("age", age)]));
@@ -584,10 +587,10 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
         panic!("expected a single leaf for a scalar field");
     };
     let leaf = SealedValue::from_bytes(leaf).expect("frozen leaf");
-    let value: FfiValue =
+    let value: Tree =
         block_on(cipher.decrypt(CipherText::Single(leaf), nonempty!("users").with("age")))
             .expect("native decrypt of a record field");
-    assert!(matches!(value, FfiValue::UInt32(34)));
+    assert!(matches!(value, Tree::UInt32(34)));
 }
 
 // =============================================================================
@@ -597,8 +600,8 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
 /// The caller extension a Rust row gets from the chain's `.extend(7u64)`:
 /// every field's label becomes `(users/<field>)/7u64`. A plan spells it as a
 /// list, the label nested inside.
-fn extended(field: &str) -> FfiValue {
-    FfiValue::Array(vec![label(field), FfiValue::UInt64(7)])
+fn extended(field: &str) -> Tree {
+    Tree::Array(vec![label(field), Tree::UInt64(7)])
 }
 
 /// `plan()` under the extension.
@@ -647,7 +650,7 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
 
     let guest_probe = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(FfiValue::UInt32(34)),
+        &encode(Tree::UInt32(34)),
         &encode(extended("age")),
         TERM_EQUALITY,
     ))
@@ -669,9 +672,9 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
         panic!("expected a single leaf for a scalar field");
     };
     let leaf = SealedValue::from_bytes(leaf).expect("frozen leaf");
-    let value: FfiValue = block_on(cipher.decrypt(CipherText::Single(leaf), native))
+    let value: Tree = block_on(cipher.decrypt(CipherText::Single(leaf), native))
         .expect("native decrypt under the tuple");
-    assert!(matches!(value, FfiValue::UInt32(34)));
+    assert!(matches!(value, Tree::UInt32(34)));
 }
 
 /// The reverse direction: a field sealed natively under the tuple — as a
@@ -683,7 +686,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     let keyset = cipher.default_keyset();
     let native = nonempty!("users").with("age").with(7u64);
     let sealed = block_on(
-        PendingStackCipherText::plan(FfiValue::UInt32(34), native)
+        PendingStackCipherText::plan(Tree::UInt32(34), native)
             .expect("plan")
             .seal(&keyset, native),
     )
@@ -699,7 +702,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     )]);
     let record = encode_tree(&tree);
 
-    let plan_with = |context: FfiValue| single_field_plan("age", context);
+    let plan_with = |context: Tree| single_field_plan("age", context);
 
     let opened = block_on(ops::decrypt_record(
         Scope::Client(&cipher),
@@ -708,10 +711,10 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
         None,
     ))
     .expect("open through the plan");
-    let FfiValue::Object(fields) = decode(&opened) else {
+    let Tree::Object(fields) = decode(&opened) else {
         panic!("a record decrypts to an object");
     };
-    assert!(matches!(fields.as_slice(), [(name, FfiValue::UInt32(34))] if name == "age"));
+    assert!(matches!(fields.as_slice(), [(name, Tree::UInt32(34))] if name == "age"));
 
     assert_eq!(
         block_on(ops::decrypt_record(
@@ -731,22 +734,22 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
 #[test]
 fn a_structured_plan_context_is_validated_at_parse() {
     let cipher = cipher();
-    let plan_with = |context: FfiValue| single_field_plan("f", context);
-    let source = encode(obj(vec![("f", FfiValue::UInt32(1))]));
+    let plan_with = |context: Tree| single_field_plan("f", context);
+    let source = encode(obj(vec![("f", Tree::UInt32(1))]));
 
     for (label, bad) in [
-        ("a boolean", FfiValue::Bool(true)),
-        ("a float", FfiValue::Float64(7.0)),
-        ("an object", FfiValue::Object(vec![])),
-        ("an empty list", FfiValue::Array(vec![])),
-        ("a list of one empty string", FfiValue::Array(vec![s("")])),
+        ("a boolean", Tree::Bool(true)),
+        ("a float", Tree::Float64(7.0)),
+        ("an object", Tree::Object(vec![])),
+        ("an empty list", Tree::Array(vec![])),
+        ("a list of one empty string", Tree::Array(vec![s("")])),
         (
             "a list with a float in it",
-            FfiValue::Array(vec![label("age"), FfiValue::Float64(7.0)]),
+            Tree::Array(vec![label("age"), Tree::Float64(7.0)]),
         ),
         ("one text part, not a label", s("users/age")),
-        ("a one-segment label", FfiValue::Array(vec![s("users")])),
-        ("an integer", FfiValue::UInt64(7)),
+        ("a one-segment label", Tree::Array(vec![s("users")])),
+        ("an integer", Tree::UInt64(7)),
     ] {
         assert_eq!(
             block_on(ops::encrypt_record(
@@ -769,13 +772,13 @@ fn a_structured_plan_context_is_validated_at_parse() {
     let sealed = block_on(ops::encrypt_record(
         &cipher.default_keyset(),
         &source,
-        &plan_with(FfiValue::Array(vec![label("f"), s("")])),
+        &plan_with(Tree::Array(vec![label("f"), s("")])),
     ))
     .expect("a label extended by an empty part is never empty");
     assert!(block_on(ops::decrypt_record(
         Scope::Client(&cipher),
         &sealed,
-        &plan_with(FfiValue::Array(vec![label("f"), s("")])),
+        &plan_with(Tree::Array(vec![label("f"), s("")])),
         None
     ))
     .is_ok());
@@ -787,7 +790,7 @@ fn record_shape_violations_are_encoding_errors() {
 
     // A field missing from the row, an extra field, a non-scalar term
     // source, and malformed plans.
-    let missing = encode(obj(vec![("age", FfiValue::UInt32(1))]));
+    let missing = encode(obj(vec![("age", Tree::UInt32(1))]));
     assert_eq!(
         block_on(ops::encrypt_record(
             &cipher.default_keyset(),
@@ -798,7 +801,7 @@ fn record_shape_violations_are_encoding_errors() {
     );
 
     let extra = encode(obj(vec![
-        ("age", FfiValue::UInt32(1)),
+        ("age", Tree::UInt32(1)),
         ("name", s("a")),
         ("stray", s("b")),
     ]));
@@ -812,7 +815,7 @@ fn record_shape_violations_are_encoding_errors() {
     );
 
     let nested = encode(obj(vec![
-        ("age", FfiValue::Array(vec![FfiValue::UInt32(1)])),
+        ("age", Tree::Array(vec![Tree::UInt32(1)])),
         ("name", s("a")),
     ]));
     assert_eq!(
@@ -832,28 +835,28 @@ fn record_shape_violations_are_encoding_errors() {
             "f",
             obj(vec![
                 ("context", s("")),
-                ("outputs", FfiValue::Array(vec![s("c")])),
+                ("outputs", Tree::Array(vec![s("c")])),
             ]),
         )]), // empty context
         obj(vec![(
             "f",
             obj(vec![
                 ("context", s("c")),
-                ("outputs", FfiValue::Array(vec![s("nope")])),
+                ("outputs", Tree::Array(vec![s("nope")])),
             ]),
         )]), // unknown output
         obj(vec![(
             "f",
             obj(vec![
                 ("context", s("c")),
-                ("outputs", FfiValue::Array(vec![s("eq"), s("eq")])),
+                ("outputs", Tree::Array(vec![s("eq"), s("eq")])),
             ]),
         )]), // duplicate output
     ] {
         assert_eq!(
             block_on(ops::encrypt_record(
                 &cipher.default_keyset(),
-                &encode(obj(vec![("f", FfiValue::UInt32(1))])),
+                &encode(obj(vec![("f", Tree::UInt32(1))])),
                 &encode(bad_plan),
             )),
             Err(STATUS_ENCODING)
@@ -878,10 +881,10 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         "f",
         obj(vec![
             ("context", s("")),
-            ("outputs", FfiValue::Array(vec![s("c")])),
+            ("outputs", Tree::Array(vec![s("c")])),
         ]),
     )]));
-    let source = encode(obj(vec![("f", FfiValue::UInt32(1))]));
+    let source = encode(obj(vec![("f", Tree::UInt32(1))]));
 
     assert_eq!(
         block_on(ops::encrypt_record(
@@ -912,8 +915,8 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
     let odd_plan = encode(obj(vec![(
         "f",
         obj(vec![
-            ("context", FfiValue::Array(vec![s("naïve users"), s("f")])),
-            ("outputs", FfiValue::Array(vec![s("c")])),
+            ("context", Tree::Array(vec![s("naïve users"), s("f")])),
+            ("outputs", Tree::Array(vec![s("c")])),
         ]),
     )]));
     let sealed = block_on(ops::encrypt_record(
@@ -929,10 +932,10 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         None,
     ))
     .expect("decrypt");
-    let FfiValue::Object(fields) = decode(&opened) else {
+    let Tree::Object(fields) = decode(&opened) else {
         panic!("a record decrypts to an object");
     };
-    assert!(matches!(fields.as_slice(), [(name, FfiValue::UInt32(1))] if name == "f"));
+    assert!(matches!(fields.as_slice(), [(name, Tree::UInt32(1))] if name == "f"));
 }
 
 // =============================================================================
@@ -993,7 +996,7 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
         2,
         "one retrieve per keyset"
     );
-    let FfiValue::Array(rows) = decode(&pt) else {
+    let Tree::Array(rows) = decode(&pt) else {
         panic!("expected an array of rows back");
     };
     assert_eq!(rows.len(), 2);
@@ -1022,14 +1025,14 @@ fn terms_derive_under_the_selected_keyset() {
 
     let acme_term = block_on(ops::term(
         &acme,
-        &encode(FfiValue::UInt32(42)),
+        &encode(Tree::UInt32(42)),
         &ctx,
         TERM_EQUALITY,
     ))
     .expect("acme term");
     let globex_term = block_on(ops::term(
         &globex,
-        &encode(FfiValue::UInt32(42)),
+        &encode(Tree::UInt32(42)),
         &ctx,
         TERM_EQUALITY,
     ))
@@ -1056,14 +1059,14 @@ fn term_validation_refuses_what_the_term_op_refuses() {
     let ctx = encode(s("f"));
 
     for (label, value, kind) in [
-        ("a bool under equality", FfiValue::Bool(true), TERM_EQUALITY),
-        ("a bool under ore", FfiValue::Bool(true), TERM_ORE),
-        ("a bool under ope", FfiValue::Bool(true), TERM_OPE),
-        ("an integer under match", FfiValue::UInt32(1), TERM_MATCH),
-        ("a container", FfiValue::Array(vec![]), TERM_ORE),
+        ("a bool under equality", Tree::Bool(true), TERM_EQUALITY),
+        ("a bool under ore", Tree::Bool(true), TERM_ORE),
+        ("a bool under ope", Tree::Bool(true), TERM_OPE),
+        ("an integer under match", Tree::UInt32(1), TERM_MATCH),
+        ("a container", Tree::Array(vec![]), TERM_ORE),
         ("an object", obj(vec![("k", s("v"))]), TERM_EQUALITY),
-        ("null", FfiValue::Null, TERM_OPE),
-        ("an unknown kind", FfiValue::UInt32(1), 99),
+        ("null", Tree::Null, TERM_OPE),
+        ("an unknown kind", Tree::UInt32(1), 99),
     ] {
         let value = encode(value);
         assert_eq!(
@@ -1079,14 +1082,11 @@ fn term_validation_refuses_what_the_term_op_refuses() {
     }
     for (label, context) in [
         ("an empty context", encode(s(""))),
-        (
-            "a context that is not a context",
-            encode(FfiValue::Bool(true)),
-        ),
+        ("a context that is not a context", encode(Tree::Bool(true))),
         ("raw bytes for a context", b"f".to_vec()),
     ] {
         assert_eq!(
-            ops::validate::term(&encode(FfiValue::UInt32(1)), &context, TERM_EQUALITY),
+            ops::validate::term(&encode(Tree::UInt32(1)), &context, TERM_EQUALITY),
             Err(STATUS_ENCODING),
             "{label} must be refused by validation"
         );
@@ -1094,14 +1094,14 @@ fn term_validation_refuses_what_the_term_op_refuses() {
 
     // Every pair the scheme defines passes.
     for (value, kind) in [
-        (FfiValue::UInt32(1), TERM_EQUALITY),
-        (FfiValue::Int64(-1), TERM_EQUALITY),
+        (Tree::UInt32(1), TERM_EQUALITY),
+        (Tree::Int64(-1), TERM_EQUALITY),
         (s("x"), TERM_EQUALITY),
-        (FfiValue::Bytes(Protected::new(vec![1])), TERM_EQUALITY),
+        (Tree::Bytes(vec![1]), TERM_EQUALITY),
         (s("x y"), TERM_MATCH),
-        (FfiValue::Float64(1.5), TERM_EQUALITY),
-        (FfiValue::Float64(1.5), TERM_ORE),
-        (FfiValue::Int32(-1), TERM_OPE),
+        (Tree::Float64(1.5), TERM_EQUALITY),
+        (Tree::Float64(1.5), TERM_ORE),
+        (Tree::Int32(-1), TERM_OPE),
         (s("x"), TERM_ORE),
     ] {
         assert_eq!(ops::validate::term(&encode(value), &ctx, kind), Ok(()));
@@ -1114,11 +1114,11 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
     let plan = plan();
 
     for (label, source) in [
-        ("a missing field", obj(vec![("age", FfiValue::UInt32(1))])),
+        ("a missing field", obj(vec![("age", Tree::UInt32(1))])),
         (
             "an extra field",
             obj(vec![
-                ("age", FfiValue::UInt32(1)),
+                ("age", Tree::UInt32(1)),
                 ("name", s("a")),
                 ("stray", s("b")),
             ]),
@@ -1126,25 +1126,22 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
         (
             "a container under a term output",
             obj(vec![
-                ("age", FfiValue::Array(vec![FfiValue::UInt32(1)])),
+                ("age", Tree::Array(vec![Tree::UInt32(1)])),
                 ("name", s("a")),
             ]),
         ),
         (
             "a float under equality",
-            obj(vec![("age", FfiValue::Float64(1.0)), ("name", s("a"))]),
+            obj(vec![("age", Tree::Float64(1.0)), ("name", s("a"))]),
         ),
         (
             "an integer under match",
-            obj(vec![
-                ("age", FfiValue::UInt32(1)),
-                ("name", FfiValue::UInt32(2)),
-            ]),
+            obj(vec![("age", Tree::UInt32(1)), ("name", Tree::UInt32(2))]),
         ),
-        ("a scalar, not a record", FfiValue::UInt32(1)),
+        ("a scalar, not a record", Tree::UInt32(1)),
         (
             "a batch holding a non-record",
-            FfiValue::Array(vec![row(1, "a"), FfiValue::Null]),
+            Tree::Array(vec![row(1, "a"), Tree::Null]),
         ),
     ] {
         let source = encode(source);
@@ -1169,7 +1166,7 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
     let ct_only = single_field_plan("age", label("age"));
     let passthrough = encode(obj(vec![(
         "age",
-        FfiValue::Passthrough(Box::new(FfiValue::UInt32(29))),
+        Tree::Passthrough(Box::new(Tree::UInt32(29))),
     )]));
     assert_eq!(
         ops::validate::record(&passthrough, &ct_only),
@@ -1184,10 +1181,7 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
 
     assert_eq!(ops::validate::record(&encode(row(1, "a")), &plan), Ok(()));
     assert_eq!(
-        ops::validate::record(
-            &encode(FfiValue::Array(vec![row(1, "a"), row(2, "b")])),
-            &plan
-        ),
+        ops::validate::record(&encode(Tree::Array(vec![row(1, "a"), row(2, "b")])), &plan),
         Ok(())
     );
     assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 0);
@@ -1230,7 +1224,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         };
         for (key, slot) in outputs.iter_mut() {
             if key == "c" {
-                *slot = clear(FfiValue::UInt32(99));
+                *slot = clear(Tree::UInt32(99));
             }
         }
     });
@@ -1240,14 +1234,14 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         };
         outputs.retain(|(key, _)| key != "c");
     });
-    let not_a_map = with_age(&|node| *node = clear(FfiValue::Null));
+    let not_a_map = with_age(&|node| *node = clear(Tree::Null));
     let missing_field = {
         let mut fields = fields();
         fields.retain(|(field, _)| field != "age");
         CipherText::Map(fields)
     };
     let batch_of_non_records =
-        CipherText::Sequence(vec![CipherText::Map(fields()), clear(FfiValue::Null)]);
+        CipherText::Sequence(vec![CipherText::Map(fields()), clear(Tree::Null)]);
 
     for (label, tree) in [
         ("a forged passthrough under c", forged_c),
@@ -1293,7 +1287,7 @@ fn plan_check_answers_without_a_cipher() {
         "age",
         obj(vec![
             ("context", label("age")),
-            ("outputs", FfiValue::Array(vec![s("c"), s("match")])),
+            ("outputs", Tree::Array(vec![s("c"), s("match")])),
             ("type", s("uint32")),
         ]),
     )]));
@@ -1305,7 +1299,7 @@ fn plan_check_answers_without_a_cipher() {
         "age",
         obj(vec![
             ("context", label("age")),
-            ("outputs", FfiValue::Array(vec![s("c"), s("eq")])),
+            ("outputs", Tree::Array(vec![s("c"), s("eq")])),
         ]),
     )]));
     assert_eq!(ops::plan_check(&untyped_index), Err(STATUS_ENCODING));
@@ -1314,8 +1308,8 @@ fn plan_check_answers_without_a_cipher() {
     let one_segment = encode(obj(vec![(
         "age",
         obj(vec![
-            ("context", FfiValue::Array(vec![s("users")])),
-            ("outputs", FfiValue::Array(vec![s("c")])),
+            ("context", Tree::Array(vec![s("users")])),
+            ("outputs", Tree::Array(vec![s("c")])),
         ]),
     )]));
     assert_eq!(ops::plan_check(&one_segment), Err(STATUS_ENCODING));
@@ -1332,31 +1326,29 @@ fn plan_check_answers_without_a_cipher() {
 #[test]
 fn targets_lists_what_the_build_holds() {
     let out = ops::targets().expect("targets encode");
-    let FfiValue::Object(entries) = decode(&out) else {
+    let Tree::Object(entries) = decode(&out) else {
         panic!("targets is an object");
     };
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].0, "targets");
-    let FfiValue::Array(items) = &entries[0].1 else {
+    let Tree::Array(items) = &entries[0].1 else {
         panic!("targets is a list");
     };
     if !stack_encrypt_guest::targets::HOLDS_EQL {
         assert!(items.is_empty(), "the build without EQL types lists none");
         return;
     }
-    let name_of = |item: &FfiValue| match item {
-        FfiValue::Object(fields) => fields.iter().find_map(|(k, v)| match (k.as_str(), v) {
-            ("name", FfiValue::String(s)) => {
-                std::str::from_utf8(s.risky_ref()).ok().map(str::to_owned)
-            }
+    let name_of = |item: &Tree| match item {
+        Tree::Object(fields) => fields.iter().find_map(|(k, v)| match (k.as_str(), v) {
+            ("name", Tree::String(s)) => std::str::from_utf8(s.as_bytes()).ok().map(str::to_owned),
             _ => None,
         }),
         _ => None,
     };
-    let producible = |item: &FfiValue| match item {
-        FfiValue::Object(fields) => fields
+    let producible = |item: &Tree| match item {
+        Tree::Object(fields) => fields
             .iter()
-            .any(|(k, v)| k == "producible" && matches!(v, FfiValue::Bool(true))),
+            .any(|(k, v)| k == "producible" && matches!(v, Tree::Bool(true))),
         _ => false,
     };
     let names: Vec<String> = items.iter().filter_map(name_of).collect();
@@ -1394,14 +1386,14 @@ fn targets_lists_what_the_build_holds() {
 // =============================================================================
 
 /// The entries of a query term's object, by key.
-fn query_term_entries(out: &[u8]) -> Vec<(String, FfiValue)> {
-    let FfiValue::Object(entries) = decode(out) else {
+fn query_term_entries(out: &[u8]) -> Vec<(String, Tree)> {
+    let Tree::Object(entries) = decode(out) else {
         panic!("a query term is an object");
     };
     entries
 }
 
-fn entry<'a>(entries: &'a [(String, FfiValue)], key: &str) -> &'a FfiValue {
+fn entry<'a>(entries: &'a [(String, Tree)], key: &str) -> &'a Tree {
     &entries
         .iter()
         .find(|(k, _)| k == key)
@@ -1409,9 +1401,9 @@ fn entry<'a>(entries: &'a [(String, FfiValue)], key: &str) -> &'a FfiValue {
         .1
 }
 
-fn bytes_of(value: &FfiValue) -> Vec<u8> {
+fn bytes_of(value: &Tree) -> Vec<u8> {
     match value {
-        FfiValue::Bytes(b) => b.risky_ref().to_vec(),
+        Tree::Bytes(b) => b.as_slice().to_vec(),
         other => panic!("expected bytes, got {}", kind(other)),
     }
 }
@@ -1424,7 +1416,7 @@ fn bytes_of(value: &FfiValue) -> Vec<u8> {
 fn a_query_term_is_the_term_of_the_index_that_answers_its_operator() {
     let cipher = cipher();
     let keyset = cipher.default_keyset();
-    let term_of = |value: FfiValue, field: &str, kind: u32| {
+    let term_of = |value: Tree, field: &str, kind: u32| {
         block_on(ops::term(
             &keyset,
             &encode(value),
@@ -1433,7 +1425,7 @@ fn a_query_term_is_the_term_of_the_index_that_answers_its_operator() {
         ))
         .expect("term")
     };
-    let query = |input: FfiValue, field: &str, operator: &str| {
+    let query = |input: Tree, field: &str, operator: &str| {
         let input = encode(input);
         assert_eq!(
             ops::validate::query_term(&input, &plan(), field.as_bytes(), operator.as_bytes()),
@@ -1452,40 +1444,40 @@ fn a_query_term_is_the_term_of_the_index_that_answers_its_operator() {
         )
     };
 
-    let eq = query(FfiValue::UInt32(34), "age", "eq");
+    let eq = query(Tree::UInt32(34), "age", "eq");
     assert_eq!(text(entry(&eq, "operator")), "eq");
     assert_eq!(text(entry(&eq, "fidelity")), "exact");
     assert_eq!(text(entry(&eq, "index")), "eq");
-    assert!(matches!(entry(&eq, "domain"), FfiValue::Null));
+    assert!(matches!(entry(&eq, "domain"), Tree::Null));
     assert_eq!(
         bytes_of(entry(&eq, "term")),
-        term_of(FfiValue::UInt32(34), "age", TERM_EQUALITY)
+        term_of(Tree::UInt32(34), "age", TERM_EQUALITY)
     );
 
     // A host's float reads as the field's integer.
-    let lt = query(FfiValue::Float64(40.0), "age", "lt");
+    let lt = query(Tree::Float64(40.0), "age", "lt");
     assert_eq!(text(entry(&lt, "index")), "ore");
     assert_eq!(
         bytes_of(entry(&lt, "term")),
-        term_of(FfiValue::UInt32(40), "age", TERM_ORE)
+        term_of(Tree::UInt32(40), "age", TERM_ORE)
     );
 
     let range = query(
-        FfiValue::Array(vec![FfiValue::UInt32(18), FfiValue::UInt32(65)]),
+        Tree::Array(vec![Tree::UInt32(18), Tree::UInt32(65)]),
         "age",
         "between",
     );
-    let FfiValue::Array(bounds) = entry(&range, "term") else {
+    let Tree::Array(bounds) = entry(&range, "term") else {
         panic!("a range is a list of two terms");
     };
     assert_eq!(bounds.len(), 2);
     assert_eq!(
         bytes_of(&bounds[0]),
-        term_of(FfiValue::UInt32(18), "age", TERM_ORE)
+        term_of(Tree::UInt32(18), "age", TERM_ORE)
     );
     assert_eq!(
         bytes_of(&bounds[1]),
-        term_of(FfiValue::UInt32(65), "age", TERM_ORE)
+        term_of(Tree::UInt32(65), "age", TERM_ORE)
     );
 
     let matches = query(s("alice"), "name", "matches");
@@ -1510,7 +1502,7 @@ fn equality_text_that_does_not_normalize_is_a_term_failure_before_any_cipher() {
         "email",
         obj(vec![
             ("context", label("email")),
-            ("outputs", FfiValue::Array(vec![s("c"), s("eq")])),
+            ("outputs", Tree::Array(vec![s("c"), s("eq")])),
             ("type", s("string")),
         ]),
     )]));
@@ -1536,7 +1528,7 @@ fn query_term_validation_refuses_what_the_query_op_refuses() {
     for (what, input, field, operator, status) in [
         (
             "unknown operator",
-            FfiValue::UInt32(1),
+            Tree::UInt32(1),
             "age",
             "like",
             STATUS_ENCODING,
@@ -1551,7 +1543,7 @@ fn query_term_validation_refuses_what_the_query_op_refuses() {
         ),
         (
             "no such field",
-            FfiValue::UInt32(1),
+            Tree::UInt32(1),
             "height",
             "eq",
             STATUS_ENCODING,
@@ -1559,14 +1551,14 @@ fn query_term_validation_refuses_what_the_query_op_refuses() {
         ("mistyped input", s("34"), "age", "eq", STATUS_ENCODING),
         (
             "not a range",
-            FfiValue::UInt32(1),
+            Tree::UInt32(1),
             "age",
             "between",
             STATUS_ENCODING,
         ),
         (
             "inverted range",
-            FfiValue::Array(vec![FfiValue::UInt32(65), FfiValue::UInt32(18)]),
+            Tree::Array(vec![Tree::UInt32(65), Tree::UInt32(18)]),
             "age",
             "between",
             STATUS_TERM,
@@ -1592,7 +1584,7 @@ fn query_term_validation_refuses_what_the_query_op_refuses() {
         );
     }
     assert_eq!(
-        ops::validate::query_term(&encode(FfiValue::UInt32(1)), &plan(), b"\xff", b"eq"),
+        ops::validate::query_term(&encode(Tree::UInt32(1)), &plan(), b"\xff", b"eq"),
         Err(STATUS_ENCODING),
         "a field name that is not UTF-8"
     );
@@ -1602,21 +1594,21 @@ fn query_term_validation_refuses_what_the_query_op_refuses() {
 /// exact operator has nothing to verify.
 #[test]
 fn verify_answers_a_page_in_one_call() {
-    let values = encode(FfiValue::Array(vec![
+    let values = encode(Tree::Array(vec![
         s("Alice Smith"),
         s("Bob"),
-        FfiValue::Null,
+        Tree::Null,
         s("malice"),
     ]));
     let out =
         ops::verify(&encode(s("alice")), &values, &plan(), b"name", b"matches").expect("verify");
-    let FfiValue::Array(verified) = decode(&out) else {
+    let Tree::Array(verified) = decode(&out) else {
         panic!("a list");
     };
     let verified: Vec<bool> = verified
         .iter()
         .map(|v| match v {
-            FfiValue::Bool(b) => *b,
+            Tree::Bool(b) => *b,
             other => panic!("a boolean, not {}", kind(other)),
         })
         .collect();
@@ -1629,8 +1621,8 @@ fn verify_answers_a_page_in_one_call() {
     for (what, input, values, field, operator) in [
         (
             "an exact operator",
-            FfiValue::UInt32(1),
-            FfiValue::Array(vec![]),
+            Tree::UInt32(1),
+            Tree::Array(vec![]),
             "age",
             "eq",
         ),
@@ -1644,14 +1636,14 @@ fn verify_answers_a_page_in_one_call() {
         (
             "a value of another type",
             s("alice"),
-            FfiValue::Array(vec![FfiValue::UInt32(1)]),
+            Tree::Array(vec![Tree::UInt32(1)]),
             "name",
             "matches",
         ),
         (
             "an unknown operator",
             s("alice"),
-            FfiValue::Array(vec![]),
+            Tree::Array(vec![]),
             "name",
             "match",
         ),
@@ -1671,7 +1663,7 @@ fn verify_answers_a_page_in_one_call() {
     assert_eq!(
         ops::verify(
             &encode(s("al")),
-            &encode(FfiValue::Array(vec![])),
+            &encode(Tree::Array(vec![])),
             &plan(),
             b"name",
             b"matches"
@@ -1697,14 +1689,12 @@ fn target_limit_sizes_a_fetch_from_the_terms_bytes() {
     ))
     .expect("query term");
     let term = bytes_of(entry(&query_term_entries(&out), "term"));
-    let pair = |bits: u32, rows: u64| {
-        FfiValue::Array(vec![FfiValue::UInt32(bits), FfiValue::UInt64(rows)])
-    };
+    let pair = |bits: u32, rows: u64| Tree::Array(vec![Tree::UInt32(bits), Tree::UInt64(rows)]);
     let measured = encode(obj(vec![
-        ("rows", FfiValue::UInt64(1_000_000)),
+        ("rows", Tree::UInt64(1_000_000)),
         (
             "histogram",
-            FfiValue::Array(vec![pair(40, 500_000), pair(120, 500_000)]),
+            Tree::Array(vec![pair(40, 500_000), pair(120, 500_000)]),
         ),
     ]));
     let limit = |stats: &[u8], term: &[u8], field: &str, operator: &str| {
@@ -1718,15 +1708,11 @@ fn target_limit_sizes_a_fetch_from_the_terms_bytes() {
         )
     };
     let rows = decode(&limit(&measured, &term, "name", "matches").expect("a limit"));
-    assert!(
-        matches!(rows, FfiValue::UInt64(n) if n > 10),
-        "{}",
-        kind(&rows)
-    );
-    let declared = encode(obj(vec![("rows", FfiValue::UInt64(1_000_000))]));
+    assert!(matches!(rows, Tree::UInt64(n) if n > 10), "{}", kind(&rows));
+    let declared = encode(obj(vec![("rows", Tree::UInt64(1_000_000))]));
     assert!(matches!(
         decode(&limit(&declared, &term, "name", "matches").expect("a limit")),
-        FfiValue::Null
+        Tree::Null
     ));
 
     assert_eq!(
@@ -1754,24 +1740,24 @@ fn the_catalog_lists_each_types_operators() {
     if !stack_encrypt_guest::targets::HOLDS_EQL {
         return;
     }
-    let FfiValue::Object(entries) = decode(&ops::targets().expect("targets")) else {
+    let Tree::Object(entries) = decode(&ops::targets().expect("targets")) else {
         panic!("an object");
     };
-    let FfiValue::Array(items) = &entries[0].1 else {
+    let Tree::Array(items) = &entries[0].1 else {
         panic!("a list");
     };
     for item in items {
-        let FfiValue::Object(fields) = item else {
+        let Tree::Object(fields) = item else {
             panic!("an object");
         };
         let name = text(entry(fields, "name")).to_owned();
-        let FfiValue::Array(operators) = entry(fields, "operators") else {
+        let Tree::Array(operators) = entry(fields, "operators") else {
             panic!("{name}: operators is a list");
         };
-        let producible = matches!(entry(fields, "producible"), FfiValue::Bool(true));
+        let producible = matches!(entry(fields, "producible"), Tree::Bool(true));
         let only = |want: [(&str, &str); 4]| {
             assert_eq!(operators.len(), 1, "{name} answers one operator");
-            let FfiValue::Object(op) = &operators[0] else {
+            let Tree::Object(op) = &operators[0] else {
                 panic!("an object");
             };
             let op: Vec<(&str, &str)> = op.iter().map(|(k, v)| (k.as_str(), text(v))).collect();
@@ -1827,17 +1813,17 @@ fn a_text_match_field_answers_matches_through_its_twin() {
         b"matches",
     ))
     .expect("matches on a TextMatch field");
-    let FfiValue::Object(term) = decode(&term) else {
+    let Tree::Object(term) = decode(&term) else {
         panic!("a term is an object");
     };
     let field = |key: &str| &term.iter().find(|(k, _)| k == key).expect(key).1;
     assert_eq!(text(field("fidelity")), "probabilistic");
     assert_eq!(text(field("index")), "match");
     assert_eq!(text(field("domain")), "eql_v4.query_text_match");
-    let FfiValue::Bytes(twin) = field("term") else {
+    let Tree::Bytes(twin) = field("term") else {
         panic!("the term is bytes");
     };
-    let twin: serde_json::Value = serde_json::from_slice(twin.risky_ref()).expect("JSON");
+    let twin: serde_json::Value = serde_json::from_slice(twin.as_slice()).expect("JSON");
     let bits = twin["bf"].as_array().expect("a bf").len();
     assert!(
         bits > 0 && bits <= 3 * 6,
@@ -1846,30 +1832,26 @@ fn a_text_match_field_answers_matches_through_its_twin() {
 
     let verified = ops::verify(
         &encode(s("ALICE")),
-        &encode(FfiValue::Array(vec![
-            s("say alice"),
-            s("alison"),
-            FfiValue::Null,
-        ])),
+        &encode(Tree::Array(vec![s("say alice"), s("alison"), Tree::Null])),
         &plan,
         b"name",
         b"matches",
     )
     .expect("verify");
-    let FfiValue::Array(verified) = decode(&verified) else {
+    let Tree::Array(verified) = decode(&verified) else {
         panic!("a list");
     };
     let verified: Vec<bool> = verified
         .iter()
-        .map(|v| matches!(v, FfiValue::Bool(true)))
+        .map(|v| matches!(v, Tree::Bool(true)))
         .collect();
     assert_eq!(verified, [true, false, false]);
-    let FfiValue::Bytes(twin_bytes) = field("term") else {
+    let Tree::Bytes(twin_bytes) = field("term") else {
         unreachable!()
     };
     let limit = ops::target_limit(
-        twin_bytes.risky_ref(),
-        &encode(obj(vec![("rows", FfiValue::UInt64(1000))])),
+        twin_bytes.as_slice(),
+        &encode(obj(vec![("rows", Tree::UInt64(1000))])),
         &plan,
         b"name",
         b"matches",
@@ -1877,7 +1859,7 @@ fn a_text_match_field_answers_matches_through_its_twin() {
     )
     .expect("target_limit reads the twin's bf");
     assert!(
-        matches!(decode(&limit), FfiValue::Null),
+        matches!(decode(&limit), Tree::Null),
         "a declared count and no measured histogram give no finite fetch"
     );
 
@@ -1897,15 +1879,14 @@ fn a_text_match_field_answers_matches_through_its_twin() {
 
 /// The operators of one field, each as `(operator, fidelity, arity, index)`.
 fn operators_of(plan: &[u8], field: &str) -> Vec<[String; 4]> {
-    let FfiValue::Array(items) =
-        decode(&ops::operators(plan, field.as_bytes()).expect("operators"))
+    let Tree::Array(items) = decode(&ops::operators(plan, field.as_bytes()).expect("operators"))
     else {
         panic!("operators are a list");
     };
     items
         .iter()
         .map(|item| {
-            let FfiValue::Object(entries) = item else {
+            let Tree::Object(entries) = item else {
                 panic!("an operator is an object");
             };
             let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
@@ -1938,14 +1919,14 @@ fn a_fields_operators_are_the_queries_it_answers() {
         operators_of(&plan(), "name"),
         [row("matches", "probabilistic", "one", "match")]
     );
-    for (field, input) in [("age", FfiValue::UInt32(7)), ("name", s("alice smith"))] {
+    for (field, input) in [("age", Tree::UInt32(7)), ("name", s("alice smith"))] {
         let listed: Vec<String> = operators_of(&plan(), field)
             .into_iter()
             .map(|[op, ..]| op)
             .collect();
         for op in ["eq", "lt", "lte", "gt", "gte", "between", "matches"] {
             let input = if op == "between" {
-                FfiValue::Array(vec![input.clone(), input.clone()])
+                Tree::Array(vec![input.clone(), input.clone()])
             } else {
                 input.clone()
             };
@@ -1990,14 +1971,14 @@ fn a_target_fields_operators_are_its_types() {
 /// The plan-level `"context_field"` key: `tenant` names each record's
 /// context, `age` is sealed under `<tenant>/age`.
 fn context_field_plan() -> Vec<u8> {
-    let identity = |field: &str| FfiValue::Array(vec![s(field)]);
+    let identity = |field: &str| Tree::Array(vec![s(field)]);
     encode(obj(vec![
         ("context_field", s("tenant")),
         (
             "tenant",
             obj(vec![
                 ("context", identity("tenant")),
-                ("outputs", FfiValue::Array(vec![s("passthrough")])),
+                ("outputs", Tree::Array(vec![s("passthrough")])),
                 ("type", s("string")),
             ]),
         ),
@@ -2005,15 +1986,15 @@ fn context_field_plan() -> Vec<u8> {
             "age",
             obj(vec![
                 ("context", identity("age")),
-                ("outputs", FfiValue::Array(vec![s("c"), s("eq")])),
+                ("outputs", Tree::Array(vec![s("c"), s("eq")])),
                 ("type", s("uint32")),
             ]),
         ),
     ]))
 }
 
-fn tenant_row(tenant: &str, age: u32) -> FfiValue {
-    obj(vec![("tenant", s(tenant)), ("age", FfiValue::UInt32(age))])
+fn tenant_row(tenant: &str, age: u32) -> Tree {
+    obj(vec![("tenant", s(tenant)), ("age", Tree::UInt32(age))])
 }
 
 /// Two tenants in one batch seal under their own contexts and open back
@@ -2025,7 +2006,7 @@ fn tenant_row(tenant: &str, age: u32) -> FfiValue {
 fn a_context_field_record_opens_under_the_context_it_stores() {
     let cipher = cipher();
     let plan = context_field_plan();
-    let batch = encode(FfiValue::Array(vec![
+    let batch = encode(Tree::Array(vec![
         tenant_row("tenants/acme", 34),
         tenant_row("tenants/globex", 34),
     ]));
@@ -2055,10 +2036,10 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
         None,
     ))
     .expect("each record opens under the context it stores");
-    let FfiValue::Array(opened) = decode(&opened) else {
+    let Tree::Array(opened) = decode(&opened) else {
         panic!("an array of rows");
     };
-    let FfiValue::Object(globex) = &opened[1] else {
+    let Tree::Object(globex) = &opened[1] else {
         panic!("an object row");
     };
     assert_eq!(
@@ -2066,7 +2047,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
         "tenants/globex",
         "the context field comes back"
     );
-    assert!(matches!(globex[1].1, FfiValue::UInt32(34)));
+    assert!(matches!(globex[1].1, Tree::UInt32(34)));
 
     let acme = Label::parse("tenants/acme").expect("a label");
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
@@ -2107,8 +2088,8 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
         Some(acme),
     ))
     .expect("the expected context opens it");
-    let FfiValue::Object(fields) = decode(&opened) else {
+    let Tree::Object(fields) = decode(&opened) else {
         panic!("an object row");
     };
-    assert!(matches!(fields[1].1, FfiValue::UInt32(35)));
+    assert!(matches!(fields[1].1, Tree::UInt32(35)));
 }

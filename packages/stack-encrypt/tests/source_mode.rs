@@ -173,12 +173,12 @@ async fn a_plaintext_that_is_not_clone_derives_a_match_term_alone() {
     );
 }
 
-/// The case the owned mode exists for: the dynamic value an FFI binding
-/// decodes is zeroized on drop and is not `Clone`.
+/// The dynamic value an FFI binding decodes, its frame, is wiped on drop:
+/// owned, it seals by value through a ciphertext alone.
 #[cfg(feature = "dynamic")]
 #[tokio::test]
-async fn a_zeroizing_ffi_value_seals_through_ciphertext_alone() {
-    use stack_encrypt::dynamic::FfiValue;
+async fn a_value_frame_seals_by_value_through_ciphertext_alone() {
+    use stack_encrypt::dynamic::ValueFrame;
 
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
@@ -186,20 +186,16 @@ async fn a_zeroizing_ffi_value_seals_through_ciphertext_alone() {
     let sealed: StackCipherText = keyset
         .run(
             ciphertext::<_, _, Owned>(),
-            FfiValue::String(NUMBER.into()),
+            ValueFrame::of(NUMBER).unwrap(),
             aead(),
         )
         .await
         .unwrap();
 
-    let opened: FfiValue = cipher.decrypt_as(sealed, aead()).await.unwrap();
-    let FfiValue::String(text) = opened else {
-        panic!("an FfiValue string should open to a string");
-    };
+    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
     assert_eq!(
-        text.risky_ref(),
-        NUMBER.as_bytes(),
-        "an FfiValue should seal by value and open to the same text"
+        opened, NUMBER,
+        "a value frame should seal by value and open to the same text"
     );
 }
 
