@@ -131,7 +131,7 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 	if err != nil {
 		return QueryTerm{}, err
 	}
-	out, err := cph.client.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := cph.client.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.queryTerm, buf(encodedInput), buf(encodedPlan), buf([]byte(field)), buf([]byte(operator)), buf(opts))
 	})
 	if err != nil {
@@ -244,7 +244,7 @@ func (cph *Cipher) Verify(ctx context.Context, plan *record.Plan, field, operato
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	out, err := cph.client.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := cph.client.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.verify, buf(encodedInput), buf(encodedValues), buf(encodedPlan), buf([]byte(field)), buf([]byte(operator)))
 	})
 	if err != nil {
@@ -287,7 +287,7 @@ func (cph *Cipher) TargetLimit(ctx context.Context, plan *record.Plan, field, op
 	if err != nil {
 		return Limit{}, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	out, err := cph.client.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := cph.client.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.limit, buf(term), buf(encodedStats), buf(encodedPlan), buf([]byte(field)), buf([]byte(operator)), scalar(want))
 	})
 	if err != nil {

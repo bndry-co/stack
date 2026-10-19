@@ -202,7 +202,7 @@ func TestRequireLockedMemoryFailsTheCallThatCannotGrow(t *testing.T) {
 	ctx := context.Background()
 	c := strictClient(t)
 	refusing := guest.RefuseGrowth(c.inst.mem, errors.New("refused for the test"))
-	stage := func(inst *instance) ([]byte, error) { return nil, stageLarge(ctx, inst) }
+	stage := func(ctx context.Context, inst *instance) ([]byte, error) { return nil, stageLarge(ctx, inst) }
 	_, err := c.call(ctx, stage)
 	if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "growth refused") || !strings.Contains(err.Error(), refusing.Reason().Error()) {
 		t.Fatalf("call needing a refused growth: %v; want ErrMemoryLock naming the refusal", err)
@@ -252,7 +252,7 @@ func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T
 		t.Fatal(err)
 	}
 	var refusing *guest.Refusing
-	_, err = c.call(ctx, func(inst *instance) ([]byte, error) {
+	_, err = c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		staged, err := inst.exports.AllocWrite(ctx, inst.module, encoded)
 		if err != nil {
 			return nil, err
@@ -273,7 +273,7 @@ func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T
 	if !c.inst.mem.IsFreed() {
 		t.Fatal("the closed client's memory was not wiped and freed")
 	}
-	if _, err := c.call(ctx, func(*instance) ([]byte, error) { return nil, nil }); !errors.Is(err, ErrState) {
+	if _, err := c.call(ctx, func(context.Context, *instance) ([]byte, error) { return nil, nil }); !errors.Is(err, ErrState) {
 		t.Fatalf("a call after the abort: %v, want ErrState", err)
 	}
 	if !c.MemoryLocked() {

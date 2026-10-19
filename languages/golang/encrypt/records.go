@@ -65,7 +65,7 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 	if err != nil {
 		return nil, err
 	}
-	out, err := cph.client.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := cph.client.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.encryptRecord, buf(encodedSource), buf(encodedPlan), buf(opts))
 	})
 	if errors.Is(err, ErrTerm) {
@@ -154,7 +154,7 @@ func (cph *Cipher) derive(ctx context.Context, plan *record.Plan, field string, 
 	if err != nil {
 		return nil, err
 	}
-	return cph.client.call(ctx, func(inst *instance) ([]byte, error) {
+	return cph.client.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.term, buf(encodedValue), buf(encodedContext), scalar(uint64(code)), buf(opts))
 	})
 }
@@ -359,9 +359,9 @@ var errNoContext = errors.New("encrypt: the record has no value for its context 
 var errNoEQL = errors.New("encrypt: the record has no EQL value for a field that names an EQL type")
 
 // open decrypts records under the keyset the selector names, and, when
-// context is not "", refuses a record whose stored context field names
+// expected is not "", refuses a record whose stored context field names
 // another context before any key is retrieved.
-func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p *record.Plan, records []record.Sealed) ([]record.Source, error) {
+func (c *Client) open(ctx context.Context, sel KeysetSelector, expected string, p *record.Plan, records []record.Sealed) ([]record.Source, error) {
 	trees := make([]any, len(records))
 	for i, rec := range records {
 		tree := make(map[string]any, len(p.Fields)+1)
@@ -404,11 +404,11 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	opts, err := vcffi.Marshal(options(sel, context))
+	opts, err := vcffi.Marshal(options(sel, expected))
 	if err != nil {
 		return nil, err
 	}
-	out, err := c.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.decryptRecord, buf(encodedTree), buf(encodedPlan), buf(opts))
 	})
 	if err != nil {

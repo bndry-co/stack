@@ -113,10 +113,13 @@ func guestModuleConfig() wazero.ModuleConfig {
 // strict policy, memory that cannot be locked fails instantiation with
 // ErrMemoryLock.
 func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.LockPolicy) (*instance, error) {
-	// WithCloseOnContextDone lets a caller's deadline or cancellation
-	// interrupt an in-flight guest call — which otherwise holds the Client's
-	// lock against every other user. An interrupted call closes the module,
-	// so the Client is done afterwards; the alternative is a wedged process.
+	// WithCloseOnContextDone closes the module when a call's context ends.
+	// A guest call never runs under the caller's context: Client.call runs
+	// it under guest.Detach, whose context ends only when the guest has run
+	// on long after its caller gave up. Closing the module then frees the
+	// Client's lock, which a stuck call would otherwise hold against every
+	// other user, at the cost of the Client: the alternative is a wedged
+	// process.
 	config := wazero.NewRuntimeConfig().
 		WithCompilationCache(compilationCache()).
 		WithCloseOnContextDone(true)
@@ -196,8 +199,8 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 // release runs the guest's shutdown — the client key and every loaded
 // index key wiped inside the instance — and closes the runtime, which
 // frees the linear memory through the allocator's wipe. It is what Close
-// does, and what the cleanup on an unreachable Client does. A module an
-// interrupted call or a trap already closed cannot run se_shutdown; the
+// does, and what the cleanup on an unreachable Client does. A module a
+// stuck call or a trap already closed cannot run se_shutdown; the
 // runtime close still wipes and frees its memory, so nothing is left
 // behind either way.
 func (inst *instance) release() error {
