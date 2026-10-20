@@ -699,7 +699,9 @@ exact pin would stop the suite sharing one `cts-common` with it.
   with its own `Cargo.lock`.
 - **The toolchain is pinned in the root `mise.toml`:** Rust 1.94.1 (the
   `stack-encrypt` `tests/ui` trybuild snapshots record its diagnostics) and
-  Go 1.26. EQL's `mise.toml` overrides the Rust pin in its folder.
+  Go 1.26.10, the module's `go` minimum (#1300: the first 1.26 patch whose
+  `crypto/x509` blocks the compromised eMudhra intermediates). EQL's
+  `mise.toml` overrides the Rust pin in its folder.
   protect-ffi's does not pin Rust, so the root pin applies there.
 - **The cargo tools are pinned in `mise.test.toml`, not `mise.toml`:**
   nextest, llvm-cov, crap, mutants, fuzz and udeps. EQL and protect-ffi

@@ -14,7 +14,11 @@ The package reference is on [pkg.go.dev]; the generator's reference is
 
 ## Use the SDK
 
-1. Add the generator to your module. This needs Go 1.26 or later.
+1. Add the generator to your module. This needs Go 1.26.10 or later (or 1.27.3 or later on 1.27):
+   those are the first releases whose `crypto/x509` blocks the compromised eMudhra intermediate CAs
+   ([CVE-2026-111943](https://github.com/golang/go/issues/82345)).
+   The module's `go` line requires 1.26.10, so under the default `GOTOOLCHAIN=auto` an older local Go downloads and switches to 1.26.10.
+   A minimum cannot exclude 1.27.0 to 1.27.2, which are also vulnerable: do not build with those.
 
    ```sh
    go get -tool github.com/cipherstash/stack/languages/golang/cmd/stashgen

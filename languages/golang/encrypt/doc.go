@@ -4,7 +4,9 @@
 //
 // # Use the SDK
 //
-// 1. Add the generator to your module (Go 1.26 or later):
+// 1. Add the generator to your module (Go 1.26.10 or later, or 1.27.3 or later
+// on 1.27: the first releases whose crypto/x509 blocks the compromised eMudhra
+// intermediate CAs, CVE-2026-111943):
 //
 //	go get -tool github.com/cipherstash/stack/languages/golang/cmd/stashgen
 //
