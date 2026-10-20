@@ -742,6 +742,51 @@ mod tests {
     }
 
     #[test]
+    fn a_header_reads_back_what_it_was_made_with() {
+        let header = JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![1, 2, 3], false);
+        assert_eq!(header.keyset_id(), Uuid::from_u128(7));
+        assert_eq!(header.iv(), &[9; 16]);
+        assert_eq!(header.tag(), &[1, 2, 3]);
+        assert!(!header.sealed_root());
+        assert_eq!(header.options(), JsonOptions { sealed_root: false });
+        let sealed = JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![], true);
+        assert_eq!(sealed.options(), JsonOptions { sealed_root: true });
+    }
+
+    #[test]
+    fn every_truncation_of_a_header_is_refused() {
+        let header = JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![1, 2, 3], true);
+        let bytes = header.to_bytes();
+        assert_eq!(bytes.len(), 40 + 3, "the fixed fields, then the tag");
+        // Short of the fixed fields, and short of the tag `tag_len` promises.
+        for len in 0..bytes.len() {
+            assert_eq!(
+                JsonHeader::from_bytes(&bytes[..len]),
+                Err(JsonHeaderError::Truncated),
+                "{len} bytes"
+            );
+        }
+        let bare = JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![], true);
+        assert_eq!(
+            JsonHeader::from_bytes(&bare.to_bytes()),
+            Ok(bare),
+            "the fixed fields alone are a header with an empty tag"
+        );
+    }
+
+    #[test]
+    fn a_header_prints_its_keyset_and_layout() {
+        let header = JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![1, 2, 3], true);
+        assert_eq!(
+            format!("{header:?}"),
+            format!(
+                "JsonHeader {{ keyset_id: {:?}, sealed_root: true, epoch: 0, .. }}",
+                Uuid::from_u128(7)
+            )
+        );
+    }
+
+    #[test]
     fn hex_round_trips_and_refuses_what_is_not_hex() {
         assert_eq!(hex(&[0, 15, 255]), "000fff");
         assert_eq!(unhex("000FfF").unwrap(), vec![0, 15, 255]);

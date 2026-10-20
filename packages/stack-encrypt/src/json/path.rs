@@ -77,70 +77,66 @@ impl JsonPath {
     ///
     /// [`JsonPathError`] for text that is not one.
     pub fn parse(text: &str) -> Result<Self, JsonPathError> {
-        let bytes = text.as_bytes();
-        let refuse = |reason, at| Err(JsonPathError { reason, at });
-        if bytes.first() != Some(&b'$') {
-            return refuse("expected `$`", 0);
-        }
+        // The parser walks a cursor, `rest`: the text not yet read. Every
+        // step strips at least one byte from its front, so the loop ends on
+        // any input, and a refusal names the offset of what was left.
+        let at = |rest: &str| text.len() - rest.len();
+        let refuse = |reason, rest: &str| {
+            Err(JsonPathError {
+                reason,
+                at: at(rest),
+            })
+        };
+        let Some(mut rest) = text.strip_prefix('$') else {
+            return refuse("expected `$`", text);
+        };
         let mut segments = Vec::new();
-        let mut at = 1;
-        while at < bytes.len() {
-            match bytes[at] {
-                b'.' => {
-                    let start = at + 1;
-                    let mut end = start;
-                    while end < bytes.len() && bytes[end] != b'.' && bytes[end] != b'[' {
-                        end += 1;
-                    }
-                    if end == start {
-                        return refuse("expected a member name after `.`", start);
-                    }
-                    // `end` is at an ASCII delimiter or the end of the text,
-                    // so the slice ends on a character boundary.
-                    segments.push(Segment::Key(text[start..end].to_owned()));
-                    at = end;
+        while !rest.is_empty() {
+            if let Some(after) = rest.strip_prefix('.') {
+                let end = after.find(['.', '[']).unwrap_or(after.len());
+                if end == 0 {
+                    return refuse("expected a member name after `.`", after);
                 }
-                b'[' => {
-                    let start = at + 1;
-                    match bytes.get(start) {
-                        Some(b'*') => {
-                            if bytes.get(start + 1) != Some(&b']') {
-                                return refuse("expected `]` after `*`", start + 1);
-                            }
-                            segments.push(Segment::Wildcard);
-                            at = start + 2;
-                        }
-                        Some(b'"') => {
-                            let (key, next) = quoted(text, start)?;
-                            if bytes.get(next) != Some(&b']') {
-                                return refuse("expected `]` after the quoted name", next);
-                            }
-                            segments.push(Segment::Key(key));
-                            at = next + 1;
-                        }
-                        Some(b'0'..=b'9') => {
-                            let mut end = start;
-                            while end < bytes.len() && bytes[end].is_ascii_digit() {
-                                end += 1;
-                            }
-                            if bytes.get(end) != Some(&b']') {
-                                return refuse("expected `]` after the position", end);
-                            }
-                            let Ok(index) = text[start..end].parse::<u64>() else {
-                                return refuse("the position does not fit 64 bits", start);
-                            };
-                            segments.push(Segment::Index(index));
-                            at = end + 1;
-                        }
-                        _ => {
-                            return refuse(
-                                "expected `*`, a quoted name or a position after `[`",
-                                start,
-                            )
-                        }
-                    }
+                // `end` is at an ASCII delimiter or the end of the text, so
+                // the split falls on a character boundary.
+                let (name, next) = after.split_at(end);
+                segments.push(Segment::Key(name.to_owned()));
+                rest = next;
+            } else if let Some(after) = rest.strip_prefix('[') {
+                if let Some(star) = after.strip_prefix('*') {
+                    let Some(next) = star.strip_prefix(']') else {
+                        return refuse("expected `]` after `*`", star);
+                    };
+                    segments.push(Segment::Wildcard);
+                    rest = next;
+                } else if after.starts_with('"') {
+                    let (key, next) = match quoted(after) {
+                        Ok(parts) => parts,
+                        Err(reason) => return refuse(reason, after),
+                    };
+                    let Some(next) = next.strip_prefix(']') else {
+                        return refuse("expected `]` after the quoted name", next);
+                    };
+                    segments.push(Segment::Key(key));
+                    rest = next;
+                } else if after.starts_with(|c: char| c.is_ascii_digit()) {
+                    let end = after
+                        .find(|c: char| !c.is_ascii_digit())
+                        .unwrap_or(after.len());
+                    let (digits, next) = after.split_at(end);
+                    let Some(next) = next.strip_prefix(']') else {
+                        return refuse("expected `]` after the position", next);
+                    };
+                    let Ok(index) = digits.parse::<u64>() else {
+                        return refuse("the position does not fit 64 bits", after);
+                    };
+                    segments.push(Segment::Index(index));
+                    rest = next;
+                } else {
+                    return refuse("expected `*`, a quoted name or a position after `[`", after);
                 }
-                _ => return refuse("expected `.` or `[`", at),
+            } else {
+                return refuse("expected `.` or `[`", rest);
             }
         }
         Ok(Self { segments })
@@ -238,29 +234,24 @@ fn push_key(out: &mut Vec<u8>, key: &str) {
     out.extend_from_slice(key.as_bytes());
 }
 
-/// A JSON string starting at the quote at `start`: its value and the offset
-/// after its closing quote. The escapes are JSON's.
-fn quoted(text: &str, start: usize) -> Result<(String, usize), JsonPathError> {
-    let bytes = text.as_bytes();
-    let mut end = start + 1;
-    while end < bytes.len() {
-        match bytes[end] {
-            b'\\' => end += 2,
-            b'"' => {
-                let literal = &text[start..=end];
-                let key: String = serde_json::from_str(literal).map_err(|_| JsonPathError {
-                    reason: "the quoted name is not a JSON string",
-                    at: start,
-                })?;
-                return Ok((key, end + 1));
+/// The JSON string at the front of `text`, which starts at its opening
+/// quote: its value and the text after its closing quote. The escapes are
+/// JSON's. The refusal is the reason; the caller names the offset.
+fn quoted(text: &str) -> Result<(String, &str), &'static str> {
+    let mut escaped = false;
+    for (end, byte) in text.bytes().enumerate().skip(1) {
+        match (escaped, byte) {
+            (true, _) => escaped = false,
+            (false, b'\\') => escaped = true,
+            (false, b'"') => {
+                let key: String = serde_json::from_str(&text[..=end])
+                    .map_err(|_| "the quoted name is not a JSON string")?;
+                return Ok((key, &text[end + 1..]));
             }
-            _ => end += 1,
+            (false, _) => {}
         }
     }
-    Err(JsonPathError {
-        reason: "unterminated quoted name",
-        at: start,
-    })
+    Err("unterminated quoted name")
 }
 
 impl FromStr for JsonPath {
@@ -332,12 +323,65 @@ mod tests {
             ("$[-1]", 2),
             ("$[\"a]", 2),
             ("$.a[x]", 4),
+            ("$[*x", 3),
+            ("$[*", 3),
+            ("$[\"a\"x", 5),
+            ("$[\"a\"", 5),
+            ("$[\"\\q\"]", 2),
+            ("$[18446744073709551616]", 2),
         ] {
             let error = JsonPath::parse(text).unwrap_err();
             assert_eq!(error.at, at, "{text:?}: {error}");
         }
         // A plain key runs to the next `.` or `[`, so it may hold a space.
         assert_eq!(JsonPath::parse("$.a b").unwrap().segments(), &[key("a b")]);
+    }
+
+    #[test]
+    fn a_quoted_name_takes_json_escapes() {
+        assert_eq!(
+            JsonPath::parse(r#"$["a\"b"]"#).unwrap().segments(),
+            &[key("a\"b")],
+            "an escaped quote does not end the name"
+        );
+        assert_eq!(
+            JsonPath::parse(r#"$["a\\"].b"#).unwrap().segments(),
+            &[key("a\\"), key("b")],
+            "an escaped backslash does not escape the closing quote"
+        );
+        assert_eq!(
+            JsonPath::parse(r#"$["\u0041"][0]"#).unwrap().segments(),
+            &[key("A"), Segment::Index(0)]
+        );
+        assert_eq!(
+            JsonPath::parse("$[18446744073709551615]")
+                .unwrap()
+                .segments(),
+            &[Segment::Index(u64::MAX)]
+        );
+    }
+
+    #[test]
+    fn a_path_parses_through_from_str() {
+        let path: JsonPath = "$.a[*]".parse().unwrap();
+        assert_eq!(path, JsonPath::parse("$.a[*]").unwrap());
+        assert_eq!("$.".parse::<JsonPath>().unwrap_err().at, 2);
+    }
+
+    #[test]
+    fn a_refusal_reports_its_reason_and_offset_and_not_the_text() {
+        use crate::ErrorPayload;
+        let error = JsonPath::parse("$.secret[x]").unwrap_err();
+        let payload = error.payload();
+        assert_eq!(
+            payload.get("reason"),
+            Some(&serde_json::json!(
+                "expected `*`, a quoted name or a position after `[`"
+            ))
+        );
+        assert_eq!(payload.get("at"), Some(&serde_json::json!(9)));
+        assert_eq!(payload.len(), 2, "{payload:?}");
+        assert!(!error.to_string().contains("secret"));
     }
 
     #[test]

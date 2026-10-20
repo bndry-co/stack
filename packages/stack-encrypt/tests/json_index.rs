@@ -15,7 +15,9 @@ use stack_encrypt::json::{
 };
 use stack_encrypt::op;
 use stack_encrypt::sem::TermError;
-use stack_encrypt::target::{AeadContext, CallerContext, IndexSpec, Json};
+use stack_encrypt::target::{
+    AeadContext, CallerContext, DecryptField, Decryption, IndexSpec, Json,
+};
 use stack_encrypt::{nonempty, Error, Plan, PlanError, StackCipher};
 use stack_kms::FakeDataKeySource;
 
@@ -184,6 +186,19 @@ async fn the_chain_fields_sit_where_the_design_says() {
         (b.selector(), b.value_selector())
     );
     assert_ne!(a.ciphertext(), b.ciphertext());
+    let doc3 = seal(&cipher, &json!([1, 2])).await;
+    let (one, two) = (&doc3.entries()[1], &doc3.entries()[2]);
+    assert_eq!(one.selector(), two.selector(), "one path");
+    assert_ne!(
+        one.value_selector(),
+        two.value_selector(),
+        "different values at one path have different value selectors"
+    );
+    assert_eq!(
+        one.value_selector(),
+        a.value_selector(),
+        "the value selector names the value at its path, in any document"
+    );
 
     // Without the sealed root, the top-level fields chain from the root.
     let open_doc = seal_with(&cipher, &fixture(), JsonOptions { sealed_root: false }).await;
@@ -907,4 +922,153 @@ fn the_json_index_has_a_wire_form() {
         not_admitted(ValueKind::Object, &IndexSpec::Json(JsonOptions::default())),
         Some(Reason::JsonIndexPending)
     );
+}
+
+// =============================================================================
+// What the suite pins beyond the round trips
+// =============================================================================
+
+/// A child's token is stored wrapped under its parent's: the stored `w` is
+/// never the token itself, which would hand the subtree to anyone who can
+/// read the column.
+#[tokio::test]
+async fn a_stored_wrapped_token_is_not_the_token() {
+    let cipher = stack_cipher().await;
+    let doc = seal(&cipher, &fixture()).await;
+    // $.nested.deep, $.nested.list, list[0], list[0].x, list[1], list[1].x
+    for (j, path) in [
+        (3, "$.nested.deep"),
+        (4, "$.nested.list"),
+        (5, "$.nested.list[0]"),
+        (6, "$.nested.list[0].x"),
+        (7, "$.nested.list[1]"),
+        (8, "$.nested.list[1].x"),
+    ] {
+        let key = subtree_key(&cipher, path, JsonOptions::default())
+            .await
+            .unwrap();
+        let wrapped = doc.entries()[j].wrapped_token().expect("below a head");
+        assert_ne!(wrapped, key.token_bytes(), "{path}");
+        assert_eq!(key.token(), hex(key.token_bytes()), "{path}");
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A document, an extracted node and a walked subtree are each the one
+/// recoverable field of a derived record: each opens through
+/// `DecryptField`, as a record holding one would.
+#[tokio::test]
+async fn each_stored_form_opens_as_a_record_field() {
+    let cipher = stack_cipher().await;
+    let doc = seal(&cipher, &fixture()).await;
+    let node = doc.node(1).unwrap();
+    let key = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
+        .await
+        .unwrap();
+    let rows: Vec<JsonNode> = doc
+        .subtree(key.token_bytes())
+        .iter()
+        .map(|(j, _, _)| doc.node(*j).unwrap())
+        .collect();
+    let subtree = JsonSubtree::new(rows.clone());
+    assert_eq!(subtree.nodes(), rows.as_slice());
+    assert_eq!(subtree.nodes().len(), 4, "both elements and both leaves");
+
+    let opening: Option<Decryption<Value, FakeDataKeySource>> = doc.decryption_field(aead());
+    let opened = cipher
+        .run_decryption(opening.expect("a document opens"))
+        .await
+        .unwrap();
+    assert_eq!(opened, fixture());
+    let opening: Option<Decryption<Value, FakeDataKeySource>> = node.decryption_field(aead());
+    let opened = cipher
+        .run_decryption(opening.expect("a node opens"))
+        .await
+        .unwrap();
+    assert_eq!(opened, json!("world-1"));
+    let opening: Option<Decryption<Value, FakeDataKeySource>> = subtree.decryption_field(aead());
+    let opened = cipher
+        .run_decryption(opening.expect("a subtree opens"))
+        .await
+        .unwrap();
+    assert_eq!(opened, json!([{"x": 1}, {"x": 2}]));
+}
+
+/// The walk reports each row's depth below where it started, in `d`; an
+/// extracted node carries none.
+#[tokio::test]
+async fn a_walked_row_carries_its_depth() {
+    let cipher = stack_cipher().await;
+    let doc = seal(&cipher, &fixture()).await;
+    assert_eq!(doc.node(6).unwrap().depth(), None);
+    let mut wire = serde_json::to_value(doc.node(6).unwrap()).unwrap();
+    assert!(wire.get("d").is_none());
+    wire["d"] = json!(3);
+    let walked: JsonNode = serde_json::from_value(wire).unwrap();
+    assert_eq!(walked.depth(), Some(3));
+    assert_eq!(serde_json::to_value(&walked).unwrap()["d"], json!(3));
+}
+
+/// A document sealed without the sealed root keeps the root as an ordinary
+/// node, and opens from its entries.
+#[tokio::test]
+async fn a_document_without_the_sealed_root_opens_from_its_entries() {
+    let cipher = stack_cipher().await;
+    for value in [fixture(), json!({"": {}}), json!([[], {}, ""]), json!("a")] {
+        let doc = seal_with(&cipher, &value, JsonOptions { sealed_root: false }).await;
+        assert!(!doc.header().sealed_root());
+        assert_eq!(doc.entries().len(), nodes(&value));
+        assert_eq!(open(&cipher, doc).await.unwrap(), value);
+    }
+}
+
+/// An accessor whose path or bounds the index refuses is refused when the
+/// query is awaited, before the keyset it names is loaded.
+#[tokio::test]
+async fn an_accessor_is_refused_before_its_keyset_loads() {
+    let (cipher, loads) = common::loads_counting_cipher().await;
+    let plan = plan();
+    let eq = cipher
+        .query(op::AtPath(op::Eq), &("address.city", "Sydney"))
+        .on(&plan)
+        .keyset("tenant")
+        .await;
+    assert!(
+        matches!(eq, Err(Error::Term(TermError::JsonPath(_)))),
+        "{eq:?}"
+    );
+    let between = cipher
+        .query(op::AtPath(op::Between), &("address.age", (1, 2)))
+        .on(&plan)
+        .keyset("tenant")
+        .await;
+    assert!(
+        matches!(between, Err(Error::Term(TermError::JsonPath(_)))),
+        "{between:?}"
+    );
+    let unordered = cipher
+        .query(op::AtPath(op::Between), &("$.flag", (false, true)))
+        .on(&plan)
+        .keyset("tenant")
+        .await;
+    assert!(
+        matches!(unordered, Err(Error::Term(TermError::JsonLeafNotOrdered))),
+        "{unordered:?}"
+    );
+    assert_eq!(
+        loads.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no keyset was loaded for a refused query"
+    );
+    // The same query with a path the index takes does load it.
+    let _ = cipher
+        .query(op::AtPath(op::Eq), &("$.address.city", "Sydney"))
+        .on(&plan)
+        .keyset("tenant")
+        .await
+        .unwrap();
+    assert_eq!(loads.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

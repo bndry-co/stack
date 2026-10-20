@@ -681,6 +681,45 @@ mod tests {
     }
 
     #[test]
+    fn a_selector_prints_as_its_hex_and_a_subtree_key_hides_its_token() {
+        let selector = JsonSelector([0xab; 16]);
+        assert_eq!(selector.to_string(), "ab".repeat(16));
+        assert_eq!(
+            format!("{selector:?}"),
+            format!("JsonSelector({})", "ab".repeat(16))
+        );
+        let key = JsonSubtreeKey {
+            token: [0xcd; 16],
+            selector: Some([0xab; 16]),
+        };
+        assert_eq!(key.token(), "cd".repeat(16));
+        assert_eq!(key.token_bytes(), &[0xcd; 16]);
+        assert_eq!(key.selector(), Some(selector));
+        assert_eq!(
+            format!("{key:?}"),
+            "JsonSubtreeKey { gated: true, .. }",
+            "a token is a capability: it never prints"
+        );
+    }
+
+    #[test]
+    fn accessor_terms_carry_the_path_they_were_asked_at() {
+        let terms = AtPathTerms {
+            path: JsonPath::parse("$.a[*]").unwrap(),
+            terms: 7u8,
+        };
+        assert_eq!(terms.path(), &JsonPath::parse("$.a[*]").unwrap());
+        assert_eq!(terms.terms(), &7);
+    }
+
+    #[test]
+    fn the_index_reports_its_options() {
+        let open = JsonOptions { sealed_root: false };
+        assert_eq!(Json::new(open).options(), open);
+        assert_eq!(Json::default().options(), JsonOptions::default());
+    }
+
+    #[test]
     fn group_containment_is_jsonbs_rule() {
         let pair = |b: u8| Pair16 {
             s: [b; 16],

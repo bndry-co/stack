@@ -809,13 +809,13 @@ fn open_entry(
     decode_node(&plaintext.risky_unwrap())
 }
 
-/// Rebuild the value whose node is `nodes[*pos]` from the pre-order
-/// sequence, consuming its subtree.
-fn rebuild(nodes: &[Opened], pos: &mut usize) -> Result<Value, Error> {
-    let node = nodes
-        .get(*pos)
-        .ok_or_else(|| shape("a complete JSON subtree"))?;
-    *pos += 1;
+/// Rebuild the value of `node`, taking its descendants from `rest`, the
+/// pre-order sequence after it. Every child is taken with `next`, so each
+/// step consumes an entry and the rebuild ends on any sequence.
+fn rebuild<'a>(
+    node: &'a Opened,
+    rest: &mut impl Iterator<Item = &'a Opened>,
+) -> Result<Value, Error> {
     if let Some(whole) = &node.whole {
         return Ok(whole.clone());
     }
@@ -823,29 +823,32 @@ fn rebuild(nodes: &[Opened], pos: &mut usize) -> Result<Value, Error> {
         Kind::Object => {
             let mut map = Map::new();
             for _ in 0..node.children {
-                let at = *pos;
-                let child = rebuild(nodes, pos)?;
-                let Label::Key(key) = &nodes[at].label else {
+                let member = next_child(rest)?;
+                let Label::Key(key) = &member.label else {
                     return Err(shape("an object member"));
                 };
-                let _ = map.insert(key.clone(), child);
+                let value = rebuild(member, rest)?;
+                let _ = map.insert(key.clone(), value);
             }
             Ok(Value::Object(map))
         }
         Kind::Array => {
             let mut items = Vec::with_capacity(node.children as usize);
             for i in 0..node.children {
-                let at = *pos;
-                let child = rebuild(nodes, pos)?;
-                if nodes[at].label != Label::Index(u64::from(i)) {
+                let element = next_child(rest)?;
+                if element.label != Label::Index(u64::from(i)) {
                     return Err(shape("an array element in order"));
                 }
-                items.push(child);
+                items.push(rebuild(element, rest)?);
             }
             Ok(Value::Array(items))
         }
         _ => node.scalar.clone().ok_or_else(|| shape("a JSON scalar")),
     }
+}
+
+fn next_child<'a>(rest: &mut impl Iterator<Item = &'a Opened>) -> Result<&'a Opened, Error> {
+    rest.next().ok_or_else(|| shape("a complete JSON subtree"))
 }
 
 /// The retrieve request for a document's one data key, and the AAD its
@@ -892,9 +895,12 @@ fn open_document<'a, K>(
             .enumerate()
             .map(|(j, entry)| open_entry(&aes, &doc.header, &aad, entry, j as u64))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut pos = 0;
-        let value = rebuild(&opened, &mut pos)?;
-        if pos != opened.len() {
+        let mut rest = opened.iter();
+        let root = rest
+            .next()
+            .ok_or_else(|| shape("a document with a root entry"))?;
+        let value = rebuild(root, &mut rest)?;
+        if rest.next().is_some() {
             return Err(shape("a document with no entries past its root"));
         }
         Ok(value)
@@ -1010,11 +1016,10 @@ fn open_subtree<'a, K>(
             .map(|n| open_entry(&aes, &header, &aad, &n.entry, n.j))
             .collect::<Result<Vec<_>, _>>()?;
         let mut forest = Vec::new();
-        let mut pos = 0;
-        while pos < opened.len() {
-            let at = pos;
-            let value = rebuild(&opened, &mut pos)?;
-            forest.push((opened[at].label.clone(), value));
+        let mut rest = opened.iter();
+        while let Some(top) = rest.next() {
+            let value = rebuild(top, &mut rest)?;
+            forest.push((top.label.clone(), value));
         }
         Ok(forest)
     })
@@ -1150,6 +1155,26 @@ mod tests {
             canonical_number(&n("18446744073709551615")),
             canonical_number(&n("18446744073709551615"))
         );
+        // A value selector is stored, so where an integral float stops
+        // reading as an integer is part of the stored form: below 1e38 it
+        // is the `i128`, from 1e38 up the `f64`.
+        assert_eq!(canonical_number(&n("9.9e37"))[0], b'i');
+        assert_eq!(canonical_number(&n("1e38"))[0], b'f');
+        assert_eq!(canonical_number(&n("-1e38"))[0], b'f');
+    }
+
+    #[test]
+    fn the_terms_name_a_node_by_its_path() {
+        let t = terms(&json!({"a": [1, {"b": 2}]}), JsonOptions::default());
+        // $, $.a, $.a[0], $.a[1], $.a[1].b
+        assert_eq!(t.len(), 5);
+        assert!(!t.is_empty());
+        let at = |path: &str| t.selector(&JsonPath::parse(path).unwrap());
+        assert_eq!(at("$.a[1].b"), Some(JsonSelector(t.nodes()[4].s)));
+        assert_eq!(at("$.a"), Some(JsonSelector(t.nodes()[1].s)));
+        assert_eq!(at("$.a[0]"), at("$.a[1]"), "every element shares one");
+        assert_eq!(at("$.c"), None, "no node there");
+        assert_eq!(at("$.a[2]"), None, "no third element");
     }
 
     #[test]
@@ -1272,16 +1297,99 @@ mod tests {
         }
         assert!(decode_node(&[]).is_err());
         assert!(decode_node(&[9, 0, 0, 0, 0, 0]).is_err());
+
+        // The empty key is a key: its label is the tag and a zero length,
+        // and nothing after it.
+        let empty_key = NodePlain {
+            label: Label::Key(String::new()),
+            kind: Kind::Object,
+            scalar: None,
+            children: 0,
+        };
+        let encoded = encode_node(&empty_key);
+        assert_eq!(encoded.len(), 1 + 4 + 1 + 4);
+        assert_eq!(
+            decode_node(&encoded).unwrap().label,
+            Label::Key(String::new())
+        );
+        // Every truncation of a labelled node is refused, not read past.
+        let keyed = encode_node(&NodePlain {
+            label: Label::Key("key".into()),
+            kind: Kind::Array,
+            scalar: None,
+            children: 1,
+        });
+        let indexed = encode_node(&NodePlain {
+            label: Label::Index(7),
+            kind: Kind::Object,
+            scalar: None,
+            children: 1,
+        });
+        for bytes in [&keyed, &indexed, &encoded] {
+            for len in 0..bytes.len() {
+                assert!(decode_node(&bytes[..len]).is_err(), "{len} of {bytes:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_key_tag_must_fit_the_header() {
+        let value = json!({"a": 1});
+        let context = Context::from_encoded(b"users/profile");
+        let sealed = |tag_len: usize| {
+            let walked = walk(&value, JsonOptions::default(), &prf(), &context).unwrap();
+            let key = stack_kms::DataKeyWithTag {
+                key: stack_kms::DataKey {
+                    iv: [1; 16],
+                    key: [2; 32],
+                },
+                tag: vec![3; tag_len],
+                decryption_policy: None,
+            };
+            seal(
+                walked,
+                Some(serde_json::to_vec(&value).unwrap()),
+                Uuid::from_u128(1),
+                key,
+                &context,
+                JsonOptions::default(),
+            )
+        };
+        let longest = usize::from(u16::MAX);
+        let doc = sealed(longest).unwrap();
+        assert_eq!(doc.header().tag().len(), longest);
+        assert_eq!(
+            &JsonHeader::from_bytes(&doc.header().to_bytes()).unwrap(),
+            doc.header(),
+            "the longest tag the field holds round-trips"
+        );
+        assert!(matches!(sealed(longest + 1), Err(Error::Other(_))));
     }
 
     #[test]
     fn too_deep_a_document_is_refused() {
-        let mut value = json!(1);
-        for _ in 0..=MAX_DEPTH {
-            value = json!([value]);
-        }
+        // The innermost scalar of `n` nested arrays sits at depth `n`.
+        let nested = |n: usize| {
+            let mut value = json!(1);
+            for _ in 0..n {
+                value = json!([value]);
+            }
+            value
+        };
+        assert!(walk(
+            &nested(MAX_DEPTH),
+            JsonOptions::default(),
+            &prf(),
+            &Context::empty()
+        )
+        .is_ok());
         assert!(matches!(
-            walk(&value, JsonOptions::default(), &prf(), &Context::empty()),
+            walk(
+                &nested(MAX_DEPTH + 1),
+                JsonOptions::default(),
+                &prf(),
+                &Context::empty()
+            ),
             Err(TermError::JsonTooDeep)
         ));
     }
