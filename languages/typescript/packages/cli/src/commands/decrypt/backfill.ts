@@ -190,7 +190,7 @@ export async function decryptBackfillCommand(
 
     if (options.force) {
       p.log.warn(
-        `--force will re-decrypt every row of ${options.table}.${pair.encryptedColumn} and overwrite the ${pair.plaintextColumn} values that already exist. Safe only while dual-writes are live: any row your application wrote to ${pair.plaintextColumn} alone (a newer value, or one cleared on purpose) gets the older ciphertext's value back.`,
+        `--force will re-decrypt every row of ${options.table}.${pair.encryptedColumn} and overwrite the ${pair.plaintextColumn} values that already exist. Safe only while dual-writes are live: any row your application wrote to ${pair.plaintextColumn} alone (a newer value, or one cleared on purpose) gets the older ciphertext's value back. Every row it cannot decrypt (a lock context, say) has ${pair.plaintextColumn} set to NULL, including any your application has already decrypted, so decrypt those in your application only after the forced pass completes.`,
       )
       const proceed = await p.confirm({
         message: 'Continue with --force?',
@@ -427,7 +427,7 @@ export function skippedReport(
   if (failed > 0) {
     const codes = ` This run: ${formatCodes(failedCodes)}.`
     paragraphs.push(
-      `${failed.toLocaleString()} row(s) of ${table}.${pair.encryptedColumn} could not be decrypted with these credentials and were left with ${pair.plaintextColumn} NULL.${codes} The usual cause is a value bound to an end-user lock context: only that user's identity can decrypt it, and the CLI has no way to act as them. Decrypt those rows in your application on behalf of each user (writing ${pair.plaintextColumn}), then re-run this backfill. \`stash decrypt drop\` refuses while any of them remain, because dropping ${pair.encryptedColumn} would destroy their only copy.`,
+      `${failed.toLocaleString()} row(s) of ${table}.${pair.encryptedColumn} could not be decrypted with these credentials and were left with ${pair.plaintextColumn} NULL.${codes} The usual cause is a value bound to an end-user lock context: only that user's identity can decrypt it, and the CLI has no way to act as them. Decrypt those rows in your application on behalf of each user (writing ${pair.plaintextColumn}), then re-run this backfill without --force. Do that only after the last forced pass has completed: a forced pass, including a plain re-run that finishes an interrupted one, sets ${pair.plaintextColumn} back to NULL on every row it cannot decrypt. \`stash decrypt drop\` refuses while any of them remain, because dropping ${pair.encryptedColumn} would destroy their only copy.`,
     )
   }
 

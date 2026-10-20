@@ -290,7 +290,10 @@ const REVERSE_EVENTS = {
  * a NULL plaintext, {@link countUndecrypted} still counts them, so the
  * coverage gate in `stash decrypt drop` refuses to drop the only copy of
  * their data. Under `force` the plaintext column may hold a stale value, so a
- * forced pass sets a skipped row's plaintext to NULL rather than leave it.
+ * forced pass sets a skipped row's plaintext to NULL rather than leave it,
+ * including a value the application wrote after decrypting the row as its
+ * user: it cannot tell that from a stale one, so per-user remediation
+ * belongs after the last forced pass.
  * A later run (after the cursor-based pass has completed) starts
  * from the beginning and retries them.
  *
