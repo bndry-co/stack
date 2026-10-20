@@ -198,9 +198,10 @@ fn alpn_protocols(http2: bool) -> Vec<Vec<u8>> {
 /// refuses a chain in which any presented certificate — the end entity or an
 /// intermediate — has a key on `blocklist`.
 ///
-/// Only the presented certificates are checked, not the root a chain was
-/// built to: the blocked keys are intermediates, which a server must send.
-/// Node's blocklist makes the same choice.
+/// Only the presented certificates are checked. rustls passes a verifier
+/// nothing else, so an intermediate the platform verifier fetched or took
+/// from an OS store is not seen here (see the module docs for where that
+/// can happen). Node's blocklist makes the same choice.
 #[derive(Debug)]
 struct SpkiBlocklistVerifier {
     inner: Arc<dyn ServerCertVerifier>,
