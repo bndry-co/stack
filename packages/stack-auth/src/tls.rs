@@ -12,6 +12,15 @@
 //! check it makes and adds one of its own after them: no certificate the
 //! server presents may carry a public key on the compiled-in blocklist.
 //!
+//! Only presented certificates are checked, because rustls hands a verifier
+//! nothing else. On Linux that covers every chain: webpki builds its path
+//! from the presented certificates and the bundle's roots, and never fetches
+//! a missing intermediate, so a chain through a blocked intermediate must
+//! present it. The macOS and Windows verifiers can fetch or reuse an
+//! intermediate the server left out. There the blocklist is a second check,
+//! and the OS vendor's own distrust of the same certificates is the one that
+//! applies.
+//!
 //! Native only. On wasm32 reqwest goes through the runtime's `fetch`, and
 //! the runtime's TLS applies.
 
