@@ -395,6 +395,23 @@ describe('decrypt backfill', () => {
       expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
       expect(migrateMocks.runDecryptBackfill).not.toHaveBeenCalled()
     })
+
+    it('says --confirm-plaintext-current has no effect when there is nothing to confirm', async () => {
+      // A later run of a lifecycle in progress, or an empty twin.
+      hazardMock.mockResolvedValue(null)
+
+      await decryptBackfillCommand({
+        table: 'users',
+        column: 'email_encrypted',
+        confirmDualWritesDeployed: true,
+        confirmPlaintextCurrent: true,
+      })
+
+      expect(p.log.warn).toHaveBeenCalledWith(
+        expect.stringContaining('--confirm-plaintext-current has no effect'),
+      )
+      expect(migrateMocks.runDecryptBackfill).toHaveBeenCalled()
+    })
   })
 
   it('a finished earlier lifecycle does not pass the dual-write gate', async () => {

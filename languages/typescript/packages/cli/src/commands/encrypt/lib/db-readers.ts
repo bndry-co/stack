@@ -10,12 +10,16 @@ import type pg from 'pg'
  * Whether `err` says `cipherstash.cs_migrations` (or its schema) does not
  * exist yet: the pre-install case, which every rollout reader treats as "no
  * events" so the commands stay readable on a fresh project.
+ *
+ * Keyed on the SQLSTATE (`42P01` undefined_table, `3F000`
+ * invalid_schema_name), never the message: "permission denied for table
+ * cs_migrations" names the table too, and reading it as "no history" would
+ * hide an open migration from every refusal that checks for one.
  */
 function isMissingMigrationsTable(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    /cs_migrations|schema "cipherstash"/i.test(err.message)
-  )
+  if (typeof err !== 'object' || err === null) return false
+  const code: unknown = Reflect.get(err, 'code')
+  return code === '42P01' || code === '3F000'
 }
 
 /**

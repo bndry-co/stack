@@ -686,7 +686,7 @@ Same engine as `encrypt backfill`: keyset pagination, one transaction per chunk 
 
 The choice is recorded in `cs_migrations`. Later runs of the same reverse migration do not ask again: the twin's values are then its own. Choosing `--force` makes a forced pass owed from that moment, and so does starting any `--force` run: every later run is forced, with or without `--force`, until one completes, so an interrupted `--force` run is always finished as one, even if it failed before writing anything. A `--force` run after an interrupted plain one starts again from the first row.
 
-**Lock contexts — known limitation, no bypass.** A value encrypted with an end-user lock context can only be decrypted as that user (see `stash-auth`). With workspace credentials it fails *on its own row* (`bulkDecrypt` reports per row), so the backfill **skips it, counts it, leaves the twin NULL**, and reports the count and error codes; the count is also recorded in `cs_migrations` and shown by `decrypt status`. Decrypt those rows in your application on each user's behalf (writing the plaintext column), then re-run. `decrypt drop` refuses while any remain.
+**Lock contexts — known limitation, no bypass.** A value encrypted with an end-user lock context can only be decrypted as that user (see `stash-auth`). With workspace credentials it fails *on its own row* (`bulkDecrypt` reports per row), so the backfill **skips it, counts it, leaves the twin NULL** (a `--force` pass sets a skipped row's twin to NULL, so a stale value is never left behind), and reports the count and error codes; the count is also recorded in `cs_migrations` and shown by `decrypt status`. Decrypt those rows in your application on each user's behalf (writing the plaintext column), then re-run. `decrypt drop` refuses while any remain.
 
 **Ciphertext that decrypts to null.** A non-JSON twin can only store an empty value as NULL, which is also what "not decrypted yet" looks like, so these rows are skipped as `NULL_PLAINTEXT` and reported separately, with their primary keys. They are not a credentials or lock-context problem and a re-run will not change them. `decrypt drop` refuses while they hold ciphertext: once you have confirmed the values really are empty, set their encrypted column to NULL, then generate the drop.
 
@@ -702,7 +702,7 @@ The choice is recorded in `cs_migrations`. Later runs of the same reverse migrat
 | `--pk-column <name>` | Override primary-key detection |
 | `--confirm-dual-writes-deployed` | Non-interactive equivalent of the prompt: the app writes the encrypted column **and** its plaintext twin on every insert and update |
 | `--force` | Re-decrypt rows whose plaintext is already set and overwrite it: drift recovery, or replacing a twin that held values before the first run. Safe only while dual-writes are live: any row the application wrote to the plaintext column alone (a newer value, or one cleared on purpose) gets the older ciphertext's value back. |
-| `--confirm-plaintext-current` | First run only: keep the values a twin already holds, asserting they are current (see above) |
+| `--confirm-plaintext-current` | First run only: keep the values a twin already holds, asserting they are current (see above). On any other run it has no effect, and the backfill says so |
 | `--continue-on-undecryptable` | Do not stop when the first batch decrypts nothing |
 
 #### `decrypt drop`

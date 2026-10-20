@@ -379,6 +379,42 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     expect(rows[0]?.email).toBe('newer@example.com')
   })
 
+  // A forced pass that skips a row must not leave its stale twin value in
+  // place: the drop's coverage check (ciphertext set, plaintext NULL) would
+  // not see the row, and the completed forced pass closes the obligation, so
+  // `decrypt drop` would destroy the only current copy.
+  it('a forced pass clears the stale twin of every row it skips, so the drop check still counts them', async () => {
+    await seed(10, 5)
+    // Row 3's ciphertext decrypts to an empty value (NULL_PLAINTEXT).
+    await pool.query(
+      `UPDATE ${TABLE} SET email_encrypted = $1::jsonb WHERE id = 3`,
+      [JSON.stringify(envelope(null))],
+    )
+    await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)
+
+    const result = await run({ force: true })
+    expect(result.completed).toBe(true)
+    expect(result.rowsSkipped).toBe(3)
+
+    const { rows } = await pool.query<{ id: string; email: string | null }>(
+      `SELECT t.id::text AS id, t.email FROM ${TABLE} AS t WHERE t.id IN (3, 5, 10) ORDER BY t.id`,
+    )
+    expect(rows).toEqual([
+      { id: '3', email: null },
+      { id: '5', email: null },
+      { id: '10', email: null },
+    ])
+    const db = await pool.connect()
+    try {
+      // The predicate `stash decrypt drop` refuses on.
+      expect(
+        await countUndecrypted(db, TABLE, 'email_encrypted', 'email'),
+      ).toBe(3)
+    } finally {
+      db.release()
+    }
+  })
+
   it('a plain run after a forced pass failed before its first commit still overwrites every row', async () => {
     await seed(300)
     await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)

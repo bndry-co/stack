@@ -182,6 +182,10 @@ export async function decryptBackfillCommand(
           `Proceeding under --confirm-plaintext-current: keeping the values already in ${options.table}.${pair.plaintextColumn} and decrypting only the rows where it is NULL. You are asserting those values are current.`,
         )
       }
+    } else if (options.confirmPlaintextCurrent) {
+      p.log.warn(
+        `--confirm-plaintext-current has no effect here: it applies only to the first run of a reverse migration whose plaintext column ${options.table}.${pair.plaintextColumn} already holds values, and this run has nothing to confirm.`,
+      )
     }
 
     if (options.force) {

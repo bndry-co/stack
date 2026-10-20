@@ -289,7 +289,9 @@ const REVERSE_EVENTS = {
  * can decrypt; there is deliberately no bypass. Because the skipped rows keep
  * a NULL plaintext, {@link countUndecrypted} still counts them, so the
  * coverage gate in `stash decrypt drop` refuses to drop the only copy of
- * their data. A later run (after the cursor-based pass has completed) starts
+ * their data. Under `force` the plaintext column may hold a stale value, so a
+ * forced pass sets a skipped row's plaintext to NULL rather than leave it.
+ * A later run (after the cursor-based pass has completed) starts
  * from the beginning and retries them.
  *
  * **Leak guard (reverse).** A decrypted value that is itself an EQL envelope
@@ -389,6 +391,17 @@ export async function runDecryptBackfill(
 
       const writes: DecryptedWrite[] = []
       const chunkCodes: Record<string, number> = {}
+      let skipped = 0
+      // A skipped row keeps whatever its plaintext column holds. Unforced,
+      // that is NULL, which `countUndecrypted` and the drop's coverage check
+      // count. Under `force` it can be a stale value, which neither would
+      // count, and the completed forced pass closes the obligation, so the
+      // drop would destroy the only current copy. A forced pass writes NULL
+      // over a skipped row instead (still guarded on its ciphertext).
+      const skip = (pk: string, ciphertext: unknown) => {
+        skipped++
+        if (force) writes.push({ pk, value: null, ciphertext })
+      }
       // Rows that decrypted, whether or not they produced a write. A row
       // decrypting to `null` (NULL_PLAINTEXT) proves the credentials work.
       let decryptedCount = 0
@@ -396,6 +409,7 @@ export async function runDecryptBackfill(
         const { pk } = rows[i]
         if (item.error !== undefined) {
           tally(chunkCodes, codeOf(item))
+          skip(pk, rows[i].ciphertext)
           continue
         }
         if (isEncryptedPayload(item.data)) {
@@ -413,6 +427,7 @@ export async function runDecryptBackfill(
           if (nullPlaintextPks.length < NULL_PLAINTEXT_SAMPLE_SIZE) {
             nullPlaintextPks.push(pk)
           }
+          skip(pk, rows[i].ciphertext)
           continue
         }
         // The ciphertext as read, so the write can refuse a row whose
@@ -433,7 +448,6 @@ export async function runDecryptBackfill(
       for (const [code, count] of Object.entries(chunkCodes)) {
         skippedByCode[code] = (skippedByCode[code] ?? 0) + count
       }
-      const skipped = rows.length - writes.length
 
       return {
         skipped,
@@ -553,8 +567,11 @@ export function plaintextSerializer(
 /** One row's decrypted plaintext, with the ciphertext it was decrypted from. */
 interface DecryptedWrite {
   pk: string
-  /** Text form of the plaintext, cast to the column's type in SQL. */
-  value: string
+  /**
+   * Text form of the plaintext, cast to the column's type in SQL. `null`
+   * clears the column: a row a forced pass skipped.
+   */
+  value: string | null
   /** The ciphertext as the page query read it (parsed `jsonb`). */
   ciphertext: unknown
 }
