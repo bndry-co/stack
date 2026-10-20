@@ -75,8 +75,8 @@ export async function statusCommand() {
               eqlVersion: column.eqlVersion,
               encryptedColumn: column.encryptedColumn,
               // `stash decrypt drop` records this against the ENCRYPTED
-              // column; the manifest entry is the user's to remove once that
-              // migration is applied.
+              // column. The manifest entry stays, and `reversed` is its final
+              // state: the CLI owns `.cipherstash/`.
               reversed:
                 stateMap.get(`${tableName}.${encryptedName}`)?.phase ===
                 'encrypted-dropped',
@@ -197,11 +197,7 @@ function renderRow(input: {
   // rename that creates `<col>_plaintext`.
   if (!isV3 && intentIndexes && !eqlColumn) flags.push('not-registered')
   if (intentIndexes && !physicalColumns.has(encryptedName)) {
-    flags.push(
-      input.reversed
-        ? 'reversed (remove from migrations.json)'
-        : 'encrypted-col-missing',
-    )
+    flags.push(input.reversed ? 'reversed' : 'encrypted-col-missing')
   }
   if (
     !isV3 &&

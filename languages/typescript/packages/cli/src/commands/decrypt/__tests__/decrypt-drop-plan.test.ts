@@ -342,7 +342,7 @@ describe('decrypt drop', () => {
     )
   })
 
-  it('keeps the forward manifest entry until the migration is applied, and says to remove it then', async () => {
+  it('keeps the forward manifest entry and never says to edit it by hand', async () => {
     migrateMocks.readManifest.mockResolvedValue({
       version: 1,
       tables: {
@@ -357,9 +357,9 @@ describe('decrypt drop', () => {
     const next = vi
       .mocked(p.note)
       .mock.calls.find(([, title]) => title === 'Next')?.[0]
-    expect(next).toContain(
-      'Remove the users.email entry from .cipherstash/migrations.json',
-    )
+    // The CLI owns .cipherstash/: the entry stays, and `encrypt status`
+    // shows it as `reversed`. Nothing tells the user to edit the file.
+    expect(next).not.toContain('migrations.json')
     expect(next).toContain(
       'Keep writing BOTH email_encrypted and email until it is applied',
     )

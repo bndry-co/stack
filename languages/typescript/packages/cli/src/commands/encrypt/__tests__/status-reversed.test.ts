@@ -109,7 +109,8 @@ describe('encrypt status for a reversed column', () => {
     )
 
     const row = await emailRow()
-    expect(row).toContain('reversed (remove from migrations.json)')
+    expect(row).toContain('reversed')
+    expect(row).not.toContain('migrations.json')
     expect(row).not.toContain('encrypted-col-missing')
   })
 })

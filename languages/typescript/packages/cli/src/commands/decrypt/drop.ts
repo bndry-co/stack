@@ -20,7 +20,6 @@ import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
 import {
-  manifestPlaintextFor,
   recordedPlaintextColumn,
   resolveDecryptPair,
 } from './lib/resolve-pair.js'
@@ -192,13 +191,8 @@ export async function decryptDropCommand(options: DecryptDropOptions) {
       },
     })
 
-    // The forward manifest entry stays until the migration is APPLIED: this
-    // file has not run, and its apply-time coverage check can still abort it.
-    // `stash encrypt status` shows the entry as `reversed` meanwhile.
-    const manifestColumn = await manifestPlaintextFor(
-      options.table,
-      options.column,
-    )
+    // The forward manifest entry stays: the CLI owns `.cipherstash/`, and
+    // `stash encrypt status` shows the entry as `reversed`, its final state.
 
     p.log.success(`Migration written to ${filePath}`)
     p.note(
@@ -211,11 +205,6 @@ export async function decryptDropCommand(options: DecryptDropOptions) {
         `  - Drizzle: delete the ${options.column} column from the table definition. If the next \`drizzle-kit generate\` emits a DROP COLUMN for it, delete that statement — this migration already drops it.`,
         `  - Prisma Next: remove the cipherstash.* field from the contract and re-emit it.`,
         `  - Remove the table/column from your encryption client schema if nothing else on it is encrypted.`,
-        ...(manifestColumn !== undefined
-          ? [
-              `  - Remove the ${options.table}.${manifestColumn} entry from .cipherstash/migrations.json: it is no longer an encryption target.`,
-            ]
-          : []),
         '  - Then stop writing the encrypted column.',
       ].join('\n'),
       'Next',
