@@ -201,7 +201,8 @@ fn alpn_protocols(http2: bool) -> Vec<Vec<u8>> {
 /// Only the presented certificates are checked. rustls passes a verifier
 /// nothing else, so an intermediate the platform verifier fetched or took
 /// from an OS store is not seen here (see the module docs for where that
-/// can happen). Node's blocklist makes the same choice.
+/// can happen). Node's and Go's blocklists check the chain their verifier
+/// built; rustls gives this wrapper no built chain, so it cannot.
 #[derive(Debug)]
 struct SpkiBlocklistVerifier {
     inner: Arc<dyn ServerCertVerifier>,
@@ -543,11 +544,13 @@ mod tests {
     /// `build` fails.
     #[test]
     fn reqwest_accepts_the_config() {
-        let config = client_config(false).unwrap();
-        reqwest::Client::builder()
-            .tls_backend_preconfigured(config)
-            .build()
-            .unwrap();
+        for http2 in [false, true] {
+            let config = client_config(http2).unwrap();
+            reqwest::Client::builder()
+                .tls_backend_preconfigured(config)
+                .build()
+                .unwrap();
+        }
     }
 
     /// An inner verifier whose every answer is recognisable.
