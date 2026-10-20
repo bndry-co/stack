@@ -496,13 +496,27 @@ fn http_client() -> reqwest::Client {
 fn http_client() -> reqwest::Client {
     use std::time::Duration;
 
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .pool_idle_timeout(Duration::from_secs(5))
-        .pool_max_idle_per_host(10)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+        .pool_max_idle_per_host(10);
+    // The platform verifier with the compromised-CA blocklist around it
+    // (`crate::tls`). This crate's reqwest has no `http2` feature of its
+    // own, so it offers `http/1.1` only. `client_config` fails only where
+    // reqwest's own TLS set-up fails the same way (it builds the same
+    // platform verifier: on Linux, no system CA certificates), so the
+    // `Err` arm's client fails to build too and `Client::new()` panics, as
+    // it always did there. `tls::tests::reqwest_accepts_the_config` pins
+    // that reqwest takes the config, so the `Ok` arm does not fall through.
+    match crate::tls::client_config(false) {
+        Ok(tls) => builder.tls_backend_preconfigured(tls).build(),
+        Err(error) => {
+            tracing::error!(%error, "could not configure TLS for the bundled HTTP client");
+            builder.build()
+        }
+    }
+    .unwrap_or_else(|_| reqwest::Client::new())
 }
 
 #[cfg(all(
