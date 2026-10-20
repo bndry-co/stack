@@ -493,6 +493,10 @@ fn http_client() -> reqwest::Client {
     not(any(test, feature = "test-utils")),
     not(target_arch = "wasm32")
 ))]
+#[allow(
+    clippy::panic,
+    reason = "fails closed: the only alternative is a client that trusts the compromised CAs"
+)]
 fn http_client() -> reqwest::Client {
     use std::time::Duration;
 
@@ -503,20 +507,19 @@ fn http_client() -> reqwest::Client {
         .pool_max_idle_per_host(10);
     // The platform verifier with the compromised-CA blocklist around it
     // (`crate::tls`). This crate's reqwest has no `http2` feature of its
-    // own, so it offers `http/1.1` only. `client_config` fails only where
-    // reqwest's own TLS set-up fails the same way (it builds the same
-    // platform verifier: on Linux, no system CA certificates), so the
-    // `Err` arm's client fails to build too and `Client::new()` panics, as
-    // it always did there. `tls::tests::reqwest_accepts_the_config` pins
-    // that reqwest takes the config, so the `Ok` arm does not fall through.
-    match crate::tls::client_config(false) {
-        Ok(tls) => builder.tls_backend_preconfigured(tls).build(),
-        Err(error) => {
-            tracing::error!(%error, "could not configure TLS for the bundled HTTP client");
-            builder.build()
-        }
-    }
-    .unwrap_or_else(|_| reqwest::Client::new())
+    // own, so it offers `http/1.1` only. This fails closed: a client
+    // without the blocklist would trust the compromised CAs, so either
+    // failure panics rather than falling back to reqwest's default
+    // verifier. `Client::new()` panicked in the same places before.
+    // `tls::tests::reqwest_accepts_the_config` pins that reqwest takes the
+    // config.
+    let tls = crate::tls::client_config(false).unwrap_or_else(|error| {
+        panic!("could not configure TLS for the bundled HTTP client: {error}")
+    });
+    builder
+        .tls_backend_preconfigured(tls)
+        .build()
+        .unwrap_or_else(|error| panic!("could not build the bundled HTTP client: {error}"))
 }
 
 #[cfg(all(
