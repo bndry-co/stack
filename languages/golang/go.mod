@@ -1,6 +1,6 @@
 module github.com/cipherstash/stack/languages/golang
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20260902024806-f2c7f7d17fbc
