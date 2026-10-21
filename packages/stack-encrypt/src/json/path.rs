@@ -186,21 +186,6 @@ impl JsonPath {
         Self { segments }
     }
 
-    /// The longest prefix with no wildcard, and whether anything was cut.
-    pub(crate) fn anchor(&self) -> (Self, bool) {
-        let end = self
-            .segments
-            .iter()
-            .position(|s| matches!(s, Segment::Wildcard))
-            .unwrap_or(self.segments.len());
-        (
-            Self {
-                segments: self.segments[..end].to_vec(),
-            },
-            end < self.segments.len(),
-        )
-    }
-
     /// The canonical bytes a selector is derived over: every array step,
     /// positional or wildcard, is the one array tag, so every element of an
     /// array shares its parent's selector. A key is length-prefixed, so two
@@ -455,16 +440,6 @@ mod tests {
             JsonPath::parse("$.ab.c").unwrap().selector_bytes(),
             JsonPath::parse("$.a.bc").unwrap().selector_bytes()
         );
-    }
-
-    #[test]
-    fn the_anchor_is_the_prefix_before_the_first_wildcard() {
-        let (anchor, cut) = JsonPath::parse("$.a[*].x").unwrap().anchor();
-        assert_eq!(anchor, JsonPath::parse("$.a").unwrap());
-        assert!(cut);
-        let (anchor, cut) = JsonPath::parse("$.a[1].x").unwrap().anchor();
-        assert_eq!(anchor.to_string(), "$.a[1].x");
-        assert!(!cut);
     }
 
     #[test]

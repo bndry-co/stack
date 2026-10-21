@@ -127,24 +127,29 @@ async fn the_wire_form_is_what_the_sql_domain_stores() {
         .unwrap();
     assert_eq!(wire["q"], serde_json::to_value(&needle).unwrap());
     assert!(
-        serde_json::from_value::<JsonDocument>(json!({"h": wire["h"], "sv": wire["sv"]})).is_ok(),
-        "a document without `q` still deserializes: the projection is derived from the entries"
+        serde_json::from_value::<JsonDocument>(json!({"h": wire["h"], "sv": wire["sv"]})).is_err(),
+        "a document without `q` is not a document: the projection is the only place the value selectors live"
     );
     let back: JsonDocument = serde_json::from_value(wire.clone()).unwrap();
     assert_eq!(
         serde_json::to_value(&back).unwrap(),
         wire,
-        "`q` round-trips through the entries"
+        "`q` round-trips as stored"
+    );
+    assert_eq!(
+        serde_json::to_value(back.projection()).unwrap(),
+        wire["q"],
+        "the projection read back is the stored one"
     );
     for (j, entry) in wire["sv"].as_array().unwrap().iter().enumerate() {
         let entry = entry.as_object().unwrap();
         for key in entry.keys() {
             assert!(
-                ["s", "vs", "c", "o", "p", "w", "n", "g", "op"].contains(&key.as_str()),
+                ["s", "c", "p", "op"].contains(&key.as_str()),
                 "entry {j} carries an unknown key {key}"
             );
         }
-        for tag in ["s", "vs", "p", "w", "n", "g"] {
+        for tag in ["s", "p"] {
             if let Some(hex) = entry.get(tag) {
                 assert_eq!(
                     hex.as_str().unwrap().len(),
@@ -166,56 +171,60 @@ async fn the_chain_fields_sit_where_the_design_says() {
     // $, $.hello, $.nested, $.nested.deep, $.nested.list, [0], [0].x, [1], [1].x, $.number
     assert_eq!(entries.len(), 10);
     let root = &entries[0];
-    assert!(
-        root.parent_tag().is_none() && root.wrapped_token().is_none() && root.ordinal().is_none()
-    );
+    assert!(root.parent_tag().is_none());
     for head in [&entries[1], &entries[2], &entries[9]] {
         assert!(
             head.parent_tag().is_none(),
             "a head has no parent tag under the sealed root"
         );
-        assert!(head.ordinal().is_none());
     }
     for below in &entries[3..9] {
-        assert!(below.parent_tag().is_some() && below.wrapped_token().is_some());
-        assert!(below.ordinal().is_some());
+        assert!(below.parent_tag().is_some());
     }
-    // The two list elements are containers: each carries its own group tag,
-    // and each `x` carries its element's.
-    assert!(entries[5].group_tag().is_some() && entries[7].group_tag().is_some());
-    assert_ne!(entries[5].group_tag(), entries[7].group_tag());
-    assert_eq!(entries[6].enclosing_group_tag(), entries[5].group_tag());
-    assert_eq!(entries[8].enclosing_group_tag(), entries[7].group_tag());
-    assert!(
-        entries[6].group_tag().is_none(),
-        "a scalar inside an element has no group of its own"
-    );
-    assert!(
-        entries[3].enclosing_group_tag().is_none(),
-        "outside any element"
+    // Every parent tag is distinct: siblings are not linkable at rest.
+    let tags: std::collections::HashSet<_> = entries[3..9]
+        .iter()
+        .map(|e| *e.parent_tag().unwrap())
+        .collect();
+    assert_eq!(tags.len(), 6);
+    // The projection groups the two list elements: each is a nested group
+    // holding its own pair and its `x`.
+    let q = serde_json::to_value(doc.projection()).unwrap();
+    assert_eq!(q["el"].as_array().unwrap().len(), 2);
+    assert_eq!(q["el"][0]["sv"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        q["sv"].as_array().unwrap().len(),
+        6,
+        "$, hello, nested, deep, list, number"
     );
     // Ordering terms on the string and number leaves only.
     assert!(entries[1].ordering_term().is_some() && entries[9].ordering_term().is_some());
     assert!(entries[2].ordering_term().is_none() && entries[4].ordering_term().is_none());
-    // Equal values at one path share selectors but not ciphertexts.
+    // Equal values at one path share selectors but not ciphertexts; the
+    // value selectors, in the projection, tell equal values from different.
+    let pair = |doc: &JsonDocument, i: usize| -> (String, String) {
+        let q = serde_json::to_value(doc.projection()).unwrap();
+        (
+            q["sv"][i]["s"].as_str().unwrap().to_owned(),
+            q["sv"][i]["vs"].as_str().unwrap().to_owned(),
+        )
+    };
     let doc2 = seal(&cipher, &json!([1, 1])).await;
     let (a, b) = (&doc2.entries()[1], &doc2.entries()[2]);
-    assert_eq!(
-        (a.selector(), a.value_selector()),
-        (b.selector(), b.value_selector())
-    );
+    assert_eq!(a.selector(), b.selector());
+    assert_eq!(pair(&doc2, 1), pair(&doc2, 2));
     assert_ne!(a.ciphertext(), b.ciphertext());
     let doc3 = seal(&cipher, &json!([1, 2])).await;
     let (one, two) = (&doc3.entries()[1], &doc3.entries()[2]);
     assert_eq!(one.selector(), two.selector(), "one path");
     assert_ne!(
-        one.value_selector(),
-        two.value_selector(),
+        pair(&doc3, 1),
+        pair(&doc3, 2),
         "different values at one path have different value selectors"
     );
     assert_eq!(
-        one.value_selector(),
-        a.value_selector(),
+        pair(&doc3, 1),
+        pair(&doc2, 1),
         "the value selector names the value at its path, in any document"
     );
 
@@ -251,8 +260,8 @@ async fn a_token_derived_from_the_path_alone_unlocks_exactly_its_subtree() {
         .await
         .unwrap();
     assert!(
-        key.selector().is_none(),
-        "a positional path gates on nothing"
+        key.gates().is_empty(),
+        "a chain head's token is derived, nothing to gate"
     );
     let under = doc.subtree(key.token_bytes());
     let found: Vec<usize> = under.iter().map(|(j, _, _)| *j).collect();
@@ -267,26 +276,42 @@ async fn a_token_derived_from_the_path_alone_unlocks_exactly_its_subtree() {
     let garbage = doc.subtree(&[7; 16]);
     assert!(garbage.is_empty(), "a wrong token unlocks nothing");
 
+    // Below a head the client derives nothing but array positions: a key
+    // step becomes a gate, and the walk from the head takes it.
     let deeper = subtree_key(&cipher, "$.nested.list[1]", JsonOptions::default())
         .await
         .unwrap();
-    let found: Vec<usize> = doc
-        .subtree(deeper.token_bytes())
-        .iter()
-        .map(|(j, _, _)| *j)
-        .collect();
+    assert_eq!(
+        deeper.token_bytes(),
+        key.token_bytes(),
+        "anchored at the head"
+    );
+    assert_eq!(deeper.gates().len(), 2, "list, then [1]");
+    assert_eq!(deeper.gates()[1], "#1");
+    let list_token = doc
+        .children(key.token_bytes())
+        .into_iter()
+        .find(|(j, _, _)| *j == 4)
+        .map(|(_, _, t)| t)
+        .expect("the list is a child of nested");
+    let second = doc
+        .children(&list_token)
+        .into_iter()
+        .find(|(j, _, _)| *j == 7)
+        .map(|(_, _, t)| t)
+        .expect("the second element");
+    let found: Vec<usize> = doc.subtree(&second).iter().map(|(j, _, _)| *j).collect();
     assert_eq!(found, [8], "the second element's x");
 
     // The children of a node, by ordinal: the list's two elements.
-    let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
-        .await
-        .unwrap();
     let children: Vec<usize> = doc
-        .children(list.token_bytes())
+        .children(&list_token)
         .iter()
         .map(|(j, _, _)| *j)
         .collect();
     assert_eq!(children, [5, 7]);
+    // An array element's token is derivable from the path once the array
+    // itself is reached by token: under an open root every node is.
 
     // The sealed root has no token; the open root's unlocks every node.
     assert!(matches!(
@@ -307,16 +332,47 @@ async fn a_token_derived_from_the_path_alone_unlocks_exactly_its_subtree() {
         "every entry but the root"
     );
 
-    // A wildcard path anchors at the deepest positional node and gates on
-    // the whole path's selector.
+    // A wildcard path anchors at the head and gates on each step's
+    // selector: the list's, then every element's (the wildcard's), then x's.
     let gated = subtree_key(&cipher, "$.nested.list[*].x", JsonOptions::default())
         .await
         .unwrap();
-    assert_eq!(gated.token_bytes(), list.token_bytes());
+    assert_eq!(gated.token_bytes(), key.token_bytes());
     assert_eq!(
-        gated.selector().unwrap().as_bytes(),
-        doc.entries()[6].selector()
+        gated.gates(),
+        [
+            hex(doc.entries()[4].selector()),
+            hex(doc.entries()[5].selector()),
+            hex(doc.entries()[6].selector()),
+        ]
     );
+    // Under an open root the whole chain is derivable down to the first
+    // key step: `$[0]` would be a position, `$.nested` is a gate.
+    let open_key = subtree_key(
+        &cipher,
+        "$.nested.list[1]",
+        JsonOptions { sealed_root: false },
+    )
+    .await
+    .unwrap();
+    assert_eq!(open_key.token_bytes(), root.token_bytes());
+    assert_eq!(open_key.gates().len(), 3);
+    let array_doc = seal_with(
+        &cipher,
+        &json!([[1, 2], [3]]),
+        JsonOptions { sealed_root: false },
+    )
+    .await;
+    let second_row = subtree_key(&cipher, "$[1]", JsonOptions { sealed_root: false })
+        .await
+        .unwrap();
+    assert!(second_row.gates().is_empty(), "positions derive");
+    let found: Vec<usize> = array_doc
+        .subtree(second_row.token_bytes())
+        .iter()
+        .map(|(j, _, _)| *j)
+        .collect();
+    assert_eq!(found, [5], "$, [0], [0][0], [0][1], [1], [1][0]");
 }
 
 #[tokio::test]
@@ -399,11 +455,15 @@ async fn an_extracted_node_opens_to_its_scalar_and_a_subtree_to_its_value() {
         .unwrap();
     assert_eq!(forest, vec![json!("constant"), json!([{"x": 1}, {"x": 2}])]);
 
-    let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
-        .await
+    // The list's token is the server's to derive, one level under nested.
+    let list = doc
+        .children(key.token_bytes())
+        .into_iter()
+        .find(|(j, _, _)| *j == 4)
+        .map(|(_, _, t)| t)
         .unwrap();
     let rows: Vec<JsonNode> = doc
-        .subtree(list.token_bytes())
+        .subtree(&list)
         .iter()
         .map(|(j, _, _)| node(*j))
         .collect();
@@ -726,7 +786,7 @@ async fn containment_over_the_projection_is_postgresqls_containment() {
         let projection = doc.projection();
         let query: JsonQuery = cipher.query(op::Contains, &needle).on(&plan).await.unwrap();
         assert_eq!(
-            query.matches(&projection),
+            query.matches(projection),
             pg_contains(&stored, &needle, true),
             "{stored} @> {needle}"
         );
@@ -742,7 +802,7 @@ async fn containment_over_the_projection_is_postgresqls_containment() {
             .unwrap();
         let scalar_in_array = !stored.is_object() && !stored.is_array() && needle.is_array();
         assert_eq!(
-            reverse.projection().contains(&projection),
+            reverse.projection().contains(projection),
             pg_contains(&needle, &stored, true) && !scalar_in_array,
             "{stored} <@ {needle}"
         );
@@ -801,26 +861,26 @@ async fn an_accessor_asks_at_a_path() {
         .on(&plan)
         .await
         .unwrap();
-    assert!(hit.matches(&projection));
+    assert!(hit.matches(projection));
     let miss: JsonQuery = cipher
         .query(op::AtPath(op::Eq), &("$.nested.list[*].x", 3))
         .on(&plan)
         .await
         .unwrap();
-    assert!(!miss.matches(&projection));
+    assert!(!miss.matches(projection));
     let deep: JsonQuery = cipher
         .query(op::AtPath(op::Eq), &("$.nested.deep", "constant"))
         .on(&plan)
         .await
         .unwrap();
-    assert!(deep.matches(&projection));
+    assert!(deep.matches(projection));
     let wrong_kind: JsonQuery = cipher
         .query(op::AtPath(op::Eq), &("$.number", "1"))
         .on(&plan)
         .await
         .unwrap();
     assert!(
-        !wrong_kind.matches(&projection),
+        !wrong_kind.matches(projection),
         "a string is not the number"
     );
 
@@ -947,29 +1007,32 @@ fn the_json_index_has_a_wire_form() {
 // What the suite pins beyond the round trips
 // =============================================================================
 
-/// A child's token is stored wrapped under its parent's: the stored `w` is
-/// never the token itself, which would hand the subtree to anyone who can
-/// read the column.
+/// No token is stored: an entry below a head carries only the parent tag,
+/// and no tag in the document is a token, or a parent's hash of one
+/// without the document's salt.
 #[tokio::test]
-async fn a_stored_wrapped_token_is_not_the_token() {
+async fn no_stored_tag_is_a_token() {
     let cipher = stack_cipher().await;
     let doc = seal(&cipher, &fixture()).await;
-    // $.nested.deep, $.nested.list, list[0], list[0].x, list[1], list[1].x
-    for (j, path) in [
-        (3, "$.nested.deep"),
-        (4, "$.nested.list"),
-        (5, "$.nested.list[0]"),
-        (6, "$.nested.list[0].x"),
-        (7, "$.nested.list[1]"),
-        (8, "$.nested.list[1].x"),
-    ] {
-        let key = subtree_key(&cipher, path, JsonOptions::default())
-            .await
-            .unwrap();
-        let wrapped = doc.entries()[j].wrapped_token().expect("below a head");
-        assert_ne!(wrapped, key.token_bytes(), "{path}");
-        assert_eq!(key.token(), hex(key.token_bytes()), "{path}");
+    let nested = subtree_key(&cipher, "$.nested", JsonOptions::default())
+        .await
+        .unwrap();
+    let mut tokens = vec![*nested.token_bytes()];
+    let mut frontier = vec![*nested.token_bytes()];
+    while let Some(token) = frontier.pop() {
+        for (_, _, child) in doc.children(&token) {
+            tokens.push(child);
+            frontier.push(child);
+        }
     }
+    assert_eq!(tokens.len(), 7, "nested and its six descendants");
+    for entry in doc.entries() {
+        if let Some(p) = entry.parent_tag() {
+            assert!(!tokens.contains(p), "a parent tag is not a token");
+        }
+        assert!(!tokens.contains(entry.selector()));
+    }
+    assert_eq!(nested.token(), hex(nested.token_bytes()));
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -984,11 +1047,17 @@ async fn each_stored_form_opens_as_a_record_field() {
     let cipher = stack_cipher().await;
     let doc = seal(&cipher, &fixture()).await;
     let node = doc.node(1).unwrap();
-    let key = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
+    let key = subtree_key(&cipher, "$.nested", JsonOptions::default())
         .await
         .unwrap();
+    let list = doc
+        .children(key.token_bytes())
+        .into_iter()
+        .find(|(j, _, _)| *j == 4)
+        .map(|(_, _, t)| t)
+        .unwrap();
     let rows: Vec<JsonNode> = doc
-        .subtree(key.token_bytes())
+        .subtree(&list)
         .iter()
         .map(|(j, _, _)| doc.node(*j).unwrap())
         .collect();

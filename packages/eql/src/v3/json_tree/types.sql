@@ -22,34 +22,34 @@
 --! at the repository root. The document's per-entry fields:
 --!   `s`  path selector (16 bytes, hex): every element of an array shares its
 --!        parent's, so a path reads `$.a[*].x`.
---!   `vs` value selector (hex): the node's kind and, for a scalar, its value,
---!        bound to `s`. Containment is a set comparison over `{s, vs}` pairs.
 --!   `c`  the node's own ciphertext (base64): its label, its kind and, for a
 --!        scalar, its value. The root's is the whole document when the root is
 --!        sealed (the default).
---!   `o`  the node's ordinal under its parent, `p` the parent tag
---!        `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))` and `w` the node's own token
---!        wrapped under its parent's: present below the chain's heads.
---!   `n`  the group tag of an array element that is a container,
---!        `g` the group tag of the nearest enclosing such element.
+--!   `p`  the parent tag `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`, where `o` is
+--!        the node's ordinal under its parent: present below the chain's
+--!        heads. The ordinals under a node are dense from 0, so a walk
+--!        holding `t(parent)` probes them in turn until the first miss, and
+--!        derives each hit's own token as `H("t" ‖ t(parent) ‖ LE32(o))`.
+--!        Nothing stores a token or an ordinal.
 --!   `op` the leaf ordering term (CLLW OPE, hex) on number and string leaves.
 --! The header `h` (base64) carries the document's data key material once; the
 --! SQL reads only the sealed-root flag at byte offset 1 and the ZeroKMS `iv`
---! at byte offset 22 of it, the per-document salt of the chain tags, and
+--! at byte offset 22 of it, the per-document salt of the parent tags, and
 --! otherwise carries it opaquely. `q` is the document's containment
---! projection, `{"sv": [{s, vs}, …], "el": [group, …]}`: its `{s, vs}`
---! pairs nested by array element, written by the client beside `sv` so the
---! server compares it with a needle by native `jsonb @>` and never
---! rebuilds it from the entries.
+--! projection, `{"sv": [{s, vs}, …], "el": [group, …]}`: one `{s, vs}` pair
+--! per node, `vs` being the value selector of the node's kind and, for a
+--! scalar, its value, bound to `s`, nested by array element. The client
+--! writes it beside `sv` and it is the only place the value selectors
+--! live: the server compares it with a needle by native `jsonb @>`.
 
 --! @brief Validate one JSON tree entry.
 --! @internal
 --! @param val jsonb Candidate entry.
---! @return boolean True when `val` is an object with string `s`, `vs` and `c`,
---!         an optional numeric `o`, optional string `p`, `w`, `n`, `g` and
---!         `op`, and the metadata the extractors graft: string `h`, numeric
---!         `j` (the entry's ordinal in the document) and `d` (its depth below
---!         a walk's start), and the envelope's `v` and `i`. No other key.
+--! @return boolean True when `val` is an object with string `s` and `c`,
+--!         optional string `p` and `op`, and the metadata the extractors
+--!         graft: string `h`, numeric `j` (the entry's ordinal in the
+--!         document) and `d` (its depth below a walk's start), and the
+--!         envelope's `v` and `i`. No other key.
 CREATE OR REPLACE FUNCTION public.{{prefix}}_is_valid_json_tree_entry_payload(val jsonb)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
@@ -57,18 +57,13 @@ AS $$
   SELECT COALESCE(
     jsonb_typeof(val) = 'object'
      AND jsonb_typeof(val -> 's') = 'string'
-     AND jsonb_typeof(val -> 'vs') = 'string'
      AND jsonb_typeof(val -> 'c') = 'string'
-     AND (NOT (val ? 'o') OR jsonb_typeof(val -> 'o') = 'number')
      AND (NOT (val ? 'p') OR jsonb_typeof(val -> 'p') = 'string')
-     AND (NOT (val ? 'w') OR jsonb_typeof(val -> 'w') = 'string')
-     AND (NOT (val ? 'n') OR jsonb_typeof(val -> 'n') = 'string')
-     AND (NOT (val ? 'g') OR jsonb_typeof(val -> 'g') = 'string')
      AND (NOT (val ? 'op') OR jsonb_typeof(val -> 'op') = 'string')
      AND (NOT (val ? 'h') OR jsonb_typeof(val -> 'h') = 'string')
      AND (NOT (val ? 'j') OR jsonb_typeof(val -> 'j') = 'number')
      AND (NOT (val ? 'd') OR jsonb_typeof(val -> 'd') = 'number')
-     AND val - ARRAY['s', 'vs', 'c', 'o', 'p', 'w', 'n', 'g', 'op', 'h', 'j', 'd', 'v', 'i']::text[] = '{}'::jsonb,
+     AND val - ARRAY['s', 'c', 'p', 'op', 'h', 'j', 'd', 'v', 'i']::text[] = '{}'::jsonb,
     false
   )
 $$;

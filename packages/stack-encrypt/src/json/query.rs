@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use super::derive::{JsonTerms, TermNode};
 use super::path::JsonPath;
-use super::{hex, JsonDocument, JsonEntry, JsonOptions, Tag};
+use super::{hex, JsonDocument, JsonOptions, Tag};
 use crate::op::{
     Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input, Lt, Lte,
     One, Pair, Pathed, QueryTerm, QueryToken, Supports,
@@ -95,8 +95,9 @@ impl JsonQuery {
 }
 
 /// The group of the nodes that sit directly in `parent` (`None` is the top
-/// level), with the container elements in it nested as groups.
-fn group_of(nodes: &[TermNode], parent: Option<usize>) -> JsonProjection {
+/// level), with the container elements in it nested as groups. What a
+/// needle is, and what a document writes to `q` when it is sealed.
+pub(crate) fn group_of(nodes: &[TermNode], parent: Option<usize>) -> JsonProjection {
     let belongs = |index: usize, node: &TermNode| {
         if node.container_element {
             Some(index)
@@ -117,34 +118,6 @@ fn group_of(nodes: &[TermNode], parent: Option<usize>) -> JsonProjection {
             .filter(|(_, n)| n.container_element && n.element == parent)
             .map(|(i, _)| group_of(nodes, Some(i)))
             .collect(),
-    }
-}
-
-impl JsonDocument {
-    /// The stored document's projection, from its group tags: what a
-    /// [`JsonQuery`] is matched against. The document writes it to the wire
-    /// as `q`, beside `sv`, and the SQL's `json_tree_query` reads it from
-    /// there; a document deserialized from the wire derives it again from
-    /// the entries, so a stored `q` is never trusted over them.
-    pub fn projection(&self) -> JsonProjection {
-        fn belongs(e: &JsonEntry) -> Option<&Tag> {
-            e.n.as_ref().or(e.g.as_ref())
-        }
-        fn group(entries: &[JsonEntry], parent: Option<&Tag>) -> JsonProjection {
-            JsonProjection {
-                sv: entries
-                    .iter()
-                    .filter(|e| belongs(e) == parent)
-                    .map(|e| Pair16 { s: e.s, vs: e.vs })
-                    .collect(),
-                el: entries
-                    .iter()
-                    .filter(|e| e.n.is_some() && e.g.as_ref() == parent)
-                    .map(|e| group(entries, e.n.as_ref()))
-                    .collect(),
-            }
-        }
-        group(&self.entries, None)
     }
 }
 
@@ -182,6 +155,20 @@ impl From<&JsonProjection> for GroupWire {
                 .collect(),
             el: group.el.iter().map(GroupWire::from).collect(),
         }
+    }
+}
+
+/// A projection serializes as a stored `q` and a needle do: `{"sv": [{"s",
+/// "vs"}, …], "el": [group, …]}`.
+impl Serialize for JsonProjection {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        GroupWire::from(self).serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for JsonProjection {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        JsonProjection::try_from(GroupWire::deserialize(d)?).map_err(serde::de::Error::custom)
     }
 }
 
@@ -326,13 +313,35 @@ impl Serialize for JsonSelector {
     }
 }
 
-/// The key of a subtree walk: the token of a positional node, and, when
-/// the walked path continues with a wildcard below it, the selector of the
-/// whole path the walk gates on. Serializes as `{"t": "…", "s": "…"}`.
+/// One gate of a subtree walk: what the entry at one depth below the
+/// walk's token must be for the walk to descend through it.
 #[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Gate {
+    /// The selector of the path down to that depth: a key step, or a
+    /// wildcard, whose selector every element carries.
+    Selector(Tag),
+    /// An array position: the one ordinal probed at that depth.
+    Slot(u32),
+}
+
+impl Gate {
+    /// The gate as `json_tree_subtree_at` takes it: the selector's hex, or
+    /// `#n` for a position.
+    fn text(&self) -> String {
+        match self {
+            Gate::Selector(s) => hex(s),
+            Gate::Slot(n) => format!("#{n}"),
+        }
+    }
+}
+
+/// The key of a subtree walk: the token of the deepest node on the path
+/// the client can derive, and one gate per step below it. Serializes as
+/// `{"t": "…", "g": ["…", "#0", …]}`, `g` omitted when empty.
+#[derive(Clone, PartialEq, Eq)]
 pub struct JsonSubtreeKey {
     pub(crate) token: Tag,
-    pub(crate) selector: Option<Tag>,
+    pub(crate) gates: Vec<Gate>,
 }
 
 impl JsonSubtreeKey {
@@ -348,10 +357,12 @@ impl JsonSubtreeKey {
         &self.token
     }
 
-    /// The selector the walk gates on, when the path has a wildcard below
-    /// the token's node.
-    pub fn selector(&self) -> Option<JsonSelector> {
-        self.selector.map(JsonSelector)
+    /// The gates the walk descends through below the token, one per step,
+    /// as `json_tree_subtree_at` takes them: a selector's hex, or `#n` for
+    /// an array position. Empty when the token names the walked node
+    /// itself, which `json_tree_subtree` takes.
+    pub fn gates(&self) -> Vec<String> {
+        self.gates.iter().map(Gate::text).collect()
     }
 }
 
@@ -359,7 +370,7 @@ impl JsonSubtreeKey {
 impl fmt::Debug for JsonSubtreeKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("JsonSubtreeKey")
-            .field("gated", &self.selector.is_some())
+            .field("gates", &self.gates.len())
             .finish_non_exhaustive()
     }
 }
@@ -369,12 +380,12 @@ impl Serialize for JsonSubtreeKey {
         #[derive(Serialize)]
         struct Wire {
             t: String,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            s: Option<String>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            g: Vec<String>,
         }
         Wire {
             t: hex(&self.token),
-            s: self.selector.as_ref().map(|t| hex(t)),
+            g: self.gates(),
         }
         .serialize(s)
     }
@@ -693,15 +704,27 @@ mod tests {
         );
         let key = JsonSubtreeKey {
             token: [0xcd; 16],
-            selector: Some([0xab; 16]),
+            gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3)],
         };
         assert_eq!(key.token(), "cd".repeat(16));
         assert_eq!(key.token_bytes(), &[0xcd; 16]);
-        assert_eq!(key.selector(), Some(selector));
+        assert_eq!(key.gates(), ["ab".repeat(16), "#3".to_owned()]);
+        assert_eq!(
+            serde_json::to_value(&key).unwrap(),
+            serde_json::json!({"t": "cd".repeat(16), "g": ["ab".repeat(16), "#3"]})
+        );
         assert_eq!(
             format!("{key:?}"),
-            "JsonSubtreeKey { gated: true, .. }",
+            "JsonSubtreeKey { gates: 2, .. }",
             "a token is a capability: it never prints"
+        );
+        let bare = JsonSubtreeKey {
+            token: [0xcd; 16],
+            gates: Vec::new(),
+        };
+        assert_eq!(
+            serde_json::to_value(&bare).unwrap(),
+            serde_json::json!({"t": "cd".repeat(16)})
         );
     }
 

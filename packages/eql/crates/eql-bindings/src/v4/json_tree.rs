@@ -35,9 +35,8 @@ use crate::v3::terms::{EntryCiphertext, KeyHeader, OpeCllw, Selector};
 use crate::v4::{DomainType, SchemaVersion};
 use crate::Identifier;
 
-/// A sixteen-byte chain tag, hex: a parent tag `p`, a wrapped token `w`,
-/// a group tag `n` or `g`. Per document, salted by the document's `iv`, so
-/// unlinkable across rows at rest.
+/// A sixteen-byte chain tag, hex: a parent tag `p`. Per document, salted
+/// by the document's `iv`, so unlinkable across rows at rest.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
 pub struct JsonTreeTag(pub String);
 
@@ -45,9 +44,11 @@ pub struct JsonTreeTag(pub String);
 /// [entry], q: group}`. Strict. `h` is the document's key header, stored
 /// once (every entry is sealed under the document's one data key); `sv`
 /// holds one entry per node in depth-first order, the root first; `q` is
-/// the document's containment projection, its `{s, vs}` pairs nested by
-/// array element, which the client writes beside the entries so the
-/// server's `eql_v4.json_tree_query` reads it rather than rebuilding it.
+/// the document's containment projection, one `{s, vs}` pair per node
+/// nested by array element, which the client writes beside the entries
+/// and which is the only place the value selectors live: the server's
+/// `eql_v4.json_tree_query` reads it, and the engine takes it as the
+/// projection when it reads a document back.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JsonTreeDocument {
@@ -58,33 +59,19 @@ pub struct JsonTreeDocument {
     pub q: JsonTreeQueryGroup,
 }
 
-/// `public.eql_v4_json_tree_entry`: one node. `s` and `vs` are the path
-/// and value selectors, `c` the node's own ciphertext; `o`, `p` and `w`
-/// the chain fields below the heads; `n` and `g` the group tags of
-/// container array elements and what sits inside them; `op` the leaf
-/// ordering term. `h`, `j`, `d`, `v` and `i` are what the extractors graft
-/// onto an entry they return, so it opens on its own.
+/// `public.eql_v4_json_tree_entry`: one node. `s` is the path selector,
+/// `c` the node's own ciphertext; `p` the parent tag below the chain's
+/// heads, which the walk probes by ordinal; `op` the leaf ordering term.
+/// `h`, `j`, `d`, `v` and `i` are what the extractors graft onto an entry
+/// they return, so it opens on its own.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JsonTreeEntry {
     pub s: Selector,
-    pub vs: Selector,
     pub c: EntryCiphertext,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub o: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
     pub p: Option<JsonTreeTag>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub w: Option<JsonTreeTag>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub n: Option<JsonTreeTag>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub g: Option<JsonTreeTag>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub op: Option<OpeCllw>,
@@ -237,9 +224,11 @@ impl JsonTreeDocument {
         serde_json::from_value(value).map_err(codec)
     }
 
-    /// The engine's document: the header and entries without the envelope.
+    /// The engine's document: the header, entries and projection without
+    /// the envelope.
     fn document(&self) -> Result<JsonDocument, Error> {
-        serde_json::from_value(serde_json::json!({ "h": self.h, "sv": self.sv })).map_err(codec)
+        serde_json::from_value(serde_json::json!({ "h": self.h, "sv": self.sv, "q": self.q }))
+            .map_err(codec)
     }
 }
 
@@ -421,7 +410,7 @@ mod tests {
     fn a_document_carries_its_projection() {
         let document = serde_json::json!({
             "v": 4, "i": {"t": "users", "c": "profile"}, "h": "AA==",
-            "sv": [{"s": "aa", "vs": "bb", "c": "AA=="}],
+            "sv": [{"s": "aa", "c": "AA=="}],
             "q": {"sv": [{"s": "aa", "vs": "bb"}], "el": []},
         });
         let stored: JsonTreeDocument = serde_json::from_value(document.clone()).unwrap();
@@ -451,7 +440,7 @@ mod tests {
     #[test]
     fn an_entry_without_the_grafted_fields_does_not_open() {
         let entry: JsonTreeEntry = serde_json::from_value(serde_json::json!({
-            "s": "00", "vs": "00", "c": "AA=="
+            "s": "00", "c": "AA=="
         }))
         .unwrap();
         assert!(entry.node().is_err());

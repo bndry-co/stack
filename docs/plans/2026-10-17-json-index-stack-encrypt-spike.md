@@ -362,6 +362,18 @@ The family was measured at 10,000 rows in the `cipherstash/benches` repository (
 
 Still open from the measurements, filed as a follow-up: `->` scans `sv` on every extraction (0.8 ms on a nested document; an index of `sv` by `s` would make it a lookup); `json_tree_contains` plans a second GIN probe for `alt` even when the needle carries none; `ORDER BY ord_term(col -> sel)` measured 0.92 ms against v3's 0.25 ms on an index scan both ways, unexplained; and the nested document is 24 times its plaintext (hex tags, a random nonce per entry, the sealed-root copy), which decisions 1 and 6 above and the opaque-subtree policy are the levers on.
 
+## Implementation notes (2026-10-22, Phase 3b: the ordinal-chained walk)
+
+A review of the stored form after the Phase 3 measurements found three fields nothing read and two the walk did not need, and replaced the chain step. The wire is now `{"h", "sv": [{s, c, p?, op?}], "q"}`.
+
+- **`vs`, `n` and `g` are gone from the entries.** Once `q` was stored (Phase 3), no SQL function read an entry's value selector or group tags: containment reads `q` alone, and the engine read them only to rebuild `q` on deserialize. The engine now takes the stored `q` as the projection. That is no change in trust: `q` and the entry fields were equally unauthenticated (only `c` is, through its AAD), and a tampered `q` changes which rows a containment query returns and nothing else. On the 269-node benchmark document the three fields were 15% of `sv`.
+- **Tokens chain by ordinal.** `t(child) = H("t" ‖ t(parent) ‖ LE32(o))` replaces the label-derived step. The server derives every hit's token from its parent's as it walks, so `w` (the wrapped token) is not stored. The cost is that the client cannot derive an object member's token, because an ordinal is a rank among sibling keys it does not know; it derives down to the last array position after a chain head and sends one gate per further step (`JsonSubtreeKey::gates()`: the step's selector, or `#n` for a position), and `json_tree_subtree_at` descends through them. A wildcard step's selector is every element's, which is the old `subtree_at` gate generalised to every depth.
+- **The walk probes to the first miss.** The ordinals under a node are dense from zero (positions for arrays, a permutation for objects), so the walk tries `0, 1, 2, …` and stops at the first miss. `o` is not stored and `json_tree_fanout` is gone. A subtree of `N` nodes costs about `2N` SHA-256 evaluations and lookups (one miss per parent, one per leaf) where it cost `F` per visited node, `F` being the widest node in the whole document; on the nested corpus a wide `items` array taxed every object walk in the same document.
+- **Depth is reported from the reached node.** A gated walk returns the node its gates reach with `d = 0` and its descendants beneath it, so the client can tell "the value at the path" (one reached node) from "the children of a node" (no `d = 0` row) without the path. A wildcard reaches several nodes and opens as a list.
+- **Leakage.** At rest, the same as Phase 3 minus the slot multiset `o` leaked; `p` is still salted by the document `iv`. Under a token, the same: a token still unlocks the shape of that subtree in every row. The `w` mask's binding to `c` (a swapped ciphertext broke the walk on the server) is gone; the swap still fails when the client opens the entry, because `c` is bound to `s` and `j` in its AAD.
+
+Measured against the Phase 3 corpus in `cipherstash/benches` (branch `feat/json-tree-benches`), results to follow in that report.
+
 ## Decisions to take before Phase 1
 
 1. **Token encoding on the wire:** hex, matching v3's `s`, or base64url, saving about 40 characters per entry. Proposal: measure in Phase 3, default to base64url.

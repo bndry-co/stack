@@ -151,8 +151,12 @@ async fn the_query_operands_are_the_engines_terms_in_the_sql_contract() {
     assert_eq!(engine.entries().len(), typed.sv.len());
     for (a, b) in engine.entries().iter().zip(&typed.sv) {
         assert_eq!(hex(a.selector()), b.s.0);
-        assert_eq!(hex(a.value_selector()), b.vs.0);
     }
+    assert_eq!(
+        serde_json::to_value(engine.projection()).unwrap(),
+        serde_json::to_value(&typed.q).unwrap(),
+        "and the same projection"
+    );
     let opened: Value = cipher.open(engine).using(&plan).await.unwrap();
     assert_eq!(opened, fixture());
 }
@@ -522,6 +526,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
     // the path alone: six entries in row 1, reassembling the sub-document;
     // two in row 2.
     let nested = subtree_key("$.nested");
+    assert!(nested.gates().is_empty(), "a chain head's token");
     for (id, expected) in [
         (1, fixture()["nested"].clone()),
         (2, rows[1].1["nested"].clone()),
@@ -597,13 +602,17 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .get(0);
     assert_eq!(garbage, 0);
 
-    // A wildcard below the anchor: every element's `x`, each a complete
-    // subtree, from the list's token gated on the whole path's selector.
+    // A path below the head walks from the head's token through one gate
+    // per step: `$.nested.list[*].x` is the list's selector, then every
+    // element's (the wildcard's), then x's; each `x` comes back as a
+    // complete subtree.
     let xs = subtree_key("$.nested.list[*].x");
+    assert_eq!(xs.token(), nested.token(), "anchored at the head");
+    assert_eq!(xs.gates().len(), 3);
     let walked: Vec<JsonTreeEntry> = db
         .query(
-            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text) e WHERE id = 1",
-            &[&xs.token(), &xs.selector().unwrap().to_string()],
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[]) e WHERE id = 1",
+            &[&xs.token(), &xs.gates()],
         )
         .unwrap()
         .iter()
@@ -619,8 +628,8 @@ fn postgres_extracts_walks_and_orders_by_path() {
     // wildcard path selects every subtree over the whole document.
     let root: Vec<JsonTreeEntry> = db
         .query(
-            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text, 1) e WHERE id = 1",
-            &[&xs.token(), &xs.selector().unwrap().to_string()],
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[], 1) e WHERE id = 1",
+            &[&xs.token(), &xs.gates()],
         )
         .unwrap()
         .iter()
@@ -638,12 +647,33 @@ fn postgres_extracts_walks_and_orders_by_path() {
     .unwrap();
     assert_eq!(values, vec![json!(1), json!(2)]);
 
-    // The array functions, by the list's token.
+    // A positional path below a key step: the second element's subtree,
+    // through the list's selector and the position `#1`.
+    let second = subtree_key("$.nested.list[1]");
+    assert_eq!(second.gates()[1], "#1");
+    let walked: Vec<JsonTreeEntry> = db
+        .query(
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[]) e WHERE id = 1",
+            &[&second.token(), &second.gates()],
+        )
+        .unwrap()
+        .iter()
+        .map(entry)
+        .collect();
+    let value: Value = wait(
+        &runtime,
+        cipher.decrypt_as(JsonTreeSubtree::new(walked), column()),
+    )
+    .unwrap();
+    assert_eq!(value, json!({"x": 2}));
+
+    // The array functions, by the head's token and the list's gate.
     let list = subtree_key("$.nested.list");
+    assert_eq!(list.gates().len(), 1);
     let counts: Vec<(i32, i32)> = db
         .query(
-            "SELECT id, eql_v4.json_tree_child_count(doc, $1::text) FROM json_tree_rows ORDER BY id",
-            &[&list.token()],
+            "SELECT id, eql_v4.json_tree_child_count(doc, $1::text, $2::text[]) FROM json_tree_rows ORDER BY id",
+            &[&list.token(), &list.gates()],
         )
         .unwrap()
         .iter()
@@ -652,8 +682,8 @@ fn postgres_extracts_walks_and_orders_by_path() {
     assert_eq!(counts, [(1, 2), (2, 0), (3, 0)]);
     let elements: Vec<JsonTreeEntry> = db
         .query(
-            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_children(doc, $1::text) e WHERE id = 1",
-            &[&list.token()],
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_children(doc, $1::text, $2::text[]) e WHERE id = 1",
+            &[&list.token(), &list.gates()],
         )
         .unwrap()
         .iter()
@@ -661,9 +691,18 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .collect();
     assert_eq!(elements.len(), 2);
     assert_eq!(
-        elements.iter().map(|e| e.o).collect::<Vec<_>>(),
-        [Some(0), Some(1)]
+        elements.iter().map(|e| (e.j, e.d)).collect::<Vec<_>>(),
+        [(Some(5), Some(1)), (Some(7), Some(1))]
     );
+    // The head's own children, with no gate: deep and list.
+    let members: i32 = db
+        .query_one(
+            "SELECT eql_v4.json_tree_child_count(doc, $1::text) FROM json_tree_rows WHERE id = 1",
+            &[&nested.token()],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(members, 2);
 
     // Orderings at a path: the rows whose `$.number` is in range, and
     // sorted by the leaf's term.
