@@ -387,10 +387,11 @@ impl JsonDocument {
     }
 
     fn walk<'a>(&'a self, token: &Tag, depth: u32, out: &mut Vec<(usize, &'a JsonEntry, u32)>) {
-        // A walk finds each entry at most once and never deeper than a
-        // document goes, so a document whose tags do not form a tree (which
-        // no sealing produces) ends the walk instead of looping.
-        if out.len() >= self.entries.len() || depth as usize > derive::MAX_DEPTH {
+        // A walk finds each entry at most once, so a document whose tags do
+        // not form a tree (which no sealing produces) ends the walk once it
+        // has returned as many entries as the document holds, instead of
+        // looping.
+        if out.len() >= self.entries.len() {
             return;
         }
         for (j, entry, child) in self.children(token) {
