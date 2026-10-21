@@ -5,14 +5,16 @@
  */
 
 import type { ClientBase } from 'pg'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import {
   ColumnMigration,
   type ColumnMigrationState,
   deriveColumnMigration,
   deriveTwinName,
   manifestTwin,
+  type Obligation,
   openCounterpart,
+  type PassPlan,
   passProgress,
   planPassFor,
 } from '../column-migration.js'
@@ -269,6 +271,25 @@ describe('deriveColumnMigration (reverse)', () => {
     expect(deriveColumnMigration({ direction: 'forward', history }).phase).toBe(
       'dropped',
     )
+  })
+
+  it('reverse events of the twin from BEFORE a forward drop leave the drop current', () => {
+    // An earlier round trip: email_encrypted decrypted back and dropped, then
+    // email encrypted into email_encrypted again and dropped.
+    const earlierReverse = [confirm(), completed(unforced), dropGenerated()]
+    const forwardTwin = { encryptedColumn: 'email_encrypted' }
+    const history = [
+      ev('dual_writing', 'dual-writing', forwardTwin, { columnName: 'email' }),
+      ev('backfilled', 'backfilled', forwardTwin, { columnName: 'email' }),
+      ev('dropped', 'dropped', forwardTwin, { columnName: 'email' }),
+    ]
+    const state = deriveColumnMigration({
+      direction: 'forward',
+      history,
+      recordedTwinHistory: earlierReverse,
+    })
+    expect(state.phase).toBe('dropped')
+    expect(state.recordedTwin).toBe('email_encrypted')
   })
 })
 
@@ -700,5 +721,41 @@ describe('manifestTwin', () => {
     expect(
       manifestTwin('reverse', manifest, 'orders', 'email_encrypted'),
     ).toBeUndefined()
+  })
+})
+
+describe('the obligation and pass plan types', () => {
+  it('admit only the states the rules produce', () => {
+    // Checked by `tsc`: each assignment marked below would compile if the
+    // fields were independent.
+    const neverWaivable = { reason: 'forced-pass', waivable: true } as const
+    const alwaysWaivable = {
+      reason: 'existing-values',
+      waivable: false,
+    } as const
+    const base = { kind: 'forced-pass', openedAt: null } as const
+    // @ts-expect-error a forced-pass obligation is never waivable
+    const a: Obligation = { ...base, ...neverWaivable }
+    // @ts-expect-error an existing-values obligation is always waivable
+    const b: Obligation = { ...base, ...alwaysWaivable }
+    const unforced = { force: false, forcedBy: 'caller' } as const
+    const forced = { force: true, forcedBy: null } as const
+    // @ts-expect-error an unforced plan has no reason
+    const c: PassPlan = { ...unforced, resumeFrom: null }
+    // @ts-expect-error a forced plan always has one
+    const d: PassPlan = { ...forced, resumeFrom: null }
+    expect([a, b, c, d]).toHaveLength(4)
+
+    const plan = planPassFor(
+      deriveColumnMigration({ direction: 'reverse', history: [] }),
+      { force: false },
+    )
+    if (plan.force) {
+      expectTypeOf(plan.forcedBy).toEqualTypeOf<
+        'caller' | Obligation['reason']
+      >()
+    } else {
+      expectTypeOf(plan.forcedBy).toEqualTypeOf<null>()
+    }
   })
 })

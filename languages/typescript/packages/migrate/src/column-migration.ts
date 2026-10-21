@@ -86,14 +86,22 @@ const OPPOSITE: Record<MigrationDirection, MigrationDirection> = {
  * - `forced-pass`: a forced pass started. Only a completed forced pass closes
  *   it.
  */
-export interface Obligation {
+export type Obligation = {
   kind: 'forced-pass'
-  reason: 'existing-values' | 'forced-pass'
   /** Id of the event that opened it, or `null` when no event records it yet. */
   openedAt: string | null
-  /** Whether a waiver may still close it. */
-  waivable: boolean
-}
+} & (
+  | {
+      reason: 'existing-values'
+      /** Whether a waiver may still close it: always, for this reason. */
+      waivable: true
+    }
+  | {
+      reason: 'forced-pass'
+      /** Whether a waiver may still close it: never, for this reason. */
+      waivable: false
+    }
+)
 
 /**
  * The operator's recorded assertion that a twin's existing values are already
@@ -280,15 +288,16 @@ export function passProgress(state: ColumnMigrationState): PassProgress | null {
 }
 
 /** How the next run will go: its mode, why, and where it resumes. */
-export interface PassPlan {
-  force: boolean
-  forcedBy: ForcedBy
+export type PassPlan = {
   /**
    * The event the run resumes from (a checkpoint, or an error carrying the
    * last committed cursor), or `null` for a fresh pass from the first row.
    */
   resumeFrom: MigrationStateRow | null
-}
+} & (
+  | { force: false; forcedBy: null }
+  | { force: true; forcedBy: NonNullable<ForcedBy> }
+)
 
 /**
  * Plan the next run of a column migration. An open obligation forces it. A
@@ -326,7 +335,10 @@ export function planPassFor(
         last.phase === vocab.runningPhase &&
         last.cursorValue !== null)) &&
     isForced(last) === force
-  return { force, forcedBy, resumeFrom: resumable ? last : null }
+  const resumeFrom = resumable ? last : null
+  return forcedBy === null
+    ? { force: false, forcedBy, resumeFrom }
+    : { force: true, forcedBy, resumeFrom }
 }
 
 /**
