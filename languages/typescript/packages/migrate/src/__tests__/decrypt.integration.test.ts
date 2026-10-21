@@ -508,6 +508,54 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     }
   })
 
+  it('a forward migration closed as observed absent is superseded by the reverse one too', async () => {
+    await seed(10)
+    const db = await pool.connect()
+    try {
+      // email's forward migration was open when its drop happened outside
+      // stash; `decrypt plan` records that before the reverse one starts.
+      await appendEvent(db, {
+        tableName: TABLE,
+        columnName: 'email',
+        event: 'dual_writing',
+        phase: 'dual-writing',
+        details: { encryptedColumn: 'email_encrypted' },
+      })
+      const open = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email',
+        direction: 'forward',
+        manifest: null,
+      })
+      const closed = await open.recordSourceRemoved()
+      expect(closed.latest?.details).toMatchObject({
+        encryptedColumn: 'email_encrypted',
+        observedAbsent: true,
+      })
+
+      await confirm()
+      await run()
+      const reverse = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email_encrypted',
+        direction: 'reverse',
+        manifest: null,
+      })
+      await reverse.recordDropGenerated({ migrationFile: 'x.sql' })
+
+      const again = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email',
+        direction: 'forward',
+        twin: 'email_encrypted_v2',
+        manifest: null,
+      })
+      expect(again.phase).toBeNull()
+    } finally {
+      db.release()
+    }
+  })
+
   it('refuses a run into a different plaintext column than the one recorded', async () => {
     await seed(10)
     await confirm()

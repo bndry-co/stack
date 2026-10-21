@@ -618,7 +618,11 @@ export class ColumnMigration implements ColumnMigrationState {
       columnName: this.column,
       event: vocab.dropped,
       phase: vocab.droppedPhase,
-      details: { observedAbsent: true, ...details },
+      details: {
+        [vocab.twinKey]: this.twin.column,
+        observedAbsent: true,
+        ...details,
+      },
     })
     return this.reload()
   }
