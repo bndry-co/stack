@@ -746,6 +746,46 @@ mod tests {
     }
 
     #[test]
+    fn a_projection_round_trips_through_its_wire_form() {
+        let projection = JsonProjection {
+            sv: vec![Pair16 {
+                s: [1; 16],
+                vs: [2; 16],
+            }],
+            el: vec![JsonProjection {
+                sv: vec![Pair16 {
+                    s: [3; 16],
+                    vs: [4; 16],
+                }],
+                el: Vec::new(),
+            }],
+        };
+        let wire = serde_json::to_value(&projection).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "sv": [{"s": "01".repeat(16), "vs": "02".repeat(16)}],
+                "el": [{"sv": [{"s": "03".repeat(16), "vs": "04".repeat(16)}], "el": []}],
+            })
+        );
+        let back: JsonProjection = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, projection);
+        assert!(
+            serde_json::from_value::<JsonProjection>(serde_json::json!({"sv": [], "el": []}))
+                .unwrap()
+                .el
+                .is_empty()
+        );
+        assert!(
+            serde_json::from_value::<JsonProjection>(
+                serde_json::json!({"sv": [{"s": "zz", "vs": "00"}], "el": []})
+            )
+            .is_err(),
+            "a pair that is not two tags is refused"
+        );
+    }
+
+    #[test]
     fn group_containment_is_jsonbs_rule() {
         let pair = |b: u8| Pair16 {
             s: [b; 16],

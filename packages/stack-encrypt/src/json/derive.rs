@@ -37,7 +37,7 @@ const ENTRY_AAD_DOMAIN: &[u8] = b"stack-encrypt/json/entry/v1";
 
 /// Deeper than this is refused rather than walked: the walk recurses, and a
 /// document built in memory can nest deeper than any parser admits.
-const MAX_DEPTH: usize = 512;
+pub(super) const MAX_DEPTH: usize = 512;
 
 /// The byte that leads a sealed root's plaintext: the whole document, not a
 /// node.

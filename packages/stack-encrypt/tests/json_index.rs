@@ -1021,6 +1021,10 @@ async fn no_stored_tag_is_a_token() {
     let mut tokens = vec![*nested.token_bytes()];
     let mut frontier = vec![*nested.token_bytes()];
     while let Some(token) = frontier.pop() {
+        assert!(
+            tokens.len() <= doc.entries().len(),
+            "the chain is a tree: no token is reached twice"
+        );
         for (_, _, child) in doc.children(&token) {
             tokens.push(child);
             frontier.push(child);
@@ -1043,6 +1047,85 @@ fn hex(bytes: &[u8]) -> String {
 /// A document, an extracted node and a walked subtree are each the one
 /// recoverable field of a derived record: each opens through
 /// `DecryptField`, as a record holding one would.
+/// The rows of a gated walk carry the node the gates reached at depth 0
+/// and its descendants beneath. Opened as a value, they are that node's
+/// value; two reached nodes open as a list, or refuse to be one value.
+#[tokio::test]
+async fn gated_walk_rows_open_to_the_reached_nodes_value() {
+    let cipher = stack_cipher().await;
+    let doc = seal(&cipher, &fixture()).await;
+    let nested = subtree_key(&cipher, "$.nested", JsonOptions::default())
+        .await
+        .unwrap();
+    let list = doc
+        .children(nested.token_bytes())
+        .into_iter()
+        .find(|(j, _, _)| *j == 4)
+        .map(|(_, _, t)| t)
+        .unwrap();
+    // What `json_tree_subtree_at(doc, t(nested), [s(list), #1])` returns:
+    // the second element at d = 0, its x at d = 1.
+    let rows_at = |reached: &[usize], below: &[(usize, u32)]| -> Vec<JsonNode> {
+        reached
+            .iter()
+            .map(|j| (*j, 0u32))
+            .chain(below.iter().copied())
+            .map(|(j, d)| {
+                let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+                wire["d"] = json!(d);
+                serde_json::from_value(wire).unwrap()
+            })
+            .collect()
+    };
+    let second = JsonSubtree::new(rows_at(&[7], &[(8, 1)]));
+    assert!(
+        !second.is_sealed_root(),
+        "a reached node is not the fallback"
+    );
+    let value = cipher
+        .decrypt_as::<Value, JsonSubtree>(second.clone(), aead())
+        .await
+        .unwrap();
+    assert_eq!(value, json!({"x": 2}), "the reached node's own value");
+    let values = cipher
+        .decrypt_as::<Vec<Value>, JsonSubtree>(second, aead())
+        .await
+        .unwrap();
+    assert_eq!(values, vec![json!({"x": 2})]);
+    // A scalar reached by a gate opens to the scalar, where the ungated
+    // walk of a scalar yields no rows and no value.
+    let x = cipher
+        .decrypt_as::<Value, JsonSubtree>(JsonSubtree::new(rows_at(&[8], &[])), aead())
+        .await
+        .unwrap();
+    assert_eq!(x, json!(2));
+    // Two reached nodes (a wildcard): a list, never one value.
+    let both = JsonSubtree::new(rows_at(&[6, 8], &[]));
+    let values = cipher
+        .decrypt_as::<Vec<Value>, JsonSubtree>(both.clone(), aead())
+        .await
+        .unwrap();
+    assert_eq!(values, vec![json!(1), json!(2)]);
+    match cipher.decrypt_as::<Value, JsonSubtree>(both, aead()).await {
+        Err(Error::OpenedType { expected }) => {
+            assert_eq!(expected, "one node at the walked path")
+        }
+        other => panic!("{other:?}"),
+    }
+    // Without a d = 0 row the same entries are the children of one node and
+    // assemble into it.
+    let rows: Vec<JsonNode> = doc
+        .subtree(&list)
+        .iter()
+        .map(|(j, _, _)| doc.node(*j).unwrap())
+        .collect();
+    let elements = cipher
+        .decrypt_as::<Value, JsonSubtree>(JsonSubtree::new(rows), aead())
+        .await
+        .unwrap();
+    assert_eq!(elements, json!([{"x": 1}, {"x": 2}]));
+}
+
 #[tokio::test]
 async fn each_stored_form_opens_as_a_record_field() {
     let cipher = stack_cipher().await;

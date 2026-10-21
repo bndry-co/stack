@@ -358,7 +358,10 @@ impl JsonDocument {
     pub fn children(&self, token: &Tag) -> Vec<(usize, &JsonEntry, Tag)> {
         let iv = &self.header.iv;
         let mut out = Vec::new();
-        for o in 0..u32::MAX {
+        // A node has at most as many children as the document has entries,
+        // so the probe loop is bounded whatever the entries say.
+        let most = u32::try_from(self.entries.len()).unwrap_or(u32::MAX);
+        for o in 0..most {
             let tag = derive::parent_tag(iv, token, o);
             let Some((j, entry)) = self
                 .entries
@@ -384,6 +387,12 @@ impl JsonDocument {
     }
 
     fn walk<'a>(&'a self, token: &Tag, depth: u32, out: &mut Vec<(usize, &'a JsonEntry, u32)>) {
+        // A walk finds each entry at most once and never deeper than a
+        // document goes, so a document whose tags do not form a tree (which
+        // no sealing produces) ends the walk instead of looping.
+        if out.len() >= self.entries.len() || depth as usize > derive::MAX_DEPTH {
+            return;
+        }
         for (j, entry, child) in self.children(token) {
             out.push((j, entry, depth));
             self.walk(&child, depth + 1, out);
