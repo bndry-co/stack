@@ -508,6 +508,49 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     }
   })
 
+  it('refuses to close a column migration that is not open, recording nothing', async () => {
+    await seed(10)
+    const db = await pool.connect()
+    try {
+      const none = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email',
+        direction: 'forward',
+        twin: 'email_encrypted',
+        manifest: null,
+      })
+      await expect(none.recordSourceRemoved()).rejects.toMatchObject({
+        code: 'wrong-phase',
+      })
+
+      // Closed once, it cannot be closed again.
+      await appendEvent(db, {
+        tableName: TABLE,
+        columnName: 'email',
+        event: 'dual_writing',
+        phase: 'dual-writing',
+        details: { encryptedColumn: 'email_encrypted' },
+      })
+      const open = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email',
+        direction: 'forward',
+        manifest: null,
+      })
+      const closed = await open.recordSourceRemoved()
+      await expect(closed.recordSourceRemoved()).rejects.toMatchObject({
+        code: 'wrong-phase',
+      })
+      const { rows } = await db.query<{ event: string }>(
+        'SELECT event FROM cipherstash.cs_migrations WHERE column_name = $1 ORDER BY id',
+        ['email'],
+      )
+      expect(rows.map((r) => r.event)).toEqual(['dual_writing', 'dropped'])
+    } finally {
+      db.release()
+    }
+  })
+
   it('a forward migration closed as observed absent is superseded by the reverse one too', async () => {
     await seed(10)
     const db = await pool.connect()
@@ -916,6 +959,14 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
       expect(state?.event).toBe('error')
       expect(state?.cursorValue).toBeNull()
       expect(state?.details).toMatchObject({ plaintextColumn: 'email' })
+      // The refused batch is recorded by counts and codes: no value, no
+      // message.
+      expect(state?.details).toMatchObject({
+        errorName: 'UndecryptableBatchError',
+        batchRows: 30,
+        batchCodes: { UNKNOWN: 30 },
+      })
+      expect(state?.details).not.toHaveProperty('message')
     } finally {
       db.release()
     }

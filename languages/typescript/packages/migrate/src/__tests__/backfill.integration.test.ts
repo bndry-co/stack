@@ -624,6 +624,45 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
     expect(firstAfter).toEqual([null, '2'])
   })
 
+  it.each([
+    ['a thrown value that is not an Error', () => 'row 7: alice@example.com'],
+    [
+      'an Error whose name is not an identifier',
+      () =>
+        Object.assign(new Error('boom'), { name: 'alice@example.com failed' }),
+    ],
+  ])('records %s as errorName "Error"', async (_label, thrown) => {
+    await seed(2)
+    const db = await pool.connect()
+    try {
+      await expect(
+        runChunkedMigration<{ pk: string }>({
+          db,
+          tableName: 'migrate_test.users',
+          stateColumn: 'email',
+          twinColumn: 'email_encrypted',
+          direction: 'forward',
+          chunkSize: 2,
+          countPending: async () => 2,
+          fetchPage: async () => ({ rows: [{ pk: '1' }], lastPk: '1' }),
+          prepareChunk: async () => {
+            throw thrown()
+          },
+        }),
+      ).rejects.toBeDefined()
+    } finally {
+      db.release()
+    }
+
+    const { rows } = await pool.query<{ details: Record<string, unknown> }>(
+      `SELECT details FROM cipherstash.cs_migrations
+        WHERE column_name = 'email' AND event = 'error'`,
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.details.errorName).toBe('Error')
+    expect(JSON.stringify(rows[0]?.details)).not.toContain('alice@example.com')
+  })
+
   it("a caller's checkpoint and error details cannot overwrite the fields a resume reads", async () => {
     await seed(4)
     const spoof = { encryptedColumn: 'spoofed', force: true, rowsSkipped: 99 }
