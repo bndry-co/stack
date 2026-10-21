@@ -306,7 +306,7 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
     let mut db = connect();
     db.batch_execute(
         "CREATE TEMP TABLE json_tree_docs (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_tree NOT NULL);
-         CREATE INDEX json_tree_docs_doc ON json_tree_docs USING gin ((eql_v4.json_tree_query(doc)::jsonb) jsonb_path_ops);",
+         CREATE INDEX json_tree_docs_doc ON json_tree_docs USING gin ((eql_v4.json_tree_query(doc)) jsonb_path_ops);",
     )
     .unwrap();
 
@@ -541,7 +541,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
             .all(|e| e.d.is_some() && e.j.is_some() && e.h.is_some()));
         let value: Value = wait(
             &runtime,
-            cipher.decrypt_as(JsonTreeSubtree(walked), column()),
+            cipher.decrypt_as(JsonTreeSubtree::new(walked), column()),
         )
         .unwrap();
         assert_eq!(value, expected, "row {id}");
@@ -554,6 +554,48 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .unwrap()
         .get(0);
     assert_eq!(garbage, 0, "a wrong token unlocks nothing in any row");
+
+    // The budget: past it the walk returns the sealed root alone, at depth
+    // 0, and the rows open to the value at the walked path; at it, or
+    // with the budget off, the walk is complete; a wrong token still
+    // yields nothing under any budget.
+    let walked = |db: &mut postgres::Client, budget: i32| -> Vec<JsonTreeEntry> {
+        db.query(
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text, $2::int) e WHERE id = 1",
+            &[&nested.token(), &budget],
+        )
+        .unwrap()
+        .iter()
+        .map(entry)
+        .collect()
+    };
+    assert_eq!(walked(&mut db, 6).len(), 6, "at the budget, the subtree");
+    assert_eq!(walked(&mut db, 0).len(), 6, "budget 0 never falls back");
+    let root = walked(&mut db, 5);
+    assert_eq!(root.len(), 1, "past the budget, the root alone");
+    assert_eq!((root[0].j, root[0].d), (Some(0), Some(0)));
+    let refused = wait(
+        &runtime,
+        cipher.decrypt_as::<Value, _>(JsonTreeSubtree::new(root.clone()), column()),
+    );
+    assert!(refused.is_err(), "the fallback needs the walked path");
+    let value: Value = wait(
+        &runtime,
+        cipher.decrypt_as(
+            JsonTreeSubtree::new(root).at(JsonPath::parse("$.nested").unwrap()),
+            column(),
+        ),
+    )
+    .unwrap();
+    assert_eq!(value, fixture()["nested"]);
+    let garbage: i64 = db
+        .query_one(
+            "SELECT count(*) FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text, 1) e",
+            &[&"00".repeat(16)],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(garbage, 0);
 
     // A wildcard below the anchor: every element's `x`, each a complete
     // subtree, from the list's token gated on the whole path's selector.
@@ -569,7 +611,29 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .collect();
     let values: Vec<Value> = wait(
         &runtime,
-        cipher.decrypt_as(JsonTreeSubtree(walked), column()),
+        cipher.decrypt_as(JsonTreeSubtree::new(walked), column()),
+    )
+    .unwrap();
+    assert_eq!(values, vec![json!(1), json!(2)]);
+    // Past the budget, the gated walk falls back the same way, and the
+    // wildcard path selects every subtree over the whole document.
+    let root: Vec<JsonTreeEntry> = db
+        .query(
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text, 1) e WHERE id = 1",
+            &[&xs.token(), &xs.selector().unwrap().to_string()],
+        )
+        .unwrap()
+        .iter()
+        .map(entry)
+        .collect();
+    assert_eq!(root.len(), 1);
+    assert_eq!(root[0].d, Some(0));
+    let values: Vec<Value> = wait(
+        &runtime,
+        cipher.decrypt_as(
+            JsonTreeSubtree::new(root).at(JsonPath::parse("$.nested.list[*].x").unwrap()),
+            column(),
+        ),
     )
     .unwrap();
     assert_eq!(values, vec![json!(1), json!(2)]);

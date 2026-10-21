@@ -121,9 +121,11 @@ fn group_of(nodes: &[TermNode], parent: Option<usize>) -> JsonProjection {
 }
 
 impl JsonDocument {
-    /// The stored document's projection, from its group tags, as the SQL's
-    /// `json_tree_query` computes it: what a [`JsonQuery`] is matched
-    /// against.
+    /// The stored document's projection, from its group tags: what a
+    /// [`JsonQuery`] is matched against. The document writes it to the wire
+    /// as `q`, beside `sv`, and the SQL's `json_tree_query` reads it from
+    /// there; a document deserialized from the wire derives it again from
+    /// the entries, so a stored `q` is never trusted over them.
     pub fn projection(&self) -> JsonProjection {
         fn belongs(e: &JsonEntry) -> Option<&Tag> {
             e.n.as_ref().or(e.g.as_ref())
@@ -146,14 +148,15 @@ impl JsonDocument {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct PairWire {
     s: String,
     vs: String,
 }
 
-#[derive(Serialize, Deserialize)]
-struct GroupWire {
+/// One group, as a needle or a stored document's `q` spells it.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct GroupWire {
     sv: Vec<PairWire>,
     el: Vec<GroupWire>,
 }
