@@ -38,6 +38,28 @@ export {
   runBackfill,
 } from './backfill.js'
 export {
+  ColumnMigration,
+  ColumnMigrationError,
+  type ColumnMigrationState,
+  DIRECTION_VOCABULARY,
+  type DirectionVocabulary,
+  deriveColumnMigration,
+  deriveTwinName,
+  type ForcedBy,
+  type LoadColumnMigrationOptions,
+  type MigrationDirection,
+  manifestTwin,
+  type Obligation,
+  type OpenCounterpart,
+  openCounterpart,
+  type PassPlan,
+  type PassProgress,
+  passProgress,
+  planPassFor,
+  type TwinSource,
+  type Waiver,
+} from './column-migration.js'
+export {
   columnHasValues,
   countEncrypted,
   countUndecrypted,
@@ -57,7 +79,6 @@ export {
   type DecryptBackfillProgress,
   type DecryptBackfillResult,
   type DecryptionClientLike,
-  forceObligationOpen,
   formatCodes,
   MAX_DECRYPT_CHUNK_SIZE,
   NULL_PLAINTEXT_SAMPLE_SIZE,
@@ -68,10 +89,10 @@ export {
 } from './decrypt.js'
 export {
   type ChunkContext,
-  type ChunkedRunEvents,
   type ChunkedRunOptions,
   type ChunkedRunProgress,
   type ChunkedRunResult,
+  type PassMode,
   type PreparedChunk,
   runChunkedMigration,
 } from './engine.js'

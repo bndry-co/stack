@@ -1,9 +1,9 @@
 import { readUninstallSql } from '@cipherstash/eql/sql'
 import {
-  appendEvent,
   type ColumnIndexInfo,
   countEqlColumnsInDatabase,
   countUndecrypted,
+  DIRECTION_VOCABULARY,
   EQL_COLUMN_PREDICATE_SQL,
   listColumnIndexes,
   qualifyTable,
@@ -19,10 +19,7 @@ import {
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
-import {
-  recordedPlaintextColumn,
-  resolveDecryptPair,
-} from './lib/resolve-pair.js'
+import { resolveDecryptPair } from './lib/resolve-pair.js'
 
 /**
  * Options accepted by `stash decrypt drop`. Generates — never applies — a
@@ -93,10 +90,11 @@ export async function decryptDropCommand(options: DecryptDropOptions) {
       plaintextColumn: options.plaintextColumn,
     })
 
-    const requiredPhase = 'decrypted'
-    if (pair.state?.phase !== requiredPhase) {
+    const { migration } = pair
+    const requiredPhase = DIRECTION_VOCABULARY.reverse.completedPhase
+    if (migration.phase !== requiredPhase || migration.obligations.length > 0) {
       p.log.error(
-        `Cannot generate the drop migration: ${options.table}.${options.column} is in reverse phase '${pair.state?.phase ?? '—'}'. Must be '${requiredPhase}' — run \`stash decrypt backfill --table ${options.table} --column ${options.column}\` to completion, switch the application's reads to the plaintext column, then drop.`,
+        `Cannot generate the drop migration: ${options.table}.${options.column} is in reverse phase '${migration.phase ?? '—'}'${migration.obligations.length > 0 ? ' and still owes a forced pass' : ''}. Must be '${requiredPhase}' — run \`stash decrypt backfill --table ${options.table} --column ${options.column}\` to completion, switch the application's reads to the plaintext column, then drop.`,
       )
       exitCode = 1
       return
@@ -105,7 +103,7 @@ export async function decryptDropCommand(options: DecryptDropOptions) {
     // `resolveDecryptPair` already refused a flag that contradicts the
     // record; here the record itself is required, because it is the only
     // positive evidence of which column the backfill filled.
-    const plaintextColumn = recordedPlaintextColumn(pair.state)
+    const plaintextColumn = migration.recordedTwin
     if (plaintextColumn === undefined) {
       p.log.error(
         `${options.table}.${options.column} reached '${requiredPhase}' but no plaintext column is recorded for it, so this command cannot verify which column holds the data. Re-run \`stash decrypt backfill --table ${options.table} --column ${options.column} --plaintext-column <name>\` (it records the pairing; already-decrypted rows are not rewritten), then drop.`,
@@ -177,18 +175,11 @@ export async function decryptDropCommand(options: DecryptDropOptions) {
       migrationsDir: options.migrationsDir,
     })
 
-    await appendEvent(client, {
-      tableName: options.table,
-      columnName: options.column,
-      event: 'encrypted_dropped',
-      phase: 'encrypted-dropped',
-      details: {
-        plaintextColumn,
-        migrationFile: filePath,
-        drizzleScaffolded,
-        droppedIndexes: indexes.map((index) => `${index.schema}.${index.name}`),
-        uninstallEql: uninstallStatements.length > 0,
-      },
+    await migration.recordDropGenerated({
+      migrationFile: filePath,
+      drizzleScaffolded,
+      droppedIndexes: indexes.map((index) => `${index.schema}.${index.name}`),
+      uninstallEql: uninstallStatements.length > 0,
     })
 
     // The forward manifest entry stays: the CLI owns `.cipherstash/`, and

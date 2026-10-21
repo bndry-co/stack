@@ -613,7 +613,7 @@ stash encrypt backfill --table users --column email
 stash encrypt backfill --table users --column email --chunk-size 5000
 ```
 
-Chunked, resumable, idempotent. Walks the table in keyset-pagination order, encrypts each chunk via `bulkEncryptModels`, and writes one `UPDATE ... FROM (VALUES ...)` per chunk in a transaction that also checkpoints to `cs_migrations`. SIGINT/SIGTERM finishes the current chunk and exits cleanly; re-running resumes. The `<col> IS NOT NULL AND <col>_encrypted IS NULL` guard makes concurrent runners and re-runs converge.
+Chunked, resumable, idempotent. Walks the table in keyset-pagination order, encrypts each chunk via `bulkEncryptModels`, and writes one `UPDATE ... FROM (VALUES ...)` per chunk in a transaction that also checkpoints to `cs_migrations`. SIGINT/SIGTERM finishes the current chunk and exits cleanly; re-running resumes, from the last checkpoint or, after a failed run, from the last committed position. A failure is recorded in `cs_migrations` by error class and safe details only, never the error message, which can carry row data. The `<col> IS NOT NULL AND <col>_encrypted IS NULL` guard makes re-runs converge. Run one backfill per column at a time: nothing serializes two runners, and the slower one's events can leave `cs_migrations` reporting stale progress.
 
 Backfill requires a `public.eql_v3_*` target column, records version 3 and the `dropped` target phase in `.cipherstash/migrations.json`, then prints the next steps: switch the application to the encrypted column by name and run `stash encrypt drop`. A missing, plaintext, or legacy v2 target is rejected before encryption begins.
 
@@ -631,7 +631,7 @@ Backfill requires a `public.eql_v3_*` target column, records version 3 and the `
 | `--encrypted-column <name>` | Override the `<col>_encrypted` target name |
 | `--schema-column-key <key>` | Override the schema lookup key |
 | `--confirm-dual-writes-deployed` | Non-interactive equivalent of the prompt |
-| `--force` | Re-encrypt every plaintext row, including ones with existing ciphertext. Recovery path for drift. Expensive, not destructive. Flagged in the audit trail. |
+| `--force` | Re-encrypt every plaintext row, including ones with existing ciphertext. Recovery path for drift. Expensive, not destructive. Flagged in the audit trail. An interrupted `--force` run is finished as one: the next run is forced, with or without the flag, until a forced pass completes. |
 
 #### `encrypt drop`
 
@@ -655,7 +655,7 @@ The reverse lifecycle: moving encrypted columns back to plaintext, for leaving C
 
 #### `decrypt status` / `decrypt plan`
 
-`status` lists every EQL v3 column in the current schema plus any reverse lifecycle on record, with the plaintext twin, phase, progress, and the count of values the backfill could not decrypt (`UNDECRYPTABLE`). A twin name already taken by an EQL column is flagged `plaintext-col-is-eql`. Read-only.
+`status` lists every EQL v3 column in the current schema plus any reverse lifecycle on record, with the plaintext twin, phase, progress, and the count of values the backfill could not decrypt (`UNDECRYPTABLE`). Its `FLAGS` column names what the other commands would refuse or warn about, from the same rules: `plaintext-col-is-eql` (the twin name is taken by an EQL column), `forward-open` (the twin is the source of a forward encryption not yet dropped), `twin-has-values` (the twin holds values and no reverse migration has started), `forced-pass-owed` (every backfill run is forced until one completes, see below). Read-only.
 
 `plan` with no flags is the read-only overview: each encrypted column, its proposed twin and type, and the next command. With `--table` (optionally `--column`, `--plaintext-column`) it generates the change that adds the twins, **nullable**:
 
@@ -684,7 +684,7 @@ Same engine as `encrypt backfill`: keyset pagination, one transaction per chunk 
 - `--force` overwrites every row of the twin with the decrypted ciphertext. Use this when in doubt.
 - `--confirm-plaintext-current` keeps the existing values and fills only the NULLs. Use it only when the application has written the plaintext column on every insert and update for the whole time the encrypted column existed.
 
-The choice is recorded in `cs_migrations`. Later runs of the same reverse migration do not ask again: the twin's values are then its own. Choosing `--force` makes a forced pass owed from that moment, and so does starting any `--force` run: every later run is forced, with or without `--force`, until one completes, so an interrupted `--force` run is always finished as one, even if it failed before writing anything. A `--force` run after an interrupted plain one starts again from the first row.
+The choice is recorded in `cs_migrations`. Later runs of the same reverse migration do not ask again: the twin's values are then its own. Choosing `--force` makes a forced pass owed from that moment, and so does starting any `--force` run: every later run is forced, with or without `--force`, until one completes, so an interrupted `--force` run is always finished as one, even if it failed before writing anything. The run says when it is forced for this reason. `--confirm-plaintext-current` is accepted on a later run too, as long as no forced pass has started; while a started one is owed, it is refused, because rows already overwritten cannot be un-overwritten. Once that pass completes there is nothing left to confirm, and the waiver has no effect. A `--force` run after an interrupted plain one starts again from the first row.
 
 **Lock contexts — known limitation, no bypass.** A value encrypted with an end-user lock context can only be decrypted as that user (see `stash-auth`). With workspace credentials it fails *on its own row* (`bulkDecrypt` reports per row), so the backfill **skips it, counts it, leaves the twin NULL** (a `--force` pass sets a skipped row's twin to NULL, so a stale value is never left behind), and reports the count and error codes; the count is also recorded in `cs_migrations` and shown by `decrypt status`. Decrypt those rows in your application on each user's behalf (writing the plaintext column), then re-run without `--force`. Do this only after the last forced pass has completed: a forced pass (including a plain run that finishes an interrupted one) sets the twin back to NULL on every row it cannot decrypt, an application-written value included. `decrypt drop` refuses while any remain.
 
@@ -702,7 +702,7 @@ The choice is recorded in `cs_migrations`. Later runs of the same reverse migrat
 | `--pk-column <name>` | Override primary-key detection |
 | `--confirm-dual-writes-deployed` | Non-interactive equivalent of the prompt: the app writes the encrypted column **and** its plaintext twin on every insert and update |
 | `--force` | Re-decrypt rows whose plaintext is already set and overwrite it: drift recovery, or replacing a twin that held values before the first run. Safe only while dual-writes are live: any row the application wrote to the plaintext column alone (a newer value, or one cleared on purpose) gets the older ciphertext's value back. |
-| `--confirm-plaintext-current` | First run only: keep the values a twin already holds, asserting they are current (see above). On any other run it has no effect, and the backfill says so |
+| `--confirm-plaintext-current` | Keep the values a twin already holds, asserting they are current (see above). Refused while a started forced pass is owed. On a run with nothing to confirm it has no effect, and the backfill says so |
 | `--continue-on-undecryptable` | Do not stop when the first batch decrypts nothing |
 
 #### `decrypt drop`

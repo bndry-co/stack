@@ -198,7 +198,8 @@ function pendingPredicate(
  *
  * When `force` is true, drops the `encrypted IS NULL` guard — used by
  * `--force` to count every plaintext row, including ones that already
- * have a (potentially stale) ciphertext.
+ * have a (potentially stale) ciphertext. `after` counts only rows past a
+ * resume cursor.
  */
 export async function countUnencrypted(
   client: ClientBase,
@@ -206,6 +207,7 @@ export async function countUnencrypted(
   plaintextColumn: string,
   encryptedColumn: string,
   force = false,
+  after: KeysetBound | null = null,
 ): Promise<number> {
   return countPending(
     client,
@@ -213,6 +215,7 @@ export async function countUnencrypted(
     plaintextColumn,
     encryptedColumn,
     force,
+    after,
   )
 }
 

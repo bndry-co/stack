@@ -1050,7 +1050,7 @@ await runBackfill({
 })
 ```
 
-Useful when the backfill needs to run in a worker, on a schedule, or alongside an existing job runner. `runBackfill` is version-agnostic — for an EQL v3 column pass an `Encryption` client built from a v3 schema set and it writes v3 envelopes straight into the concrete `eql_v3_*` domain column.
+Useful when the backfill needs to run in a worker, on a schedule, or alongside an existing job runner. The engine applies the same rules as the CLI, whoever calls it: it throws a `ColumnMigrationError` while a reverse migration of the same columns is open; a run that follows an interrupted `force: true` run is forced too, until a forced pass completes (the result's `forcedBy` says why); a failed run resumes from its last committed position; and an `error` event records the error's class (`errorName`) and safe details, never its message. it throws a `ColumnMigrationError` with code `twin-mismatch` when `encryptedColumn` differs from the encrypted column recorded for that column. `ColumnMigration.load()` from `@cipherstash/migrate` answers the same questions (phase, twin, owed forced pass) before a run. A column whose migration was dropped and then migrated back the other way starts a new column migration. `runBackfill` is version-agnostic — for an EQL v3 column pass an `Encryption` client built from a v3 schema set and it writes v3 envelopes straight into the concrete `eql_v3_*` domain column.
 
 ### Invariants the rollout preserves
 

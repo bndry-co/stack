@@ -9,9 +9,16 @@
  * `encrypt-v3.test.ts` pins `encrypt drop`.
  */
 
-import type { ColumnIndexInfo, MigrationStateRow } from '@cipherstash/migrate'
+import type { ColumnIndexInfo, OpenCounterpart } from '@cipherstash/migrate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DecryptPair } from '../lib/resolve-pair.js'
+import {
+  decrypted,
+  type FakeMigration,
+  fakeMigration,
+  inFlight,
+  reverseEvent,
+} from './fake-migration.js'
 
 const queryMock = vi.hoisted(() =>
   vi.fn(async (_sql: string): Promise<{ rows: unknown[] }> => ({ rows: [] })),
@@ -30,7 +37,6 @@ const migrateMocks = vi.hoisted(() => ({
   countUndecrypted: vi.fn(async () => 0),
   listColumnIndexes: vi.fn(async (): Promise<ColumnIndexInfo[]> => []),
   countEqlColumnsInDatabase: vi.fn(async () => 1),
-  appendEvent: vi.fn(async () => {}),
   removeManifestColumn: vi.fn(async () => true),
   columnHasValues: vi.fn(async () => false),
   readManifest: vi.fn(async (): Promise<unknown> => null),
@@ -38,9 +44,12 @@ const migrateMocks = vi.hoisted(() => ({
     { column: 'email_encrypted', domain: 'eql_v3_text_search', version: 3 },
   ]),
 }))
+// The forward column migration `decrypt plan` closes for a removed source.
+const forwardLoad = vi.hoisted(() => vi.fn())
 vi.mock('@cipherstash/migrate', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@cipherstash/migrate')>()),
   ...migrateMocks,
+  ColumnMigration: { load: forwardLoad },
 }))
 
 const resolveMock = vi.hoisted(() => vi.fn())
@@ -101,7 +110,11 @@ import { BackfillConfigError } from '@/commands/encrypt/backfill.js'
 import { decryptDropCommand } from '../drop.js'
 import { buildAddPlaintextSql, decryptPlanCommand } from '../plan.js'
 
-function pair(overrides: Partial<DecryptPair> = {}): DecryptPair {
+function pair(
+  overrides: Partial<Omit<DecryptPair, 'migration'>> & {
+    migration?: FakeMigration
+  } = {},
+): DecryptPair & { migration: FakeMigration } {
   return {
     table: 'users',
     encryptedColumn: 'email_encrypted',
@@ -110,44 +123,19 @@ function pair(overrides: Partial<DecryptPair> = {}): DecryptPair {
     plaintextColumn: 'email',
     via: 'recorded',
     plaintextSqlType: 'text',
-    state: decrypted('email'),
-    // A recorded reverse event means a lifecycle in progress, unless a test
-    // says otherwise.
-    lifecycleActive: 'state' in overrides ? overrides.state !== null : true,
-    forwardState: null,
+    migration: fakeMigration({ history: decrypted() }),
     ...overrides,
   }
 }
 
-/** A forward event recorded under the plaintext twin's name. */
-function forward(phase: MigrationStateRow['phase']): MigrationStateRow {
-  return {
-    id: '3',
-    tableName: 'users',
-    columnName: 'email',
-    event: phase === 'backfilled' ? 'backfilled' : 'dual_writing',
-    phase,
-    cursorValue: null,
-    rowsProcessed: null,
-    rowsTotal: null,
-    details: null,
-    createdAt: new Date(0),
-  }
-}
+/** A pair with no reverse column migration on record. */
+const fresh = (overrides: Parameters<typeof pair>[0] = {}) =>
+  pair({ migration: fakeMigration(), ...overrides })
 
-function decrypted(plaintextColumn?: string): MigrationStateRow {
-  return {
-    id: '9',
-    tableName: 'users',
-    columnName: 'email_encrypted',
-    event: 'decrypted',
-    phase: 'decrypted',
-    cursorValue: '100',
-    rowsProcessed: 100,
-    rowsTotal: 100,
-    details: plaintextColumn ? { plaintextColumn, rowsSkipped: 0 } : {},
-    createdAt: new Date(0),
-  }
+const forwardOpen: OpenCounterpart = {
+  direction: 'forward',
+  column: 'email',
+  phase: 'backfilled',
 }
 
 function spyExit() {
@@ -169,6 +157,8 @@ describe('decrypt drop', () => {
   })
 
   it('verifies coverage against the RECORDED twin and drops the encrypted column', async () => {
+    const dropping = pair()
+    resolveMock.mockResolvedValue(dropping)
     await decryptDropCommand({ table: 'users', column: 'email_encrypted' })
 
     expect(migrateMocks.countUndecrypted).toHaveBeenCalledWith(
@@ -187,15 +177,8 @@ describe('decrypt drop', () => {
     )
     // The plaintext twin is never touched.
     expect(sql).not.toMatch(/DROP COLUMN "email"'/)
-    expect(migrateMocks.appendEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        tableName: 'users',
-        columnName: 'email_encrypted',
-        event: 'encrypted_dropped',
-        phase: 'encrypted-dropped',
-        details: expect.objectContaining({ plaintextColumn: 'email' }),
-      }),
+    expect(dropping.migration.recordDropGenerated).toHaveBeenCalledWith(
+      expect.objectContaining({ migrationFile: expect.any(String) }),
     )
   })
 
@@ -242,14 +225,13 @@ describe('decrypt drop', () => {
       ),
     )
     expect(writeFileMock).not.toHaveBeenCalled()
-    expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(1)
     exitSpy.mockRestore()
   })
 
   it("requires the reverse phase 'decrypted'", async () => {
     resolveMock.mockResolvedValue(
-      pair({ state: { ...decrypted('email'), phase: 'decrypting' } }),
+      pair({ migration: fakeMigration({ history: inFlight() }) }),
     )
     const exitSpy = spyExit()
 
@@ -264,8 +246,44 @@ describe('decrypt drop', () => {
     exitSpy.mockRestore()
   })
 
+  it("refuses at 'decrypted' while a forced pass is still owed", async () => {
+    const twin = { plaintextColumn: 'email' }
+    const owing = pair({
+      migration: fakeMigration({
+        history: [
+          reverseEvent('decrypt_dual_writing', 'decrypt-dual-writing'),
+          reverseEvent('decrypt_started', 'decrypting', {
+            details: { ...twin, force: true },
+          }),
+          reverseEvent('decrypted', 'decrypted', {
+            details: { ...twin, force: false },
+          }),
+        ],
+      }),
+    })
+    expect(owing.migration.phase).toBe('decrypted')
+    resolveMock.mockResolvedValue(owing)
+    const exitSpy = spyExit()
+
+    await decryptDropCommand({ table: 'users', column: 'email_encrypted' })
+
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('still owes a forced pass'),
+    )
+    expect(writeFileMock).not.toHaveBeenCalled()
+    expect(owing.migration.recordDropGenerated).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    exitSpy.mockRestore()
+  })
+
   it('refuses without a RECORDED pairing, even when a twin name could be guessed', async () => {
-    resolveMock.mockResolvedValue(pair({ state: decrypted(undefined) }))
+    resolveMock.mockResolvedValue(
+      pair({
+        migration: fakeMigration({
+          history: [reverseEvent('decrypted', 'decrypted', { details: {} })],
+        }),
+      }),
+    )
     const exitSpy = spyExit()
 
     await decryptDropCommand({ table: 'users', column: 'email_encrypted' })
@@ -371,7 +389,13 @@ describe('decrypt drop', () => {
         table: 'tenant.weird"table',
         encryptedColumn: "o'brien_encrypted",
         plaintextColumn: 'o"brien',
-        state: decrypted('o"brien'),
+        migration: fakeMigration({
+          history: [
+            reverseEvent('decrypted', 'decrypted', {
+              details: { plaintextColumn: 'o"brien' },
+            }),
+          ],
+        }),
       }),
     )
 
@@ -399,7 +423,7 @@ describe('decrypt plan', () => {
     detectMocks.detectPrismaNext.mockReturnValue(false)
     migrateMocks.columnHasValues.mockResolvedValue(false)
     resolveMock.mockResolvedValue(
-      pair({ plaintextSqlType: null, state: null, via: 'convention' }),
+      fresh({ plaintextSqlType: null, via: 'convention' }),
     )
   })
 
@@ -458,7 +482,7 @@ describe('decrypt plan', () => {
   })
 
   it('adds nothing for an empty twin that already exists', async () => {
-    resolveMock.mockResolvedValue(pair({ state: null }))
+    resolveMock.mockResolvedValue(fresh())
 
     await decryptPlanCommand({ table: 'users' })
 
@@ -470,8 +494,9 @@ describe('decrypt plan', () => {
   })
 
   it('warns, with the backfill refusal text, when an existing twin already holds values', async () => {
-    resolveMock.mockResolvedValue(pair({ state: null }))
-    migrateMocks.columnHasValues.mockResolvedValueOnce(true)
+    resolveMock.mockResolvedValue(
+      fresh({ migration: fakeMigration({ twinHasValues: true }) }),
+    )
 
     await decryptPlanCommand({ table: 'users' })
 
@@ -490,9 +515,13 @@ describe('decrypt plan', () => {
 
   it('warns that the backfill will refuse a twin whose forward migration was never dropped', async () => {
     resolveMock.mockResolvedValue(
-      pair({ state: null, forwardState: forward('backfilled') }),
+      fresh({
+        migration: fakeMigration({
+          blockedBy: forwardOpen,
+          twinHasValues: true,
+        }),
+      }),
     )
-    migrateMocks.columnHasValues.mockResolvedValueOnce(true)
 
     await decryptPlanCommand({ table: 'users' })
 
@@ -504,22 +533,28 @@ describe('decrypt plan', () => {
 
   it('closes an open forward migration whose source column was removed outside stash', async () => {
     resolveMock.mockResolvedValue(
-      pair({
+      fresh({
         plaintextSqlType: null,
-        state: null,
         via: 'convention',
-        forwardState: forward('backfilled'),
+        migration: fakeMigration({ blockedBy: forwardOpen }),
       }),
     )
+    const recordSourceRemoved = vi.fn(async () => ({}))
+    forwardLoad.mockResolvedValue({ recordSourceRemoved })
 
     await decryptPlanCommand({ table: 'users' })
 
-    expect(migrateMocks.appendEvent).toHaveBeenCalledWith(expect.anything(), {
-      tableName: 'users',
-      columnName: 'email',
-      event: 'dropped',
-      phase: 'dropped',
-      details: { observedAbsent: true, recordedBy: 'stash decrypt plan' },
+    expect(forwardLoad).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        table: 'users',
+        column: 'email',
+        direction: 'forward',
+        twin: 'email_encrypted',
+      }),
+    )
+    expect(recordSourceRemoved).toHaveBeenCalledWith({
+      recordedBy: 'stash decrypt plan',
     })
     expect(p.log.info).toHaveBeenCalledWith(
       expect.stringContaining("still open at 'backfilled'"),
@@ -531,49 +566,40 @@ describe('decrypt plan', () => {
 
   it('--dry-run records nothing for a removed forward source', async () => {
     resolveMock.mockResolvedValue(
-      pair({
+      fresh({
         plaintextSqlType: null,
-        state: null,
         via: 'convention',
-        forwardState: forward('backfilled'),
+        migration: fakeMigration({ blockedBy: forwardOpen }),
       }),
     )
 
     await decryptPlanCommand({ table: 'users', dryRun: true })
 
-    expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
+    expect(forwardLoad).not.toHaveBeenCalled()
     expect(p.log.info).toHaveBeenCalledWith(
       expect.stringContaining('would record'),
     )
   })
 
   it('records nothing for a missing twin with no open forward migration', async () => {
-    for (const forwardState of [null, forward('dropped')]) {
-      vi.clearAllMocks()
-      resolveMock.mockResolvedValue(
-        pair({
-          plaintextSqlType: null,
-          state: null,
-          via: 'convention',
-          forwardState,
-        }),
-      )
-
-      await decryptPlanCommand({ table: 'users' })
-
-      expect(migrateMocks.appendEvent).not.toHaveBeenCalled()
-    }
-  })
-
-  it('does not second-guess a twin the reverse lifecycle in progress filled', async () => {
     resolveMock.mockResolvedValue(
-      pair({ state: { ...decrypted('email'), phase: 'decrypting' } }),
+      fresh({ plaintextSqlType: null, via: 'convention' }),
     )
-    migrateMocks.columnHasValues.mockResolvedValue(true)
 
     await decryptPlanCommand({ table: 'users' })
 
-    expect(migrateMocks.columnHasValues).not.toHaveBeenCalled()
+    expect(forwardLoad).not.toHaveBeenCalled()
+  })
+
+  it('does not second-guess a twin the reverse column migration in progress filled', async () => {
+    resolveMock.mockResolvedValue(
+      pair({
+        migration: fakeMigration({ history: inFlight(), twinHasValues: true }),
+      }),
+    )
+
+    await decryptPlanCommand({ table: 'users' })
+
     expect(p.log.warn).not.toHaveBeenCalled()
   })
 
@@ -596,7 +622,7 @@ describe('decrypt plan', () => {
     })
     resolveMock
       .mockResolvedValueOnce(
-        pair({ plaintextSqlType: null, state: null, via: 'convention' }),
+        fresh({ plaintextSqlType: null, via: 'convention' }),
       )
       .mockRejectedValueOnce(
         new BackfillConfigError('users.note is itself an EQL v3 column'),

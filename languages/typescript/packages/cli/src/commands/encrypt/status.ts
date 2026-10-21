@@ -1,6 +1,9 @@
 import {
+  type ColumnKey,
   classifyEqlDomain,
+  deriveColumnMigration,
   type MigrationPhase,
+  type MigrationStateRow,
   readManifest,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
@@ -14,6 +17,15 @@ import {
   latestByColumnSafe,
 } from './lib/db-readers.js'
 import { formatTable } from './lib/table-format.js'
+
+/** The latest event under `key`, as the history `deriveColumnMigration` reads. */
+function latestOf(
+  stateMap: ReadonlyMap<ColumnKey, MigrationStateRow>,
+  key: ColumnKey,
+): MigrationStateRow[] {
+  const row = stateMap.get(key)
+  return row === undefined ? [] : [row]
+}
 
 interface Row {
   table: string
@@ -77,9 +89,10 @@ export async function statusCommand() {
               // `stash decrypt drop` records this against the ENCRYPTED
               // column. The manifest entry stays, and `reversed` is its final
               // state: the CLI owns `.cipherstash/`.
-              reversed:
-                stateMap.get(`${tableName}.${encryptedName}`)?.phase ===
-                'encrypted-dropped',
+              reversed: deriveColumnMigration({
+                direction: 'reverse',
+                history: latestOf(stateMap, `${tableName}.${encryptedName}`),
+              }).dropGenerated,
             }),
           )
         }
