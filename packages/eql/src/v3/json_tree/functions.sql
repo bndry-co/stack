@@ -290,15 +290,23 @@ COMMENT ON FUNCTION {{prefix}}.json_tree_path_exists(jsonb, text) IS
 --!       runs the needle's recursive CHECK, and the recheck would pay it
 --!       once per candidate row. The document's own CHECK validated `q`
 --!       when the row was written.
+--! @note plpgsql, deliberately, and costed at 1000: a SQL body this simple
+--!       would be inlined to `value -> 'q'`, which the planner costs as one
+--!       operator, and a column of large documents is TOASTed out of the
+--!       heap, so a sequential scan over it looks almost free on paper and
+--!       is chosen over the GIN index. It is not free: every row is
+--!       decompressed to read `q`. Un-inlined, the call keeps its cost, the
+--!       index expression still matches it, and the planner takes the
+--!       index. The call itself is a few microseconds per recheck row.
 CREATE FUNCTION {{prefix}}.json_tree_query(e public.{{prefix}}_json_tree)
   RETURNS jsonb
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+  COST 1000
 AS $$
-  SELECT e::jsonb -> 'q'
+BEGIN
+  RETURN e::jsonb -> 'q';
+END;
 $$;
-
-COMMENT ON FUNCTION {{prefix}}.json_tree_query(public.{{prefix}}_json_tree) IS
-  'eql-inline-critical: the containment projection the GIN index is built over; must stay inlinable (unpinned search_path)';
 
 --! @brief Does the stored document `a` contain the needle `b`?
 --!
