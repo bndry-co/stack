@@ -5356,6 +5356,37 @@ mod tests {
             assert_eq!(open(&cipher, with, &plan).await, present);
         }
 
+        /// A stored null opens only through a plan that says the field may
+        /// hold one: read through a plan with no `"null"`, the field's kind
+        /// check refuses it, so a nil never reads as a zero value.
+        #[tokio::test]
+        async fn a_stored_null_is_refused_through_a_plan_that_has_no_null() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let sealing = plan(obj(vec![(
+                "dob",
+                nullable(label("dob"), &["c"], Some("date"), "sealed"),
+            )]))
+            .expect("parses");
+            let reading =
+                plan(obj(vec![("dob", typed(label("dob"), &["c"], "date"))])).expect("parses");
+            let sealed = seal(&keyset, obj(vec![("dob", Tree::Null)]), &sealing).await;
+            let refused = decrypt(Scope::Client(&cipher), sealed, &reading, None)
+                .expect("the record fits the plan")
+                .await
+                .err();
+            assert!(
+                matches!(&refused, Some(crate::Error::Plan(crate::PlanError::FieldType { field, .. })) if field == "dob"),
+                "{refused:?}"
+            );
+            // And through the plan that says so, a value opens as a value.
+            let sealed = seal(&keyset, obj(vec![("dob", date(19_000))]), &sealing).await;
+            assert_eq!(
+                open(&cipher, sealed, &sealing).await,
+                obj(vec![("dob", date(19_000))])
+            );
+        }
+
         /// A null in a typed field with no `"null"` is still refused.
         #[tokio::test]
         async fn a_null_in_a_field_with_no_null_mode_is_refused() {
@@ -6461,6 +6492,31 @@ mod tests {
             )]);
             assert!(plan_with(value, &FakeEql).is_ok());
             assert_eq!(generates(&cipher), 0, "nothing minted");
+        }
+
+        /// A target field stores a null as its plan says: under `"sql"` any
+        /// type, but sealed only in a type with no term, since a null has none
+        /// and the type's term column would show it (#1298). Refused when the
+        /// plan is built, naming the field, before any value crosses.
+        #[test]
+        fn a_target_field_seals_a_null_only_in_a_type_with_no_term() {
+            let with_null = |null: &str| {
+                let mut spec = target_spec(label("email"), TEXT_EQ);
+                if let Tree::Object(entries) = &mut spec {
+                    entries.push(("null".to_string(), s(null)));
+                }
+                obj(vec![("email", spec)])
+            };
+            let refused = plan_with(with_null("sealed"), &FakeEql).err();
+            assert!(
+                matches!(
+                    &refused,
+                    Some(Error::Plan { field: Some(f), reason: Reason::SealedNullIndex }) if f == "email"
+                ),
+                "{refused:?}"
+            );
+            let parsed = plan_with(with_null("sql"), &FakeEql).expect("any type stores a SQL null");
+            assert_eq!(parsed.fields()[0].null(), Some(NullMode::Sql));
         }
 
         /// The resolver opens a target value through the client, which opens
