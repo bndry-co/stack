@@ -63,6 +63,18 @@ func TestRefusals(t *testing.T) {
 		want  string
 	}{
 		{"an exported field with no stash tag", user(ctx + "\tEmail string"), stashgen.Request{Type: "User"}, "Email", "no stash tag"},
+		// Optional fields (#1298): a pointer to one scalar, and how it stores nil.
+		{"a sealed pointer to a pointer", user(ctx + "\tAge **int32 `stash:\"age,encrypt\"`"), stashgen.Request{Type: "User"}, "Age", "a sealed field is one scalar"},
+		{"a sealed pointer to a struct", user(ctx + "\tAddr *crm.Contact `stash:\"addr,encrypt\"`"), stashgen.Request{Type: "User"}, "Addr", "a sealed field is one scalar"},
+		{"a sealed pointer to a slice", user(ctx + "\tTags *[]string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "a sealed field is one scalar"},
+		{"null= on a field that is not a pointer", user(ctx + "\tAge int32 `stash:\"age,encrypt,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "a field of type int32 is never nil"},
+		{"null= on a passthrough", user(ctx + "\tAge *int32 `stash:\"age,passthrough,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "keeps nil as nil"},
+		{"an unknown null mode", user(ctx + "\tAge *int32 `stash:\"age,encrypt,null=zero\"`"), stashgen.Request{Type: "User"}, "Age", "null= is sealed or sql"},
+		{"null= given twice", user(ctx + "\tAge *int32 `stash:\"age,encrypt,null=sql,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "null is given twice"},
+		{"an indexed pointer that does not say null=sql", user(ctx + "\tAge *int32 `stash:\"age,encrypt,index=ore\"`"), stashgen.Request{Type: "User"}, "Age", "Write null=sql to say so"},
+		{"a pointer to text that does not say null=sql", user(ctx + "\tNick *string `stash:\"nick,encrypt\"`"), stashgen.Request{Type: "User"}, "Nick", "a string shows its length"},
+		{"a sealed null on an indexed pointer", user(ctx + "\tAge *int32 `stash:\"age,encrypt,index=ore,null=sealed\"`"), stashgen.Request{Type: "User"}, "Age", "a sealed nil has no index term yet"},
+		{"a sealed null on a pointer to bytes", user(ctx + "\tBlob *[]byte `stash:\"blob,encrypt,null=sealed\"`"), stashgen.Request{Type: "User"}, "Blob", "a []byte shows its length"},
 		{"a match query on an index-only field", user(ctx + "\tName string `stash:\"name,index=match\"`"), stashgen.Request{Type: "User"}, "Name", "an index-only field stores no ciphertext to decrypt"},
 		{"a tag that does not parse", user(ctx + "\tEmail string `stash:\"email,shred\"`"), stashgen.Request{Type: "User"}, "Email", `unknown part "shred"`},
 		{"two fields with one name", user(ctx + "\tEmail string `stash:\"email,encrypt\"`\n\tAlt string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "Alt", `two fields write the name "email"`},

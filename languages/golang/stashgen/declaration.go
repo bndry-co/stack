@@ -47,6 +47,39 @@ type Field struct {
 	// a column that was renamed keeps the identity it was first written
 	// under. "" means Name. Only a policy sets it.
 	Identity string
+	// Null is how a sealed field declared over a pointer stores nil; NotNull
+	// for every other field. GoType is then the type the pointer points to.
+	Null Null
+}
+
+// Null is how a sealed field declared over a pointer (*T) stores nil: the
+// `null=` tag, or the generator's choice where the tag is left out.
+type Null string
+
+const (
+	// NotNull is a field that is not a pointer: it is never nil.
+	NotNull Null = ""
+	// NullSealed seals nil like a value, as long as one, so the stored
+	// field does not show that the value is absent. The default for a field
+	// with no index whose type has a fixed width: a bool, a number,
+	// encrypt.Date, time.Time, encrypt.Decimal, encrypt.Int128 or
+	// encrypt.Uint128.
+	NullSealed Null = "sealed"
+	// NullSQL stores nothing for nil: the field's columns hold SQL NULL,
+	// which shows that the value is absent. A field with an index, or of
+	// text or bytes, says so with `null=sql`: its absence would show anyway.
+	NullSQL Null = "sql"
+)
+
+// fixedWidth reports whether a scalar kind seals at one length whatever its
+// value, so that a sealed nil can be as long as a value.
+func (k Kind) fixedWidth() bool {
+	switch k {
+	case KindBool, KindInt, KindUint, KindFloat, KindInt128, KindUint128,
+		KindDate, KindTimestamp, KindDecimal:
+		return true
+	}
+	return false
 }
 
 // Verb is what happens to a field.

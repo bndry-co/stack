@@ -164,3 +164,25 @@ func NoticePrintsPlaintext(typeName string)           {}
 
 // Identity gives a field a context part other than its name.
 func (d Declaration) Identity(name, identity string) Declaration { return d }
+
+// NullMode is how a sealed field declared over a pointer stores nil.
+type NullMode string
+
+const (
+	NullSealed NullMode = "sealed"
+	NullSQL    NullMode = "sql"
+)
+
+// Null says how the named field, declared over a pointer, stores nil.
+func (d Declaration) Null(name string, mode NullMode) Declaration { return d }
+
+// Deref is a field declared over a pointer as Source gives it.
+func Deref[T any](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// GetPtr reads one opened field declared over a pointer.
+func GetPtr[T any](Values, string) (*T, error) { return nil, nil }

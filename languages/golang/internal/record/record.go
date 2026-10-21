@@ -106,7 +106,29 @@ type Field struct {
 	// type's own plan decides what is sealed and which terms sit beside it,
 	// and the engine returns the finished value under EQLKey.
 	Target string
+	// Null is how the field stores a value that is not there: NotNull for a
+	// field every row has, SealedNull or SQLNull for one declared over a
+	// pointer.
+	Null Null
 }
+
+// Null is how a field stores a value that is not there: the plan's "null".
+// The spellings are wire format, stack-encrypt's dynamic::NullMode.
+type Null string
+
+const (
+	// NotNull is a field every row has. A typed field refuses a nil.
+	NotNull Null = ""
+	// SealedNull seals a nil like a value, as a typed null as long as one of
+	// the field's kind, so the stored record does not show which rows are
+	// absent; it opens as nil. The engine takes it on a field that seals and
+	// derives no term, of a kind of fixed width.
+	SealedNull Null = "sealed"
+	// SQLNull stores nothing for a nil: the field is left out of the record,
+	// a source may leave it out, and a stored record without it opens it as
+	// nil. Its columns hold SQL NULL, which shows that the value is absent.
+	SQLNull Null = "sql"
+)
 
 // IsTarget reports whether the field names an EQL type.
 func (f Field) IsTarget() bool { return f.Target != "" }
@@ -261,6 +283,11 @@ func (p *Plan) Validate() error {
 		if !f.Kind.Known() {
 			return fmt.Errorf("record: field %q: unknown kind %q", f.Name, f.Kind)
 		}
+		switch f.Null {
+		case NotNull, SealedNull, SQLNull:
+		default:
+			return fmt.Errorf("record: field %q: unknown null %q", f.Name, f.Null)
+		}
 		if f.IsTarget() {
 			if len(f.Outputs) != 0 {
 				return fmt.Errorf("record: field %q names the EQL type %s and outputs; a field has one or the other", f.Name, f.Target)
@@ -358,6 +385,9 @@ func (p *Plan) Wire() vcvalue.Object {
 		if f.Kind != Untyped {
 			spec = append(spec, vcvalue.Field{Key: "type", Value: string(f.Kind)})
 		}
+		if f.Null != NotNull {
+			spec = append(spec, vcvalue.Field{Key: "null", Value: string(f.Null)})
+		}
 		out = append(out, vcvalue.Field{Key: f.Name, Value: spec})
 	}
 	return out
@@ -404,7 +434,8 @@ func (p *Plan) Descriptor(f Field) string {
 
 // Source is one record's plaintext for the engine: each sealed field's value
 // by name, and the context field's string when the plan has one.
-// Passthrough and omitted fields are not in it.
+// Passthrough and omitted fields are not in it, nor need a SQLNull field
+// that is nil be.
 type Source = map[string]any
 
 // Outputs is what the engine produced for one sealed field, or what it
@@ -423,7 +454,8 @@ type Outputs struct {
 }
 
 // Sealed is one record as stored: each sealed field's outputs by name, and
-// the context field's under its name when the plan has one.
+// the context field's under its name when the plan has one. A SQLNull field
+// that was nil has no entry.
 type Sealed = map[string]Outputs
 
 // Target is one EQL type as se_targets lists it. The entry's keys are wire

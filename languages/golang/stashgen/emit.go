@@ -294,7 +294,7 @@ func (w *writer) declaration(f *genFile) {
 	}
 	for i, fld := range fields {
 		end := "."
-		if i == len(fields)-1 && fld.Identity == "" {
+		if i == len(fields)-1 && fld.Identity == "" && fld.Null == NotNull {
 			end = ""
 		}
 		switch fld.Verb {
@@ -323,12 +323,27 @@ func (w *writer) declaration(f *genFile) {
 		}
 		if fld.Identity != "" {
 			end = "."
-			if i == len(fields)-1 {
+			if i == len(fields)-1 && fld.Null == NotNull {
 				end = ""
 			}
 			w.p("\tIdentity(%q, %q)%s", fld.Name, fld.Identity, end)
 		}
+		if fld.Null != NotNull {
+			end = "."
+			if i == len(fields)-1 {
+				end = ""
+			}
+			w.p("\tNull(%q, %s)%s", fld.Name, nullExpr(fld.Null), end)
+		}
 	}
+}
+
+// nullExpr is a null mode's constant in gensupport.
+func nullExpr(n Null) string {
+	if n == NullSQL {
+		return "gensupport.NullSQL"
+	}
+	return "gensupport.NullSealed"
 }
 
 // literal writes a composite literal: one line with one entry, one entry per
@@ -384,6 +399,11 @@ func (w *writer) source(f *genFile) {
 	} else {
 		entries := make([]string, len(f.fields))
 		for i, g := range f.fields {
+			if g.nullable() {
+				// nil crosses as nil, not as a nil pointer.
+				entries[i] = fmt.Sprintf("%q: gensupport.Deref(v.%s)", g.Name, g.GoName)
+				continue
+			}
 			entries[i] = fmt.Sprintf("%q: v.%s", g.Name, g.GoName)
 		}
 		w.literal("\t\t", "return gensupport.Values{", entries, "}")
@@ -419,17 +439,35 @@ func (w *writer) seal(f *genFile) {
 		w.p("\t\t}")
 	}
 	for _, g := range f.fields {
-		switch g.Verb {
-		case VerbPassthrough, VerbContextField:
-		case VerbEncryptInto:
-			w.p("\t\te.%s = %s(rec[%q].EQL)", g.GoName, g.outputType, g.Name)
-		default:
-			entries := make([]string, len(g.outputs))
-			for i, o := range g.outputs {
-				entries[i] = fmt.Sprintf("%s: rec[%q].%s", o.name, g.Name, o.name)
-			}
-			w.literal("\t\t", fmt.Sprintf("e.%s = %s{", g.GoName, g.outputType), entries, "}")
+		if g.Stored() {
+			continue
 		}
+		if g.Null == NullSQL {
+			// A nil stores nothing: the record has no entry, and the
+			// member stays nil, so its columns hold SQL NULL.
+			w.p("\t\tif o, ok := rec[%q]; ok {", g.Name)
+			if g.Verb == VerbEncryptInto {
+				w.p("\t\t\tv := %s(o.EQL)", g.outputType)
+			} else {
+				entries := make([]string, len(g.outputs))
+				for i, o := range g.outputs {
+					entries[i] = fmt.Sprintf("%s: o.%s", o.name, o.name)
+				}
+				w.literal("\t\t\t", fmt.Sprintf("v := %s{", g.outputType), entries, "}")
+			}
+			w.p("\t\t\te.%s = &v", g.GoName)
+			w.p("\t\t}")
+			continue
+		}
+		if g.Verb == VerbEncryptInto {
+			w.p("\t\te.%s = %s(rec[%q].EQL)", g.GoName, g.outputType, g.Name)
+			continue
+		}
+		entries := make([]string, len(g.outputs))
+		for i, o := range g.outputs {
+			entries[i] = fmt.Sprintf("%s: rec[%q].%s", o.name, g.Name, o.name)
+		}
+		w.literal("\t\t", fmt.Sprintf("e.%s = %s{", g.GoName, g.outputType), entries, "}")
 	}
 	w.p("\t\treturn e, nil")
 	w.p("\t},")
@@ -442,22 +480,48 @@ func (w *writer) open(f *genFile) {
 		w.p("\t},")
 		return
 	}
-	entries := make([]string, len(f.fields))
-	for i, g := range f.fields {
+	output := func(g genField, e string) string {
 		switch g.Verb {
 		case VerbPassthrough, VerbContextField:
-			entries[i] = fmt.Sprintf("%q: {Value: e.%s}", g.Name, g.GoName)
+			return fmt.Sprintf("{Value: %s}", e)
 		case VerbEncryptInto:
-			entries[i] = fmt.Sprintf("%q: {EQL: e.%s}", g.Name, g.GoName)
-		default:
-			parts := make([]string, len(g.outputs))
-			for n, o := range g.outputs {
-				parts[n] = fmt.Sprintf("%s: e.%s.%s", o.name, g.GoName, o.name)
-			}
-			entries[i] = fmt.Sprintf("%q: {%s}", g.Name, strings.Join(parts, ", "))
+			return fmt.Sprintf("{EQL: %s}", e)
 		}
+		parts := make([]string, len(g.outputs))
+		for n, o := range g.outputs {
+			parts[n] = fmt.Sprintf("%s: %s.%s", o.name, e, o.name)
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
 	}
-	w.literal("\t\t", "return gensupport.Record{", entries, "}")
+	var entries []string
+	var absent []genField
+	for _, g := range f.fields {
+		if g.Null == NullSQL {
+			absent = append(absent, g)
+			continue
+		}
+		entries = append(entries, fmt.Sprintf("%q: %s", g.Name, output(g, "e."+g.GoName)))
+	}
+	if len(absent) == 0 {
+		w.literal("\t\t", "return gensupport.Record{", entries, "}")
+		w.p("\t},")
+		return
+	}
+	w.literal("\t\t", "rec := gensupport.Record{", entries, "}")
+	for _, g := range absent {
+		// A nil member stored nothing: the record leaves it out, and it
+		// opens as nil.
+		w.p("\t\tif e.%s != nil {", g.GoName)
+		// An EQL value is a slice and is dereferenced; an output struct's
+		// fields are read through the pointer.
+		member := "e." + g.GoName
+		if g.Verb == VerbEncryptInto {
+			member = "*" + member
+		}
+		w.p("\t\t\trec[%q] = gensupport.Output%s", g.Name, output(g, member))
+		w.p("\t\t}")
+	}
+	w.p("\t\treturn rec")
 	w.p("\t},")
 }
 
@@ -489,6 +553,25 @@ func (w *writer) value(f *genFile) {
 			if g.Verb == VerbIndex {
 				// An index-only field stores no ciphertext, so nothing opens
 				// for it: the struct gets the field's zero value.
+				continue
+			}
+			if g.nullable() && g.definedScalar() {
+				// The engine returns the underlying type, or nil; the
+				// conversion to the defined type is the struct's own.
+				w.p("\t\traw%s, err := gensupport.GetPtr[%s](vals, %q)", g.GoName, g.GoType.Basic, g.Name)
+				w.p("\t\tif err != nil {")
+				fail()
+				w.p("\t\t}")
+				w.p("\t\tif raw%s != nil {", g.GoName)
+				w.p("\t\t\tv%s := %s(*raw%s)", g.GoName, g.valueExpr, g.GoName)
+				w.p("\t\t\tv.%s = &v%s", g.GoName, g.GoName)
+				w.p("\t\t}")
+				continue
+			}
+			if g.nullable() {
+				w.p("\t\tif v.%s, err = gensupport.GetPtr[%s](vals, %q); err != nil {", g.GoName, g.valueExpr, g.Name)
+				fail()
+				w.p("\t\t}")
 				continue
 			}
 			if g.Sealed() && g.definedScalar() {
@@ -553,16 +636,16 @@ func (w *writer) fieldEntries(f *genFile) {
 	}
 	w.p("}{")
 	for _, g := range sealed {
-		w.p("\t%s: %s{gensupport.NewField[%s](%s, %q)},", g.GoName, g.fieldType, g.typeExpr, f.declVar, g.Name)
+		w.p("\t%s: %s{gensupport.NewField[%s](%s, %q)},", g.GoName, g.fieldType, g.valueExpr, f.declVar, g.Name)
 	}
 	w.p("}")
 	for _, g := range sealed {
 		w.nl()
 		w.p("type %s struct {", g.fieldType)
-		w.p("\tfield gensupport.Field[%s]", g.typeExpr)
+		w.p("\tfield gensupport.Field[%s]", g.valueExpr)
 		w.p("}")
 		w.nl()
-		w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.typeExpr, g.outputType)
+		w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.valueExpr, g.outputType)
 		switch {
 		case g.Verb == VerbEncryptInto:
 			w.p("\tout, err := f.field.Encrypt(ctx, c, v)")
@@ -669,7 +752,7 @@ func indexesAnswer(g *genField) ([]string, error) {
 				}
 			}
 		}
-		notices = append(notices, fmt.Sprintf("stores %s terms that no generated method queries: the engine answers no query through the %s index on this field (%s)%s. Drop the index unless your own code compares the stored terms.", ix.Name, ix.Name, g.typeExpr, why))
+		notices = append(notices, fmt.Sprintf("stores %s terms that no generated method queries: the engine answers no query through the %s index on this field (%s)%s. Drop the index unless your own code compares the stored terms.", ix.Name, ix.Name, g.valueExpr, why))
 	}
 	return notices, nil
 }
@@ -692,7 +775,7 @@ func queryFor(g *genField, op Operator) (queryMethod, error) {
 		case op.Probabilistic:
 			// The query value is the type's, and the query keeps what Verify
 			// and TargetLimit need, as a MatchQuery does.
-			q.resultType = "encrypt.EQLMatchQuery[" + g.queryType + ", " + g.typeExpr + "]"
+			q.resultType = "encrypt.EQLMatchQuery[" + g.queryType + ", " + g.valueExpr + "]"
 			q.termType = g.queryType
 			return q, nil
 		}
@@ -702,7 +785,7 @@ func queryFor(g *genField, op Operator) (queryMethod, error) {
 	termType := map[IndexName]string{IndexEquality: "encrypt.EqualityTerm", IndexOre: "encrypt.OreTerm", IndexOpe: "encrypt.OpeTerm"}[op.Index]
 	switch {
 	case op.Probabilistic && op.Index == IndexMatch && !op.Pair && g.GoType.Kind == KindString:
-		q.resultType = "encrypt.MatchQuery[" + g.typeExpr + "]"
+		q.resultType = "encrypt.MatchQuery[" + g.valueExpr + "]"
 	case op.Probabilistic || termType == "":
 		return q, fmt.Errorf("the engine answers %s through the %s index, and the SDK has no Go type for that query", op.Name, op.Index)
 	case op.Pair && op.Index != IndexEquality:
@@ -731,18 +814,18 @@ func (w *writer) query(g genField, q queryMethod) {
 	switch {
 	case q.operator.Probabilistic:
 		w.b.WriteString(wrapComment(fmt.Sprintf("%s derives the %s query for v. Its answer can hold rows that do not match: decrypt the rows it fetches and keep those Verify reports true.", q.method, q.operator.Name), 80))
-		w.p("%sv %s) (%s, error) {", recv, g.typeExpr, q.resultType)
+		w.p("%sv %s) (%s, error) {", recv, g.valueExpr, q.resultType)
 		if g.Verb == VerbEncryptInto {
 			w.p("	return gensupport.EQLMatches[%s](ctx, f.field, c, v)", q.termType)
 		} else {
 			w.p("	return gensupport.Matches(ctx, f.field, c, v)")
 		}
 	case q.operator.Pair:
-		w.p("%slo, hi %s) (%s, error) {", recv, g.typeExpr, q.resultType)
+		w.p("%slo, hi %s) (%s, error) {", recv, g.valueExpr, q.resultType)
 		w.p("	low, high, err := f.field.Range(ctx, c, %q, lo, hi)", q.operator.Name)
 		w.p("	return %s{Low: low, High: high}, err", q.resultType)
 	default:
-		w.p("%sv %s) (%s, error) {", recv, g.typeExpr, q.resultType)
+		w.p("%sv %s) (%s, error) {", recv, g.valueExpr, q.resultType)
 		w.p("	term, err := f.field.Term(ctx, c, %q, v)", q.operator.Name)
 		w.p("	return %s(term), err", q.resultType)
 	}

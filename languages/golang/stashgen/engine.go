@@ -193,7 +193,7 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 		if !f.Sealed() {
 			continue
 		}
-		rf := record.Field{Name: f.Name, Identity: f.Identity, Kind: wireKind(f.GoType)}
+		rf := record.Field{Name: f.Name, Identity: f.Identity, Kind: wireKind(f.GoType), Null: record.Null(f.Null)}
 		switch f.Verb {
 		case VerbEncryptInto:
 			if len(eqlTypes) == 0 {

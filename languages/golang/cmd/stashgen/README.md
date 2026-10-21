@@ -79,6 +79,7 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"tenant,context_field"` | the field's value is the context of every other field in the struct, in place of a `context=` tag; stored as it is |
 | `stash:"-"` | leave the field out |
 | `` _ struct{} `stash:"context=documents,opaque"` `` | seal the struct as one value |
+| `stash:"born,encrypt_into=DateEq,null=sql"` | on a field declared over a pointer (`*encrypt.Date`): how it stores `nil`, `null=sealed` or `null=sql`; see "Optional fields" |
 
 A struct has one context: either a `_ struct{}` field with `context=`, or one field with `context_field`, not both.
 A `context_field` is a `string` whose value is a label such as `"tenants/acme"`, segments separated by `/`.
@@ -108,6 +109,24 @@ This build refuses an index with options: a query term is derived with the defau
 These words are the same as the Rust API's words for the same behaviour, with two that only Go has.
 `opaque` seals the whole struct as one `bytes` field holding a JSON document (see "What crosses the binding").
 `json` names the JSON index, which the Rust API does not declare yet; this build refuses it.
+
+### Optional fields
+
+A sealed field declared over a pointer to one scalar (`*encrypt.Date`, `*int32`, `*string`, a pointer to a type defined over a scalar) is optional: `nil` is a value it may hold, and `Decrypt` gives it back as `nil`.
+`null=` says how the field stores `nil`. There are two ways, and they differ in what a reader of the database can see:
+
+| `null=` | Stored for `nil` | What a reader of the column sees |
+|---|---|---|
+| `sealed` | a sealed null, as long as a sealed value of the field's type | nothing: an absent value looks like any other |
+| `sql` | nothing: the field's columns are `NULL`, and its member in the generated type is `nil` | which rows have no value |
+
+A sealed null hides that the value is absent only where its length matches a value's and nothing beside it shows it, so it is the default for a field with no index whose type has a fixed width: a `bool`, a number, `encrypt.Date`, `time.Time`, `encrypt.Decimal`, `encrypt.Int128` and `encrypt.Uint128`, sealed with `encrypt` or into an EQL type with no index (`Date`, `Integer`, `Boolean`, ...).
+A field with an index, and a field of text or bytes, has to write `null=sql`: a null has no index term yet, and text shows its length, so a sealed null would hide nothing there, and `stashgen` will not choose a visible `NULL` for you.
+`null=sealed` on such a field stops `stashgen` with the reason.
+
+A `null=sql` field's member in the generated type is a pointer (`*eql.DateEq`, `*EncryptedUserScore`), `nil` when the value was; a `null=sealed` field's is the same type as a non-optional field's, and its column is never `NULL`.
+A stored null read into a field that is not a pointer is an error from `Decrypt`, naming the field, never a zero value.
+`-model` does not map a `null=sql` field yet, and `stashgen` stops if it is asked to.
 
 An embedded struct of your own adds its tagged fields to the outer struct.
 An embedded struct from another package takes one tag for all of its fields: `stash:",passthrough"` stores them as they are, and `stash:"-"` leaves them out.
@@ -254,10 +273,10 @@ Generated code sends the engine every sealed field with its value, under the dec
 A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext (a `driver.Valuer`, a `sql.NullTime`).
 An `opaque` struct crosses as one JSON document and is one column, decoded back into the exact Go types the struct declares; a field may be any type `encoding/json` carries both ways (a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, `time.Time`).
 A float in an opaque struct must be finite: `encoding/json` refuses NaN and the infinities, so `Encrypt` fails for the batch with `encrypt.ErrEncoding`. A sealed float field outside an opaque struct carries them.
-A sealed field outside an opaque struct is one scalar, or a type defined over one; a struct, slice or map field seals only inside an opaque struct.
+A sealed field outside an opaque struct is one scalar, a type defined over one, or a pointer to either (see "Optional fields"); a struct, slice or map field seals only inside an opaque struct.
 The scalars are `string`, `[]byte`, `bool`, every integer type (each sealed at its own width, `int` and `uint` as 64-bit), `encrypt.Int128` and `encrypt.Uint128`, `float32`, `float64`, `encrypt.Decimal`, `encrypt.Date` and `time.Time` (a timestamp). The wire type `stashgen` writes for each is the field's own: `int8` is `gensupport.Int8`, `time.Time` is `gensupport.Timestamp`, and so on.
 An order index (`ore`, `ope`) on a decimal, date or timestamp is refused: those order terms are not supported yet (#1236).
-The zero `encrypt.Date` is not a date: a date field must be set, and `Encrypt` refuses a zero one with `encrypt.ErrEncoding`, naming the field. A sealed field cannot be a pointer (`*encrypt.Date` is refused as a composite), so an optional date has no sealed form yet: keep it in an opaque struct, or store a sentinel date.
+The zero `encrypt.Date` is not a date: a date field must be set, and `Encrypt` refuses a zero one with `encrypt.ErrEncoding`, naming the field. An optional date is a `*encrypt.Date` field (see "Optional fields").
 A nil `[]byte` in a sealed field, or a nil slice of a type defined over `[]byte`, comes back from `Decrypt` as an empty, non-nil slice; inside an opaque struct, nil comes back as nil.
 A protobuf message with a `oneof` cannot be generated from a policy: protoc-gen-go puts its members in wrapper types, not in the message struct, and `Generate` refuses it.
 

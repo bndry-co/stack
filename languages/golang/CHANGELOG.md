@@ -10,6 +10,23 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+### Added
+
+- **An optional field: a sealed field declared over a pointer (#1298).**
+  `DOB *encrypt.Date` with `stash:"dob,encrypt_into=Date"` generates (it
+  was refused as a composite, #1293), and `Decrypt` gives `nil` back for a
+  `nil`. The new `null=` tag part says how `nil` is stored:
+  `null=sealed` seals it as a null as long as a value of the field's type,
+  so the column does not show which rows have no value; `null=sql` stores
+  nothing, so the field's columns are SQL `NULL` and its member in the
+  generated type is a pointer. `stashgen` picks `null=sealed` for a field
+  with no index whose type has a fixed width (a bool, a number,
+  `encrypt.Date`, `time.Time`, `encrypt.Decimal`, the 128-bit integers),
+  and asks for `null=sql` to be written on any other: a null has no index
+  term yet, and text shows its length. A stored null read into a field that
+  is not a pointer is an error from `Decrypt`. `-model` does not map a
+  `null=sql` field yet.
+
 ### Breaking
 
 - **Every order term changes: re-derive stored `ore`, `ope` and

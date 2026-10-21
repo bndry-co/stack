@@ -119,6 +119,48 @@ func TestRunFlags(t *testing.T) {
 	}
 }
 
+// A storage-only EQL type over a pointer (#1293): the generator takes
+// *encrypt.Date as it takes encrypt.Date, and stores nil as a sealed null,
+// as long as a date, since Date carries no index. From the reproduction in
+// #1293. Skips when the guest is not built, as the engine decides what an
+// EQL type is.
+func TestRunGeneratesNullableDOB(t *testing.T) {
+	checker, err := encrypt.NewChecker(context.Background())
+	if err != nil {
+		t.Skip(err)
+	}
+	_ = checker.Close()
+	for _, dateType := range []string{"encrypt.Date", "*encrypt.Date"} {
+		t.Run(dateType, func(t *testing.T) {
+			src := `package people
+
+import "github.com/cipherstash/stack/languages/golang/encrypt"
+
+type Person struct {
+	_ struct{} ` + "`stash:\"context=people\"`" + `
+	DOB ` + dateType + " `stash:\"dob,encrypt_into=Date\"`" + `
+}
+`
+			dir := writeModule(t, map[string]string{"model.go": src})
+			var stdout, stderr bytes.Buffer
+			if code := run([]string{"-type", "Person"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 0 {
+				t.Fatalf("exit %d, want 0\n%s", code, stderr.String())
+			}
+			written, err := os.ReadFile(filepath.Join(dir, "person_stash.go"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sealedNull := strings.Contains(string(written), `Null("dob", gensupport.NullSealed)`)
+			if pointer := strings.HasPrefix(dateType, "*"); sealedNull != pointer {
+				t.Fatalf("a %s field stores nil as a sealed null: %v, want %v\n%s", dateType, sealedNull, pointer, written)
+			}
+			if !strings.Contains(string(written), "DOB eql.Date") {
+				t.Fatalf("a sealed null keeps the column's type, eql.Date:\n%s", written)
+			}
+		})
+	}
+}
+
 // The real engine: the embedded guest, which the command links with the EQL
 // types, so a struct with encrypt_into=TextEq generates, and a type the
 // engine cannot produce yet is refused with nothing written. Skips when the
