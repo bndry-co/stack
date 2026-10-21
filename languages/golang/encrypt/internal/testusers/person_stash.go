@@ -18,16 +18,18 @@ const _ = gensupport.GeneratedVersion1
 // method. Write them, or run stashgen with -redact.
 
 type EncryptedPerson struct {
-	ID    int64
-	DOB   eql.Date
-	Born  *eql.DateEq
-	Age   EncryptedPersonAge
-	Score *EncryptedPersonScore
-	Nick  *EncryptedPersonNick
+	ID     int64
+	DOB    eql.Date
+	Born   eql.DateEq
+	Joined *eql.DateEq
+	Age    EncryptedPersonAge
+	Score  *EncryptedPersonScore
+	Nick   *EncryptedPersonNick
 }
 
 type EncryptedPersonAge struct {
 	Ciphertext encrypt.Ciphertext
+	Equality   encrypt.EqualityTerm
 }
 
 type EncryptedPersonScore struct {
@@ -40,24 +42,25 @@ type EncryptedPersonNick struct {
 }
 
 func (e EncryptedPerson) String() string {
-	return gensupport.Redacted("EncryptedPerson", map[string]any{"ID": e.ID}, "DOB", "Born", "Age", "Score", "Nick")
+	return gensupport.Redacted("EncryptedPerson", map[string]any{"ID": e.ID}, "DOB", "Born", "Joined", "Age", "Score", "Nick")
 }
 
 func (e EncryptedPerson) LogValue() slog.Value {
-	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "DOB", "Born", "Age", "Score", "Nick")
+	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "DOB", "Born", "Joined", "Age", "Score", "Nick")
 }
 
 // Stops compiling when Person gains, loses, reorders or retypes a field.
 var _ = personShape(Person{})
 
 type personShape struct {
-	_     struct{}
-	ID    int64
-	DOB   *encrypt.Date
-	Born  *encrypt.Date
-	Age   *int32
-	Score *int64
-	Nick  *string
+	_      struct{}
+	ID     int64
+	DOB    *encrypt.Date
+	Born   *encrypt.Date
+	Joined *encrypt.Date
+	Age    *int32
+	Score  *int64
+	Nick   *string
 }
 
 var personDeclaration = gensupport.Declare("people").
@@ -65,8 +68,10 @@ var personDeclaration = gensupport.Declare("people").
 	EncryptInto("dob", gensupport.Date, "Date").
 	Null("dob", gensupport.NullSealed).
 	EncryptInto("born", gensupport.Date, "DateEq").
-	Null("born", gensupport.NullSQL).
-	Encrypt("age", gensupport.Int32).
+	Null("born", gensupport.NullSealed).
+	EncryptInto("joined", gensupport.Date, "DateEq").
+	Null("joined", gensupport.NullSQL).
+	EncryptIndex("age", gensupport.Int32, encrypt.Equality).
 	Null("age", gensupport.NullSealed).
 	EncryptIndex("score", gensupport.Int64, encrypt.Ore).
 	Null("score", gensupport.NullSQL).
@@ -79,12 +84,13 @@ var personCodec = gensupport.New(gensupport.Generated[Person, EncryptedPerson]{
 	PrintsPlaintext: true,
 	Source: func(v Person) gensupport.Values {
 		return gensupport.Values{
-			"id":    v.ID,
-			"dob":   gensupport.Deref(v.DOB),
-			"born":  gensupport.Deref(v.Born),
-			"age":   gensupport.Deref(v.Age),
-			"score": gensupport.Deref(v.Score),
-			"nick":  gensupport.Deref(v.Nick),
+			"id":     v.ID,
+			"dob":    gensupport.Deref(v.DOB),
+			"born":   gensupport.Deref(v.Born),
+			"joined": gensupport.Deref(v.Joined),
+			"age":    gensupport.Deref(v.Age),
+			"score":  gensupport.Deref(v.Score),
+			"nick":   gensupport.Deref(v.Nick),
 		}
 	},
 	Seal: func(rec gensupport.Record) (EncryptedPerson, error) {
@@ -94,11 +100,15 @@ var personCodec = gensupport.New(gensupport.Generated[Person, EncryptedPerson]{
 			return EncryptedPerson{}, err
 		}
 		e.DOB = eql.Date(rec["dob"].EQL)
-		if o, ok := rec["born"]; ok {
+		e.Born = eql.DateEq(rec["born"].EQL)
+		if o, ok := rec["joined"]; ok {
 			v := eql.DateEq(o.EQL)
-			e.Born = &v
+			e.Joined = &v
 		}
-		e.Age = EncryptedPersonAge{Ciphertext: rec["age"].Ciphertext}
+		e.Age = EncryptedPersonAge{
+			Ciphertext: rec["age"].Ciphertext,
+			Equality:   rec["age"].Equality,
+		}
 		if o, ok := rec["score"]; ok {
 			v := EncryptedPersonScore{
 				Ciphertext: o.Ciphertext,
@@ -114,12 +124,13 @@ var personCodec = gensupport.New(gensupport.Generated[Person, EncryptedPerson]{
 	},
 	Open: func(e EncryptedPerson) gensupport.Record {
 		rec := gensupport.Record{
-			"id":  {Value: e.ID},
-			"dob": {EQL: e.DOB},
-			"age": {Ciphertext: e.Age.Ciphertext},
+			"id":   {Value: e.ID},
+			"dob":  {EQL: e.DOB},
+			"born": {EQL: e.Born},
+			"age":  {Ciphertext: e.Age.Ciphertext, Equality: e.Age.Equality},
 		}
-		if e.Born != nil {
-			rec["born"] = gensupport.Output{EQL: *e.Born}
+		if e.Joined != nil {
+			rec["joined"] = gensupport.Output{EQL: *e.Joined}
 		}
 		if e.Score != nil {
 			rec["score"] = gensupport.Output{Ciphertext: e.Score.Ciphertext, Ore: e.Score.Ore}
@@ -139,6 +150,9 @@ var personCodec = gensupport.New(gensupport.Generated[Person, EncryptedPerson]{
 			return Person{}, err
 		}
 		if v.Born, err = gensupport.GetPtr[encrypt.Date](vals, "born"); err != nil {
+			return Person{}, err
+		}
+		if v.Joined, err = gensupport.GetPtr[encrypt.Date](vals, "joined"); err != nil {
 			return Person{}, err
 		}
 		if v.Age, err = gensupport.GetPtr[int32](vals, "age"); err != nil {
@@ -168,17 +182,19 @@ func DecryptPerson(ctx context.Context, d encrypt.Decrypter, encrypted []Encrypt
 }
 
 var PersonFields = struct {
-	DOB   PersonDOBField
-	Born  PersonBornField
-	Age   PersonAgeField
-	Score PersonScoreField
-	Nick  PersonNickField
+	DOB    PersonDOBField
+	Born   PersonBornField
+	Joined PersonJoinedField
+	Age    PersonAgeField
+	Score  PersonScoreField
+	Nick   PersonNickField
 }{
-	DOB:   PersonDOBField{gensupport.NewField[encrypt.Date](personDeclaration, "dob")},
-	Born:  PersonBornField{gensupport.NewField[encrypt.Date](personDeclaration, "born")},
-	Age:   PersonAgeField{gensupport.NewField[int32](personDeclaration, "age")},
-	Score: PersonScoreField{gensupport.NewField[int64](personDeclaration, "score")},
-	Nick:  PersonNickField{gensupport.NewField[string](personDeclaration, "nick")},
+	DOB:    PersonDOBField{gensupport.NewField[encrypt.Date](personDeclaration, "dob")},
+	Born:   PersonBornField{gensupport.NewField[encrypt.Date](personDeclaration, "born")},
+	Joined: PersonJoinedField{gensupport.NewField[encrypt.Date](personDeclaration, "joined")},
+	Age:    PersonAgeField{gensupport.NewField[int32](personDeclaration, "age")},
+	Score:  PersonScoreField{gensupport.NewField[int64](personDeclaration, "score")},
+	Nick:   PersonNickField{gensupport.NewField[string](personDeclaration, "nick")},
 }
 
 type PersonDOBField struct {
@@ -204,13 +220,49 @@ func (f PersonBornField) Eq(ctx context.Context, c *encrypt.Cipher, v encrypt.Da
 	return eql.DateEqQuery(term), err
 }
 
+// EqNull derives the eq query for nil: the term every stored nil of the field
+// shares, so it finds the rows whose value is absent.
+func (f PersonBornField) EqNull(ctx context.Context, c *encrypt.Cipher) (eql.DateEqQuery, error) {
+	term, err := f.field.NullTerm(ctx, c, "eq")
+	return eql.DateEqQuery(term), err
+}
+
+type PersonJoinedField struct {
+	field gensupport.Field[encrypt.Date]
+}
+
+func (f PersonJoinedField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.DateEq, error) {
+	out, err := f.field.Encrypt(ctx, c, v)
+	return eql.DateEq(out.EQL), err
+}
+
+func (f PersonJoinedField) Eq(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.DateEqQuery, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return eql.DateEqQuery(term), err
+}
+
 type PersonAgeField struct {
 	field gensupport.Field[int32]
 }
 
 func (f PersonAgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (EncryptedPersonAge, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return EncryptedPersonAge{Ciphertext: out.Ciphertext}, err
+	if err != nil {
+		return EncryptedPersonAge{}, err
+	}
+	return EncryptedPersonAge{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
+}
+
+func (f PersonAgeField) Eq(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.EqualityTerm, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return encrypt.EqualityTerm(term), err
+}
+
+// EqNull derives the eq query for nil: the term every stored nil of the field
+// shares, so it finds the rows whose value is absent.
+func (f PersonAgeField) EqNull(ctx context.Context, c *encrypt.Cipher) (encrypt.EqualityTerm, error) {
+	term, err := f.field.NullTerm(ctx, c, "eq")
+	return encrypt.EqualityTerm(term), err
 }
 
 type PersonScoreField struct {

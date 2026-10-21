@@ -86,8 +86,9 @@ type NullMode string
 const (
 	// NullSealed seals nil like a value, as a null as long as a value of
 	// the field's kind, so the stored record does not show which rows are
-	// absent. Decrypt gives nil. The field derives no index, and its kind
-	// has a fixed width.
+	// absent. Decrypt gives nil. An equality index stores the term every nil
+	// shares, which [Field.NullTerm] queries; the field has no other index,
+	// and its kind has a fixed width.
 	NullSealed NullMode = "sealed"
 	// NullSQL stores nothing for nil: the field's columns hold SQL NULL,
 	// which shows that the value is absent. Decrypt gives nil.
@@ -170,7 +171,8 @@ func (d Declaration) EncryptInto(name string, kind Kind, eqlType string) Declara
 
 // Null says how the named field, declared over a pointer, stores nil. The
 // engine decides whether the field can, when the declaration is first used:
-// a sealed null needs a field with no index, of a kind of fixed width.
+// a sealed null needs a field whose only index is equality, of a kind of
+// fixed width.
 func (d Declaration) Null(name string, mode NullMode) Declaration {
 	if d.err != nil {
 		return d

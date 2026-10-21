@@ -668,6 +668,16 @@ func (w *writer) fieldEntries(f *genFile) {
 		for _, q := range g.queries {
 			w.nl()
 			w.query(g, q)
+			if g.Null == NullSealed && q.operator.Name == "eq" && !q.operator.Pair && !q.operator.Probabilistic {
+				// A sealed nil stores the term every nil of the field
+				// shares, so eq answers for nil too.
+				w.nl()
+				w.b.WriteString(wrapComment(fmt.Sprintf("%sNull derives the %s query for nil: the term every stored nil of the field shares, so it finds the rows whose value is absent.", q.method, q.operator.Name), 80))
+				w.p("func (f %s) %sNull(ctx context.Context, c *encrypt.Cipher) (%s, error) {", g.fieldType, q.method, q.resultType)
+				w.p("\tterm, err := f.field.NullTerm(ctx, c, %q)", q.operator.Name)
+				w.p("\treturn %s(term), err", q.resultType)
+				w.p("}")
+			}
 		}
 	}
 }

@@ -15,7 +15,7 @@ use ts_rs::TS;
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptFrom<i64>` and `DecryptInto<i64>`, and both for `Option<i64>`: a storage-only type carries no term, so it may store a `None`, sealed as long as a value.
+/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptFrom<i64>` and `DecryptInto<i64>`, and both for `Option<i64>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
@@ -65,11 +65,12 @@ impl DomainType for Bigint {
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptFrom<i64>` and `DecryptInto<i64>`.
+/// Plaintext input and decrypted output: [`i64`](i64). Implements `EncryptFrom<i64>` and `DecryptInto<i64>`, and both for `Option<i64>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = i64)]
+#[stash(plaintext = Option<i64>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BigintEq {
@@ -265,11 +266,12 @@ impl DomainType for BigintOrdOpe {
     doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`i64`](i64). Implements `EncryptFrom<i64>` to build equality query terms. Query operands do not decrypt.
+/// Plaintext input: [`i64`](i64). Implements `EncryptFrom<i64>` to build equality query terms, and `EncryptFrom<Option<i64>>`, whose `None` is the query of a stored null. Query operands do not decrypt.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom)]
 #[stash(plaintext = i64)]
+#[stash(plaintext = Option<i64>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BigintEqQuery {

@@ -20,12 +20,15 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   so the column does not show which rows have no value; `null=sql` stores
   nothing, so the field's columns are SQL `NULL` and its member in the
   generated type is a pointer. `stashgen` picks `null=sealed` for a field
-  with no index whose type has a fixed width (a bool, a number,
-  `encrypt.Date`, `time.Time`, `encrypt.Decimal`, the 128-bit integers),
-  and asks for `null=sql` to be written on any other: a null has no index
-  term yet, and text shows its length. A stored null read into a field that
-  is not a pointer is an error from `Decrypt`. `-model` does not map a
-  `null=sql` field yet.
+  whose type has a fixed width (a bool, a number, `encrypt.Date`,
+  `time.Time`, `encrypt.Decimal`, the 128-bit integers) and whose only
+  index, if any, is equality, and asks for `null=sql` to be written on any
+  other: a null has an equality term and no other, and text shows its
+  length. Beside equality a sealed null stores the term every nil of the
+  field shares, and a generated `EqNull` method derives its `eq` query,
+  which finds the rows whose value is absent. A stored null read into a
+  field that is not a pointer is an error from `Decrypt`. `-model` does not
+  map a `null=sql` field yet.
 
 ### Breaking
 

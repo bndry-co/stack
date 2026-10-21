@@ -607,14 +607,20 @@ reasons! {
         /// A passthrough field says how to store a null: it carries one as
         /// it is.
         NullPassthrough => "null_passthrough", r#"a passthrough carries a null as it is, and takes no "null""#;
-        /// A field with `"null": "sealed"` derives a term, or names an EQL
-        /// type that carries one: a null has no term yet (#1298), so its
-        /// absence would show in the term column.
-        SealedNullIndex => "sealed_null_index", r#"a sealed null has no term yet, so a field with one takes "null": "sql""#;
+        /// A field with `"null": "sealed"` derives a term other than
+        /// equality's, or names an EQL type that carries one: a null has an
+        /// equality term and no other (#1298), so its absence would show in
+        /// that term's column.
+        SealedNullIndex => "sealed_null_index", r#"a null has an equality term and no other, so a field with another index takes "null": "sql""#;
         /// A field with `"null": "sealed"` declares no type, or one of no
         /// fixed width (text, bytes, a container), whose absence the length
         /// of its ciphertext would show.
         SealedNullType => "sealed_null_type", "a sealed null needs a declared type of fixed width: a bool, a number, a date, a timestamp or a decimal";
+        /// A query's input is a null, and the field does not seal its nulls
+        /// beside an equality term: only `eq` on a `"null": "sealed"` field
+        /// finds a null by its term. A `"null": "sql"` field's nulls are SQL
+        /// `NULL`, which `IS NULL` finds.
+        NullQuery => "null_query", r#"a null is found by its term only with eq on a field with "null": "sealed"; a "null": "sql" field's nulls are SQL NULL"#;
     }
 }
 

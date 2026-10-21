@@ -23,10 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`dynamic::NullMode`, `FieldPlan::with_null`). `"sealed"` seals a null
   like a value, under the field's label, as vitaminc 0.8's typed null of
   the field's type, as long as a present value, so the stored record does
-  not show which rows are absent; it opens as a null. It needs a declared
-  type of fixed width (a bool's plain null is already as long as its value)
-  and no term, on the field or on the EQL type it names: refused otherwise
-  with `Reason::SealedNullType` or `Reason::SealedNullIndex`. `"sql"`
+  not show which rows are absent; it opens as a null. Beside an equality
+  index it stores a null's equality term, the one every null of the field
+  shares, so the absent rows are one equality group, as any repeated value
+  is, and an `eq` query whose input is a null finds them (`query_term`,
+  `record::query`). It needs a declared type of fixed width (a bool's plain
+  null is already as long as its value) and no index but equality, on the
+  field or on the EQL type it names, since a null has no other term:
+  refused otherwise with `Reason::SealedNullType` or
+  `Reason::SealedNullIndex`. A null query of any other field or operator is
+  `Reason::NullQuery`. `"sql"`
   stores nothing for a null, or for a row with no entry for the field: the
   stored record has no entry, so a host writes SQL `NULL`, and a stored
   record with no entry for the field opens it as a null. A batch's rows are
@@ -265,10 +271,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     readers before writers; every null written before still opens. The
     `dynamic` feature's sinks carry a typed null through the value model,
     and the frame a binding receives holds the plain null.
-  - **A null still has no equality term.** vitaminc-normalize 0.8 derives
-    one; this crate drops it, so an absent value keeps a SQL `NULL` in its
-    equality column, as before, until the index terms of a null are decided
-    (#1298).
+  - **A null has an equality term** (vitaminc-normalize 0.8, #1298), the
+    one term every null of a context shares, on the typed path
+    (`EqualityTerm` of a `None`) and the dynamic one (`IndexSpec::Equality`
+    now defines a null). No other index has a term for a null.
   - **Block ORE's text ceiling is unchanged, but counted the new way.**
     `vitaminc-ore` puts the marker byte in front of text itself now, and
     ore-rs's 1024-byte ceiling counts it, so the fold is still at most 1023

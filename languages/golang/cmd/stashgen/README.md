@@ -117,11 +117,12 @@ A sealed field declared over a pointer to one scalar (`*encrypt.Date`, `*int32`,
 
 | `null=` | Stored for `nil` | What a reader of the column sees |
 |---|---|---|
-| `sealed` | a sealed null, as long as a sealed value of the field's type | nothing: an absent value looks like any other |
+| `sealed` | a sealed null, as long as a sealed value of the field's type, and beside an equality index the one term every null of the field shares | nothing in the ciphertext; in an equality column, that the absent rows are one group, as rows holding one repeated value are |
 | `sql` | nothing: the field's columns are `NULL`, and its member in the generated type is `nil` | which rows have no value |
 
-A sealed null hides that the value is absent only where its length matches a value's and nothing beside it shows it, so it is the default for a field with no index whose type has a fixed width: a `bool`, a number, `encrypt.Date`, `time.Time`, `encrypt.Decimal`, `encrypt.Int128` and `encrypt.Uint128`, sealed with `encrypt` or into an EQL type with no index (`Date`, `Integer`, `Boolean`, ...).
-A field with an index, and a field of text or bytes, has to write `null=sql`: a null has no index term yet, and text shows its length, so a sealed null would hide nothing there, and `stashgen` will not choose a visible `NULL` for you.
+A sealed null hides that the value is absent only where its length matches a value's and no index beside it shows it, so it is the default for a field whose type has a fixed width (a `bool`, a number, `encrypt.Date`, `time.Time`, `encrypt.Decimal`, `encrypt.Int128` and `encrypt.Uint128`) and whose only index, if it has one, is `equality`: sealed with `encrypt`, `encrypt,index=equality`, or into an EQL type with no index or with equality alone (`Date`, `DateEq`, `Integer`, `IntegerEq`, ...).
+A null has an equality term, so its rows are one equality group and a query finds them: the generated `EqNull` derives the `eq` query of `nil`, which matches every row whose value is absent.
+A null has no order or match term, so a field with any other index, and a field of text or bytes, has to write `null=sql`: an order or match column would show which values are absent, and text shows its length, and `stashgen` will not choose a visible `NULL` for you.
 `null=sealed` on such a field stops `stashgen` with the reason.
 
 A `null=sql` field's member in the generated type is a pointer (`*eql.DateEq`, `*EncryptedUserScore`), `nil` when the value was; a `null=sealed` field's is the same type as a non-optional field's, and its column is never `NULL`.

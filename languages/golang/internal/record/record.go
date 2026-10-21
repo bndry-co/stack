@@ -121,8 +121,9 @@ const (
 	NotNull Null = ""
 	// SealedNull seals a nil like a value, as a typed null as long as one of
 	// the field's kind, so the stored record does not show which rows are
-	// absent; it opens as nil. The engine takes it on a field that seals and
-	// derives no term, of a kind of fixed width.
+	// absent; it opens as nil. Beside an equality index it stores the term
+	// every nil shares. The engine takes it on a field whose only index is
+	// equality, of a kind of fixed width.
 	SealedNull Null = "sealed"
 	// SQLNull stores nothing for a nil: the field is left out of the record,
 	// a source may leave it out, and a stored record without it opens it as

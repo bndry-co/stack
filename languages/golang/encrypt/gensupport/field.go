@@ -100,6 +100,18 @@ func (f Field[T]) Range(ctx context.Context, c *encrypt.Cipher, operator string,
 	return terms[0], terms[1], nil
 }
 
+// NullTerm derives an exact operator's term for nil: for eq on a field that
+// stores nil as a sealed null, the term every such nil shares, so it finds
+// the rows whose value is absent. The engine refuses it for any other field
+// or operator: nothing else stores a null's term.
+func (f Field[T]) NullTerm(ctx context.Context, c *encrypt.Cipher, operator string) ([]byte, error) {
+	terms, err := f.query(ctx, c, operator, nil, 1)
+	if err != nil {
+		return nil, err
+	}
+	return terms[0], nil
+}
+
 // query derives an exact operator's terms, and refuses an answer of another
 // shape than the generated method's: a probabilistic term has a query type
 // of its own (Matches). Each operand is converted to the field's kind as a

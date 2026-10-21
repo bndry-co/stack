@@ -15,7 +15,7 @@ use ts_rs::TS;
     doc = " See the [EQL numeric reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`Decimal`](crate::v4::plaintext::Decimal). Implements `EncryptFrom<Decimal>` and `DecryptInto<Decimal>`, and both for `Option<Decimal>`: a storage-only type carries no term, so it may store a `None`, sealed as long as a value.
+/// Plaintext input and decrypted output: [`Decimal`](crate::v4::plaintext::Decimal). Implements `EncryptFrom<Decimal>` and `DecryptInto<Decimal>`, and both for `Option<Decimal>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
@@ -65,11 +65,12 @@ impl DomainType for Numeric {
     doc = " See the [EQL numeric reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`Decimal`](crate::v4::plaintext::Decimal). Implements `EncryptFrom<Decimal>` and `DecryptInto<Decimal>`.
+/// Plaintext input and decrypted output: [`Decimal`](crate::v4::plaintext::Decimal). Implements `EncryptFrom<Decimal>` and `DecryptInto<Decimal>`, and both for `Option<Decimal>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = crate::v4::plaintext::Decimal)]
+#[stash(plaintext = Option<crate::v4::plaintext::Decimal>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NumericEq {
@@ -241,11 +242,12 @@ impl DomainType for NumericOrdOpe {
     doc = " See the [EQL numeric reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`Decimal`](crate::v4::plaintext::Decimal). Implements `EncryptFrom<Decimal>` to build equality query terms. Query operands do not decrypt.
+/// Plaintext input: [`Decimal`](crate::v4::plaintext::Decimal). Implements `EncryptFrom<Decimal>` to build equality query terms, and `EncryptFrom<Option<Decimal>>`, whose `None` is the query of a stored null. Query operands do not decrypt.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom)]
 #[stash(plaintext = crate::v4::plaintext::Decimal)]
+#[stash(plaintext = Option<crate::v4::plaintext::Decimal>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NumericEqQuery {

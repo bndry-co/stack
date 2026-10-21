@@ -352,15 +352,16 @@ fn unsupported_term_inputs_are_encoding_errors() {
     let ctx = encode(s("f"));
 
     // Bools have no equality domain and no order term; match is text-only;
-    // containers have no term semantics; kinds outside the table and empty
-    // contexts are rejected.
+    // containers have no term semantics; a null has an equality term
+    // (#1298) and no order term; kinds outside the table and empty contexts
+    // are rejected.
     for (value, kind) in [
         (Tree::Bool(true), TERM_EQUALITY),
         (Tree::Bool(true), TERM_ORE),
         (Tree::Bool(false), TERM_OPE),
         (Tree::UInt32(1), TERM_MATCH),
         (Tree::Array(vec![]), TERM_ORE),
-        (Tree::Null, TERM_EQUALITY),
+        (Tree::Null, TERM_ORE),
         (Tree::UInt32(1), 99),
     ] {
         assert_eq!(

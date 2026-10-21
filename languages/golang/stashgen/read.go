@@ -793,30 +793,38 @@ func (r *reader) buildFields(c *collected) error {
 // nullMode is how a sealed field declared over a pointer stores nil: the
 // tag's `null=` if it says, else NullSealed where a sealed nil hides that the
 // value is absent. That needs a type of fixed width, so a nil is as long as a
-// value, and no index, since a nil has no term yet (#1298) and its absence
-// would show in the index column; anywhere else the field says null=sql, so
-// a visible SQL NULL is a choice the source shows.
+// value, and no index but equality, the one index a nil has a term for
+// (#1298): any other index's column would show which values are absent.
+// Anywhere else the field says null=sql, so a visible SQL NULL is a choice
+// the source shows.
 func (r *reader) nullMode(field Field, tagged Null) (Null, error) {
-	indexed := len(field.Indexes) > 0
+	indexes := make([]IndexName, 0, len(field.Indexes))
+	for _, idx := range field.Indexes {
+		indexes = append(indexes, idx.Name)
+	}
 	if field.Verb == VerbEncryptInto {
 		for _, eqlType := range r.eql {
 			if eqlType.Name == field.EQLType {
-				indexed = len(eqlType.Indexes) > 0
+				indexes = eqlType.Indexes
 			}
 		}
+	}
+	indexed := false
+	for _, name := range indexes {
+		indexed = indexed || name != IndexEquality
 	}
 	fixed := field.GoType.Kind.fixedWidth()
 	switch {
 	case tagged == NullSQL:
 		return NullSQL, nil
 	case tagged == NullSealed && indexed:
-		return "", fmt.Errorf("a sealed nil has no index term yet, so the index column would show which values are absent; write null=sql, which stores SQL NULL")
+		return "", fmt.Errorf("a nil has an equality term and no other, so another index's column would show which values are absent; write null=sql, which stores SQL NULL")
 	case tagged == NullSealed && !fixed:
 		return "", fmt.Errorf("a sealed nil is as long as a value only for a type of fixed width, and a %s shows its length; write null=sql, which stores SQL NULL", field.GoType)
 	case fixed && !indexed:
 		return NullSealed, nil
 	case indexed:
-		return "", fmt.Errorf("a field with an index stores nil as SQL NULL, which shows which values are absent: a nil has no index term yet. Write null=sql to say so")
+		return "", fmt.Errorf("a field with an index other than equality stores nil as SQL NULL, which shows which values are absent: a nil has an equality term and no other. Write null=sql to say so")
 	default:
 		return "", fmt.Errorf("a %s field stores nil as SQL NULL, which shows which values are absent: a %s shows its length, so a sealed nil would not hide it. Write null=sql to say so", "*"+field.GoType.Name, field.GoType)
 	}

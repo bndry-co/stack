@@ -569,7 +569,23 @@ fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
 fn read_input(answer: &Answer<'_>, operator: OpSpec, input: impl Encrypt) -> Result<Input, Error> {
     let name = answer.field.name();
     if !operator.takes_pair() {
-        return read(answer.kind, input)
+        let input = ValueFrame::of(input).map_err(|_| Error::Source {
+            field: Some(name.to_owned()),
+            reason: Reason::FieldType,
+        })?;
+        // A null is found by its equality term, which a field that seals
+        // its nulls stores beside each one (#1298); nothing else has one.
+        if input.is_null() {
+            let sealed = answer.field.null() == Some(super::NullMode::Sealed);
+            return match (sealed, &answer.index) {
+                (true, IndexSpec::Equality) => Ok(Input::One(input)),
+                _ => Err(Error::Source {
+                    field: Some(name.to_owned()),
+                    reason: Reason::NullQuery,
+                }),
+            };
+        }
+        return read(answer.kind, &input)
             .map(Input::One)
             .map_err(|error| error.in_field(name));
     }

@@ -973,9 +973,34 @@ async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
     .unwrap();
     assert!(same(&opened, &null), "opens as a null by name");
 
-    // A type with a term has no null to store: its term would show it.
+    // A type whose term is equality's stores a null with a null's term,
+    // the one a query of a null derives (#1298); a type with an order term
+    // has no null to store, since its term column would show it.
+    let eq: date::DateEq = by_name(&keyset, "DateEq", null.clone()).await;
+    let present_eq: date::DateEq = by_name(&keyset, "DateEq", frame(day("2024-02-29"))).await;
+    assert_eq!(
+        leaf_len(&eq.c),
+        leaf_len(&present_eq.c),
+        "as long as a value"
+    );
+    assert_ne!(eq.hm, present_eq.hm, "a null's term is no value's");
+    assert_eq!(
+        hm(&keyset, "DateEq", null.clone()).await,
+        eq.hm.0,
+        "a query of a null finds it"
+    );
+    let opened = targets::decrypt(
+        "DateEq",
+        &cipher,
+        &label(),
+        &serde_json::to_vec(&eq).unwrap(),
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    assert!(same(&opened, &null), "opens as a null");
     assert!(matches!(
-        refused_null(&keyset, "DateEq"),
+        refused_null(&keyset, "IntegerOrd"),
         TargetError::Plaintext { .. }
     ));
 }
@@ -1002,22 +1027,30 @@ fn postgres_stores_a_sealed_null_in_a_storage_only_column() {
     let keyset = cipher.default_keyset();
     let mut db = database();
     db.batch_execute(
-        "CREATE TEMP TABLE v4_optional (id int PRIMARY KEY, entry public.eql_v4_date);",
+        "CREATE TEMP TABLE v4_optional (
+            id int PRIMARY KEY,
+            entry public.eql_v4_date,
+            due public.eql_v4_date_eq
+        );",
     )
     .unwrap();
-    let (absent, present): (date::Date, date::Date) = runtime.block_on(async {
-        (
-            keyset.encrypt_as(&None::<Date>, column()).await.unwrap(),
-            keyset
-                .encrypt_as(&Date::from(day("2024-02-29")), column())
-                .await
-                .unwrap(),
-        )
-    });
-    for (id, value) in [(1, &absent), (2, &present)] {
+    let rows: Vec<(i32, Option<Date>)> = vec![
+        (1, None),
+        (2, Some(Date::from(day("2024-02-29")))),
+        (3, None),
+    ];
+    for (id, value) in &rows {
+        let (entry, due): (date::Date, date::DateEq) = runtime.block_on(async {
+            (
+                keyset.encrypt_as(value, column()).await.unwrap(),
+                keyset.encrypt_as(value, column()).await.unwrap(),
+            )
+        });
         db.execute(
-            "INSERT INTO v4_optional (id, entry) VALUES ($1, $2::text::jsonb::public.eql_v4_date)",
-            &[&id, &json(value)],
+            "INSERT INTO v4_optional VALUES ($1,
+                $2::text::jsonb::public.eql_v4_date,
+                $3::text::jsonb::public.eql_v4_date_eq)",
+            &[id, &json(&entry), &json(&due)],
         )
         .unwrap();
     }
@@ -1033,4 +1066,19 @@ fn postgres_stores_a_sealed_null_in_a_storage_only_column() {
         .block_on(async { cipher.decrypt_as(stored, column().into()).await })
         .unwrap();
     assert!(opened.is_none(), "the stored null opens as None");
+
+    // `=` with the query of a null finds the absent rows, and only them.
+    let null_query: date::DateEqQuery = runtime
+        .block_on(async { keyset.encrypt_as(&None::<Date>, column()).await })
+        .unwrap();
+    let found: Vec<i32> = db
+        .query(
+            "SELECT id FROM v4_optional WHERE due = $1::text::jsonb::eql_v4.query_date_eq ORDER BY id",
+            &[&json(&null_query)],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(found, [1, 3]);
 }

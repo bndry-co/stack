@@ -15,7 +15,7 @@ use ts_rs::TS;
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`, and both for `Option<String>`: a storage-only type carries no term, so it may store a `None`, sealed as long as a value.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`, and both for `Option<String>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
@@ -65,11 +65,12 @@ impl DomainType for Text {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`, and both for `Option<String>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = String)]
+#[stash(plaintext = Option<String>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextEq {
@@ -422,11 +423,12 @@ impl DomainType for TextSearch {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt.
+/// Plaintext input: [`String`](String). Implements `EncryptFrom<String>` to build equality query terms, and `EncryptFrom<Option<String>>`, whose `None` is the query of a stored null. Query operands do not decrypt.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom)]
 #[stash(plaintext = String)]
+#[stash(plaintext = Option<String>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextEqQuery {

@@ -545,14 +545,16 @@ mod logical {
     );
 }
 
-/// The plaintext of a storage-only type, which may be absent: what the
-/// generated dispatch reads a storage-only type's value as, and opens it
-/// into. A null seals as `None`, a typed null of the plaintext's type, as
-/// long as a value when the type is fixed width (vitaminc 0.8), and opens
-/// as a null; a value seals and opens exactly as the plaintext does, since
-/// `Some(v)` walks `v` itself. A storage-only type has no term to derive
-/// from a null. Whether a field may hold a null is the plan's to decide
-/// (its `"null"`), not the type's.
+/// The plaintext of a type whose terms a null has (a storage-only type, or
+/// one whose only term is equality's), which may be absent: what the
+/// generated dispatch reads such a type's value as, opens it into and
+/// queries it with. A null seals as `None`, a typed null of the plaintext's
+/// type, as long as a value when the type is fixed width (vitaminc 0.8), and
+/// opens as a null; a value seals and opens exactly as the plaintext does,
+/// since `Some(v)` walks `v` itself. A null's equality term is the one every
+/// null shares (vitaminc-normalize 0.8), which a query of a `None` derives
+/// too. Whether a field may hold a null is the plan's to decide (its
+/// `"null"`), not the type's.
 impl<S: Plaintext> Plaintext for Option<S> {
     const KIND: ValueKind = S::KIND;
 

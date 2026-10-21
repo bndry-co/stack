@@ -184,5 +184,10 @@ func Deref[T any](p *T) any {
 	return *p
 }
 
+// NullTerm derives an exact operator's term for nil.
+func (f Field[T]) NullTerm(context.Context, *encrypt.Cipher, string) ([]byte, error) {
+	return nil, nil
+}
+
 // GetPtr reads one opened field declared over a pointer.
 func GetPtr[T any](Values, string) (*T, error) { return nil, nil }

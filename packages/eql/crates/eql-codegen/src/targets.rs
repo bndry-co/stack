@@ -425,11 +425,12 @@ fn render_targets_from(rows: &[Row]) -> String {
         let source = format_ident!("{}", rust.rsplit("::").next().unwrap_or(rust));
         (name.clone(), quote!(super::#module::#ty), quote!(#source))
     };
-    // A storage-only type (no query twin, so no term) seals and opens an
-    // `Option` of its plaintext: a value exactly as the plaintext does, and
-    // a null as a null (#1298). Whether a field may hold one is its plan's.
+    // A type whose terms a null has (none, or equality's alone) seals,
+    // opens and queries an `Option` of its plaintext: a value exactly as the
+    // plaintext does, and a null as a null with a null's terms (#1298).
+    // Whether a field may hold one is its plan's.
     let stored_source = |r: &Row, source: TokenStream| {
-        if r.query.is_none() {
+        if r.indexes.iter().all(|index| *index == "eq") {
             quote!(Option<#source>)
         } else {
             source
@@ -463,6 +464,7 @@ fn render_targets_from(rows: &[Row]) -> String {
         .filter_map(|r| {
             let (query, _) = r.query.as_ref()?;
             let (name, ty, source) = arm(r, query);
+            let source = stored_source(r, source);
             if r.projections.is_empty() {
                 return Some(
                     quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), },
@@ -836,21 +838,19 @@ mod tests {
             let module = family.name;
             let (_, plaintext) = plaintext_of(family.name).expect("a derived family's plaintext");
             let plaintext = plaintext.rsplit("::").next().unwrap();
-            // A storage-only type stores and opens an `Option` of its
-            // plaintext; its query arm, which it has none of, would not.
-            let stored = if domain.terms.is_empty() {
+            // A type whose terms a null has (none, or equality's alone)
+            // stores, opens and queries an `Option` of its plaintext.
+            let source = if crate::bindings::nullable_terms(domain) {
                 format!("Option<{plaintext}>")
             } else {
                 plaintext.to_owned()
             };
             let arm = |helper: &str, ty: &str| {
-                let source = if ty == name { &stored } else { plaintext };
                 format!(
                     "\"{name}\" => {{ {helper}::<super::{module}::{ty}, {source}, K>(\"{name}\", "
                 )
             };
             let flat_arm = |helper: &str, ty: &str| {
-                let source = if ty == name { &stored } else { plaintext };
                 format!("\"{name}\" => {helper}::<super::{module}::{ty}, {source}, K>(\"{name}\", ")
             };
             // rustfmt breaks long arms at different points, so compare with

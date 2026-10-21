@@ -60,14 +60,16 @@ const (
 	// NotNull is a field that is not a pointer: it is never nil.
 	NotNull Null = ""
 	// NullSealed seals nil like a value, as long as one, so the stored
-	// field does not show that the value is absent. The default for a field
-	// with no index whose type has a fixed width: a bool, a number,
-	// encrypt.Date, time.Time, encrypt.Decimal, encrypt.Int128 or
-	// encrypt.Uint128.
+	// field does not show that the value is absent. Its equality term is the
+	// one every nil shares, and the generated EqNull queries it. The default
+	// for a field whose only index, if any, is equality and whose type has a
+	// fixed width: a bool, a number, encrypt.Date, time.Time,
+	// encrypt.Decimal, encrypt.Int128 or encrypt.Uint128.
 	NullSealed Null = "sealed"
 	// NullSQL stores nothing for nil: the field's columns hold SQL NULL,
-	// which shows that the value is absent. A field with an index, or of
-	// text or bytes, says so with `null=sql`: its absence would show anyway.
+	// which shows that the value is absent. A field with an index other than
+	// equality, or of text or bytes, says so with `null=sql`: its absence
+	// would show anyway.
 	NullSQL Null = "sql"
 )
 

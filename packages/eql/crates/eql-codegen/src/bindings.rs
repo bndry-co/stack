@@ -726,16 +726,24 @@ fn encryption_attrs(
                 (false, false, true) => "order",
                 _ => "equality",
             };
+            let null = if nullable_terms(domain) {
+                format!(
+                    ", and `EncryptFrom<Option<{shown}>>`, whose `None` is the query of a stored \
+                     null"
+                )
+            } else {
+                String::new()
+            };
             format!(
                 " Plaintext input: {named}. Implements `EncryptFrom<{shown}>` to build {terms} \
-                 query terms. Query operands do not decrypt."
+                 query terms{null}. Query operands do not decrypt."
             )
-        } else if domain.terms.is_empty() {
+        } else if nullable_terms(domain) {
             format!(
                 " Plaintext input and decrypted output: {named}. Implements \
                  `EncryptFrom<{shown}>` and `DecryptInto<{shown}>`, and both for \
-                 `Option<{shown}>`: a storage-only type carries no term, so it may store a \
-                 `None`, sealed as long as a value."
+                 `Option<{shown}>`: a `None` is sealed as long as a value, and its terms \
+                 are a null's, which equality has and no other index does."
             )
         } else {
             format!(
@@ -745,10 +753,10 @@ fn encryption_attrs(
         }
     };
     let plaintext = plaintext_doc(&format!("[`{shown}`]({rust})"));
-    // A storage-only type derives no term, so an absent value has nothing
-    // it cannot store: it may be sealed from an `Option` too (#1298).
-    let nullable = (!query && domain.terms.is_empty())
-        .then(|| quote!(#[stash(plaintext = Option<#plaintext_ty>)]));
+    // A type whose terms a null has (none, or equality's alone) may be
+    // sealed, or queried, from an `Option` too (#1298).
+    let nullable =
+        nullable_terms(domain).then(|| quote!(#[stash(plaintext = Option<#plaintext_ty>)]));
     // The twin of an optional-term query is built by its projections
     // (`render_query_projections`), one per index, so it carries no derive.
     if query && v4_optional_query_terms(domain) {
@@ -785,6 +793,13 @@ fn encryption_attrs(
         quote!(#[stash(default)]),
         quote!(#[stash(context_field)]),
     )
+}
+
+/// Whether a null has every term the domain carries, so its type may be
+/// sealed or queried from an `Option` of its plaintext (#1298): a null has
+/// an equality term (`hm`, vitaminc-normalize 0.8) and no other.
+pub(crate) fn nullable_terms(domain: &Domain) -> bool {
+    domain.terms.iter().all(|term| *term == Term::Hm)
 }
 
 /// A v4 struct's `DomainType::schema_id` overrides: the trait's defaults name

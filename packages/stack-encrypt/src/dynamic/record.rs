@@ -227,10 +227,12 @@ pub enum NullMode {
     /// `"sealed"`: a null is sealed like a value, under the field's label,
     /// as a typed null as long as a value of the field's type (vitaminc
     /// 0.8), so the stored record does not say which rows are absent. It
-    /// opens as a null. Only for a field that seals and derives no term (a
-    /// null has none yet), of a declared type of fixed width: a boolean, a
-    /// number, a date, a timestamp or a decimal. A target field takes it
-    /// when its EQL type carries no term.
+    /// opens as a null. An equality index stores a null's term beside it,
+    /// the one term every null of the field shares, so an `eq` query of a
+    /// null finds the absent rows; no other index has a term for a null.
+    /// Only for a field of a declared type of fixed width (a boolean, a
+    /// number, a date, a timestamp or a decimal) whose indexes are equality
+    /// alone; a target field takes it when its EQL type's are.
     Sealed,
     /// `"sql"`: a null, or a row with no entry for the field, produces
     /// nothing: the stored record has no entry for the field, so the host
@@ -525,7 +527,11 @@ impl FieldPlan {
         if null == NullMode::Sql {
             return None;
         }
-        if !matches!(self.verb(), Verb::Encrypt | Verb::Target) {
+        if self
+            .indexes()
+            .iter()
+            .any(|index| !matches!(index, IndexSpec::Equality))
+        {
             return Some(Reason::SealedNullIndex);
         }
         match self.field_type.and_then(ValueKind::sealed_null) {
@@ -739,8 +745,14 @@ impl Plan {
                 (None, Some(kind)) => field.field_type = Some(kind),
                 _ => {}
             }
-            // A sealed null has no term, so its type must carry none.
-            if field.null == Some(NullMode::Sealed) && !descriptor.indexes.is_empty() {
+            // A null has an equality term and no other, so a sealed null
+            // needs a type whose terms are equality's alone.
+            if field.null == Some(NullMode::Sealed)
+                && descriptor
+                    .indexes
+                    .iter()
+                    .any(|index| index != IndexSpec::Equality.key())
+            {
                 return Err(Error::Plan {
                     field: Some(field.name.clone()),
                     reason: Reason::SealedNullIndex,
@@ -1085,9 +1097,11 @@ pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
 /// value that is not there ([`NullMode`], #1298). Without it a row must
 /// have the field, and a typed field refuses a null. `"sealed"` seals a
 /// null as a typed null as long as a value, so the stored record does not
-/// show it; the field must declare a type of fixed width (a bool, a number,
-/// a date, a timestamp or a decimal), have no term output, and, as a target
-/// field, name an EQL type with no term. `"sql"` stores nothing for a null
+/// show it, and beside an equality index stores a null's equality term, the
+/// one every null of the field shares, which an `eq` query of a null finds;
+/// the field must declare a type of fixed width (a bool, a number, a date, a
+/// timestamp or a decimal) and have no index but equality, on the field or,
+/// for a target field, on its EQL type. `"sql"` stores nothing for a null
 /// or a missing field, so the host's columns hold SQL `NULL`; any field but
 /// a passthrough takes it.
 ///
@@ -1693,7 +1707,18 @@ pub fn query<'a, K: 'static>(
         field: Some(field.name.clone()),
         reason: Reason::FieldType,
     })?;
-    check_field(&value, field)?;
+    // A null is queried by the term a field that seals its nulls stores
+    // beside each (#1298), through the type's equality index alone.
+    if value.is_null() {
+        if field.null != Some(NullMode::Sealed) || *index != IndexSpec::Equality {
+            return Err(Error::Source {
+                field: Some(field.name.clone()),
+                reason: Reason::NullQuery,
+            });
+        }
+    } else {
+        check_field(&value, field)?;
+    }
     resolver
         .query(name, index, cipher, field.label(), value)
         .map_err(|error| Error::Target(name_target(error, &field.name)))
@@ -2217,7 +2242,8 @@ fn source_row(mut row: Vec<(String, ValueFrame)>, plan: &Plan) -> Result<Row, Er
             // A null the field seals: as a typed null of its type, as long
             // as a value of it, or as the plain null for a boolean, which
             // is already as long as one. `Plan::build` refuses a sealed
-            // null on any other type, and on a field with a term.
+            // null on any other type, and on a field with a term other than
+            // equality's, which a null has.
             Some(NullMode::Sealed) if value.is_null() => {
                 match field.field_type.and_then(ValueKind::sealed_null) {
                     Some(Some(ty)) => ValueFrame::typed_null(ty),
@@ -5286,12 +5312,17 @@ mod tests {
                     Reason::SealedNullType,
                 ),
                 (
-                    "a sealed null beside a term",
-                    nullable(label("f"), &["c", "eq"], Some("int64"), "sealed"),
+                    "a sealed null beside an order term",
+                    nullable(label("f"), &["c", "ore"], Some("int64"), "sealed"),
                     Reason::SealedNullIndex,
                 ),
                 (
-                    "a sealed null of a term alone",
+                    "a sealed null beside equality and an order term",
+                    nullable(label("f"), &["c", "eq", "ore"], Some("int64"), "sealed"),
+                    Reason::SealedNullIndex,
+                ),
+                (
+                    "a sealed null of an order term alone",
                     nullable(label("f"), &["ore"], Some("int64"), "sealed"),
                     Reason::SealedNullIndex,
                 ),
@@ -5354,6 +5385,110 @@ mod tests {
             check_record(again, &plan, None).expect("the stored nulls fit the plan");
             assert_eq!(open(&cipher, without, &plan).await, absent);
             assert_eq!(open(&cipher, with, &plan).await, present);
+        }
+
+        /// The term under a stored field's output key, as its bytes.
+        fn stored_term(record: &StackCipherText, field: &str, key: &str) -> Vec<u8> {
+            let CipherText::Map(fields) = record else {
+                panic!("a record is a map");
+            };
+            let Some((_, CipherText::Map(outputs))) = fields.iter().find(|(name, _)| name == field)
+            else {
+                panic!("{field} is stored");
+            };
+            match outputs.iter().find(|(k, _)| k == key) {
+                Some((_, CipherText::Passthrough(payload))) => {
+                    passthrough_bytes(payload).expect("a term is bytes")
+                }
+                other => panic!("{field}'s {key} is a term: {other:?}"),
+            }
+        }
+
+        /// A null sealed beside an equality index stores the term every null
+        /// of the field shares (#1298): the absent rows are one equality
+        /// group, as any repeated value is, and an `eq` query of a null finds
+        /// them. The ciphertext still does not show which they are.
+        #[tokio::test]
+        async fn a_sealed_null_stores_its_equality_term_and_a_query_finds_it() {
+            use crate::dynamic::{query_term, NoTargets, OpSpec, Operand};
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan(obj(vec![
+                (
+                    "age",
+                    nullable(label("age"), &["c", "eq"], Some("uint32"), "sealed"),
+                ),
+                (
+                    "rank",
+                    nullable(label("rank"), &["c", "eq", "ore"], Some("uint32"), "sql"),
+                ),
+            ]))
+            .expect("parses");
+            let row = |age: Tree| obj(vec![("age", age), ("rank", Tree::UInt32(1))]);
+            let sealed = seal(
+                &keyset,
+                Tree::Array(vec![
+                    row(Tree::UInt32(34)),
+                    row(Tree::Null),
+                    row(Tree::Null),
+                ]),
+                &plan,
+            )
+            .await;
+            let CipherText::Sequence(rows) = &sealed else {
+                panic!("a batch is a sequence");
+            };
+            let terms: Vec<Vec<u8>> = rows
+                .iter()
+                .map(|row| stored_term(row, "age", "eq"))
+                .collect();
+            assert_eq!(terms[1], terms[2], "every null shares one term");
+            assert_ne!(terms[0], terms[1], "and no value has it");
+            assert_eq!(
+                sealed_len(&rows[1], "age"),
+                sealed_len(&rows[0], "age"),
+                "the ciphertext is as long as a value's"
+            );
+
+            let query = |field: &str, op: OpSpec| {
+                query_term(&keyset, &plan, field, op, &Tree::Null, &NoTargets)
+            };
+            let null = query("age", OpSpec::Eq)
+                .expect("eq takes a null")
+                .await
+                .expect("a term");
+            assert_eq!(null.operand(), &Operand::One(terms[1].clone()));
+            let value = query_term(
+                &keyset,
+                &plan,
+                "age",
+                OpSpec::Eq,
+                Tree::UInt32(34),
+                &NoTargets,
+            )
+            .expect("eq takes a value")
+            .await
+            .expect("a term");
+            assert_eq!(value.operand(), &Operand::One(terms[0].clone()));
+
+            // A null has no order term, and a `"sql"` field stores none for
+            // its nulls, which are SQL NULL.
+            for (field, op) in [("rank", OpSpec::Eq), ("rank", OpSpec::Lt)] {
+                let refused = query(field, op).err();
+                assert!(
+                    matches!(&refused, Some(Error::Source { field: Some(f), reason: Reason::NullQuery }) if f == field),
+                    "{field} {op}: {refused:?}"
+                );
+            }
+            let opened = open(&cipher, sealed, &plan).await;
+            assert_eq!(
+                opened,
+                Tree::Array(vec![
+                    row(Tree::UInt32(34)),
+                    row(Tree::Null),
+                    row(Tree::Null)
+                ])
+            );
         }
 
         /// A stored null opens only through a plan that says the field may
@@ -6076,6 +6211,30 @@ mod tests {
                         None,
                     ),
                     TargetDescriptor::new(
+                        "IntegerEq",
+                        "integer",
+                        "Eq",
+                        Some(ValueKind::Int32),
+                        "public.eql_v4_integer_eq",
+                        vec!["eq".to_string()],
+                        Some("IntegerEqQuery".to_string()),
+                        Some("eql_v4.query_integer_eq".to_string()),
+                        true,
+                        None,
+                    ),
+                    TargetDescriptor::new(
+                        "IntegerOrd",
+                        "integer",
+                        "Ord",
+                        Some(ValueKind::Int32),
+                        "public.eql_v4_integer_ord",
+                        vec!["eq".to_string(), "ope".to_string()],
+                        Some("IntegerOrdQuery".to_string()),
+                        Some("eql_v4.query_integer_ord".to_string()),
+                        true,
+                        None,
+                    ),
+                    TargetDescriptor::new(
                         "TextOrdOre",
                         "text",
                         "OrdOre",
@@ -6494,29 +6653,45 @@ mod tests {
             assert_eq!(generates(&cipher), 0, "nothing minted");
         }
 
-        /// A target field stores a null as its plan says: under `"sql"` any
-        /// type, but sealed only in a type with no term, since a null has none
-        /// and the type's term column would show it (#1298). Refused when the
-        /// plan is built, naming the field, before any value crosses.
+        /// A target field stores a null as its plan says (#1298): under
+        /// `"sql"` in any type; sealed only in a type of fixed width whose
+        /// terms are equality's alone, since a null has an equality term and
+        /// no other. Refused when the plan is built, naming the field,
+        /// before any value crosses.
         #[test]
-        fn a_target_field_seals_a_null_only_in_a_type_with_no_term() {
-            let with_null = |null: &str| {
-                let mut spec = target_spec(label("email"), TEXT_EQ);
+        fn a_target_field_seals_a_null_only_in_a_type_of_equality_alone() {
+            let with_null = |target: &str, null: &str| {
+                let mut spec = target_spec(label("f"), target);
                 if let Tree::Object(entries) = &mut spec {
                     entries.push(("null".to_string(), s(null)));
                 }
-                obj(vec![("email", spec)])
+                obj(vec![("f", spec)])
             };
-            let refused = plan_with(with_null("sealed"), &FakeEql).err();
+            let refused = |target: &str| plan_with(with_null(target, "sealed"), &FakeEql).err();
             assert!(
                 matches!(
-                    &refused,
-                    Some(Error::Plan { field: Some(f), reason: Reason::SealedNullIndex }) if f == "email"
+                    &refused("IntegerOrd"),
+                    Some(Error::Plan { field: Some(f), reason: Reason::SealedNullIndex }) if f == "f"
                 ),
-                "{refused:?}"
+                "an order term has no null: {:?}",
+                refused("IntegerOrd")
             );
-            let parsed = plan_with(with_null("sql"), &FakeEql).expect("any type stores a SQL null");
-            assert_eq!(parsed.fields()[0].null(), Some(NullMode::Sql));
+            assert!(
+                matches!(
+                    &refused(TEXT_EQ),
+                    Some(Error::Plan { field: Some(f), reason: Reason::SealedNullType }) if f == "f"
+                ),
+                "text has no fixed width: {:?}",
+                refused(TEXT_EQ)
+            );
+            let sealed = plan_with(with_null("IntegerEq", "sealed"), &FakeEql)
+                .expect("an equality type seals a null");
+            assert_eq!(sealed.fields()[0].null(), Some(NullMode::Sealed));
+            for target in [TEXT_EQ, "IntegerOrd"] {
+                let parsed = plan_with(with_null(target, "sql"), &FakeEql)
+                    .expect("any type stores a SQL null");
+                assert_eq!(parsed.fields()[0].null(), Some(NullMode::Sql));
+            }
         }
 
         /// The resolver opens a target value through the client, which opens

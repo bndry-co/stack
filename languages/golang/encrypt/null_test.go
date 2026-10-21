@@ -1,6 +1,7 @@
 package encrypt_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -16,6 +17,18 @@ import (
 // nothing. Both decrypt to nil.
 
 func ptr[T any](v T) *T { return &v }
+
+// hmOf is the equality term an EQL value or query holds.
+func hmOf(t *testing.T, value []byte) string {
+	t.Helper()
+	var envelope struct {
+		HM string `json:"hm"`
+	}
+	if err := json.Unmarshal(value, &envelope); err != nil || envelope.HM == "" {
+		t.Fatalf("the EQL value has no hm: %v: %s", err, value)
+	}
+	return envelope.HM
+}
 
 // cOf is the length of the `c` an EQL value stores.
 func cOf(t *testing.T, value []byte) int {
@@ -38,8 +51,9 @@ func TestOptionalFieldsStoreNilAsTheirTagsSay(t *testing.T) {
 	cipher := c.DefaultKeyset()
 	dob, born := encrypt.Date{Year: 1990, Month: 5, Day: 17}, encrypt.Date{Year: 1991, Month: 6, Day: 1}
 	people := []testusers.Person{
-		{ID: 1, DOB: &dob, Born: &born, Age: ptr(int32(34)), Score: ptr(int64(7)), Nick: ptr("al")},
+		{ID: 1, DOB: &dob, Born: &born, Joined: &born, Age: ptr(int32(34)), Score: ptr(int64(7)), Nick: ptr("al")},
 		{ID: 2},
+		{ID: 3},
 	}
 	sealed, err := testusers.EncryptPerson(ctx, cipher, people)
 	if err != nil {
@@ -55,11 +69,31 @@ func TestOptionalFieldsStoreNilAsTheirTagsSay(t *testing.T) {
 	if len(absent.Age.Ciphertext) != len(present.Age.Ciphertext) {
 		t.Fatalf("a nil Age is sealed as long as an int32: %d bytes, beside %d", len(absent.Age.Ciphertext), len(present.Age.Ciphertext))
 	}
+	if cOf(t, absent.Born) != cOf(t, present.Born) {
+		t.Fatalf("a nil Born is sealed as long as a date")
+	}
+	// Beside equality, a sealed null stores the term every nil shares, and
+	// EqNull is its query (#1298).
+	other := sealed[2]
+	if hmOf(t, absent.Born) != hmOf(t, other.Born) || hmOf(t, absent.Born) == hmOf(t, present.Born) {
+		t.Fatal("every nil Born shares one term, and no date has it")
+	}
+	if !bytes.Equal(absent.Age.Equality, other.Age.Equality) || bytes.Equal(absent.Age.Equality, present.Age.Equality) {
+		t.Fatal("every nil Age shares one term, and no int32 has it")
+	}
+	bornNull, err := testusers.PersonFields.Born.EqNull(ctx, cipher)
+	if err != nil || hmOf(t, bornNull) != hmOf(t, absent.Born) {
+		t.Fatalf("Born.EqNull is the query of the stored nils: %v", err)
+	}
+	ageNull, err := testusers.PersonFields.Age.EqNull(ctx, cipher)
+	if err != nil || !bytes.Equal(ageNull, absent.Age.Equality) {
+		t.Fatalf("Age.EqNull is the query of the stored nils: %v", err)
+	}
 	// A SQL null: nothing stored, so the column holds NULL.
-	if absent.Born != nil || absent.Score != nil || absent.Nick != nil {
+	if absent.Joined != nil || absent.Score != nil || absent.Nick != nil {
 		t.Fatalf("a nil null=sql field stores nothing: %+v", absent)
 	}
-	if present.Born == nil || present.Score == nil || present.Nick == nil {
+	if present.Joined == nil || present.Score == nil || present.Nick == nil {
 		t.Fatalf("a present null=sql field is stored: %+v", present)
 	}
 	var stored eql.Date
@@ -71,11 +105,11 @@ func TestOptionalFieldsStoreNilAsTheirTagsSay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := opened[1]; got.ID != 2 || got.DOB != nil || got.Born != nil || got.Age != nil || got.Score != nil || got.Nick != nil {
+	if got := opened[1]; got.ID != 2 || got.DOB != nil || got.Born != nil || got.Joined != nil || got.Age != nil || got.Score != nil || got.Nick != nil {
 		t.Fatalf("every nil decrypts to nil: %+v", got)
 	}
 	got := opened[0]
-	if got.DOB == nil || *got.DOB != dob || got.Born == nil || *got.Born != born || got.Age == nil || *got.Age != 34 ||
+	if got.DOB == nil || *got.DOB != dob || got.Born == nil || *got.Born != born || got.Joined == nil || *got.Joined != born || got.Age == nil || *got.Age != 34 ||
 		got.Score == nil || *got.Score != 7 || got.Nick == nil || *got.Nick != "al" {
 		t.Fatalf("every value decrypts as it was: %+v", got)
 	}
