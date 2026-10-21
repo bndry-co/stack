@@ -6,6 +6,8 @@
 **Relates to:** #1231 (containment matches across array elements), #1209 (`Contains`, `ContainedBy`, `AtPath` declared), ADR-0009 (operators select the index), system ADR-0002 (EQL v4 by producer), `packages/eql/docs/plans/stevec-envelope-key-header-rfc.md` (the v3 envelope), `docs/plans/2026-10-04-plan-builder.md` ("The JSON index" under Additions)
 **Prototypes:** `2026-10-17-json-index-stack-encrypt-spike/` beside this file, three SQL files that run on a stock PostgreSQL 16 with no extension
 
+> **Note (2026-10-22).** The stored form this document designs has changed twice since, and the implementation notes at the end record each change. As of Phase 3b a stored entry carries only `s`, `c`, `p` and `op`. The value selectors live only in the stored projection `q`. The group tags `n` and `g`, the wrapped token `w` and the stored ordinal (`i` here, `o` in the code) are gone. A child's token is derived from its parent's token and its ordinal, not its label, and the walk probes ordinals until the first miss. The sections below are kept as written, with short dated notes where they would otherwise mislead.
+
 ## Summary
 
 Stack Encrypt has no JSON index yet. The operators exist (#1209 merged `op::Contains`, `op::ContainedBy` and `op::AtPath<Op>` on `next`), the plan-builder document reserves `Json: Index<Value>` as "a new core operation", and EQL v4 has a storage-only `public.eql_v4_json` but "no SteVec bindings yet". The v4 JSON wire format is therefore unconstrained by anything shipped. This document proposes what to build, and a spike to prove it.
@@ -74,6 +76,8 @@ The flattening is unchanged in what it visits: every node, with arrays indexed u
 
 The value entry and its sentinel disappear: `vs` sits on the node's own entry. The entry count halves. `a` disappears: `n` marks an array element, and the chain enumerates an array's elements.
 
+> **2026-10-22:** of the fields in this table a stored entry now keeps `s`, `p`, `c` and `op` (Phase 3b). `vs` moved to the stored projection `q` (Phase 3 stored it, Phase 3b removed it from the entries), and `w`, `n`, `g` and the ordinal are not stored.
+
 What the client gets back for a scalar path (`doc -> 'sel'` where the leaf is a string) is unchanged in shape: one entry, decryptable with the grafted `h`, its own `s` and `c`, and its ordinal `j` (grafted by the extractor, as `h` is today). For a container path the client gets the subtree's entries and rebuilds the value from each entry's decrypted `(label, kind, scalar)` and the depth the walk reports. Whole-document decryption is one AEAD on the root entry when the sealed-root option (next section, on by default) is set, and otherwise the same walk, run by the client over the whole `sv` with the root token it can derive itself.
 
 ### 2. The token chain
@@ -85,6 +89,8 @@ t(child)       = H("t" ‖ t(parent) ‖ 0x02 ‖ LE64(index))[..16]       array
 p(child)       = H("p" ‖ iv ‖ t(parent))[..16]                        stored
 w(child)       = t(child) XOR H("w" ‖ iv ‖ t(parent) ‖ c(child))[..16] stored
 ```
+
+> **2026-10-22:** superseded by Phase 3b. A child's token is `H("t" ‖ t(parent) ‖ LE32(o))`, keyed by its ordinal rather than its label, and nothing stores it: the server derives it as it walks, so there is no `w`, no unwrapping and no XOR, and the parent tag is the position-keyed one below. The client can then derive a token only for a chain head and the array positions that directly follow it, and sends gates for the rest of a path. The recursive query, the paragraph on the mask, and "Wildcard paths" below describe the original design.
 
 `H` is SHA-256. Only `t(root)` needs the index key; everything below it is hashing, so the server can do its half with core functions. The tokens are a function of the column and the **positional** path, so the client derives a start token for any path it can name without a wildcard: `$.nested`, `$.a[2].b`. Labels are bound with a kind byte and as the final variable-length field, so `("ab", "c")` and `("a", "bc")` cannot collide.
 
@@ -142,6 +148,8 @@ The sealed root caps how much a token unlocks. It does nothing about how long: a
 
 `p = H("p" ‖ iv ‖ t(parent))` is the same value on every child of a node, so sibling groups are visible to anyone holding the row, with no token. That is the main at-rest residue of the chain. Keying the tag by the child's position removes it: `p_i = H("p" ‖ iv ‖ t(parent) ‖ i)`, with the child's ordinal `i` stored in the clear on the entry. At rest an observer learns only "this is some node's `i`-th child". The walk changes from one hash per walked node to `F` hashes per walked node, where `F` is one more than the largest `i` in the document (public), followed by the same equality join as now; `W × F` hashes for a walk of `W` nodes, which Phase 3 measures. Array children take `i` from their index, which the client needs for reconstruction anyway. Object children take `i` from a per-document shuffled order, derived from the document key, so the ordinal does not rank key names. The storage cost is one small integer per entry.
 
+> **2026-10-22:** the parent tag is still position-keyed, but since Phase 3b the ordinal is not stored and there is no `F`: the ordinals under a node are dense from zero, so the walk probes them in turn and stops at the first miss, about `2N` probes for a subtree of `N` nodes.
+
 ### 3. Exact containment (#1231)
 
 **The gap, verified.** `jsonb-semantics.sql` pins PostgreSQL's own answers, and `containment-oracle.sql` runs a plaintext-selector simulation of the v3 flattening (the PRF is injective in practice, so string selectors give the same containment answers as MAC'd ones) beside it:
@@ -186,6 +194,8 @@ OR (q.alt IS NOT NULL AND to_query(doc) @> q.alt)  -- a second GIN probe, bitmap
 
 Then `to_query(a) @> to_query(b)` is exact for arrays of containers with no plpgsql at all: the `sv` arrays check selector presence, and each needle `el` object has to fit inside one stored `el` object, which is the same-element rule. The GIN `jsonb_path_ops` index still serves it, because GIN is lossy for `@>` and the executor rechecks the real operator on the heap tuple; and the projection is computed once per row inside the expression index, so a query pays nothing for it. `alt` stays as it is. Two ways to obtain the grouping server-side, with identical leakage: build the projection from the `g` and `n` tags (a plpgsql `to_query`, immutable, run at index time), or store `sv` itself nested by element, which removes the tags from the wire and makes `->` by selector a `$.**` jsonpath lookup. Phase 2 tries the projection first, measures both, and keeps `groups_ok` only if neither engages the index. Whichever form wins, `n` and `g` are emitted only for elements that are **containers**: a scalar element carries one constraint, so grouping cannot be wrong for it, and the tags would reveal element membership for nothing.
 
+> **2026-10-22:** the projection won, and it is stored rather than built: the client writes it beside `sv` as `q` (Phase 3), and since Phase 3b the entries carry no `n` or `g`. Element grouping is visible at rest through the nesting of `q` instead. The `grp` needle and `groups_ok` above were never built.
+
 **Portability to v3.** The group tags and the recheck do not depend on the chain. If #1231 must also be fixed for rows cipherstash-client writes, the same `g`/`n` fields and the same `groups_ok` can be added to the v3 wire and SQL, with `g` derived from the document key instead of a token. This document does not propose that; it records that the fix is separable.
 
 ### 4. Wire format
@@ -222,6 +232,8 @@ A `Contains` needle, `eql_v4.query_json`:
 An `AtPath<Eq>` needle is `{"sv": [{"vs": "…"}]}`. An `AtPath<Gte>` term is the pair the ADR-0009 appendix already shows: a selector for `->` and a leaf ordering operand. A subtree request is `(t_start, s?)`.
 
 With the sealed-root option off, the root entry's `c` is the root's label and kind only, and the top-level entries carry `p` and `w` like every other node. The header records which shape the document has.
+
+> **2026-10-22:** as built, a stored document is `{"v", "i", "h", "sv": [{s, c, p?, op?}], "q"}`, with no `k`; a containment needle is a projection, `{"sv", "el", "alt"?}`, with no `grp`; and a subtree request is a token and one gate per step below it. The size estimates below predate both; the measured sizes are under Phase 3b.
 
 **Size.** Per 16-byte field, hex costs 32 characters plus about six of framing. Measured against the envelope RFC's fixture document (`{"hello":"world-1","nested":{"deep":"constant"},"number":1}`, 5 nodes):
 
@@ -262,6 +274,8 @@ On a flat five-node document the proposal is about 8% larger: the two chain fiel
 | the broadest token a legitimate query can send | none exist | with the sealed root: one top-level field's subtree. Without it: `t($)`, the whole column's shape |
 | how long a revealed token stays useful | not applicable | for as long as the column lives; epochs (recorded above, not scheduled) would bound it to rows written under the epoch it was issued for |
 
+> **2026-10-22:** parent tags are position-keyed (Phase 1), so siblings do not share a `p` at rest. Since Phase 3b there is no `g`: which leaves sit in the same array element is visible at rest through the nesting of the stored projection `q` instead.
+
 ### 7. Performance
 
 - **Encrypt:** per node two PRFs (`s`, `vs`), three hashes (`t`, `p`, mask), one small AEAD. v3 does two MACs and one AEAD over the subtree bytes. Fewer bytes encrypted at every depth above the leaves.
@@ -271,9 +285,13 @@ On a flat five-node document the proposal is about 8% larger: the two chain fiel
 - **Decrypt a document:** with the sealed root, one AEAD on the root entry, as today. Without it, the client walks the chain locally: N hashes plus N small AEADs; the client has the index key, so no extra round trip either way.
 - **Encrypt, with the sealed root:** one more AEAD, over the whole document, beside the N small ones.
 
+> **2026-10-22:** as built, encrypt is two PRFs per node (`s`, `vs`) and up to three hashes (`t`, `p`, and an object member's rank), with no mask. The walk reads the document once into a map keyed by parent tag (Phase 3) and probes it, about `2N` probes and `3N` hashes for a subtree of `N` nodes (Phase 3b); measurements are under Phase 3 and Phase 3b.
+
 ### 8. Standard PostgreSQL
 
 Everything the server does: `sha256(bytea)` (core since PostgreSQL 11), `get_byte` / `set_byte` for a 16-byte XOR in plpgsql, `decode` / `encode`, `WITH RECURSIVE`, `jsonb_array_elements WITH ORDINALITY`, and `jsonb_path_ops` GIN. No pgcrypto, no superuser, no C. The same posture as the v3 surface Supabase runs today.
+
+> **2026-10-22:** with no XOR since Phase 3b, the walk needs no `get_byte` / `set_byte`: it is `sha256`, `decode` / `encode`, a jsonb object lookup and `WITH RECURSIVE`.
 
 ## Further mechanisms (added 2026-10-18)
 
@@ -309,6 +327,8 @@ The four above are in the spike: the native-`@>` projection and container-only t
 - **A build change, additive only.** `tasks/build.sh` renders `src/v3/**` as both bundles and `verify_installer_complete.sh` asserts every ordered v3 file is in the v4 installer. The new family needs the renderer to also order and render a v4-only source tree into the v4 bundle, and the completeness check to accept files that exist in one bundle only. Nothing is removed from either bundle, so this cannot block the v4 release: until the build change lands, the spike installs the new family as a separate file over the v4 bundle.
 - Tests: `mise run test:stack_encrypt_pg` on `next` already installs the v4 bundle and runs a Stack Encrypt PostgreSQL test with fresh encryption under a fake KMS and no credentials. The JSON suite joins it. The SQLx fixture machinery is not needed for this and should not be used: the point of the fake key source is that the whole suite runs on a fork PR.
 
+> **2026-10-22:** as built, the walk functions are `eql_v4.json_tree_subtree(doc, token, budget)`, `json_tree_subtree_at(doc, token, gates, budget)`, `json_tree_children(doc, token, gates)` and `json_tree_child_count(doc, token, gates)`, and there is no `groups_ok`.
+
 **`languages/golang`**
 
 - Nothing in the spike. After it, `JSON` moves from "the JSON index is a new operation in the engine" to producible in `encrypt/eql`'s table, and the data plan carries the `json` index with its options (plan-builder Additions, item 7).
@@ -339,11 +359,13 @@ The index, the SQL and the live oracle landed in the pull request stacked on thi
 
 **Decisions taken by the code.** Of the ten listed below: 1, hex for every sixteen-byte field and base64 for `c` and `h`, pending Phase 3; 2, leaf ordering terms bound to the column only, numbers as the `f64` they round to and strings as text, under the scalar `Ope` index's derivation; 3, wildcard arrays only; 4, group tags on, and only on container array elements; 5, the child count is in every container node's ciphertext, and a truncated subtree is `OpenedType`, not a shorter array; 7, plain SHA-256; 8, the option is the boolean `sealed_root`, on by default, recorded in the header's flags; 9, the projection is built from the tags server-side (`eql_v4.json_tree_query`) and `groups_ok` was not needed; 10, position-keyed parent tags on, the ordinal stored as `o`, object members ranked by a hash under the parent's token.
 
+> **2026-10-22:** 4 and 10 have since moved. The grouping lives only in the stored projection `q`, with no `n` or `g` on an entry (Phase 3 and 3b). Parent tags are still position-keyed and an object member's ordinal is still its rank by a hash under the parent's token, but the ordinal is no longer stored (Phase 3b).
+
 **Deviations.**
 
 - *Nonces are random, not derived from the selector and ordinal.* Every entry seals through the engine's one AEAD path (`vitaminc-encrypt`'s AES-256-GCM with its own random 96-bit nonce, carried in `c`), so there is one leaf cipher in the crate and no second AES-GCM call site. Uniqueness under one document key is then probabilistic (`N² / 2^97` at `N` entries) rather than structural. The entry's AAD still binds its ordinal `j`, so a moved or reordered entry fails to open as the design requires; the cost is twelve bytes per entry, which Phase 3 should count.
-- *The ordinal is `o`, not `i`*, because `i` is the envelope's identifier, which `->` grafts onto an extracted entry. An extracted entry also carries `j`, its ordinal in the document, which its AAD is bound to, and a walk adds `d`, its depth below the start.
-- *The subtree walk returns a node's descendants and not the node itself.* The walk addresses nodes by their parent, and the design's wire has no field that names a node by its own token. The client reads the node's kind from its children's labels; a node with no descendants, an empty container or a scalar, yields no rows, and `->` on its selector returns the node. A self tag per node would close this at sixteen bytes an entry and is left to Phase 4.
+- *The ordinal is `o`, not `i`*, because `i` is the envelope's identifier, which `->` grafts onto an extracted entry. An extracted entry also carries `j`, its ordinal in the document, which its AAD is bound to, and a walk adds `d`, its depth below the start. (2026-10-22: since Phase 3b `o` is not stored at all.)
+- *The subtree walk returns a node's descendants and not the node itself.* The walk addresses nodes by their parent, and the design's wire has no field that names a node by its own token. The client reads the node's kind from its children's labels; a node with no descendants, an empty container or a scalar, yields no rows, and `->` on its selector returns the node. A self tag per node would close this at sixteen bytes an entry and is left to Phase 4. (2026-10-22: a gated walk, `json_tree_subtree_at`, now returns the node its gates reach at `d = 0`, with no self tag; the ungated `json_tree_subtree` still returns descendants only.)
 - *Containment is not `STRICT` in SQL.* PostgreSQL inlines a `STRICT` SQL function only when it can prove the body is NULL for a NULL argument, and the `OR` that adds the needle's `alt` probe is not provably NULL; un-inlined, the call was an opaque filter and the GIN index never engaged. `eql_v4.json_tree_contains` and the `@>` / `<@` wrappers over it are declared without `STRICT` and return NULL for a NULL side on their own.
 - *`<@` cannot match a stored root scalar inside a needle root array*, since a stored document carries no `alt` pair. The oracle records the case; `@>` is exact.
 - *Value selectors compare strings byte for byte*, with no Unicode normalization, because `jsonb @>` does, and the oracle is agreement with `jsonb @>`. The scalar equality index normalizes to NFC; a JSON value does not. Numbers canonicalize by value, so `2` and `2.0` are one value, as `jsonb` compares them.
@@ -364,17 +386,55 @@ Still open from the measurements, filed as a follow-up: `->` scans `sv` on every
 
 ## Implementation notes (2026-10-22, Phase 3b: the ordinal-chained walk)
 
-A review of the stored form after the Phase 3 measurements found three fields nothing read and two the walk did not need, and replaced the chain step. The wire is now `{"h", "sv": [{s, c, p?, op?}], "q"}`.
+A review of the stored form after the Phase 3 measurements found three fields nothing read and two the walk did not need, and replaced the chain step. The wire is now `{"v", "i", "h", "sv": [{s, c, p?, op?}], "q"}`.
 
-- **`vs`, `n` and `g` are gone from the entries.** Once `q` was stored (Phase 3), no SQL function read an entry's value selector or group tags: containment reads `q` alone, and the engine read them only to rebuild `q` on deserialize. The engine now takes the stored `q` as the projection. That is no change in trust: `q` and the entry fields were equally unauthenticated (only `c` is, through its AAD), and a tampered `q` changes which rows a containment query returns and nothing else. On the 269-node benchmark document the three fields were 15% of `sv`.
-- **Tokens chain by ordinal.** `t(child) = H("t" ‖ t(parent) ‖ LE32(o))` replaces the label-derived step. The server derives every hit's token from its parent's as it walks, so `w` (the wrapped token) is not stored. The cost is that the client cannot derive an object member's token, because an ordinal is a rank among sibling keys it does not know; it derives down to the last array position after a chain head and sends one gate per further step (`JsonSubtreeKey::gates()`: the step's selector, or `#n` for a position), and `json_tree_subtree_at` descends through them. A wildcard step's selector is every element's, which is the old `subtree_at` gate generalised to every depth.
-- **The walk probes to the first miss.** The ordinals under a node are dense from zero (positions for arrays, a permutation for objects), so the walk tries `0, 1, 2, …` and stops at the first miss. `o` is not stored and `json_tree_fanout` is gone. A subtree of `N` nodes costs about `2N` SHA-256 evaluations and lookups (one miss per parent, one per leaf) where it cost `F` per visited node, `F` being the widest node in the whole document; on the nested corpus a wide `items` array taxed every object walk in the same document.
-- **Depth is reported from the reached node.** A gated walk returns the node its gates reach with `d = 0` and its descendants beneath it, so the client can tell "the value at the path" (one reached node) from "the children of a node" (no `d = 0` row) without the path. A wildcard reaches several nodes and opens as a list.
-- **Leakage.** At rest, the same as Phase 3 minus the slot multiset `o` leaked; `p` is still salted by the document `iv`. Under a token, the same: a token still unlocks the shape of that subtree in every row. The `w` mask's binding to `c` (a swapped ciphertext broke the walk on the server) is gone; the swap still fails when the client opens the entry, because `c` is bound to `s` and `j` in its AAD.
+- **`vs`, `n` and `g` are gone from the entries.** Once `q` was stored (Phase 3), no SQL function read an entry's value selector or group tags: containment reads `q` alone, and the engine read them only to rebuild `q` on deserialize. The engine now takes the stored `q` as the projection. That is no change in trust: `q` and the entry fields were equally unauthenticated (only `c` is, through its AAD), and a tampered `q` changes which rows a containment query returns and nothing else. On the nested benchmark document (213 entries on average) the values of those three fields were 15% of `sv`.
+- **Tokens chain by ordinal.** `t(child) = H("t" ‖ t(parent) ‖ LE32(o))` replaces the label-derived step. The server derives every hit's token from its parent's as it walks, so `w` (the wrapped token) is not stored. The cost is that the client cannot derive an object member's token, because an ordinal is a rank among sibling keys it does not know. It derives a chain head's token and those of the array positions that directly follow the head, and sends one gate per further step (`JsonSubtreeKey::gates()`: the step's selector, or `#n` for a position); `json_tree_subtree_at(doc, token, gates, budget)` descends through them, and `json_tree_children` and `json_tree_child_count` take the same gates. A wildcard step's selector is every element's, which is the old `subtree_at` gate generalised to every depth.
+- **The walk probes to the first miss.** The ordinals under a node are dense from zero (positions for arrays, a permutation for objects), so the walk tries `0, 1, 2, …` and stops at the first miss. `o` is not stored and `json_tree_fanout` is gone. A subtree of `N` nodes costs about `2N` probes (`N` hits, and a miss for every node visited), each a SHA-256 and a map lookup, plus a SHA-256 per hit for its token, where it cost `F` probes per visited node, `F` being the widest node in the whole document; on the nested corpus a wide `items` array taxed every object walk in the same document.
+- **Depth is reported from the reached node.** A gated walk returns the node its gates reach with `d = 0` and its descendants beneath it, so the client can tell "the value at the path" (one reached node) from "the children of a node" (no `d = 0` row) without the path. A wildcard reaches several nodes and opens as a list. The ungated `json_tree_subtree(doc, token)` is now `json_tree_subtree_at` with no gates, and returns the token's node's descendants from `d = 1` as before.
+- **Leakage.** At rest, the same as Phase 3 less what the stored ordinals told: their multiset gave, for every `k`, how many nodes in the chain have more than `k` children. `p` is still salted by the document `iv`. Under a token, the same: a token still unlocks the shape of that subtree in every row. The `w` mask's binding to `c` (a swapped ciphertext broke the walk on the server) is gone; the swap still fails when the client opens the entry, because `c` is bound to `s` and `j` in its AAD.
 
-Measured against the Phase 3 corpus in `cipherstash/benches` (branch `feat/json-tree-benches`), results to follow in that report.
+### Measured (cipherstash/benches 2d9d5f2)
+
+Measured in `cipherstash/benches` (branch `feat/json-tree-benches`, commit 2d9d5f2, `report/JSON_TREE_COMPARISON.md`, "Third measurement") on the machine of the second Phase 3 measurement (Apple M1 Max, PostgreSQL 17.10), against the same documents: the ingest resealed the plaintext each row already held, so every scenario returned the same rows before and after. "Before" is the Phase 3 branch with its fixes, "after" this change. Query-only criterion medians over 10 samples, no decrypt, in milliseconds, on the nested corpus.
+
+| scenario | 10,000 rows | 100,000 rows |
+|---|--:|--:|
+| `subtree/orders`, default budget (falls back to the sealed root) | 9.48 → 5.71 (−40%) | 8.77 → 5.46 (−38%) |
+| `subtree_at/items`, `$.orders[*].items`, default budget | 12.95 → 8.21 (−37%) | 10.92 → 7.18 (−34%) |
+| `subtree/orders`, walked out (budget 0; 122 / 130 entries) | 22.97 → 10.92 (−52%) | 24.57 → 11.35 (−54%) |
+| `subtree_at/items`, walked out (budget 0; 87 / 105 entries) | 23.12 → 10.93 (−53%) | 24.83 → 11.27 (−55%) |
+| `subtree/company` | 2.84 → 1.99 (−30%) | 2.94 → 1.96 (−33%) |
+| `subtree/user` | 3.90 → 2.38 (−39%) | 3.99 → 2.45 (−39%) |
+| `children/orders` | 1.63 → 1.54 (−6%) | 1.64 → 1.49 (−9%) |
+| `child_count/orders` | 1.62 → 1.53 (−6%) | 1.66 → 1.52 (−9%) |
+| `path_query/wildcard` | 2.24 → 1.64 (−27%) | 1.80 → 1.41 (−22%) |
+| `field_order/nested` | 4.81 → 3.81 (−21%) | 5.23 → 4.12 (−21%) |
+| `extract/nested` | 0.59 → 0.47 (−19%) | 0.63 → 0.54 (−15%) |
+
+The walks the change was aimed at halved when walked out. Scenarios the walk does not touch improved too (`path_query`, `field_order`, `extract`): they read entries through `->` and the path functions, which scan an `sv` 30% shorter in a datum 24% smaller to decompress. `children` and `child_count` moved least; the report's explanation, not yet tested, is that both are dominated by the per-call fixed cost of detoasting the document and building the parent map over all its entries, which this change does not touch, and probing five to seven children instead of the document's widest fan-out saves only a few dozen hashes on top of it. That fixed cost is the next lever for every walk.
+
+Containment and field queries did not change beyond noise. The nested corpus's containment scenarios moved −12% to +7%. The flat corpus read +7% to +13% on the GIN-served containment and equality scenarios, but its operands, SQL, plans, projection and index are byte-identical before and after, and the native `jsonb` containment controls over unchanged plaintext, with freshly built indexes, drifted +5% to +19% in the same run; that points at the machine, not the format. The 100,000-row nested GIN build went from 58 s to 65 s on one sample, with the same projection and a smaller heap, which reads the same way.
+
+| size | before | after |
+|---|--:|--:|
+| nested document, characters (213 entries) | 113,458 | 85,157 (−25%) |
+| nested `sv`, characters | 94,324 | 66,023 (−30%) |
+| nested `q`, characters | 18,961 | 18,961 |
+| nested `pg_column_size`, 10,000 rows | 81,264 B | 62,143 B (−24%) |
+| nested heap with TOAST, 10,000 / 100,000 rows | 810 MB / 8,093 MB | 621 MB / 6,201 MB (−23%) |
+| nested containment GIN, 10,000 / 100,000 rows | 40 MB / 358 MB | 40 MB / 358 MB |
+| nested GIN build, 10,000 / 100,000 rows | 5 s / 58 s | 5 s / 65 s |
+| flat document, characters (5 entries) | 2,346 | 2,136 (−9%) |
+| flat `pg_column_size` | 2,452 B | 2,250 B (−8%) |
+
+`sv` shrank by 30% where 15% was expected from the three unread fields alone: the five removed fields carried 20,827 characters of values per nested document, and their keys and quotes about 7,500 more. The nested document is now 21 times its plaintext in characters (was 28) and 26 times in heap (was 34). The largest field is now `op`, the CLLW OPE term on the 156 number and string leaves: 24,832 characters a document.
+
+**Correctness.** A new benches task, `mise run check:v4:json_tree <N>`, ran after ingest at both tiers. For 25 rows in a fixed pseudo-random order it decrypted every walk form the SQL returns and compared it with the row's plaintext: `json_tree_subtree` at `$.company`, `$.user` and `$.orders`, walked out and under the default budget (opening the sealed root at the path when the walk fell back); `json_tree_subtree_at` for `$.user.contact` (one gate) and `$.orders[*].items` (two gates); `json_tree_children` and `json_tree_child_count` at `$.orders`; every order by its position-derived token; `json_tree_path_query`; and `->`. For 10 sampled needles per predicate it compared the full id set of the encrypted containment, equality, range and ordering queries with native `jsonb` over the plaintext. 462 checks passed and none failed at each of 10,000 and 100,000 rows (350 walk checks, 112 predicate checks).
 
 ## Decisions to take before Phase 1
+
+> **2026-10-22:** these are the open questions as they stood before Phase 1; the implementation notes above record how each was taken. Since then, decision 4's group tags exist only as the nesting of the stored projection `q`, decision 9 was settled by storing the projection (Phase 3), and decision 10's ordinal is not stored (Phase 3b).
 
 1. **Token encoding on the wire:** hex, matching v3's `s`, or base64url, saving about 40 characters per entry. Proposal: measure in Phase 3, default to base64url.
 2. **Leaf ordering terms bound to the column only, or to the column and the selector.** Column-only reuses the v4 scalar ordering query domains unchanged and matches the ADR-0009 appendix; selector-bound stops cross-path order comparison at the cost of a JSON-specific query domain. Proposal: column-only for the spike, revisit in the ADR.

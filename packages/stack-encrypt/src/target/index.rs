@@ -169,8 +169,9 @@ pub struct Ore;
 pub struct Ope;
 
 /// The JSON index, over a [`serde_json::Value`] alone: one searchable
-/// document per value, with a selector and a value selector per node, a
-/// token chain and group tags (the [`json`](crate::json) module).
+/// document per value, with a path selector per node, a token chain, and
+/// a containment projection of the nodes' value selectors grouped by array
+/// element (the [`json`](crate::json) module).
 ///
 /// Its term is a [`JsonTerms`], the document's one-way terms, which every
 /// query term is built from; the stored document is the output of the

@@ -33,7 +33,6 @@ AS $$
   SELECT substr(sha256(x), 1, 16)
 $$;
 
-
 --! @brief A 32-bit integer as four little-endian bytes.
 --! @internal
 --! @param n integer The integer, non-negative.
@@ -107,8 +106,8 @@ $$;
 --!        whose keys are each entry's `p` and whose values are the entry
 --!        with its ordinal `j` in `sv` added. A walk looks a child up by
 --!        the tag it computes, `map -> tag`, instead of scanning `sv` for
---!        it, so the document is read once per walk and a level costs its
---!        fan-out in hashes, not its fan-out times the document's size.
+--!        it, so the document is read once per walk and a probe costs one
+--!        hash and one lookup, not a pass over the document.
 --! @internal
 --! @param val jsonb The document.
 --! @return jsonb The map; `{}` for a document with no chained entry.
@@ -338,14 +337,16 @@ $$;
 --! first miss. A hit's own token is `H("t" ‖ t(parent) ‖ LE32(o))`,
 --! derived on the spot ({{prefix}}_internal.json_tree_child_token), and the
 --! walk recurses under it. A subtree of `N` nodes therefore costs about
---! `2N` SHA-256 evaluations and map lookups, one miss per parent and one
---! per leaf, whatever the document's width; the map and the header fields
+--! `2N` probes, `N` hits and a miss for every node visited (the end of a
+--! parent's children, or a leaf's lack of any), each probe one SHA-256 and
+--! one map lookup, plus one SHA-256 per hit for its token: about `3N`
+--! hashes whatever the document's width. The map and the header fields
 --! are computed once per call, so the document is read once.
 --!
 --! **Gates.** An object member's ordinal is a function of its siblings'
 --! keys, which the client does not know, so the client derives a token
---! only down to the last array position after a chain head and walks the
---! rest through one gate per further step: either the step's selector,
+--! only for a chain head and the array positions that directly follow it,
+--! and walks the rest through one gate per further step: either the step's selector,
 --! which the entry at that depth must carry in `s`, or `#n`, an array
 --! position, which is the one ordinal probed at that depth. A wildcard
 --! step's selector is every element's, so it admits them all. Entries are

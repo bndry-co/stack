@@ -141,8 +141,9 @@ impl Default for JsonOptions {
 /// | 38 | `tag_len` | 2 | `u16` little-endian |
 /// | 40 | ZeroKMS key `tag` | `tag_len` | required to retrieve the key |
 ///
-/// The SQL reads the `iv` at offset 22 to compute parent and group tags; it
-/// parses nothing else. The epoch is reserved for bounding a revealed token
+/// The SQL reads the `iv` at offset 22 to compute parent tags, and the
+/// flags at offset 1 to know whether a walk may fall back to the sealed
+/// root; it parses nothing else. The epoch is reserved for bounding a revealed token
 /// in time (the design's "Epochs"); writing it now keeps that a new value
 /// rather than a new layout.
 #[derive(Clone, PartialEq, Eq)]
@@ -352,7 +353,7 @@ impl JsonDocument {
     /// probed until the first miss, each with its own token derived. A
     /// token that names no node yields nothing.
     ///
-    /// What a `jsonb_array_elements(doc, token)` returns; one level of the
+    /// What `json_tree_children(doc, token)` returns; one level of the
     /// walk [`subtree`](Self::subtree) runs to the bottom.
     pub fn children(&self, token: &Tag) -> Vec<(usize, &JsonEntry, Tag)> {
         let iv = &self.header.iv;
@@ -480,11 +481,13 @@ where
 /// [`DecryptInto<Value>`](crate::DecryptInto) reassembles into the value
 /// under that node.
 ///
-/// The walk returns the node's descendants and not the node itself, so the
-/// node's kind is read from its children's labels: elements make an array,
-/// members an object. A node with no descendants, an empty container or a
-/// scalar, yields no rows and so no value; `->` on its selector returns the
-/// node itself.
+/// The ungated walk returns the node's descendants and not the node
+/// itself, so the node's kind is read from its children's labels: elements
+/// make an array, members an object. A node with no descendants, an empty
+/// container or a scalar, yields no rows and so no value; `->` on its
+/// selector returns the node itself. A gated walk,
+/// `json_tree_subtree_at(doc, token, gates)`, also returns each node its
+/// gates reach, at depth `0`, with that node's descendants beneath it.
 ///
 /// Past its budget, a walk over a document with a sealed root returns the
 /// root entry alone, at depth `0`, instead of a subtree it would be

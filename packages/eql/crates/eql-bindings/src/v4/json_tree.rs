@@ -342,7 +342,7 @@ impl DecryptInto<Value> for JsonTreeSubtree {
 }
 
 /// The rows of a walk open to the complete subtrees they hold, in order:
-/// one per node whose selector `json_tree_subtree_at` matched.
+/// one per node the gates of `json_tree_subtree_at` reached.
 impl DecryptInto<Vec<Value>> for JsonTreeSubtree {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {

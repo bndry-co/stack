@@ -1,6 +1,7 @@
 //! The JSON index end to end, with no database: a document seals into one
 //! entry per node under one data key and opens again; the token chain
-//! unwraps every child from its parent's token and nothing from any other;
+//! reaches every child from its parent's token and ordinal, and nothing
+//! from any other token;
 //! a moved, reordered or regrafted entry fails to open; and containment
 //! over the element-nested projection agrees with PostgreSQL's `jsonb @>`
 //! on the design's corpus and on random documents, through a Rust model

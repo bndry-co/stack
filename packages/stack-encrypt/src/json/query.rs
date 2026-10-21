@@ -2,9 +2,9 @@
 //!
 //! A containment needle is the **element-nested projection** of the
 //! needle's terms: the selector pairs `{s, vs}` of every node, grouped by
-//! the array element they sit in. The server projects a stored document the
-//! same way from its group tags, and native `jsonb @>` over the two
-//! projections is exact containment: each needle element has to fit inside
+//! the array element they sit in. A stored document carries its own
+//! projection, built the same way, as `q`, which the server reads, and
+//! native `jsonb @>` over the two projections is exact containment: each needle element has to fit inside
 //! one stored element, which is PostgreSQL's own rule for arrays. The
 //! design's "The preferred form" records why no re-check is needed.
 use std::fmt;
@@ -32,8 +32,8 @@ struct Pair16 {
 
 /// The element-nested projection of a document: the selector pairs that
 /// sit outside any array element, and one nested projection per array
-/// element that is a container. What the server computes from a stored
-/// document's group tags (`json_tree_query`), and what a containment
+/// element that is a container. What a stored document carries as `q`,
+/// which the server reads (`json_tree_query`), and what a containment
 /// needle is.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct JsonProjection {

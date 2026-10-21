@@ -907,9 +907,9 @@ impl DecryptInto<Value> for JsonNode {
 
 /// Open the rows of a walk: each complete subtree the rows hold, as a
 /// value, in order. What `json_tree_subtree_at` returns is one subtree per
-/// node whose selector matched; what `json_tree_subtree` returns is the
-/// children of one node, which [`DecryptInto<Value>`] assembles into that
-/// node's value. The sealed root a walk fell back to opens whole, and the
+/// node its gates reached, each rooted at depth `0`; what
+/// `json_tree_subtree` returns is the children of one node, which
+/// [`DecryptInto<Value>`] assembles into that node's value. The sealed root a walk fell back to opens whole, and the
 /// path attached with [`JsonSubtree::at`] selects over it: one value per
 /// node the path reaches.
 impl DecryptInto<Vec<Value>> for JsonSubtree {
