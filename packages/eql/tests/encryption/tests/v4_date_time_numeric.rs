@@ -987,3 +987,50 @@ fn refused_null(
     let null = ValueFrame::from_bytes(&[0x00]).unwrap();
     refused(targets::encrypt(name, keyset, &label(), null))
 }
+
+/// Needs an EQL v4 installation. A storage-only column stores an absent
+/// value sealed as a typed null (#1298): the domain's check takes it, as
+/// it takes a value, and it reads back and opens as `None`.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_stores_a_sealed_null_in_a_storage_only_column() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = database();
+    db.batch_execute(
+        "CREATE TEMP TABLE v4_optional (id int PRIMARY KEY, entry public.eql_v4_date);",
+    )
+    .unwrap();
+    let (absent, present): (date::Date, date::Date) = runtime.block_on(async {
+        (
+            keyset.encrypt_as(&None::<Date>, column()).await.unwrap(),
+            keyset
+                .encrypt_as(&Date::from(day("2024-02-29")), column())
+                .await
+                .unwrap(),
+        )
+    });
+    for (id, value) in [(1, &absent), (2, &present)] {
+        db.execute(
+            "INSERT INTO v4_optional (id, entry) VALUES ($1, $2::text::jsonb::public.eql_v4_date)",
+            &[&id, &json(value)],
+        )
+        .unwrap();
+    }
+    let stored: String = db
+        .query_one(
+            "SELECT entry::jsonb::text FROM v4_optional WHERE id = 1",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    let stored: date::Date = serde_json::from_str(&stored).unwrap();
+    let opened: Option<Date> = runtime
+        .block_on(async { cipher.decrypt_as(stored, column().into()).await })
+        .unwrap();
+    assert!(opened.is_none(), "the stored null opens as None");
+}
