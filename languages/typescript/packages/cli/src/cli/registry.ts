@@ -701,7 +701,7 @@ export const registry: CommandGroup[] = [
           'backfill only fills NULLs, so stale values would survive. Pass --force',
           'to overwrite them from the ciphertext, or --confirm-plaintext-current',
           'to keep them. A forced pass, once started, is owed: every later run is',
-          'forced until one completes, and the waiver is refused from then on.',
+          'forced until one completes, and the waiver is refused while it is owed.',
           '`decrypt status` flags a column that owes one (forced-pass-owed).',
           'Keep writing both columns until the drop is applied.',
         ].join('\n'),
@@ -741,7 +741,7 @@ export const registry: CommandGroup[] = [
           {
             name: '--confirm-plaintext-current',
             description:
-              'Keep the values a plaintext column already holds, asserting they are current. Refused once a forced pass has started.',
+              'Keep the values a plaintext column already holds, asserting they are current. Refused while a started forced pass is owed.',
           },
           {
             name: '--continue-on-undecryptable',
