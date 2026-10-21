@@ -107,11 +107,15 @@ export async function resolveDecryptPair(
     })
   } catch (error) {
     if (!(error instanceof ColumnMigrationError)) throw error
-    throw new BackfillConfigError(
-      opts.plaintextColumn === undefined
-        ? `${error.message} Pass --plaintext-column <name>.`
-        : `${error.message} Drop --plaintext-column to continue with the recorded column.`,
-    )
+    let hint: string
+    if (opts.plaintextColumn === undefined) {
+      hint = 'Pass --plaintext-column <name>.'
+    } else if (opts.plaintextColumn === encryptedColumn) {
+      hint = 'Pass a different --plaintext-column.'
+    } else {
+      hint = 'Drop --plaintext-column to continue with the recorded column.'
+    }
+    throw new BackfillConfigError(`${error.message} ${hint}`)
   }
   const plaintextColumn = migration.twin.column
 

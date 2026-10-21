@@ -142,9 +142,10 @@ export interface ColumnMigrationState {
  * `history` is the column's events in `id` order (any subset that contains
  * every non-checkpoint event and the latest checkpoint). Events of the other
  * direction are ignored. `recordedTwinHistory` is the events under the twin
- * the latest event names: for reverse, a forward column migration of the twin
- * recorded after a generated drop means the drop was applied and the column
- * was encrypted again, so the reverse history is finished.
+ * the latest event names: a column migration of the twin in the other
+ * direction, recorded after a drop, means the drop was applied and the pair
+ * was migrated back (for reverse, the column encrypted again; forward, the
+ * column decrypted again), so this history is finished.
  *
  * Obligations are scoped to the column migration in progress: the events
  * since its latest dual-write confirmation (all of them when a pass ran
@@ -172,7 +173,7 @@ export function deriveColumnMigration(input: {
   if (latest === null) return none
 
   const recordedTwin = twinNamedBy(vocab, latest)
-  if (latest.phase === vocab.droppedPhase && direction === 'reverse') {
+  if (latest.phase === vocab.droppedPhase) {
     const superseded = ofDirection(
       OPPOSITE[direction],
       input.recordedTwinHistory ?? [],

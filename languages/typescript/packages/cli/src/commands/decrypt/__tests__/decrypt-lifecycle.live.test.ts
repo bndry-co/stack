@@ -368,4 +368,122 @@ describeLive('decrypt lifecycle — live Postgres', () => {
       }),
     ).rejects.toThrow(/--force[\s\S]*--confirm-plaintext-current/)
   })
+  it('status flags a twin a forward encryption is still open on, which backfill refuses', async () => {
+    await client.query(`
+      CREATE TABLE ${TABLE} (
+        id int PRIMARY KEY,
+        email_encrypted eql_v3_text_search,
+        email text
+      )
+    `)
+    await installMigrationsSchema(client)
+    await appendEvent(client, {
+      tableName: TABLE,
+      columnName: 'email',
+      event: 'dual_writing',
+      phase: 'dual-writing',
+      details: { encryptedColumn: 'email_encrypted' },
+    })
+
+    expect(rowFor(await statusRows(), 'email_encrypted')).toContain(
+      'forward-open',
+    )
+    await expect(
+      decryptBackfillCommand({
+        table: TABLE,
+        column: 'email_encrypted',
+        confirmDualWritesDeployed: true,
+      }),
+    ).rejects.toThrow(/forward encryption/)
+  })
+
+  it('status flags a started forced pass as owed, refuses the waiver, and clears once a run finishes it', async () => {
+    await client.query(`
+      CREATE TABLE ${TABLE} (
+        id int PRIMARY KEY,
+        email_encrypted eql_v3_text_search,
+        email text
+      )
+    `)
+    for (let id = 1; id <= 3; id++) {
+      await client.query(
+        `INSERT INTO ${TABLE} VALUES ($1, $2, 'stale@example.com')`,
+        [id, JSON.stringify(envelope(`user-${id}@example.com`))],
+      )
+    }
+    await installMigrationsSchema(client)
+    // A `--force` run over a twin that held values, interrupted after it
+    // started: the forced pass is owed.
+    await appendEvent(client, {
+      tableName: TABLE,
+      columnName: 'email_encrypted',
+      event: 'decrypt_dual_writing',
+      phase: 'decrypt-dual-writing',
+      details: { plaintextColumn: 'email', existingTwinValues: true },
+    })
+    await appendEvent(client, {
+      tableName: TABLE,
+      columnName: 'email_encrypted',
+      event: 'decrypt_started',
+      phase: 'decrypting',
+      details: { plaintextColumn: 'email', force: true },
+    })
+
+    expect(rowFor(await statusRows(), 'email_encrypted')).toContain(
+      'forced-pass-owed',
+    )
+    await expect(
+      decryptBackfillCommand({
+        table: TABLE,
+        column: 'email_encrypted',
+        confirmPlaintextCurrent: true,
+      }),
+    ).rejects.toThrow(/forced pass .* has already started/)
+
+    // A plain run finishes it as a forced pass, overwriting the stale values.
+    await decryptBackfillCommand({ table: TABLE, column: 'email_encrypted' })
+    const { rows: stale } = await client.query<{ n: string }>(
+      `SELECT count(*) AS n FROM ${TABLE} WHERE email = 'stale@example.com'`,
+    )
+    expect(stale[0].n).toBe('0')
+    expect(rowFor(await statusRows(), 'email_encrypted')).not.toContain(
+      'forced-pass-owed',
+    )
+  })
+
+  it('status leaves out a finished reversal whose plaintext column was encrypted again under a new name', async () => {
+    // email_encrypted was decrypted into email and dropped; email was then
+    // encrypted again into email_v2.
+    await client.query(`
+      CREATE TABLE ${TABLE} (
+        id int PRIMARY KEY,
+        email text,
+        email_v2 eql_v3_text_search
+      )
+    `)
+    await installMigrationsSchema(client)
+    await appendEvent(client, {
+      tableName: TABLE,
+      columnName: 'email_encrypted',
+      event: 'encrypted_dropped',
+      phase: 'encrypted-dropped',
+      details: { plaintextColumn: 'email' },
+    })
+    await appendEvent(client, {
+      tableName: TABLE,
+      columnName: 'email',
+      event: 'dual_writing',
+      phase: 'dual-writing',
+      details: { encryptedColumn: 'email_v2' },
+    })
+
+    const rows = await statusRows()
+
+    expect(
+      rows.find((r) => r.startsWith(`${TABLE}  email_encrypted `)),
+      rows.join('\n'),
+    ).toBeUndefined()
+    expect(rows.join('\n')).not.toContain('encrypted-col-missing')
+    expect(rowFor(rows, 'email_v2')).toBeDefined()
+  })
 })

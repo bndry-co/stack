@@ -9,6 +9,7 @@
 
 import {
   type ColumnMigration,
+  ColumnMigrationError,
   deriveColumnMigration,
   type MigrationEvent,
   type MigrationPhase,
@@ -66,6 +67,8 @@ export type FakeMigration = ColumnMigration & {
 export function fakeMigration(
   opts: {
     history?: MigrationStateRow[]
+    /** Events under the recorded twin, which can make `history` finished. */
+    recordedTwinHistory?: MigrationStateRow[]
     twin?: string
     blockedBy?: OpenCounterpart | null
     twinHasValues?: boolean
@@ -74,6 +77,7 @@ export function fakeMigration(
   const state = deriveColumnMigration({
     direction: 'reverse',
     history: opts.history ?? [],
+    recordedTwinHistory: opts.recordedTwinHistory,
   })
   const twinHasValues = opts.twinHasValues ?? false
   const fake = {
@@ -96,16 +100,39 @@ export function fakeMigration(
     recordDropGenerated: vi.fn(),
     recordSourceRemoved: vi.fn(),
   }
-  fake.confirmDualWrites.mockImplementation(async () => {
-    const confirmed = fakeMigration({
-      ...opts,
-      history: [
-        ...(opts.history ?? []),
-        reverseEvent('decrypt_dual_writing', 'decrypt-dual-writing'),
-      ],
-    })
-    return confirmed
-  })
+  // The real rules: in progress, record nothing unless a waiver closes a
+  // waivable obligation, and refuse one that is not.
+  fake.confirmDualWrites.mockImplementation(
+    async ({ waiver }: { waiver?: 'plaintext-current' } = {}) => {
+      let existingTwinValues: boolean
+      if (state.phase !== null) {
+        const owed = state.obligations[0]
+        if (waiver === undefined || owed === undefined) return fake
+        if (!owed.waivable) {
+          throw new ColumnMigrationError(
+            'waiver-refused',
+            'A forced pass over users.email has already started.',
+          )
+        }
+        existingTwinValues = true
+      } else {
+        existingTwinValues = twinHasValues
+      }
+      return fakeMigration({
+        ...opts,
+        history: [
+          ...(opts.history ?? []),
+          reverseEvent('decrypt_dual_writing', 'decrypt-dual-writing', {
+            details: {
+              plaintextColumn: 'email',
+              ...(existingTwinValues ? { existingTwinValues: true } : {}),
+              ...(existingTwinValues && waiver !== undefined ? { waiver } : {}),
+            },
+          }),
+        ],
+      })
+    },
+  )
   fake.recordDropGenerated.mockImplementation(async () => fake)
   fake.recordSourceRemoved.mockImplementation(async () => fake)
   return fake as unknown as FakeMigration

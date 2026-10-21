@@ -559,8 +559,10 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
   })
   it('the engine records the twin itself, so a paused run is not resumed into another', async () => {
     await seed(4)
-    const run = async (twinColumn: string, signal?: AbortSignal) => {
+    const firstAfter: Array<string | null> = []
+    const run = async (twinColumn: string, controller?: AbortController) => {
       const db = await pool.connect()
+      let fetched = false
       try {
         return await runChunkedMigration<{ pk: string }>({
           db,
@@ -569,7 +571,9 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
           twinColumn,
           direction: 'forward',
           chunkSize: 2,
-          signal,
+          signal: controller?.signal,
+          // Pause once the first chunk has committed.
+          onProgress: () => controller?.abort(),
           countPending: async (after) =>
             Number(
               (
@@ -580,6 +584,8 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
               ).rows[0]?.n,
             ),
           fetchPage: async (after, limit) => {
+            if (!fetched) firstAfter.push(after)
+            fetched = true
             const { rows } = await db.query<{ pk: string }>(
               'SELECT id::text AS pk FROM migrate_test.users WHERE id > $1 ORDER BY id LIMIT $2',
               [after ?? 0, limit],
@@ -593,21 +599,28 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
       }
     }
 
-    // Pause after the first chunk, with no baseDetails naming the twin.
-    const controller = new AbortController()
-    controller.abort()
-    const paused = await run('email_encrypted', controller.signal)
+    // Paused after its first chunk, with no baseDetails naming the twin.
+    const paused = await run('email_encrypted', new AbortController())
     expect(paused.completed).toBe(false)
-    const { rows: recorded } = await pool.query<{ details: unknown }>(
-      `SELECT details FROM cipherstash.cs_migrations
+    const { rows: recorded } = await pool.query<{
+      cursor_value: string | null
+      details: unknown
+    }>(
+      `SELECT cursor_value, details FROM cipherstash.cs_migrations
         WHERE column_name = 'email' ORDER BY id DESC LIMIT 1`,
     )
+    expect(recorded[0]?.cursor_value).toBe('2')
     expect(recorded[0]?.details).toMatchObject({
       encryptedColumn: 'email_encrypted',
     })
 
+    // Another twin is refused before it can resume the paused cursor…
     await expect(run('email_ciphertext')).rejects.toMatchObject({
       code: 'twin-mismatch',
     })
+    // …while the recorded one resumes after it.
+    const resumed = await run('email_encrypted')
+    expect(resumed.completed).toBe(true)
+    expect(firstAfter).toEqual([null, '2'])
   })
 })

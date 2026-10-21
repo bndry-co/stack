@@ -461,6 +461,53 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     expect(await plaintextCount()).toBe(0)
   })
 
+  it('encrypting a column again after a full round trip starts a new forward column migration', async () => {
+    await seed(10)
+    const db = await pool.connect()
+    try {
+      // email encrypted into email_encrypted and dropped, then decrypted back
+      // into email and email_encrypted's drop generated.
+      const forwardTwin = { encryptedColumn: 'email_encrypted' }
+      for (const [event, phase] of [
+        ['dual_writing', 'dual-writing'],
+        ['backfilled', 'backfilled'],
+        ['dropped', 'dropped'],
+      ] as const) {
+        await appendEvent(db, {
+          tableName: TABLE,
+          columnName: 'email',
+          event,
+          phase,
+          details: forwardTwin,
+        })
+      }
+      await confirm()
+      await run()
+      const reverse = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email_encrypted',
+        direction: 'reverse',
+        manifest: null,
+      })
+      await reverse.recordDropGenerated({ migrationFile: 'x.sql' })
+
+      const forward = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email',
+        direction: 'forward',
+        twin: 'email_encrypted_v2',
+        manifest: null,
+      })
+      expect(forward.phase).toBeNull()
+      const confirmed = await forward.confirmDualWrites()
+      expect(confirmed.phase).toBe('dual-writing')
+      expect(confirmed.latest?.event).toBe('dual_writing')
+      expect(confirmed.twin.column).toBe('email_encrypted_v2')
+    } finally {
+      db.release()
+    }
+  })
+
   it('refuses a run into a different plaintext column than the one recorded', async () => {
     await seed(10)
     await confirm()

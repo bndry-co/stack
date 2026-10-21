@@ -142,7 +142,8 @@ async function goneRows(
       direction: 'reverse',
       manifest: null,
     })
-    if (migration.latest === null) continue
+    // No history, or finished: a drop applied and the pair migrated back.
+    if (migration.phase === null) continue
     const plaintext = migration.recordedTwin ?? '—'
     rows.push(
       renderRow({

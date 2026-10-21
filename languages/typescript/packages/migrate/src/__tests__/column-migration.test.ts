@@ -244,6 +244,30 @@ describe('deriveColumnMigration (reverse)', () => {
       }).phase,
     ).toBe('encrypted-dropped')
   })
+
+  it('a forward drop superseded by a later reverse column migration of its twin is history', () => {
+    // email encrypted into email_encrypted and dropped, then decrypted back
+    // into email and email_encrypted dropped: encrypting email again starts
+    // a new column migration, not the dropped one.
+    const forwardTwin = { encryptedColumn: 'email_encrypted' }
+    const history = [
+      ev('dual_writing', 'dual-writing', forwardTwin, { columnName: 'email' }),
+      ev('backfilled', 'backfilled', forwardTwin, { columnName: 'email' }),
+      ev('dropped', 'dropped', forwardTwin, { columnName: 'email' }),
+    ]
+    const reverseOfTwin = [confirm(), completed(unforced), dropGenerated()]
+    const state = deriveColumnMigration({
+      direction: 'forward',
+      history,
+      recordedTwinHistory: reverseOfTwin,
+    })
+    expect(state.phase).toBeNull()
+    expect(state.open).toBe(false)
+    expect(state.recordedTwin).toBeUndefined()
+    expect(deriveColumnMigration({ direction: 'forward', history }).phase).toBe(
+      'dropped',
+    )
+  })
 })
 
 describe('deriveColumnMigration (reverse, events from an earlier release)', () => {

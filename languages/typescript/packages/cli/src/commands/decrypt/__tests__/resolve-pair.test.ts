@@ -271,6 +271,19 @@ describe('resolveDecryptPair', () => {
     expect(error.message).toContain('Drop --plaintext-column')
   })
 
+  it('does not suggest the recorded column when nothing is recorded', async () => {
+    const error = await failure(
+      resolveDecryptPair(db, {
+        table: 'users',
+        encryptedColumn: 'email_encrypted',
+        plaintextColumn: 'email_encrypted',
+      }),
+    )
+    expect(error.message).toContain('cannot be email_encrypted itself')
+    expect(error.message).not.toContain('recorded column')
+    expect(error.message).toContain('Pass a different --plaintext-column')
+  })
+
   it('ignores forward history under the same key — only reverse events pair', async () => {
     events = [
       {
