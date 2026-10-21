@@ -85,9 +85,10 @@ exclude_re = [
   # the empty list (`dynamic::target::NoTargets`), which a test asserts on
   # and `resolve` turns into `TargetError::NoTargets`; `vec![]` is the body.
   'stack-encrypt/src/dynamic/target\.rs:\d+:\d+: replace <impl TargetResolver for NoTargets>::targets -> Vec<TargetDescriptor> with vec!\[\]$',
-  # A passthrough has no kind: `KindOf::passthrough` returns `Ok(None)`,
-  # which is `Ok(Default::default())`. `a_frame_names_its_kind` asserts it.
-  'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace <impl Sink for KindOf>::passthrough -> Result<Self::Ok, DecodeError> with Ok\(Default::default\(\)\)$',
+  # A passthrough, and a typed null as any null, has no kind:
+  # `KindOf::passthrough` and `KindOf::typed_null` return `Ok(None)`, which
+  # is `Ok(Default::default())`. `a_frame_names_its_kind` asserts the first.
+  'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace <impl Sink for KindOf>::(passthrough|typed_null) -> Result<Self::Ok, DecodeError> with Ok\(Default::default\(\)\)$',
   # `model`'s `admits` guard on a date, decimal or undefined value is checked
   # again by vitaminc on every path that reaches it: the frame writer behind
   # `Modeled` and `ModelOnly` refuses an inadmissible logical value
