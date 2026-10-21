@@ -106,7 +106,7 @@ pub use query::{
     check_query, field_operators, query_term, target_limit, verify, Fidelity, OpSpec, Operand,
     OperatorEntry, QueryTerm,
 };
-pub use record::{FieldPlan, Output, Plan};
+pub use record::{FieldPlan, NullMode, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
 pub use term::{term, TermBytes};
 pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
@@ -512,8 +512,8 @@ reasons! {
         /// A field is named twice in the plan.
         DuplicateField => "duplicate_field", "a field is named twice";
         /// A field spec has a key other than `"context"`, `"outputs"`,
-        /// `"target"` and `"type"`.
-        UnknownKey => "unknown_key", r#"a key other than "context", "outputs", "target" and "type""#;
+        /// `"target"`, `"type"` and `"null"`.
+        UnknownKey => "unknown_key", r#"a key other than "context", "outputs", "target", "type" and "null""#;
         /// A key is given twice: in a field spec, or in a map inside a source
         /// value or a stored record.
         RepeatedKey => "repeated_key", "a key is given twice";
@@ -602,6 +602,19 @@ reasons! {
         /// Statistics are not a row count with an optional histogram and
         /// confidence ([`Stats::from_frame`](crate::op::Stats::from_frame)).
         NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
+        /// `"null"` is not `"sealed"` or `"sql"`.
+        UnknownNull => "unknown_null", r#""null" is not "sealed" or "sql""#;
+        /// A passthrough field says how to store a null: it carries one as
+        /// it is.
+        NullPassthrough => "null_passthrough", r#"a passthrough carries a null as it is, and takes no "null""#;
+        /// A field with `"null": "sealed"` derives a term, or names an EQL
+        /// type that carries one: a null has no term yet (#1298), so its
+        /// absence would show in the term column.
+        SealedNullIndex => "sealed_null_index", r#"a sealed null has no term yet, so a field with one takes "null": "sql""#;
+        /// A field with `"null": "sealed"` declares no type, or one of no
+        /// fixed width (text, bytes, a container), whose absence the length
+        /// of its ciphertext would show.
+        SealedNullType => "sealed_null_type", "a sealed null needs a declared type of fixed width: a bool, a number, a date, a timestamp or a decimal";
     }
 }
 
