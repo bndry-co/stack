@@ -6653,6 +6653,42 @@ mod tests {
             assert_eq!(generates(&cipher), 0, "nothing minted");
         }
 
+        /// A null is queried by its equality term, which only a field that
+        /// seals its nulls stores (#1298): through such a field's equality
+        /// index the null reaches the resolver; through any other index, or
+        /// a `"sql"` field, it is refused before. (The fake resolver reads
+        /// text, so it refuses the null it is handed with an error of its
+        /// own: what matters is that the lowering let it through.)
+        #[tokio::test]
+        async fn a_target_query_of_a_null_needs_a_sealed_field_and_equality() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let with_null = |target: &str, null: &str| {
+                let mut spec = target_spec(label("f"), target);
+                if let Tree::Object(entries) = &mut spec {
+                    entries.push(("null".to_string(), s(null)));
+                }
+                obj(vec![("f", spec)])
+            };
+            let sealed = plan_with(with_null("IntegerEq", "sealed"), &FakeEql).expect("parses");
+            let sql = plan_with(with_null(TEXT_EQ, "sql"), &FakeEql).expect("parses");
+            let null_query = |plan: &Plan, index: IndexSpec| {
+                query(&keyset, plan, "f", &index, &Tree::Null, &FakeEql).err()
+            };
+            let refused = |error: &Option<Error>| matches!(error, Some(Error::Source { field: Some(f), reason: Reason::NullQuery }) if f == "f");
+            let through = null_query(&sealed, IndexSpec::Equality);
+            assert!(
+                !refused(&through),
+                "a sealed field's equality takes a null: {through:?}"
+            );
+            for (what, error) in [
+                ("another index", null_query(&sealed, IndexSpec::Ore)),
+                ("a sql field", null_query(&sql, IndexSpec::Equality)),
+            ] {
+                assert!(refused(&error), "{what}: {error:?}");
+            }
+        }
+
         /// A target field stores a null as its plan says (#1298): under
         /// `"sql"` in any type; sealed only in a type of fixed width whose
         /// terms are equality's alone, since a null has an equality term and
