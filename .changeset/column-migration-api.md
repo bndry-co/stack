@@ -17,4 +17,4 @@ Error events store the error's class (`errorName`) and safe details instead of i
 
 `stash decrypt plan`, `status`, `backfill` and `drop` resolve every column through `ColumnMigration`, so they always agree on the twin and the phase.
 `decrypt status` flags `forward-open`, `twin-has-values` and `forced-pass-owed`.
-`decrypt backfill --confirm-plaintext-current` is accepted on a later run as long as no forced pass has started, and refused once one has.
+`decrypt backfill --confirm-plaintext-current` is accepted on a later run as long as no forced pass has started, and refused while a started forced pass is owed.

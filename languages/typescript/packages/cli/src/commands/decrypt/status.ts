@@ -2,6 +2,8 @@ import {
   ColumnMigration,
   type ColumnMigrationState,
   classifyEqlDomain,
+  isReverseMigrationPhase,
+  type MigrationStateRow,
   passProgress,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
@@ -126,13 +128,17 @@ async function currentRows(
  */
 async function goneRows(
   client: ReturnType<typeof createPgClient>,
-  stateMap: ReadonlyMap<string, unknown>,
+  stateMap: ReadonlyMap<string, MigrationStateRow>,
   seen: ReadonlySet<string>,
   physicalCols: PhysicalColumns,
 ): Promise<Row[]> {
   const rows: Row[] = []
-  for (const key of stateMap.keys()) {
+  for (const [key, latest] of stateMap) {
     if (seen.has(key)) continue
+    // Reverse events are keyed by the encrypted column, so a key whose latest
+    // event is forward is a plaintext column, not a reversal: skip it before
+    // reading its history.
+    if (!isReverseMigrationPhase(latest.phase)) continue
     const lastDot = key.lastIndexOf('.')
     const table = key.slice(0, lastDot)
     const column = key.slice(lastDot + 1)

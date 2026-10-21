@@ -92,7 +92,11 @@ vi.mock('@/commands/encrypt/context.js', () => ({
   requireTable: vi.fn(),
 }))
 
-import { appendEvent, installMigrationsSchema } from '@cipherstash/migrate'
+import {
+  appendEvent,
+  ColumnMigration,
+  installMigrationsSchema,
+} from '@cipherstash/migrate'
 import type pg from 'pg'
 import { decryptBackfillCommand } from '../backfill.js'
 import { decryptDropCommand } from '../drop.js'
@@ -485,5 +489,103 @@ describeLive('decrypt lifecycle — live Postgres', () => {
     ).toBeUndefined()
     expect(rows.join('\n')).not.toContain('encrypted-col-missing')
     expect(rowFor(rows, 'email_v2')).toBeDefined()
+  })
+
+  it('status flags an open reversal whose encrypted column is gone as encrypted-col-missing', async () => {
+    // The backfill completed, then email_encrypted was dropped outside stash
+    // before `decrypt drop` generated anything.
+    await client.query(`CREATE TABLE ${TABLE} (id int PRIMARY KEY, email text)`)
+    await installMigrationsSchema(client)
+    for (const [event, phase] of [
+      ['decrypt_dual_writing', 'decrypt-dual-writing'],
+      ['decrypted', 'decrypted'],
+    ] as const) {
+      await appendEvent(client, {
+        tableName: TABLE,
+        columnName: 'email_encrypted',
+        event,
+        phase,
+        details: { plaintextColumn: 'email', force: false },
+      })
+    }
+
+    const row = rowFor(await statusRows(), 'email_encrypted')
+
+    expect(row).toMatch(/email_encrypted\s+—\s+email\s+decrypted/)
+    expect(row).toContain('encrypted-col-missing')
+  })
+
+  it('status does not load a reverse migration for a column with only forward history', async () => {
+    await client.query(`CREATE TABLE ${TABLE} (id int PRIMARY KEY, email text)`)
+    await installMigrationsSchema(client)
+    await appendEvent(client, {
+      tableName: TABLE,
+      columnName: 'email',
+      event: 'dual_writing',
+      phase: 'dual-writing',
+      details: { encryptedColumn: 'email_encrypted' },
+    })
+    const load = vi.spyOn(ColumnMigration, 'load')
+
+    output.length = 0
+    await decryptStatusCommand()
+
+    expect(load).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ table: TABLE, column: 'email' }),
+    )
+    expect(output.join('\n')).not.toContain(`${TABLE}  email `)
+  })
+
+  it('the plan overview names a generated drop, an open forward migration and a twin that holds values', async () => {
+    await client.query(`
+      CREATE TABLE ${TABLE} (
+        id int PRIMARY KEY,
+        a_encrypted eql_v3_text_search,
+        a text,
+        b_encrypted eql_v3_text_search,
+        b text,
+        c_encrypted eql_v3_text_search,
+        c text
+      )
+    `)
+    await client.query(
+      `INSERT INTO ${TABLE} (id, c) VALUES (1, 'stale@example.com')`,
+    )
+    await installMigrationsSchema(client)
+    for (const [event, phase] of [
+      ['decrypt_dual_writing', 'decrypt-dual-writing'],
+      ['decrypted', 'decrypted'],
+      ['encrypted_dropped', 'encrypted-dropped'],
+    ] as const) {
+      await appendEvent(client, {
+        tableName: TABLE,
+        columnName: 'a_encrypted',
+        event,
+        phase,
+        details: { plaintextColumn: 'a', force: false },
+      })
+    }
+    await appendEvent(client, {
+      tableName: TABLE,
+      columnName: 'b',
+      event: 'dual_writing',
+      phase: 'dual-writing',
+      details: { encryptedColumn: 'b_encrypted' },
+    })
+
+    output.length = 0
+    await decryptPlanCommand()
+    const overview = output.join('\n')
+
+    expect(overview).toContain(
+      `✓ ${TABLE}.a_encrypted: encrypted-dropped (apply the generated drop migration)`,
+    )
+    expect(overview).toContain(
+      `! ${TABLE}.b_encrypted → b text: forward encryption still open at 'dual-writing'`,
+    )
+    expect(overview).toContain(
+      `! ${TABLE}.c_encrypted → c text: twin already holds values; the backfill needs --force or --confirm-plaintext-current`,
+    )
   })
 })

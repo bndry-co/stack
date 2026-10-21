@@ -17,7 +17,7 @@ import {
   type OpenCounterpart,
   planPassFor,
 } from '@cipherstash/migrate'
-import { vi } from 'vitest'
+import { type Mock, vi } from 'vitest'
 
 let nextId = 1
 
@@ -58,10 +58,17 @@ export const decrypted = (): MigrationStateRow[] => [
   reverseEvent('decrypted', 'decrypted', { rowsProcessed: 10, rowsTotal: 10 }),
 ]
 
+/**
+ * The spies are typed from `ColumnMigration` itself, so a change to a real
+ * method's signature fails these tests' typecheck instead of passing them.
+ */
 export type FakeMigration = ColumnMigration & {
-  confirmDualWrites: ReturnType<typeof vi.fn>
-  recordDropGenerated: ReturnType<typeof vi.fn>
-  recordSourceRemoved: ReturnType<typeof vi.fn>
+  existingTwinValues: Mock<ColumnMigration['existingTwinValues']>
+  planPass: Mock<ColumnMigration['planPass']>
+  counterpartMessage: Mock<ColumnMigration['counterpartMessage']>
+  confirmDualWrites: Mock<ColumnMigration['confirmDualWrites']>
+  recordDropGenerated: Mock<ColumnMigration['recordDropGenerated']>
+  recordSourceRemoved: Mock<ColumnMigration['recordSourceRemoved']>
 }
 
 export function fakeMigration(
@@ -80,60 +87,65 @@ export function fakeMigration(
     recordedTwinHistory: opts.recordedTwinHistory,
   })
   const twinHasValues = opts.twinHasValues ?? false
+  const spies = {
+    existingTwinValues: vi.fn<ColumnMigration['existingTwinValues']>(
+      async () => state.phase === null && twinHasValues,
+    ),
+    planPass: vi.fn<ColumnMigration['planPass']>(async ({ force }) =>
+      planPassFor(state, {
+        force,
+        twinHasValues: state.phase === null && twinHasValues,
+      }),
+    ),
+    counterpartMessage: vi.fn<ColumnMigration['counterpartMessage']>(
+      () => null,
+    ),
+    confirmDualWrites: vi.fn<ColumnMigration['confirmDualWrites']>(),
+    recordDropGenerated: vi.fn<ColumnMigration['recordDropGenerated']>(),
+    recordSourceRemoved: vi.fn<ColumnMigration['recordSourceRemoved']>(),
+  }
+  // `ColumnMigration` has private members, so no object literal is one; the
+  // spies above are what carry its method types.
   const fake = {
     ...state,
     table: 'users',
     column: 'email_encrypted',
     twin: { column: opts.twin ?? 'email', via: 'convention' as const },
     blockedBy: opts.blockedBy ?? null,
-    existingTwinValues: vi.fn(
-      async () => state.phase === null && twinHasValues,
-    ),
-    planPass: vi.fn(async ({ force }: { force: boolean }) =>
-      planPassFor(state, {
-        force,
-        twinHasValues: state.phase === null && twinHasValues,
-      }),
-    ),
-    counterpartMessage: vi.fn(() => null),
-    confirmDualWrites: vi.fn(),
-    recordDropGenerated: vi.fn(),
-    recordSourceRemoved: vi.fn(),
-  }
+    ...spies,
+  } as unknown as FakeMigration
   // The real rules: in progress, record nothing unless a waiver closes a
   // waivable obligation, and refuse one that is not.
-  fake.confirmDualWrites.mockImplementation(
-    async ({ waiver }: { waiver?: 'plaintext-current' } = {}) => {
-      let existingTwinValues: boolean
-      if (state.phase !== null) {
-        const owed = state.obligations[0]
-        if (waiver === undefined || owed === undefined) return fake
-        if (!owed.waivable) {
-          throw new ColumnMigrationError(
-            'waiver-refused',
-            'A forced pass over users.email has already started.',
-          )
-        }
-        existingTwinValues = true
-      } else {
-        existingTwinValues = twinHasValues
+  fake.confirmDualWrites.mockImplementation(async ({ waiver } = {}) => {
+    let existingTwinValues: boolean
+    if (state.phase !== null) {
+      const owed = state.obligations[0]
+      if (waiver === undefined || owed === undefined) return fake
+      if (!owed.waivable) {
+        throw new ColumnMigrationError(
+          'waiver-refused',
+          'A forced pass over users.email has already started.',
+        )
       }
-      return fakeMigration({
-        ...opts,
-        history: [
-          ...(opts.history ?? []),
-          reverseEvent('decrypt_dual_writing', 'decrypt-dual-writing', {
-            details: {
-              plaintextColumn: 'email',
-              ...(existingTwinValues ? { existingTwinValues: true } : {}),
-              ...(existingTwinValues && waiver !== undefined ? { waiver } : {}),
-            },
-          }),
-        ],
-      })
-    },
-  )
+      existingTwinValues = true
+    } else {
+      existingTwinValues = twinHasValues
+    }
+    return fakeMigration({
+      ...opts,
+      history: [
+        ...(opts.history ?? []),
+        reverseEvent('decrypt_dual_writing', 'decrypt-dual-writing', {
+          details: {
+            plaintextColumn: 'email',
+            ...(existingTwinValues ? { existingTwinValues: true } : {}),
+            ...(existingTwinValues && waiver !== undefined ? { waiver } : {}),
+          },
+        }),
+      ],
+    })
+  })
   fake.recordDropGenerated.mockImplementation(async () => fake)
   fake.recordSourceRemoved.mockImplementation(async () => fake)
-  return fake as unknown as FakeMigration
+  return fake
 }
