@@ -76,7 +76,7 @@ async fn a_document_round_trips_through_the_typed_target() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(keys, ["h", "i", "sv", "v"]);
+    assert_eq!(keys, ["h", "i", "q", "sv", "v"]);
 
     let opened: Value = cipher
         .decrypt_as(stored.clone(), Default::default())

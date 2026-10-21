@@ -1061,9 +1061,11 @@ async fn the_sealed_root_a_walk_fell_back_to_opens_at_the_path() {
         .unwrap();
     assert!(none.is_empty(), "a path that reaches nothing is no subtree");
 
-    for (path, why) in [
-        ("$.missing", "a path that reaches nothing"),
-        ("$.nested.list[*].x", "a wildcard path reaching two nodes"),
+    // Each refusal names what it expected: nothing at the path, or one node
+    // where a wildcard reached two.
+    for (path, expected) in [
+        ("$.missing", "a node at the walked path"),
+        ("$.nested.list[*].x", "one node at the walked path"),
     ] {
         let refused = cipher
             .decrypt_as::<Value, JsonSubtree>(
@@ -1071,10 +1073,10 @@ async fn the_sealed_root_a_walk_fell_back_to_opens_at_the_path() {
                 aead(),
             )
             .await;
-        assert!(
-            matches!(refused, Err(Error::OpenedType { .. })),
-            "{why}: {refused:?}"
-        );
+        match refused {
+            Err(Error::OpenedType { expected: got }) => assert_eq!(got, expected, "{path}"),
+            other => panic!("{path}: {other:?}"),
+        }
     }
     let unattached = cipher
         .decrypt_as::<Value, JsonSubtree>(rows.clone(), aead())
