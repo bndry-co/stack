@@ -37,8 +37,8 @@ vitaminc-hmac = { workspace = true }
 # number whatever its width, text in Unicode 16 NFC. Match text is
 # normalized by the same crate before it is tokenized.
 vitaminc-normalize = { workspace = true }
-# The order targets (`OrderTarget`) and the scheme traits cllw-ore's
-# `vitaminc` feature implements, which order terms encrypt through.
+# The order targets (`OrderTarget`) and the scheme traits clww-ore and
+# ore-rs implement, which order terms encrypt through.
 vitaminc-ore = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
@@ -49,9 +49,9 @@ serde = { workspace = true }
 # `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
 base64ct = { version = "1.7", features = ["alloc"] }
 
-cllw-ore = { workspace = true }
-# Block ORE (`OreBlock`): ore-rs's 6-bit schemes through the same
-# vitaminc-ore traits cllw-ore implements.
+clww-ore = { workspace = true }
+# Block ORE (`OreBlock`): ore-rs's `BlockOre`, its 6-bit schemes behind
+# the same vitaminc-ore traits clww-ore implements.
 ore-rs = { workspace = true }
 # Every error derives `miette::Diagnostic` (a code, and help where a caller
 # can act) and gives its structured fields as a `serde_json` map through

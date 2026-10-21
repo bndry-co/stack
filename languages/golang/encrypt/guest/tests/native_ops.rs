@@ -330,7 +330,7 @@ fn guest_terms_match_the_native_sem_derivations() {
     .expect("native");
     assert_eq!(eq_bytes, native_bytes.as_bytes());
 
-    // Variable-width CLLW output for strings: the text behind cllw-ore's
+    // Variable-width CLLW output for strings: the text behind clww-ore's
     // one marker byte, eight bytes a plaintext byte.
     let ore_s = block_on(ops::term(
         &cipher.default_keyset(),

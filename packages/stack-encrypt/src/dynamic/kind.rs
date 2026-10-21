@@ -60,7 +60,7 @@ use crate::target::IndexSpec;
 /// no order term: over so small a domain it would reveal which rows are
 /// `true`, or each row's rank among 256 values.
 /// A decimal, a date and a timestamp have none yet: their order encodings
-/// wait for new cllw-ore and ore-rs releases (#1236), and [`not_admitted`]
+/// wait for new clww-ore and ore-rs releases (#1236), and [`not_admitted`]
 /// names that reason. A composite (`array`, `object`) has no term. Only the
 /// index's kind matters: a match index's options do not change what it
 /// applies to.
@@ -87,7 +87,7 @@ pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
 /// plan that declares the pair is refused with.
 ///
 /// [`Reason::OrderTermPending`] for an order index on a decimal, date
-/// or timestamp, whose order terms wait for new cllw-ore and ore-rs
+/// or timestamp, whose order terms wait for new clww-ore and ore-rs
 /// releases (#1236). [`Reason::IndexNotAdmitted`] for every other pair
 /// [`admits`] refuses.
 ///

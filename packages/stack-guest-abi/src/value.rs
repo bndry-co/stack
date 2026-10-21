@@ -10,7 +10,8 @@
 //! through a [`Sink`], for the tests that check what a host is given.
 
 use vitaminc_aead::plaintext::{
-    visit_map, visit_seq, Encrypt, Float, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    visit_map, visit_seq, Encrypt, FixedType, Float, Logical, MapSink, Physical, SeqSink, Sink,
+    SourceError,
 };
 use vitaminc_aead_frame::{to_frame, Frame, FrameError, FrameWriteError};
 use vitaminc_protected::{Controlled, Protected};
@@ -229,6 +230,12 @@ impl<O: Put> Sink for ValueSink<O> {
             _ => return Err(DecodeError::Scalar),
         };
         Ok(self.0.put(value))
+    }
+
+    /// A typed null is a null to the host: its type only hides its length
+    /// once sealed.
+    fn typed_null(self, _: FixedType) -> Result<O::Ok, DecodeError> {
+        Ok(self.0.put(HostValue::Null))
     }
 
     fn seq(self, _: Option<usize>) -> Result<ValueSeq<O>, DecodeError> {

@@ -16,14 +16,14 @@
 //!   a domain of its own. A boolean has none.
 //! - **Match** takes text only, cut in Unicode 16 NFC.
 //! - **ORE, OPE and block ORE** take an integer of 16 bits or wider, a
-//!   float, text or bytes, each handed to cllw-ore (ORE, OPE) or ore-rs
+//!   float, text or bytes, each handed to clww-ore (ORE, OPE) or ore-rs
 //!   (block ORE) as the Rust type the typed path would have named: an `i16`
 //!   as an `i16`, a `u128` as a `u128`. A boolean, a `u8` and an `i8` have
 //!   no order term: over a domain that small (two values, or 256) it would
 //!   tell anyone holding the column which rows are `true`, or rank every
 //!   row among 256. A decimal, a date and a timestamp
-//!   have none yet: cllw-ore 0.5 does not encode them the ADR-0002 way, and
-//!   their order terms wait for new cllw-ore and ore-rs releases (#1236).
+//!   have none yet: clww-ore 0.5 does not encode them the ADR-0002 way, and
+//!   their order terms wait for new clww-ore and ore-rs releases (#1236).
 //!
 //! # These are the query-probe path
 //!
@@ -38,9 +38,10 @@ use std::marker::PhantomData;
 use super::ValueFrame;
 use stack_kms::DataKeySource;
 use vitaminc_aead::plaintext::{
-    Error as SinkError, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    Error as SinkError, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
+    SourceError,
 };
-use vitaminc_normalize::{domain_of, normalize, NormalizeError};
+use vitaminc_normalize::{domain, domain_of, normalize, NormalizeError};
 
 use serde::{Deserialize, Serialize, Serializer};
 
@@ -149,8 +150,10 @@ impl IndexSpec {
     /// The table [`defines`](Self::defines) reads, over one scalar.
     pub(super) fn takes(&self, ty: Option<Logical>, value: &Physical<'_>) -> bool {
         match self {
-            // vitaminc's table: a kind with an equality domain.
-            IndexSpec::Equality => domain_of(ty, value).is_some(),
+            // vitaminc's table: a kind with an equality domain. A null has
+            // one from `vitaminc-normalize` 0.8, and no term here, as before:
+            // see `sem::normalized`.
+            IndexSpec::Equality => domain_of(ty, value).is_some_and(|d| d != domain::NULL),
             IndexSpec::Match(_) => ty.is_none() && matches!(value, Physical::Text(_)),
             IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => ty.is_none() && ordered(value),
         }
@@ -604,6 +607,12 @@ where
         (self.0)(ty, value).map_err(Refused)
     }
 
+    /// A typed null is a null to a term: its type hides its length when
+    /// sealed, which a term does not seal.
+    fn typed_null(self, _: FixedType) -> Result<T, Refused> {
+        self.scalar(None, Physical::Null)
+    }
+
     fn seq(self, _: Option<usize>) -> Result<NoContainer<T>, Refused> {
         Err(Refused(None))
     }
@@ -640,6 +649,10 @@ impl<T> Sink for NoContainer<T> {
     type Map = Self;
 
     fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<T, Refused> {
+        self.unreachable()
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<T, Refused> {
         self.unreachable()
     }
 
@@ -1333,8 +1346,8 @@ mod tests {
 
         /// A decimal, a date and a timestamp have an equality term, from
         /// vitaminc, and no order term yet: their order encodings wait for
-        /// new cllw-ore and ore-rs releases (#1236), and the engine does not
-        /// shim around cllw-ore 0.5.
+        /// new clww-ore and ore-rs releases (#1236), and the engine does not
+        /// shim around clww-ore 0.5.
         #[tokio::test]
         async fn a_decimal_date_or_timestamp_has_no_order_term_yet() {
             let cipher = cipher().await;
