@@ -24,20 +24,20 @@ export type MigrationDirection = 'forward' | 'reverse'
  */
 export interface DirectionVocabulary {
   /** Starts the column migration: dual-writes are confirmed deployed. */
-  dualWriting: MigrationEvent
-  dualWritingPhase: MigrationPhase
-  started: MigrationEvent
+  readonly dualWriting: MigrationEvent
+  readonly dualWritingPhase: MigrationPhase
+  readonly started: MigrationEvent
   /** The event a resume looks for. Its `cursorValue` is the restart point. */
-  checkpoint: MigrationEvent
-  completed: MigrationEvent
+  readonly checkpoint: MigrationEvent
+  readonly completed: MigrationEvent
   /** Phase recorded on `started`, every `checkpoint`, and any `error`. */
-  runningPhase: MigrationPhase
-  completedPhase: MigrationPhase
+  readonly runningPhase: MigrationPhase
+  readonly completedPhase: MigrationPhase
   /** Recorded when the drop of the source column is generated. */
-  dropped: MigrationEvent
-  droppedPhase: MigrationPhase
+  readonly dropped: MigrationEvent
+  readonly droppedPhase: MigrationPhase
   /** The `details` key every event uses to name the twin, when it does. */
-  twinKey: string
+  readonly twinKey: string
 }
 
 export const DIRECTION_VOCABULARY: Readonly<
@@ -702,7 +702,10 @@ function isForced(row: MigrationStateRow): boolean {
  * key takes the mode of the pass started before it.
  */
 function passForced(row: MigrationStateRow, startedForced: boolean): boolean {
-  if (row.details !== null && 'force' in row.details) return isForced(row)
+  // `details` is jsonb: a hand-written scalar must not throw on `in`.
+  if (typeof row.details === 'object' && row.details !== null) {
+    if ('force' in row.details) return isForced(row)
+  }
   return startedForced
 }
 

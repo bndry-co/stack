@@ -390,8 +390,13 @@ export function forcedReason(
       return `This run is a forced pass: a forced pass over ${table}.${pair.plaintextColumn} started earlier and has not completed, so ${pair.plaintextColumn} may hold a mix of overwritten and stale values. Every run overwrites it from ${pair.encryptedColumn} until one completes.`
     case 'existing-values':
       return `This run is a forced pass: ${table}.${pair.plaintextColumn} held values before this reverse migration began and no waiver (--confirm-plaintext-current) is recorded, so it overwrites them from ${pair.encryptedColumn}.`
-    default:
+    case 'caller':
+    case null:
       return null
+    default: {
+      const unhandled: never = forcedBy
+      return unhandled
+    }
   }
 }
 

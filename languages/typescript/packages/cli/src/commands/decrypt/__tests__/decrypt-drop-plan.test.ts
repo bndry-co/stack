@@ -246,6 +246,36 @@ describe('decrypt drop', () => {
     exitSpy.mockRestore()
   })
 
+  it("refuses at 'decrypted' while a forced pass is still owed", async () => {
+    const twin = { plaintextColumn: 'email' }
+    const owing = pair({
+      migration: fakeMigration({
+        history: [
+          reverseEvent('decrypt_dual_writing', 'decrypt-dual-writing'),
+          reverseEvent('decrypt_started', 'decrypting', {
+            details: { ...twin, force: true },
+          }),
+          reverseEvent('decrypted', 'decrypted', {
+            details: { ...twin, force: false },
+          }),
+        ],
+      }),
+    })
+    expect(owing.migration.phase).toBe('decrypted')
+    resolveMock.mockResolvedValue(owing)
+    const exitSpy = spyExit()
+
+    await decryptDropCommand({ table: 'users', column: 'email_encrypted' })
+
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('still owes a forced pass'),
+    )
+    expect(writeFileMock).not.toHaveBeenCalled()
+    expect(owing.migration.recordDropGenerated).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    exitSpy.mockRestore()
+  })
+
   it('refuses without a RECORDED pairing, even when a twin name could be guessed', async () => {
     resolveMock.mockResolvedValue(
       pair({

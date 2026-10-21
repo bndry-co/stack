@@ -4,8 +4,10 @@
  * the `cs_migrations` rows `ColumnMigration.load` would read.
  */
 
-import { describe, expect, it } from 'vitest'
+import type { ClientBase } from 'pg'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  ColumnMigration,
   type ColumnMigrationState,
   deriveColumnMigration,
   deriveTwinName,
@@ -362,6 +364,55 @@ describe('deriveColumnMigration (forward)', () => {
       history: [confirm()],
     })
     expect(state.phase).toBeNull()
+  })
+
+  it('a completion whose details are a JSON scalar takes the mode of its pass', () => {
+    // `details` is jsonb, so a hand-written row can hold a string.
+    const scalar = 'x' as unknown as Record<string, unknown>
+    const state = deriveColumnMigration({
+      direction: 'forward',
+      history: [
+        fwd('dual_writing', 'dual-writing'),
+        fwd('backfill_started', 'backfilling', { force: true }),
+        fwd('backfilled', 'backfilled', scalar),
+      ],
+    })
+    expect(state.phase).toBe('backfilled')
+    expect(state.obligations).toEqual([])
+  })
+})
+
+describe('ColumnMigration.load without cs_migrations', () => {
+  const failingDb = (error: unknown) =>
+    ({ query: vi.fn().mockRejectedValue(error) }) as unknown as ClientBase
+
+  it.each([
+    ['42P01', 'undefined_table'],
+    ['3F000', 'invalid_schema_name'],
+  ])('reads %s (%s) as no history', async (code) => {
+    const migration = await ColumnMigration.load(
+      failingDb(Object.assign(new Error('not installed'), { code })),
+      {
+        table: 'users',
+        column: 'email_encrypted',
+        direction: 'reverse',
+        twin: 'email',
+      },
+    )
+    expect(migration.phase).toBeNull()
+    expect(migration.obligations).toEqual([])
+  })
+
+  it('rethrows any other error', async () => {
+    const lost = new Error('connection lost')
+    await expect(
+      ColumnMigration.load(failingDb(lost), {
+        table: 'users',
+        column: 'email_encrypted',
+        direction: 'reverse',
+        twin: 'email',
+      }),
+    ).rejects.toBe(lost)
   })
 })
 

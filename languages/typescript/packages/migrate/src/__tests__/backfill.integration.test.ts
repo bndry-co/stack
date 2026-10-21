@@ -623,4 +623,56 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
     expect(resumed.completed).toBe(true)
     expect(firstAfter).toEqual([null, '2'])
   })
+
+  it("a caller's checkpoint and error details cannot overwrite the fields a resume reads", async () => {
+    await seed(4)
+    const spoof = { encryptedColumn: 'spoofed', force: true, rowsSkipped: 99 }
+    const db = await pool.connect()
+    let chunk = 0
+    try {
+      await expect(
+        runChunkedMigration<{ pk: string }>({
+          db,
+          tableName: 'migrate_test.users',
+          stateColumn: 'email',
+          twinColumn: 'email_encrypted',
+          direction: 'forward',
+          chunkSize: 2,
+          errorDetails: () => spoof,
+          countPending: async () => 4,
+          fetchPage: async (after, limit) => {
+            const { rows } = await db.query<{ pk: string }>(
+              'SELECT id::text AS pk FROM migrate_test.users WHERE id > $1 ORDER BY id LIMIT $2',
+              [after ?? 0, limit],
+            )
+            return { rows, lastPk: rows.at(-1)?.pk ?? null }
+          },
+          prepareChunk: async () => {
+            chunk += 1
+            if (chunk === 2) throw new Error('second chunk fails')
+            return { checkpointDetails: spoof, write: async () => {} }
+          },
+        }),
+      ).rejects.toThrow('second chunk fails')
+    } finally {
+      db.release()
+    }
+
+    const { rows } = await pool.query<{
+      event: string
+      details: Record<string, unknown>
+    }>(
+      `SELECT event, details FROM cipherstash.cs_migrations
+        WHERE column_name = 'email' AND event IN ('backfill_checkpoint', 'error')
+        ORDER BY id`,
+    )
+    expect(rows.map((r) => r.event)).toEqual(['backfill_checkpoint', 'error'])
+    for (const { details } of rows) {
+      expect(details).toMatchObject({
+        encryptedColumn: 'email_encrypted',
+        force: false,
+        rowsSkipped: 0,
+      })
+    }
+  })
 })

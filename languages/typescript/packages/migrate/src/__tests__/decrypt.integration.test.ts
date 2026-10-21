@@ -600,6 +600,72 @@ describe.skipIf(!runIntegration)('runDecryptBackfill (integration)', () => {
     }
   })
 
+  it('refuses to generate the drop while a forced pass is owed', async () => {
+    await seed(10)
+    const db = await pool.connect()
+    try {
+      // A forced pass started, then an unforced one completed: still owed.
+      for (const [event, phase, force] of [
+        ['decrypt_dual_writing', 'decrypt-dual-writing', undefined],
+        ['decrypt_started', 'decrypting', true],
+        ['decrypted', 'decrypted', false],
+      ] as const) {
+        await appendEvent(db, {
+          tableName: TABLE,
+          columnName: 'email_encrypted',
+          event,
+          phase,
+          details: {
+            plaintextColumn: 'email',
+            ...(force === undefined ? {} : { force }),
+          },
+        })
+      }
+      const owing = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email_encrypted',
+        direction: 'reverse',
+        manifest: null,
+      })
+      await expect(owing.recordDropGenerated()).rejects.toMatchObject({
+        code: 'obligation-open',
+      })
+      const after = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email_encrypted',
+        direction: 'reverse',
+        manifest: null,
+      })
+      expect(after.phase).toBe('decrypted')
+    } finally {
+      db.release()
+    }
+  })
+
+  it('refuses a waiver on a forward column migration, recording nothing', async () => {
+    await seed(10)
+    const db = await pool.connect()
+    try {
+      const forward = await ColumnMigration.load(db, {
+        table: TABLE,
+        column: 'email',
+        direction: 'forward',
+        twin: 'email_encrypted',
+        manifest: null,
+      })
+      await expect(
+        forward.confirmDualWrites({ waiver: 'plaintext-current' }),
+      ).rejects.toMatchObject({ code: 'waiver-refused' })
+      const { rows } = await db.query(
+        'SELECT 1 FROM cipherstash.cs_migrations WHERE column_name = $1',
+        ['email'],
+      )
+      expect(rows).toEqual([])
+    } finally {
+      db.release()
+    }
+  })
+
   it('a completed forced pass meets the obligation: later plain runs are unforced again', async () => {
     await seed(300)
     await pool.query(`UPDATE ${TABLE} SET email = 'stale@example.com'`)

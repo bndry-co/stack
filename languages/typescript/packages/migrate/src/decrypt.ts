@@ -76,9 +76,9 @@ export class UndecryptableBatchError extends Error {
  *
  * Postgres puts the offending INPUT in the text of a cast error
  * (`invalid input syntax for type integer: "…"`), and on this path the input
- * is decrypted plaintext. The engine persists an error's message into the
- * `cs_migrations` `error` event, so the database's message must never reach
- * it. This error carries only the SQLSTATE, the constraint name when there is
+ * is decrypted plaintext. The engine's `error` event stores only the error's
+ * name and the safe details this direction supplies, never a message, and
+ * this error must not carry the database's message either. It carries only the SQLSTATE, the constraint name when there is
  * one, and the column and type names; the original error is deliberately not
  * kept as `cause`.
  */

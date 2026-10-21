@@ -169,8 +169,9 @@ export async function runChunkedMigration<Row extends { pk: string }>(
   const plan = await migration.planPass({ force: options.force ?? false })
   const { force, forcedBy } = plan
   const mode: PassMode = { force }
-  // The pairing is recorded on every event whatever the caller passes, so a
-  // later run with a different twin is refused rather than resumed.
+  // The pairing and mode are recorded on every event whatever the caller
+  // passes, so a later run with a different twin is refused rather than
+  // resumed. Caller details are spread before them on every event.
   const base = {
     ...options.baseDetails,
     [events.twinKey]: options.twinColumn,
@@ -240,13 +241,14 @@ export async function runChunkedMigration<Row extends { pk: string }>(
           cursorValue: page.lastPk,
           rowsProcessed: nextProcessed,
           rowsTotal,
+          // The caller's fields go first: a resume reads the engine's.
           details: {
+            ...prepared.checkpointDetails,
             ...base,
             chunkIndex,
             chunkRows: page.rows.length,
             chunkSkipped,
             rowsSkipped: nextSkipped,
-            ...prepared.checkpointDetails,
           },
         })
         await db.query('COMMIT')
@@ -291,8 +293,8 @@ export async function runChunkedMigration<Row extends { pk: string }>(
       rowsProcessed,
       rowsTotal,
       details: {
-        ...base,
         ...options.errorDetails?.(err),
+        ...base,
         errorName: safeErrorName(err),
         chunkIndex,
         rowsSkipped,

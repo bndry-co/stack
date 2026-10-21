@@ -92,7 +92,11 @@ vi.mock('@/commands/init/utils.js', () => ({
 }))
 
 import * as p from '@clack/prompts'
-import { decryptBackfillCommand, skippedReport } from '../backfill.js'
+import {
+  decryptBackfillCommand,
+  forcedReason,
+  skippedReport,
+} from '../backfill.js'
 
 function pair(
   overrides: Partial<Omit<DecryptPair, 'migration'>> & {
@@ -592,5 +596,20 @@ describe('skippedReport', () => {
       /10 row\(s\) of users\.email_encrypted could not be decrypted with these credentials/,
     )
     expect(report).not.toContain('lock context')
+  })
+})
+
+describe('forcedReason', () => {
+  const names = { encryptedColumn: 'email_encrypted', plaintextColumn: 'email' }
+
+  it('explains a pass forced by values the twin held before the reversal', () => {
+    const reason = forcedReason('existing-values', 'users', names)
+    expect(reason).toContain('users.email held values')
+    expect(reason).toContain('--confirm-plaintext-current')
+  })
+
+  it('says nothing for a pass the caller forced, or an unforced one', () => {
+    expect(forcedReason('caller', 'users', names)).toBeNull()
+    expect(forcedReason(null, 'users', names)).toBeNull()
   })
 })
