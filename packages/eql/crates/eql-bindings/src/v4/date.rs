@@ -15,11 +15,12 @@ use ts_rs::TS;
     doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptFrom<Date>` and `DecryptInto<Date>`.
+/// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptFrom<Date>` and `DecryptInto<Date>`, and both for `Option<Date>`: a storage-only type carries no term, so it may store a `None`, sealed as long as a value.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = crate::v4::plaintext::Date)]
+#[stash(plaintext = Option<crate::v4::plaintext::Date>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Date {

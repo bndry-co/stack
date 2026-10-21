@@ -15,11 +15,12 @@ use ts_rs::TS;
     doc = " See the [EQL smallint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptFrom<i16>` and `DecryptInto<i16>`.
+/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptFrom<i16>` and `DecryptInto<i16>`, and both for `Option<i16>`: a storage-only type carries no term, so it may store a `None`, sealed as long as a value.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = i16)]
+#[stash(plaintext = Option<i16>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Smallint {

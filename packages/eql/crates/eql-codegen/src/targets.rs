@@ -425,10 +425,21 @@ fn render_targets_from(rows: &[Row]) -> String {
         let source = format_ident!("{}", rust.rsplit("::").next().unwrap_or(rust));
         (name.clone(), quote!(super::#module::#ty), quote!(#source))
     };
+    // A storage-only type (no query twin, so no term) seals and opens an
+    // `Option` of its plaintext: a value exactly as the plaintext does, and
+    // a null as a null (#1298). Whether a field may hold one is its plan's.
+    let stored_source = |r: &Row, source: TokenStream| {
+        if r.query.is_none() {
+            quote!(Option<#source>)
+        } else {
+            source
+        }
+    };
     let encrypt_arms: TokenStream = producible
         .iter()
         .map(|r| {
             let (name, ty, source) = arm(r, &r.name);
+            let source = stored_source(r, source);
             quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), }
         })
         .collect();
@@ -436,6 +447,7 @@ fn render_targets_from(rows: &[Row]) -> String {
         .iter()
         .map(|r| {
             let (name, ty, source) = arm(r, &r.name);
+            let source = stored_source(r, source);
             quote! { #name => open_target::<#ty, #source, K>(#name, opener, column, stored), }
         })
         .collect();
@@ -824,15 +836,22 @@ mod tests {
             let module = family.name;
             let (_, plaintext) = plaintext_of(family.name).expect("a derived family's plaintext");
             let plaintext = plaintext.rsplit("::").next().unwrap();
+            // A storage-only type stores and opens an `Option` of its
+            // plaintext; its query arm, which it has none of, would not.
+            let stored = if domain.terms.is_empty() {
+                format!("Option<{plaintext}>")
+            } else {
+                plaintext.to_owned()
+            };
             let arm = |helper: &str, ty: &str| {
+                let source = if ty == name { &stored } else { plaintext };
                 format!(
-                    "\"{name}\" => {{ {helper}::<super::{module}::{ty}, {plaintext}, K>(\"{name}\", "
+                    "\"{name}\" => {{ {helper}::<super::{module}::{ty}, {source}, K>(\"{name}\", "
                 )
             };
             let flat_arm = |helper: &str, ty: &str| {
-                format!(
-                    "\"{name}\" => {helper}::<super::{module}::{ty}, {plaintext}, K>(\"{name}\", "
-                )
+                let source = if ty == name { &stored } else { plaintext };
+                format!("\"{name}\" => {helper}::<super::{module}::{ty}, {source}, K>(\"{name}\", ")
             };
             // rustfmt breaks long arms at different points, so compare with
             // all whitespace gone.
@@ -1073,8 +1092,9 @@ mod tests {
     }
 
     /// A producible type with no query twin — the storage-only `Text` —
-    /// renders encrypt and decrypt arms and no query arm: the query
-    /// dispatch's fall-through refuses it as answering no query.
+    /// renders encrypt and decrypt arms over an `Option` of its plaintext,
+    /// so it stores a null (#1298), and no query arm: the query dispatch's
+    /// fall-through refuses it as answering no query.
     #[test]
     fn a_producible_type_without_a_query_twin_gets_no_query_arm() {
         let rows = rows();
@@ -1089,12 +1109,12 @@ mod tests {
             .join(" ");
         let arms_for = |helper: &str| {
             out.matches(&format!(
-                "\"Text\" => {{ {helper}::<super::text::Text, String, K>(\"Text\","
+                "\"Text\" => {{ {helper}::<super::text::Text, Option<String>, K>(\"Text\","
             ))
             .count()
                 + out
                     .matches(&format!(
-                        "\"Text\" => {helper}::<super::text::Text, String, K>(\"Text\","
+                        "\"Text\" => {helper}::<super::text::Text, Option<String>, K>(\"Text\","
                     ))
                     .count()
         };

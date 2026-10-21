@@ -15,11 +15,12 @@ use ts_rs::TS;
     doc = " See the [EQL numeric reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`Decimal`](crate::v4::plaintext::Decimal). Implements `EncryptFrom<Decimal>` and `DecryptInto<Decimal>`.
+/// Plaintext input and decrypted output: [`Decimal`](crate::v4::plaintext::Decimal). Implements `EncryptFrom<Decimal>` and `DecryptInto<Decimal>`, and both for `Option<Decimal>`: a storage-only type carries no term, so it may store a `None`, sealed as long as a value.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = crate::v4::plaintext::Decimal)]
+#[stash(plaintext = Option<crate::v4::plaintext::Decimal>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Numeric {

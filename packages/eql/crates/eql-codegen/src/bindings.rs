@@ -730,6 +730,13 @@ fn encryption_attrs(
                 " Plaintext input: {named}. Implements `EncryptFrom<{shown}>` to build {terms} \
                  query terms. Query operands do not decrypt."
             )
+        } else if domain.terms.is_empty() {
+            format!(
+                " Plaintext input and decrypted output: {named}. Implements \
+                 `EncryptFrom<{shown}>` and `DecryptInto<{shown}>`, and both for \
+                 `Option<{shown}>`: a storage-only type carries no term, so it may store a \
+                 `None`, sealed as long as a value."
+            )
         } else {
             format!(
                 " Plaintext input and decrypted output: {named}. Implements \
@@ -738,6 +745,10 @@ fn encryption_attrs(
         }
     };
     let plaintext = plaintext_doc(&format!("[`{shown}`]({rust})"));
+    // A storage-only type derives no term, so an absent value has nothing
+    // it cannot store: it may be sealed from an `Option` too (#1298).
+    let nullable = (!query && domain.terms.is_empty())
+        .then(|| quote!(#[stash(plaintext = Option<#plaintext_ty>)]));
     // The twin of an optional-term query is built by its projections
     // (`render_query_projections`), one per index, so it carries no derive.
     if query && v4_optional_query_terms(domain) {
@@ -769,6 +780,7 @@ fn encryption_attrs(
             #[derive(stack_encrypt::EncryptFrom)]
             #decrypt
             #[stash(plaintext = #plaintext_ty)]
+            #nullable
         },
         quote!(#[stash(default)]),
         quote!(#[stash(context_field)]),

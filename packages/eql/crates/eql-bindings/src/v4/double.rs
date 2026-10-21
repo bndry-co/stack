@@ -15,11 +15,12 @@ use ts_rs::TS;
     doc = " See the [EQL double reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`f64`](f64). Implements `EncryptFrom<f64>` and `DecryptInto<f64>`.
+/// Plaintext input and decrypted output: [`f64`](f64). Implements `EncryptFrom<f64>` and `DecryptInto<f64>`, and both for `Option<f64>`: a storage-only type carries no term, so it may store a `None`, sealed as long as a value.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = f64)]
+#[stash(plaintext = Option<f64>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Double {
