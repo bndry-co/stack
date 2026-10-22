@@ -17,9 +17,10 @@
 //!   token and nothing else: the ordinals `o` under a node are dense from
 //!   zero, so a walk probes them in turn until the first miss, and derives
 //!   each hit's own token as `H("t" ‖ t(parent) ‖ LE32(o))`;
-//! - a leaf ordering term `op` on number and string leaves, the same OPE
-//!   term the scalar [`Ope`](crate::target::Ope) index derives, keyed by
-//!   the column.
+//! - a leaf ordering term `op` on the number and string leaves at the
+//!   paths the index declares ordered ([`JsonOptions::ordered`]), the
+//!   same OPE term the scalar [`Ope`](crate::target::Ope) index derives,
+//!   keyed by the column. No path is ordered by default.
 //!
 //! Beside the entries the document stores its containment **projection**
 //! `q`: one `(s, vs)` pair per node, `vs` being a PRF of the node's kind
@@ -84,6 +85,7 @@
 //! derivations are versioned by their PAE domain labels, as every other
 //! term kind's are ([`sem`](crate::sem)): a change to any of them is a new
 //! version, never an edit in place.
+use std::collections::BTreeSet;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -106,11 +108,12 @@ pub(crate) use derive::{seal_pending, terms_pending};
 /// A sixteen-byte tag: a selector, a token or a parent tag.
 pub type Tag = [u8; 16];
 
-/// How a JSON index lays a document out. Part of the index's identity: a
-/// stored document and the query probing it must agree on it, so it rides
-/// in the data plan beside the index and is recorded in every document's
-/// header.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// How a JSON index lays a document out, and which of its leaves it
+/// orders. Part of the index's identity: a stored document and the query
+/// probing it must agree on it, so it rides in the data plan beside the
+/// index. The layout is recorded in every document's header; the ordered
+/// paths are not, since a stored leaf shows whether it carries a term.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct JsonOptions {
     /// Seal the root: the root entry's ciphertext is the whole document and
     /// the top-level fields are the heads of the token chain, so no token
@@ -118,11 +121,54 @@ pub struct JsonOptions {
     /// default. Off, the chain starts at the root and a query may walk the
     /// whole document from the root's token.
     pub sealed_root: bool,
+    /// The paths whose number and string leaves carry an ordering term
+    /// `op`, and so answer `op::AtPath(op::Lt)` and the other orderings.
+    /// None by default: an ordering term reveals the order of the leaf
+    /// across every row that holds one, and costs about eighty bytes a
+    /// leaf, so a path pays for it only when asked. A wildcard step covers
+    /// every element of the array (`$.orders[*].total`); a position covers
+    /// that element alone (`$.scores[0]`). An ordering asked at a path no
+    /// entry here covers is refused
+    /// ([`TermError::JsonPathNotOrdered`](crate::sem::TermError::JsonPathNotOrdered)).
+    pub ordered: BTreeSet<JsonPath>,
+}
+
+impl JsonOptions {
+    /// The defaults: the root sealed, no leaf ordered.
+    pub const fn new() -> Self {
+        Self {
+            sealed_root: true,
+            ordered: BTreeSet::new(),
+        }
+    }
+
+    /// These options with the leaves at `paths` ordered, each path parsed
+    /// as [`JsonPath::parse`] does.
+    ///
+    /// # Errors
+    ///
+    /// [`JsonPathError`] for a path that is not one.
+    pub fn ordering<I>(mut self, paths: I) -> Result<Self, JsonPathError>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        for path in paths {
+            let _ = self.ordered.insert(JsonPath::parse(path.as_ref())?);
+        }
+        Ok(self)
+    }
+
+    /// Whether the leaf at `path` carries an ordering term: some ordered
+    /// path [covers](JsonPath::covers) it.
+    pub fn orders(&self, path: &JsonPath) -> bool {
+        self.ordered.iter().any(|ordered| ordered.covers(path))
+    }
 }
 
 impl Default for JsonOptions {
     fn default() -> Self {
-        Self { sealed_root: true }
+        Self::new()
     }
 }
 
@@ -194,13 +240,6 @@ impl JsonHeader {
     /// Whether the root is sealed: see [`JsonOptions::sealed_root`].
     pub fn sealed_root(&self) -> bool {
         self.sealed_root
-    }
-
-    /// The layout this document was laid out under.
-    pub fn options(&self) -> JsonOptions {
-        JsonOptions {
-            sealed_root: self.sealed_root,
-        }
     }
 
     /// The frozen byte layout; see the type docs.
@@ -283,7 +322,7 @@ impl fmt::Debug for JsonHeader {
 ///
 /// `s` and `c` are always present. `p` is present on a node whose parent
 /// has a token (everything below the chain's heads); `op` on a number or
-/// string leaf.
+/// string leaf at a path the index orders ([`JsonOptions::ordered`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonEntry {
     s: Tag,
@@ -305,7 +344,8 @@ impl JsonEntry {
     pub fn parent_tag(&self) -> Option<&Tag> {
         self.p.as_ref()
     }
-    /// The leaf ordering term, on a number or string leaf.
+    /// The leaf ordering term, on a number or string leaf at an ordered
+    /// path.
     pub fn ordering_term(&self) -> Option<&[u8]> {
         self.op.as_deref()
     }
@@ -776,9 +816,8 @@ mod tests {
         assert_eq!(header.iv(), &[9; 16]);
         assert_eq!(header.tag(), &[1, 2, 3]);
         assert!(!header.sealed_root());
-        assert_eq!(header.options(), JsonOptions { sealed_root: false });
         let sealed = JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![], true);
-        assert_eq!(sealed.options(), JsonOptions { sealed_root: true });
+        assert!(sealed.sealed_root());
     }
 
     #[test]

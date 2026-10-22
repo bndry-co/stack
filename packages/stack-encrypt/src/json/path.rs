@@ -17,7 +17,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// One step of a [`JsonPath`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Segment {
     /// An object member, by key.
     Key(String),
@@ -28,7 +28,7 @@ pub enum Segment {
 }
 
 /// A path into a JSON document, from the root (`$`) down.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub struct JsonPath {
     segments: Vec<Segment>,
 }
@@ -150,6 +150,41 @@ impl JsonPath {
     /// Whether this path names one node: no step is the wildcard.
     pub fn is_positional(&self) -> bool {
         !self.segments.iter().any(|s| matches!(s, Segment::Wildcard))
+    }
+
+    /// Whether this path, read as a pattern, covers `path`: the same
+    /// steps, except that a wildcard here covers any array step there, a
+    /// position or the wildcard. A position here covers that position
+    /// alone, not the wildcard, since the wildcard names elements the
+    /// position does not. How the index's ordered paths
+    /// ([`JsonOptions::ordered`](super::JsonOptions::ordered)) are matched
+    /// against a node's path when a document is sealed, and against a
+    /// query's path when an ordering is asked.
+    ///
+    /// ```
+    /// use stack_encrypt::json::JsonPath;
+    ///
+    /// let wild = JsonPath::parse("$.orders[*].total").unwrap();
+    /// assert!(wild.covers(&JsonPath::parse("$.orders[3].total").unwrap()));
+    /// assert!(wild.covers(&JsonPath::parse("$.orders[*].total").unwrap()));
+    /// let third = JsonPath::parse("$.orders[3].total").unwrap();
+    /// assert!(third.covers(&JsonPath::parse("$.orders[3].total").unwrap()));
+    /// assert!(!third.covers(&JsonPath::parse("$.orders[2].total").unwrap()));
+    /// assert!(!third.covers(&JsonPath::parse("$.orders[*].total").unwrap()));
+    /// assert!(!wild.covers(&JsonPath::parse("$.orders[*]").unwrap()));
+    /// ```
+    pub fn covers(&self, path: &JsonPath) -> bool {
+        self.segments.len() == path.segments.len()
+            && self
+                .segments
+                .iter()
+                .zip(&path.segments)
+                .all(|(pattern, step)| match (pattern, step) {
+                    (Segment::Key(a), Segment::Key(b)) => a == b,
+                    (Segment::Wildcard, Segment::Index(_) | Segment::Wildcard) => true,
+                    (Segment::Index(a), Segment::Index(b)) => a == b,
+                    _ => false,
+                })
     }
 
     /// The values at this path in `value`, in document order: at most one

@@ -390,6 +390,15 @@ impl From<Unspecified> for Error {
     }
 }
 
+/// A text that is not a JSON path is a term error, as it is when an
+/// accessor's path is parsed: a caller building a JSON index's options
+/// (`JsonOptions::ordering`) can `?` it.
+impl From<crate::json::JsonPathError> for Error {
+    fn from(error: crate::json::JsonPathError) -> Self {
+        Error::Term(error.into())
+    }
+}
+
 /// The CipherStash cipher, scoped to one client: a ZeroKMS client (a
 /// [`DataKeySource`] — production: [`kms::StackKms`](crate::kms::StackKms); tests:
 /// `stack_encrypt::kms::FakeDataKeySource`) and the keysets that client uses.

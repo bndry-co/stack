@@ -23,9 +23,9 @@ use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stack_encrypt::json::{
-    JsonDocument, JsonLeafQuery, JsonNode, JsonPath, JsonQuery, JsonSubtree,
+    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSubtree,
 };
-use stack_encrypt::target::{AeadContext, ExpectedContext, IndexSpec};
+use stack_encrypt::target::{AeadContext, ExpectedContext, IndexSpec, Json, Layout};
 use stack_encrypt::{
     DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption, Error, NonEmpty,
 };
@@ -270,19 +270,62 @@ impl JsonTreeEntry {
 // Stack Encrypt targets
 // =============================================================================
 
-/// A document seals as the JSON index lays it out, under the column it is
-/// stored in: the [`Identifier`] is the context the data key is minted
-/// under and every selector derives under, and is written to `i`.
+/// The `json_tree` layout under the JSON index's options: what seals a
+/// value into a [`JsonTreeDocument`] under options other than the
+/// defaults, such as the paths that carry an ordering term
+/// ([`JsonOptions::ordered`]). A [`Layout`], so a Rust program runs it as
+/// `keyset.run(JsonTree::new(options).encryption(), &value, column)`, and
+/// its index is the engine's [`Json`] under the same options, which a
+/// query derives through. [`JsonTreeDocument`]'s own [`EncryptFrom`] is
+/// this layout under the defaults.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct JsonTree {
+    index: Json,
+}
+
+impl JsonTree {
+    /// The layout under `options`.
+    pub fn new(options: JsonOptions) -> Self {
+        Self {
+            index: Json::new(options),
+        }
+    }
+
+    /// The index the layout seals under, with its options.
+    pub fn index(&self) -> &Json {
+        &self.index
+    }
+}
+
+/// A document seals as the JSON index lays it out under the layout's
+/// options, under the column it is stored in: the [`Identifier`] is the
+/// context the data key is minted under and every selector derives
+/// under, and is written to `i`.
+impl Layout<Value> for JsonTree {
+    type Target = JsonTreeDocument;
+    type Index = Json;
+    fn encryption<'s, K: 'static>(
+        &self,
+    ) -> Encryption<'s, Value, JsonTreeDocument, K, NonEmpty<Identifier>> {
+        Layout::<Value>::encryption::<K>(&self.index)
+            .accepting::<NonEmpty<Identifier>>()
+            .map_with_context(|document, i: NonEmpty<Identifier>| (i, document))
+            .try_map(|(i, document)| JsonTreeDocument::envelope(i.into_inner(), &document))
+    }
+    fn index(&self) -> &Json {
+        &self.index
+    }
+}
+
+/// A document seals as the JSON index lays it out under the default
+/// options ([`JsonTree::default`]): no path ordered, the root sealed.
 impl EncryptFrom<Value> for JsonTreeDocument {
     type Context = NonEmpty<Identifier>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, Value, Self, K, Self::Context> {
-        <JsonDocument as EncryptFrom<Value>>::encryption()
-            .accepting::<NonEmpty<Identifier>>()
-            .map_with_context(|document, i: NonEmpty<Identifier>| (i, document))
-            .try_map(|(i, document)| Self::envelope(i.into_inner(), &document))
+        JsonTree::default().encryption()
     }
     fn indexes() -> Vec<IndexSpec> {
-        <JsonDocument as EncryptFrom<Value>>::indexes()
+        JsonTree::default().specs()
     }
 }
 

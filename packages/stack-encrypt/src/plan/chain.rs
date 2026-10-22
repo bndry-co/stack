@@ -9,12 +9,12 @@ use uuid::Uuid;
 
 use super::build::{FieldPlan, FieldsBuilder, IntoLabel, Opens, PlanContext, Runs};
 use super::field_ref::FieldRef;
-use super::value::{Indexed, Typed, ValuePlan, ValueShape};
+use super::value::{Indexed, Laid, Typed, ValuePlan, ValueShape};
 use super::PlanError;
 use crate::op::{Answers, DefaultIndex, Input, Operator, QueryToken, Supports};
 use crate::target::{
     ciphertext, Borrowed, CallerContext, DeclaredContext, DecryptField, Decryptable, EncryptFrom,
-    Index, Indexes, Pending, PendingFuture, Select, Whole,
+    Index, Indexes, Layout, Pending, PendingFuture, Select, Whole,
 };
 use crate::{Error, KeysetCipher, Label, LabelError, NonEmpty, StackCipher, StackCipherText};
 
@@ -754,12 +754,27 @@ where
     type Via = T::Via;
 }
 
+/// A plan laid out by value answers the operators its layout's index
+/// supports, through that index, under the plan's options.
+impl<Op, S, In, X, T> Chooses<Op, In, Whole> for ValuePlan<S, Laid<X, T>>
+where
+    Op: Operator,
+    In: Input<Op::Arity, Plaintext = S>,
+    S: 'static,
+    X: Layout<S, Target = T>,
+    X::Index: Supports<Op, In> + Default,
+    Laid<X, T>: ValueShape<S>,
+{
+    type Via = X::Index;
+}
+
 mod plan_sealed {
-    use super::{FieldPlan, Indexed, Typed, ValuePlan};
+    use super::{FieldPlan, Indexed, Laid, Typed, ValuePlan};
     pub trait Sealed {}
     impl Sealed for FieldPlan {}
     impl<F, X> Sealed for ValuePlan<F, Indexed<X>> {}
     impl<F, T> Sealed for ValuePlan<F, Typed<T>> {}
+    impl<F, X, T> Sealed for ValuePlan<F, Laid<X, T>> {}
 }
 
 /// A plan the index `I` over the plaintext `S` can be queried on. Sealed:
@@ -810,6 +825,19 @@ where
     fn resolve(&self, index: I, call: Option<Label>) -> (I, Result<Label, PlanError>) {
         let label = self.query_label(&index.spec(), call);
         (index, label)
+    }
+}
+
+/// A plan laid out by value uses its layout's own index, with its
+/// options, so the index named says only which; as a plan built `with`
+/// indexes does.
+impl<S: 'static, X, T> Resolves<S, X::Index, Whole> for ValuePlan<S, Laid<X, T>>
+where
+    X: Layout<S, Target = T>,
+    Laid<X, T>: ValueShape<S>,
+{
+    fn resolve(&self, _: X::Index, call: Option<Label>) -> (X::Index, Result<Label, PlanError>) {
+        (self.layout().index().clone(), self.resolve(call))
     }
 }
 

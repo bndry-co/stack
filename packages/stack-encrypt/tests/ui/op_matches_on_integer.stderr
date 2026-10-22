@@ -24,6 +24,15 @@ help: the following other types implement trait `Chooses<Op, In, At>`
   | |     T::Via: Default,
   | |     Typed<T>: ValueShape<S>,
   | |____________________________^ `ValuePlan<S, Typed<T>>` implements `Chooses<Op, In, Whole>`
+...
+  | / impl<Op, S, In, X, T> Chooses<Op, In, Whole> for ValuePlan<S, Laid<X, T>>
+  | | where
+  | |     Op: Operator,
+  | |     In: Input<Op::Arity, Plaintext = S>,
+... |
+  | |     X::Index: Supports<Op, In> + Default,
+  | |     Laid<X, T>: ValueShape<S>,
+  | |______________________________^ `ValuePlan<S, Laid<X, T>>` implements `Chooses<Op, In, Whole>`
   = note: required for `stack_encrypt::op::Matches` to implement `DefaultIndex<u32>`
   = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Equality>>` to implement `Chooses<stack_encrypt::op::Matches, u32, _>`
 

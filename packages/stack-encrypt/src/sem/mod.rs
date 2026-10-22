@@ -277,6 +277,15 @@ pub enum TermError {
         help("The JSON index derives an ordering term for number and string leaves only: query `op::AtPath(op::Eq)` for a boolean or a null.")
     )]
     JsonLeafNotOrdered,
+    /// An ordering was asked at a JSON path the index does not order: no
+    /// stored leaf there carries an ordering term, so the comparison would
+    /// match no row.
+    #[error("the JSON index orders no leaf at this path")]
+    #[diagnostic(
+        code(stack_encrypt::json_path_not_ordered),
+        help("A leaf carries an ordering term only at a path the index's `ordered` option covers (`$.age`, or `$.orders[*].total` for every element). Declare the path on the index, and re-encrypt the documents stored before it was, then order at it.")
+    )]
+    JsonPathNotOrdered,
 }
 
 impl crate::ErrorPayload for TermError {
@@ -293,7 +302,8 @@ impl crate::ErrorPayload for TermError {
             | Self::JsonTooDeep
             | Self::JsonTooWide
             | Self::JsonSealedRoot
-            | Self::JsonLeafNotOrdered => serde_json::Map::new(),
+            | Self::JsonLeafNotOrdered
+            | Self::JsonPathNotOrdered => serde_json::Map::new(),
         }
     }
 }

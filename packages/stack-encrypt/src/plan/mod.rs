@@ -321,7 +321,7 @@ pub use chain::{
 pub use error::PlanError;
 pub use field_ref::{pick, FieldRef};
 pub use value::{
-    ContextFieldStart, Indexed, Stored, Typed, ValueLayout, ValuePlan, ValuePlanBuilder,
+    ContextFieldStart, Indexed, Laid, Stored, Typed, ValueLayout, ValuePlan, ValuePlanBuilder,
     ValueShape, ValueStart,
 };
 pub use values::{Field, FieldSchema, FieldValues, Fields};

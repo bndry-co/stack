@@ -1,6 +1,7 @@
 //! One-value plans: one plaintext, sealed with its indexes beside it
-//! ([`with`](ValueStart::with)) or laid out by a target type
-//! ([`encrypt_into`](ValueStart::encrypt_into)).
+//! ([`with`](ValueStart::with)), laid out by a target type
+//! ([`encrypt_into`](ValueStart::encrypt_into)), or laid out by a layout
+//! value with its options ([`encrypt_as`](ValueStart::encrypt_as)).
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -11,7 +12,7 @@ use super::build::{
 use super::PlanError;
 use crate::target::{
     indexed, Borrowed, CallerContext, DeclaredContext, DecryptInto, Decryption, EncryptFrom,
-    Encrypted, Encryption, ExpectedContext, IndexSpec, Indexes, Pending,
+    Encrypted, Encryption, ExpectedContext, IndexSpec, Indexes, Layout, Pending,
 };
 use crate::{
     Error, IntoContext, KeysetCipher, Label, LabelError, MaybeEmpty, NonEmpty, Plan,
@@ -122,6 +123,46 @@ impl<S> ValueStart<S> {
         ValuePlanBuilder {
             sources: self.sources,
             shape: Typed(PhantomData),
+            plaintext: PhantomData,
+        }
+    }
+
+    /// Lay the value out as `layout` does: a target's layout chosen by
+    /// value, with its options ([`Layout`]), where
+    /// [`encrypt_into`](Self::encrypt_into) takes the target type's own.
+    /// The output is the layout's target, and a query through the plan
+    /// runs through the layout's index, under its options: the JSON index
+    /// with the paths it orders, say.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use serde_json::json;
+    /// use stack_encrypt::json::{JsonDocument, JsonOptions};
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::target::Json;
+    /// use stack_encrypt::{op, Plan, StackCipher};
+    ///
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let options = JsonOptions::default().ordering(["$.age"])?;
+    /// let plan = Plan::value::<serde_json::Value>()
+    ///     .context("users/profile")
+    ///     .encrypt_as(Json::new(options))
+    ///     .build()?;
+    /// let doc: JsonDocument = cipher.encrypt(&json!({"age": 34, "name": "Bob"})).using(&plan).await?;
+    /// assert_eq!(doc.entries().iter().filter(|e| e.ordering_term().is_some()).count(), 1);
+    /// // The query derives under the plan's options: `$.age` is ordered.
+    /// let _at_least_18 = cipher.query(op::AtPath(op::Gte), &("$.age", 18)).on(&plan).await?;
+    /// # Ok(())
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+    /// ```
+    pub fn encrypt_as<X>(self, layout: X) -> ValuePlanBuilder<S, Laid<X, X::Target>>
+    where
+        X: Layout<S>,
+    {
+        ValuePlanBuilder {
+            sources: self.sources,
+            shape: Laid(layout, PhantomData),
             plaintext: PhantomData,
         }
     }
@@ -321,10 +362,30 @@ impl<T> fmt::Debug for Typed<T> {
     }
 }
 
+/// A one-value plan's layout when it was given one by value
+/// ([`encrypt_as`](ValueStart::encrypt_as)): the layout `X`, whose target
+/// `T` is its output, and a query runs through the layout's own index,
+/// with its options ([`Layout::index`]). `T` is the layout's
+/// [`Target`](Layout::Target), spelled out so that opening one `T` and a
+/// `Vec<T>` are told apart as they are for a [`Typed`] plan.
+pub struct Laid<X, T>(X, PhantomData<fn() -> T>);
+
+impl<X: Clone, T> Clone for Laid<X, T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), PhantomData)
+    }
+}
+impl<X: fmt::Debug, T> fmt::Debug for Laid<X, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Laid<{}>({:?})", std::any::type_name::<T>(), self.0)
+    }
+}
+
 mod sealed {
     pub trait Sealed {}
     impl<X> Sealed for super::Indexed<X> {}
     impl<T> Sealed for super::Typed<T> {}
+    impl<X, T> Sealed for super::Laid<X, T> {}
 }
 
 /// What a one-value plan's layout says before it runs: what one run
@@ -398,6 +459,31 @@ where
         S: 's,
     {
         T::encryption().accepting::<CallerContext>()
+    }
+}
+
+impl<S, X, T> ValueLayout<S> for Laid<X, T>
+where
+    X: Layout<S, Target = T>,
+    T: EncryptFrom<S>,
+{
+    type Output = T;
+    fn specs(&self) -> Vec<IndexSpec> {
+        self.0.specs()
+    }
+}
+
+impl<S, X, T> ValueShape<S> for Laid<X, T>
+where
+    X: Layout<S, Target = T>,
+    T: EncryptFrom<S>,
+    CallerContext: Into<T::Context>,
+{
+    fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, T, K, CallerContext>
+    where
+        S: 's,
+    {
+        self.0.encryption().accepting::<CallerContext>()
     }
 }
 
@@ -554,6 +640,16 @@ where
         let label = self.resolve(call)?;
         check_declared(THE_VALUE, &self.shape.specs(), index)?;
         Ok(label)
+    }
+}
+
+impl<S, X, T> ValuePlan<S, Laid<X, T>>
+where
+    X: Layout<S, Target = T>,
+{
+    /// The layout: the index a query runs through, with its options.
+    pub fn layout(&self) -> &X {
+        &self.shape.0
     }
 }
 
@@ -726,6 +822,52 @@ where
 
 impl<S, T, K> Opens<Vec<T>, K> for ValuePlan<S, Typed<T>>
 where
+    T: DecryptInto<S>,
+    CallerContext: Into<T::Context>,
+    S: 'static,
+    K: 'static,
+{
+    type Output = Vec<S>;
+    fn decryption(
+        &self,
+        records: Vec<T>,
+        context: Option<Label>,
+        extend: DeclaredContext,
+    ) -> Decryption<Vec<S>, K> {
+        self.open_all(records, context, extend)
+    }
+    fn check(&self, _: &Vec<T>, context: Option<&Label>) -> Result<(), Error> {
+        self.check_call(context)
+    }
+}
+
+/// A [`Laid`] plan opens its layout's target, one or a `Vec` of them,
+/// through the target's own [`DecryptInto`], as a [`Typed`] plan does.
+impl<S, X, T, K> Opens<T, K> for ValuePlan<S, Laid<X, T>>
+where
+    X: Layout<S, Target = T>,
+    T: DecryptInto<S>,
+    CallerContext: Into<T::Context>,
+    S: 'static,
+    K: 'static,
+{
+    type Output = S;
+    fn decryption(
+        &self,
+        record: T,
+        context: Option<Label>,
+        extend: DeclaredContext,
+    ) -> Decryption<S, K> {
+        self.open_one(record, context, extend)
+    }
+    fn check(&self, _: &T, context: Option<&Label>) -> Result<(), Error> {
+        self.check_call(context)
+    }
+}
+
+impl<S, X, T, K> Opens<Vec<T>, K> for ValuePlan<S, Laid<X, T>>
+where
+    X: Layout<S, Target = T>,
     T: DecryptInto<S>,
     CallerContext: Into<T::Context>,
     S: 'static,

@@ -314,7 +314,8 @@ fn value_selector(
 /// The leaf ordering term: the OPE term of a number as an `f64` or of a
 /// string, under the column's context, as the scalar `Ope` index derives
 /// it. Nothing for any other kind. An integer wider than 53 bits orders by
-/// the `f64` it rounds to.
+/// the `f64` it rounds to. The walk asks for it only at a path the
+/// options order.
 fn leaf_op(
     prf: &HmacSha256Prf,
     context: &Context<'_>,
@@ -349,7 +350,7 @@ struct Walked {
 struct Walker<'p> {
     prf: &'p HmacSha256Prf,
     context: &'p Context<'p>,
-    options: JsonOptions,
+    options: &'p JsonOptions,
     nodes: Vec<TermNode>,
     plain: Vec<NodePlain>,
 }
@@ -357,7 +358,7 @@ struct Walker<'p> {
 /// Flatten `value` into its terms and its nodes' plaintexts.
 fn walk(
     value: &Value,
-    options: JsonOptions,
+    options: &JsonOptions,
     prf: &HmacSha256Prf,
     context: &Context<'_>,
 ) -> Result<Walked, TermError> {
@@ -431,7 +432,11 @@ impl Walker<'_> {
             )?),
             _ => parent_token.zip(ordinal).map(|(p, o)| child_token(&p, o)),
         };
-        let op = leaf_op(self.prf, self.context, value)?;
+        let op = if self.options.orders(positional) {
+            leaf_op(self.prf, self.context, value)?
+        } else {
+            None
+        };
         let container_element = matches!(label, Label::Index(_)) && kind.is_container();
         let index = self.nodes.len();
         self.nodes.push(TermNode {
@@ -526,7 +531,7 @@ fn shuffled_ordinals(parent: &Tag, map: &Map<String, Value>) -> BTreeMap<String,
 /// derives them: no key is requested.
 pub(crate) fn terms_pending<'a, K>(
     value: &Value,
-    options: JsonOptions,
+    options: &JsonOptions,
     cipher: &'a KeysetCipher<'_, K>,
     context: NonEmpty<CallerContext>,
 ) -> Pending<'a, JsonTerms, K> {
@@ -543,7 +548,7 @@ pub(crate) fn terms_pending<'a, K>(
 /// column and its ordinal.
 pub(crate) fn seal_pending<'a, K: 'static>(
     value: Value,
-    options: JsonOptions,
+    options: &JsonOptions,
     cipher: &'a KeysetCipher<'_, K>,
     context: NonEmpty<CallerContext>,
 ) -> Pending<'a, JsonDocument, K> {
@@ -567,12 +572,13 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         None
     };
     let keyset_id = cipher.keyset_id();
+    let sealed_root = options.sealed_root;
     Pending::request(
         cipher,
         vec![Request::generate_under(descriptor)],
         move |responses| {
             let key = responses.next_generated_key()?;
-            seal(walked, whole, keyset_id, key, &aad, options)
+            seal(walked, whole, keyset_id, key, &aad, sealed_root)
         },
     )
 }
@@ -626,7 +632,7 @@ fn seal(
     keyset_id: Uuid,
     key: stack_kms::DataKeyWithTag,
     aad: &Context<'_>,
-    options: JsonOptions,
+    sealed_root: bool,
 ) -> Result<JsonDocument, Error> {
     if key.tag.len() > usize::from(u16::MAX) {
         return Err(Error::Other(
@@ -668,7 +674,7 @@ fn seal(
     }
     let projection = super::query::group_of(nodes, None);
     Ok(JsonDocument::new(
-        JsonHeader::new(keyset_id, iv, tag, options.sealed_root),
+        JsonHeader::new(keyset_id, iv, tag, sealed_root),
         entries,
         projection,
     ))
@@ -1071,7 +1077,7 @@ fn open_fallback<'a, K>(
 fn subtree_key_for(
     prf: &HmacSha256Prf,
     context: &Context<'_>,
-    options: JsonOptions,
+    options: &JsonOptions,
     path: &JsonPath,
 ) -> Result<JsonSubtreeKey, TermError> {
     let segments = path.segments();
@@ -1161,7 +1167,7 @@ impl<K> KeysetCipher<'_, K> {
     pub fn json_subtree_key<'c>(
         &self,
         path: &JsonPath,
-        options: JsonOptions,
+        options: &JsonOptions,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSubtreeKey, K> {
         let context = descriptor.into_prf_context().into_owned();
@@ -1181,7 +1187,14 @@ mod tests {
         HmacSha256Prf::new(Protected::new([7; 32]))
     }
 
-    fn terms(value: &Value, options: JsonOptions) -> JsonTerms {
+    fn open_root() -> JsonOptions {
+        JsonOptions {
+            sealed_root: false,
+            ..JsonOptions::new()
+        }
+    }
+
+    fn terms(value: &Value, options: &JsonOptions) -> JsonTerms {
         walk(
             value,
             options,
@@ -1213,7 +1226,7 @@ mod tests {
 
     #[test]
     fn the_terms_name_a_node_by_its_path() {
-        let t = terms(&json!({"a": [1, {"b": 2}]}), JsonOptions::default());
+        let t = terms(&json!({"a": [1, {"b": 2}]}), &JsonOptions::default());
         // $, $.a, $.a[0], $.a[1], $.a[1].b
         assert_eq!(t.len(), 5);
         assert!(!t.is_empty());
@@ -1227,7 +1240,7 @@ mod tests {
 
     #[test]
     fn every_element_of_an_array_shares_a_selector_and_values_do_not() {
-        let t = terms(&json!({"a": [1, 2, 1]}), JsonOptions::default());
+        let t = terms(&json!({"a": [1, 2, 1]}), &JsonOptions::default());
         let nodes = t.nodes();
         assert_eq!(nodes.len(), 5);
         assert_eq!(nodes[2].s, nodes[3].s);
@@ -1238,12 +1251,12 @@ mod tests {
 
     #[test]
     fn the_sealed_root_has_no_token_and_its_fields_are_heads() {
-        let sealed = terms(&json!({"a": {"b": 1}}), JsonOptions::default());
+        let sealed = terms(&json!({"a": {"b": 1}}), &JsonOptions::default());
         assert!(sealed.nodes()[0].token.is_none());
         assert!(sealed.nodes()[1].token.is_some());
         assert!(sealed.nodes()[1].ordinal.is_none(), "a head has no ordinal");
         assert!(sealed.nodes()[2].ordinal.is_some());
-        let open = terms(&json!({"a": {"b": 1}}), JsonOptions { sealed_root: false });
+        let open = terms(&json!({"a": {"b": 1}}), &open_root());
         assert!(open.nodes()[0].token.is_some());
         assert!(open.nodes()[1].ordinal.is_some());
         // The chain below a head is the same hash chain either way, but
@@ -1256,7 +1269,7 @@ mod tests {
     fn the_subtree_key_derives_what_it_can_and_gates_the_rest() {
         let context = Context::from_encoded(b"users/profile");
         let value = json!({"a": {"b": [1, {"c": 2}]}, "l": [[0], 1]});
-        let key = |options, path: &str| {
+        let key = |options: &JsonOptions, path: &str| {
             subtree_key_for(&prf(), &context, options, &JsonPath::parse(path).unwrap())
         };
         let at = |t: &JsonTerms, path: &str| {
@@ -1267,10 +1280,10 @@ mod tests {
                 .clone()
         };
         let options = JsonOptions::default();
-        let t = terms(&value, options);
+        let t = terms(&value, &options);
         // A head's token, and the positions under it, derive exactly.
         for path in ["$.a", "$.l", "$.l[0]", "$.l[0][0]", "$.l[1]"] {
-            let k = key(options, path).unwrap();
+            let k = key(&options, path).unwrap();
             assert_eq!(Some(*k.token_bytes()), at(&t, path).token, "{path}");
             assert!(k.gates().is_empty(), "{path}");
         }
@@ -1284,13 +1297,13 @@ mod tests {
         );
         // Below a key step, gates: the step's selector, a position, the
         // wildcard's selector (every element's).
-        let k = key(options, "$.a.b[1].c").unwrap();
+        let k = key(&options, "$.a.b[1].c").unwrap();
         assert_eq!(Some(*k.token_bytes()), a.token);
         assert_eq!(
             k.gates(),
             [hex(&b.s), "#1".to_owned(), hex(&at(&t, "$.a.b[1].c").s)]
         );
-        let k = key(options, "$.a.b[*].c").unwrap();
+        let k = key(&options, "$.a.b[*].c").unwrap();
         assert_eq!(
             k.gates(),
             [
@@ -1302,32 +1315,32 @@ mod tests {
         // Under the sealed root the root has no token; under an open root
         // it has, and `$.a` is then one gate below it.
         assert!(matches!(
-            key(JsonOptions::default(), "$"),
+            key(&JsonOptions::default(), "$"),
             Err(TermError::JsonSealedRoot)
         ));
-        let open = JsonOptions { sealed_root: false };
-        let root = key(open, "$").unwrap();
+        let open = open_root();
+        let root = key(&open, "$").unwrap();
         assert!(root.gates().is_empty());
-        let a = key(open, "$.a").unwrap();
+        let a = key(&open, "$.a").unwrap();
         assert_eq!(a.token_bytes(), root.token_bytes());
         assert_eq!(a.gates().len(), 1);
     }
 
     #[test]
     fn a_root_scalar_carries_its_element_selectors_as_alt() {
-        let scalar = terms(&json!("a"), JsonOptions::default());
-        let array = terms(&json!(["a"]), JsonOptions::default());
+        let scalar = terms(&json!("a"), &JsonOptions::default());
+        let array = terms(&json!(["a"]), &JsonOptions::default());
         assert_eq!(
             scalar.alt(),
             Some((array.nodes()[1].s, array.nodes()[1].vs)),
             "the alt pair is the stored array element's"
         );
-        assert!(terms(&json!({}), JsonOptions::default()).alt().is_none());
+        assert!(terms(&json!({}), &JsonOptions::default()).alt().is_none());
     }
 
     #[test]
     fn container_elements_group_what_sits_inside_them() {
-        let t = terms(&json!({"a": [{"x": 1}, 2, [3]]}), JsonOptions::default());
+        let t = terms(&json!({"a": [{"x": 1}, 2, [3]]}), &JsonOptions::default());
         let nodes = t.nodes();
         // $, $.a, $.a[0], $.a[0].x, $.a[1], $.a[2], $.a[2][0]
         assert!(nodes[2].container_element);
@@ -1422,7 +1435,7 @@ mod tests {
         let value = json!({"a": 1});
         let context = Context::from_encoded(b"users/profile");
         let sealed = |tag_len: usize| {
-            let walked = walk(&value, JsonOptions::default(), &prf(), &context).unwrap();
+            let walked = walk(&value, &JsonOptions::default(), &prf(), &context).unwrap();
             let key = stack_kms::DataKeyWithTag {
                 key: stack_kms::DataKey {
                     iv: [1; 16],
@@ -1437,7 +1450,7 @@ mod tests {
                 Uuid::from_u128(1),
                 key,
                 &context,
-                JsonOptions::default(),
+                true,
             )
         };
         let longest = usize::from(u16::MAX);
@@ -1463,7 +1476,7 @@ mod tests {
         };
         assert!(walk(
             &nested(MAX_DEPTH),
-            JsonOptions::default(),
+            &JsonOptions::default(),
             &prf(),
             &Context::empty()
         )
@@ -1471,7 +1484,7 @@ mod tests {
         assert!(matches!(
             walk(
                 &nested(MAX_DEPTH + 1),
-                JsonOptions::default(),
+                &JsonOptions::default(),
                 &prf(),
                 &Context::empty()
             ),

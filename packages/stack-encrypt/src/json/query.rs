@@ -575,9 +575,21 @@ fn ordered(value: &Value) -> Result<(), Error> {
     }
 }
 
+/// Whether the index orders the leaves at `path`: some path in its
+/// `ordered` option covers it.
+fn orders(index: &Json, path: &JsonPath) -> Result<(), Error> {
+    if index.options.orders(path) {
+        Ok(())
+    } else {
+        Err(TermError::JsonPathNotOrdered.into())
+    }
+}
+
 /// The orderings at a path: the path's selector and the value's leaf
 /// ordering term. Refused, when the query is awaited, for a value that is
-/// neither a number nor a string.
+/// neither a number nor a string, and for a path the index does not order
+/// ([`JsonOptions::ordered`]): no stored leaf there carries a term, so the
+/// comparison would match no row.
 macro_rules! orderings {
     ($($op:ident),+ $(,)?) => {$(
         impl<P, V> Supports<AtPath<$op>, (P, V)> for Json
@@ -588,7 +600,8 @@ macro_rules! orderings {
             type Query = JsonLeafQuery;
             type Verifier = ();
             fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
-                let _ = parse_path(path.as_ref())?;
+                let path = parse_path(path.as_ref())?;
+                orders(self, &path)?;
                 ordered(&value.clone().into())
             }
             fn verifier(&self, _: &(P, V)) {}
@@ -622,7 +635,8 @@ where
     type Query = RangeQuery<JsonLeafQuery>;
     type Verifier = ();
     fn check(&self, (path, (lo, hi)): &(P, (V, V))) -> Result<(), Error> {
-        let _ = parse_path(path.as_ref())?;
+        let path = parse_path(path.as_ref())?;
+        orders(self, &path)?;
         ordered(&lo.clone().into())?;
         ordered(&hi.clone().into())
     }
@@ -655,9 +669,9 @@ where
 /// plan that declares the index carries them, and a query through it takes
 /// them from there.
 impl Json {
-    /// The index's layout options.
-    pub fn options(&self) -> JsonOptions {
-        self.options
+    /// The index's options: its layout, and the paths it orders.
+    pub fn options(&self) -> &JsonOptions {
+        &self.options
     }
 }
 
@@ -740,9 +754,12 @@ mod tests {
 
     #[test]
     fn the_index_reports_its_options() {
-        let open = JsonOptions { sealed_root: false };
-        assert_eq!(Json::new(open).options(), open);
-        assert_eq!(Json::default().options(), JsonOptions::default());
+        let open = JsonOptions {
+            sealed_root: false,
+            ..JsonOptions::new()
+        };
+        assert_eq!(Json::new(open.clone()).options(), &open);
+        assert_eq!(Json::default().options(), &JsonOptions::default());
     }
 
     #[test]

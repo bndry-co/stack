@@ -75,10 +75,14 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 /// A JSON index is `"json"`, or an object mapping `"json"` to its options:
 ///
 /// ```text
-/// { "json": { "sealed_root": <bool> } }
+/// { "json": { "sealed_root": <bool>, "ordered": [<path>, …] } }
 /// ```
 ///
-/// `sealed_root` defaults to `true` ([`JsonOptions::default`]). A data plan
+/// `sealed_root` defaults to `true` and `ordered` to none
+/// ([`JsonOptions::default`]); each path in `ordered` is text
+/// [`JsonPath::parse`](crate::json::JsonPath::parse) takes, such as
+/// `"$.age"` or `"$.orders[*].total"`, and one it refuses refuses the
+/// index. A data plan
 /// reads and writes the JSON index and refuses to run it
 /// ([`Reason::JsonIndexPending`]): the engine's typed path produces a JSON
 /// document, and the binding's half is not written yet. The other three
@@ -204,6 +208,7 @@ impl Serialize for IndexSpec {
         #[derive(Serialize)]
         struct JsonOut {
             sealed_root: bool,
+            ordered: Vec<String>,
         }
         #[derive(Serialize)]
         struct MatchOut {
@@ -235,6 +240,7 @@ impl Serialize for IndexSpec {
             IndexSpec::Json(options) if *options == JsonOptions::default() => Out::DefaultJson,
             IndexSpec::Json(options) => Out::Json(JsonOut {
                 sealed_root: options.sealed_root,
+                ordered: options.ordered.iter().map(ToString::to_string).collect(),
             }),
         }
         .serialize(s)
@@ -269,29 +275,36 @@ impl From<IndexWire> for IndexSpec {
 }
 
 /// A JSON index's options object: each option optional, defaulting to
-/// [`JsonOptions::default`]'s.
+/// [`JsonOptions::default`]'s, and each ordered path parsed.
 #[derive(Deserialize)]
-#[serde(from = "JsonOptionsWire")]
+#[serde(try_from = "JsonOptionsWire")]
 pub(super) struct JsonWire(pub(super) JsonOptions);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, default)]
 struct JsonOptionsWire {
     sealed_root: bool,
+    ordered: Vec<String>,
 }
 
 impl Default for JsonOptionsWire {
     fn default() -> Self {
-        let JsonOptions { sealed_root } = JsonOptions::default();
-        Self { sealed_root }
+        Self {
+            sealed_root: JsonOptions::default().sealed_root,
+            ordered: Vec::new(),
+        }
     }
 }
 
-impl From<JsonOptionsWire> for JsonWire {
-    fn from(wire: JsonOptionsWire) -> Self {
-        JsonWire(JsonOptions {
+impl TryFrom<JsonOptionsWire> for JsonWire {
+    type Error = crate::json::JsonPathError;
+    fn try_from(wire: JsonOptionsWire) -> Result<Self, Self::Error> {
+        let options = JsonOptions {
             sealed_root: wire.sealed_root,
-        })
+            ..JsonOptions::new()
+        }
+        .ordering(wire.ordered)?;
+        Ok(JsonWire(options))
     }
 }
 

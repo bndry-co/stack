@@ -41,17 +41,32 @@ async fn seal(cipher: &StackCipher<FakeDataKeySource>, value: &Value) -> JsonDoc
 async fn seal_with(
     cipher: &StackCipher<FakeDataKeySource>,
     value: &Value,
-    options: JsonOptions,
+    options: &JsonOptions,
 ) -> JsonDocument {
     cipher
         .default_keyset()
         .run(
-            stack_encrypt::target::json_document::<_, stack_encrypt::target::Borrowed>(options),
+            stack_encrypt::target::json_document::<_, stack_encrypt::target::Borrowed>(
+                options.clone(),
+            ),
             value,
             context(),
         )
         .await
         .expect("seals")
+}
+
+/// The options with the root open.
+fn open_root() -> JsonOptions {
+    JsonOptions {
+        sealed_root: false,
+        ..JsonOptions::new()
+    }
+}
+
+/// The options ordering `paths`.
+fn ordering(paths: &[&str]) -> JsonOptions {
+    JsonOptions::default().ordering(paths).unwrap()
 }
 
 async fn open(cipher: &StackCipher<FakeDataKeySource>, doc: JsonDocument) -> Result<Value, Error> {
@@ -92,8 +107,8 @@ async fn a_document_seals_one_entry_per_node_and_opens_again() {
         json!({"a": "b", "a b": 1, "é": [], "0": {}}),
         json!({"n": 18446744073709551615u64, "m": -9223372036854775808i64, "f": 1e300}),
     ] {
-        for options in [JsonOptions::default(), JsonOptions { sealed_root: false }] {
-            let doc = seal_with(&cipher, &value, options).await;
+        for options in [JsonOptions::default(), open_root()] {
+            let doc = seal_with(&cipher, &value, &options).await;
             assert_eq!(
                 doc.entries().len(),
                 nodes(&value),
@@ -198,9 +213,8 @@ async fn the_chain_fields_sit_where_the_design_says() {
         6,
         "$, hello, nested, deep, list, number"
     );
-    // Ordering terms on the string and number leaves only.
-    assert!(entries[1].ordering_term().is_some() && entries[9].ordering_term().is_some());
-    assert!(entries[2].ordering_term().is_none() && entries[4].ordering_term().is_none());
+    // No path is ordered by default, so no entry carries a term.
+    assert!(entries.iter().all(|e| e.ordering_term().is_none()));
     // Equal values at one path share selectors but not ciphertexts; the
     // value selectors, in the projection, tell equal values from different.
     let pair = |doc: &JsonDocument, i: usize| -> (String, String) {
@@ -230,7 +244,7 @@ async fn the_chain_fields_sit_where_the_design_says() {
     );
 
     // Without the sealed root, the top-level fields chain from the root.
-    let open_doc = seal_with(&cipher, &fixture(), JsonOptions { sealed_root: false }).await;
+    let open_doc = seal_with(&cipher, &fixture(), &open_root()).await;
     assert!(open_doc.entries()[1].parent_tag().is_some());
 }
 
@@ -247,12 +261,52 @@ async fn subtree_key(
         .default_keyset()
         .json_subtree_key(
             &JsonPath::parse(path).unwrap(),
-            options,
+            &options,
             nonempty!("users").with("profile"),
         )
         .await
 }
 
+/// An ordering term sits on a number or string leaf at an ordered path and
+/// nowhere else: a wildcard covers every element, a position one.
+#[tokio::test]
+async fn an_ordering_term_sits_only_at_an_ordered_path() {
+    let cipher = stack_cipher().await;
+    // $, $.hello, $.nested, $.nested.deep, $.nested.list, [0], [0].x, [1], [1].x, $.number
+    let with_term = |doc: &JsonDocument| -> Vec<usize> {
+        doc.entries()
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.ordering_term().is_some())
+            .map(|(j, _)| j)
+            .collect()
+    };
+    let doc = seal_with(&cipher, &fixture(), &ordering(&["$.hello", "$.number"])).await;
+    assert_eq!(with_term(&doc), [1, 9]);
+    let wild = seal_with(&cipher, &fixture(), &ordering(&["$.nested.list[*].x"])).await;
+    assert_eq!(with_term(&wild), [6, 8], "a wildcard covers every element");
+    let second = seal_with(&cipher, &fixture(), &ordering(&["$.nested.list[1].x"])).await;
+    assert_eq!(
+        with_term(&second),
+        [8],
+        "a position covers that element alone"
+    );
+    // A container, a boolean or a null at an ordered path carries none.
+    let kinds = seal_with(
+        &cipher,
+        &json!({"a": true, "b": null, "c": {"d": 1}, "e": [1, "x"]}),
+        &ordering(&["$.a", "$.b", "$.c", "$.e", "$.e[*]"]),
+    )
+    .await;
+    // $, $.a, $.b, $.c, $.c.d, $.e, $.e[0], $.e[1]
+    assert_eq!(with_term(&kinds), [6, 7]);
+    // The root scalar itself, at `$`.
+    let scalar = seal_with(&cipher, &json!(7), &ordering(&["$"])).await;
+    assert_eq!(with_term(&scalar), [0]);
+    // The documents open regardless.
+    assert_eq!(open(&cipher, doc).await.unwrap(), fixture());
+    assert_eq!(open(&cipher, wild).await.unwrap(), fixture());
+}
 #[tokio::test]
 async fn a_token_derived_from_the_path_alone_unlocks_exactly_its_subtree() {
     let cipher = stack_cipher().await;
@@ -323,10 +377,8 @@ async fn a_token_derived_from_the_path_alone_unlocks_exactly_its_subtree() {
         subtree_key(&cipher, "$[*].x", JsonOptions::default()).await,
         Err(Error::Term(TermError::JsonSealedRoot))
     ));
-    let open_doc = seal_with(&cipher, &fixture(), JsonOptions { sealed_root: false }).await;
-    let root = subtree_key(&cipher, "$", JsonOptions { sealed_root: false })
-        .await
-        .unwrap();
+    let open_doc = seal_with(&cipher, &fixture(), &open_root()).await;
+    let root = subtree_key(&cipher, "$", open_root()).await.unwrap();
     assert_eq!(
         open_doc.subtree(root.token_bytes()).len(),
         9,
@@ -349,24 +401,13 @@ async fn a_token_derived_from_the_path_alone_unlocks_exactly_its_subtree() {
     );
     // Under an open root the whole chain is derivable down to the first
     // key step: `$[0]` would be a position, `$.nested` is a gate.
-    let open_key = subtree_key(
-        &cipher,
-        "$.nested.list[1]",
-        JsonOptions { sealed_root: false },
-    )
-    .await
-    .unwrap();
-    assert_eq!(open_key.token_bytes(), root.token_bytes());
-    assert_eq!(open_key.gates().len(), 3);
-    let array_doc = seal_with(
-        &cipher,
-        &json!([[1, 2], [3]]),
-        JsonOptions { sealed_root: false },
-    )
-    .await;
-    let second_row = subtree_key(&cipher, "$[1]", JsonOptions { sealed_root: false })
+    let open_key = subtree_key(&cipher, "$.nested.list[1]", open_root())
         .await
         .unwrap();
+    assert_eq!(open_key.token_bytes(), root.token_bytes());
+    assert_eq!(open_key.gates().len(), 3);
+    let array_doc = seal_with(&cipher, &json!([[1, 2], [3]]), &open_root()).await;
+    let second_row = subtree_key(&cipher, "$[1]", open_root()).await.unwrap();
     assert!(second_row.gates().is_empty(), "positions derive");
     let found: Vec<usize> = array_doc
         .subtree(second_row.token_bytes())
@@ -498,8 +539,8 @@ async fn an_extracted_node_opens_to_its_scalar_and_a_subtree_to_its_value() {
 async fn a_moved_reordered_or_regrafted_entry_fails_to_open() {
     let cipher = stack_cipher().await;
     let value = json!({"a": "x", "b": "y"});
-    let doc = seal_with(&cipher, &value, JsonOptions { sealed_root: false }).await;
-    let other = seal_with(&cipher, &value, JsonOptions { sealed_root: false }).await;
+    let doc = seal_with(&cipher, &value, &open_root()).await;
+    let other = seal_with(&cipher, &value, &open_root()).await;
     let tamper = |mut wire: Value, f: &dyn Fn(&mut Vec<Value>)| {
         let sv = wire["sv"].as_array_mut().unwrap();
         f(sv);
@@ -568,6 +609,19 @@ fn plan() -> JsonPlan {
     Plan::value::<Value>()
         .context("users/profile")
         .encrypt_into::<JsonDocument>()
+        .build()
+        .unwrap()
+}
+
+type OrderedPlan =
+    stack_encrypt::plan::ValuePlan<Value, stack_encrypt::plan::Laid<Json, JsonDocument>>;
+
+/// The plan laid out by the JSON index with `$.hello`, `$.number` and
+/// `$.flag` ordered.
+fn ordered_plan() -> OrderedPlan {
+    Plan::value::<Value>()
+        .context("users/profile")
+        .encrypt_as(Json::new(ordering(&["$.hello", "$.number", "$.flag"])))
         .build()
         .unwrap()
 }
@@ -886,7 +940,10 @@ async fn an_accessor_asks_at_a_path() {
     );
 
     // An ordering at a path: the path's selector and a leaf term that
-    // orders as the stored leaf's does, under native byte comparison.
+    // orders as the stored leaf's does, under native byte comparison. The
+    // plan declares the paths it orders, and the query runs under them.
+    let plan = ordered_plan();
+    let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
     let bound = cipher
         .query(op::AtPath(op::Gte), &("$.number", 0))
         .on(&plan)
@@ -942,6 +999,82 @@ async fn an_accessor_asks_at_a_path() {
         unordered,
         Err(Error::Term(TermError::JsonLeafNotOrdered))
     ));
+    // A path the plan does not order is refused: no stored leaf there
+    // carries a term, so the comparison would match no row. Under the
+    // default plan that is every path.
+    let not_ordered = cipher
+        .query(op::AtPath(op::Lt), &("$.nested.deep", "z"))
+        .on(&plan)
+        .await;
+    assert!(
+        matches!(not_ordered, Err(Error::Term(TermError::JsonPathNotOrdered))),
+        "{not_ordered:?}"
+    );
+    let default_plan = self::plan();
+    let not_ordered = cipher
+        .query(op::AtPath(op::Between), &("$.number", (0, 5)))
+        .on(&default_plan)
+        .await;
+    assert!(
+        matches!(not_ordered, Err(Error::Term(TermError::JsonPathNotOrdered))),
+        "{not_ordered:?}"
+    );
+    // A wildcard query path is covered by a wildcard, not by a position.
+    let by_element = Plan::value::<Value>()
+        .context("users/profile")
+        .encrypt_as(Json::new(ordering(&["$.nested.list[1].x"])))
+        .build()
+        .unwrap();
+    assert!(cipher
+        .query(op::AtPath(op::Gt), &("$.nested.list[1].x", 0))
+        .on(&by_element)
+        .await
+        .is_ok());
+    for path in ["$.nested.list[*].x", "$.nested.list[0].x"] {
+        let refused = cipher
+            .query(op::AtPath(op::Gt), &(path, 0))
+            .on(&by_element)
+            .await;
+        assert!(
+            matches!(refused, Err(Error::Term(TermError::JsonPathNotOrdered))),
+            "{path}: {refused:?}"
+        );
+    }
+}
+
+/// A plan laid out by the index opens what it wrote, one document or a
+/// batch, and reports its layout.
+#[tokio::test]
+async fn a_laid_out_plan_opens_what_it_wrote() {
+    let cipher = stack_cipher().await;
+    let plan = ordered_plan();
+    assert_eq!(
+        plan.layout().options(),
+        &ordering(&["$.hello", "$.number", "$.flag"])
+    );
+    let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
+    let back: Value = cipher.open(doc.clone()).using(&plan).await.unwrap();
+    assert_eq!(back, fixture());
+    let docs: Vec<Value> = cipher
+        .open(vec![doc.clone(), doc])
+        .using(&plan)
+        .await
+        .unwrap();
+    assert_eq!(docs, [fixture(), fixture()]);
+    // The index named on the query says only which: the plan's own, with
+    // its options, answers.
+    let through_default = cipher
+        .query(op::AtPath(op::Gte), &("$.number", 0))
+        .via(Json)
+        .on(&plan)
+        .await
+        .unwrap();
+    let chosen = cipher
+        .query(op::AtPath(op::Gte), &("$.number", 0))
+        .on(&plan)
+        .await
+        .unwrap();
+    assert_eq!(through_default.selector(), chosen.selector());
 }
 
 #[tokio::test]
@@ -950,7 +1083,7 @@ async fn a_query_under_other_options_is_refused_by_the_plan() {
     let plan = plan();
     let refused = cipher
         .query(op::Contains, &json!({}))
-        .via(Json::new(JsonOptions { sealed_root: false }))
+        .via(Json::new(open_root()))
         .on(&plan)
         .await;
     assert!(
@@ -987,16 +1120,32 @@ fn the_json_index_has_a_wire_form() {
         json!("json")
     );
     assert_eq!(
-        serde_json::to_value(IndexSpec::Json(JsonOptions { sealed_root: false })).unwrap(),
-        json!({"json": {"sealed_root": false}})
+        serde_json::to_value(IndexSpec::Json(open_root())).unwrap(),
+        json!({"json": {"sealed_root": false, "ordered": []}}),
+        "every option is written when any is not the default"
     );
     let frame =
         vitaminc_aead_frame::serde::to_vec(&json!({"json": {"sealed_root": false}})).unwrap();
     assert_eq!(
         IndexSpec::from_frame(&frame).unwrap(),
-        IndexSpec::Json(JsonOptions { sealed_root: false })
+        IndexSpec::Json(open_root())
     );
     let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"nope": true}})).unwrap();
+    assert!(IndexSpec::from_frame(&frame).is_err());
+    // The ordered paths ride in `ordered`, written in their canonical
+    // order and read back parsed; a text that is not a path refuses the
+    // index.
+    let ordered = IndexSpec::Json(ordering(&["$.orders[*].total", "$.age", "$.age"]));
+    assert_eq!(
+        serde_json::to_value(&ordered).unwrap(),
+        json!({"json": {"sealed_root": true, "ordered": ["$.age", "$.orders[*].total"]}})
+    );
+    let frame = vitaminc_aead_frame::serde::to_vec(
+        &json!({"json": {"ordered": ["$.age", "$.orders[*].total"]}}),
+    )
+    .unwrap();
+    assert_eq!(IndexSpec::from_frame(&frame).unwrap(), ordered);
+    let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["age"]}})).unwrap();
     assert!(IndexSpec::from_frame(&frame).is_err());
     assert_eq!(
         not_admitted(ValueKind::Object, &IndexSpec::Json(JsonOptions::default())),
@@ -1252,7 +1401,7 @@ async fn the_sealed_root_a_walk_fell_back_to_opens_at_the_path() {
         )
         .await;
     assert!(matches!(refused, Err(Error::OpenedType { .. })));
-    let open_doc = seal_with(&cipher, &fixture(), JsonOptions { sealed_root: false }).await;
+    let open_doc = seal_with(&cipher, &fixture(), &open_root()).await;
     assert!(!JsonSubtree::new(vec![fallback(&open_doc)]).is_sealed_root());
     assert!(!JsonSubtree::new(vec![]).is_sealed_root());
     assert!(!JsonSubtree::new(vec![root.clone(), root]).is_sealed_root());
@@ -1279,7 +1428,7 @@ async fn a_walked_row_carries_its_depth() {
 async fn a_document_without_the_sealed_root_opens_from_its_entries() {
     let cipher = stack_cipher().await;
     for value in [fixture(), json!({"": {}}), json!([[], {}, ""]), json!("a")] {
-        let doc = seal_with(&cipher, &value, JsonOptions { sealed_root: false }).await;
+        let doc = seal_with(&cipher, &value, &open_root()).await;
         assert!(!doc.header().sealed_root());
         assert_eq!(doc.entries().len(), nodes(&value));
         assert_eq!(open(&cipher, doc).await.unwrap(), value);
@@ -1291,7 +1440,7 @@ async fn a_document_without_the_sealed_root_opens_from_its_entries() {
 #[tokio::test]
 async fn an_accessor_is_refused_before_its_keyset_loads() {
     let (cipher, loads) = common::loads_counting_cipher().await;
-    let plan = plan();
+    let plan = ordered_plan();
     let eq = cipher
         .query(op::AtPath(op::Eq), &("address.city", "Sydney"))
         .on(&plan)
@@ -1318,6 +1467,15 @@ async fn an_accessor_is_refused_before_its_keyset_loads() {
     assert!(
         matches!(unordered, Err(Error::Term(TermError::JsonLeafNotOrdered))),
         "{unordered:?}"
+    );
+    let not_ordered = cipher
+        .query(op::AtPath(op::Lt), &("$.nested.deep", "z"))
+        .on(&plan)
+        .keyset("tenant")
+        .await;
+    assert!(
+        matches!(not_ordered, Err(Error::Term(TermError::JsonPathNotOrdered))),
+        "{not_ordered:?}"
     );
     assert_eq!(
         loads.load(std::sync::atomic::Ordering::SeqCst),

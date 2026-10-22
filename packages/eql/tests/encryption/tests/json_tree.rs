@@ -11,12 +11,13 @@
 mod common;
 
 use eql_bindings::v4::json_tree::{
-    JsonTreeDocument, JsonTreeEntry, JsonTreeLeafQuery, JsonTreeQuery, JsonTreeSubtree,
+    JsonTree, JsonTreeDocument, JsonTreeEntry, JsonTreeLeafQuery, JsonTreeQuery, JsonTreeSubtree,
 };
 use eql_bindings::Identifier;
 use serde_json::{json, Map, Value};
 use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPath};
-use stack_encrypt::plan::{Typed, ValuePlan};
+use stack_encrypt::plan::{Laid, ValuePlan};
+use stack_encrypt::target::{Json, Layout};
 use stack_encrypt::{op, NonEmpty, Plan};
 
 fn column() -> NonEmpty<Identifier> {
@@ -29,10 +30,12 @@ fn fixture() -> Value {
 
 type Cipher = stack_encrypt::StackCipher<common::Observed>;
 
+/// Seal `value` as the EQL type under the identifier, laid out by the
+/// `json_tree` layout with the same ordered paths as [`plan`].
 async fn seal(cipher: &Cipher, value: &Value) -> JsonTreeDocument {
     cipher
         .default_keyset()
-        .encrypt_as::<Value, JsonTreeDocument>(value, column())
+        .run(JsonTree::new(options()).encryption(), value, column())
         .await
         .unwrap()
 }
@@ -40,14 +43,23 @@ async fn seal(cipher: &Cipher, value: &Value) -> JsonTreeDocument {
 /// The plan a query derives through: the engine's own document target
 /// under the label `users/profile`, which is the same context as the
 /// identifier the EQL target stores (the same two parts, rendered
-/// `users/profile`), so its selectors are the stored document's. An EQL
-/// type takes its context as an identifier and runs through `encrypt_as`,
-/// not through the chain.
-fn plan() -> ValuePlan<Value, Typed<JsonDocument>> {
+/// `users/profile`), so its selectors are the stored document's, laid
+/// out by the JSON index with `$.hello` and `$.number` ordered, the paths
+/// the ordering queries below ask at. An EQL type takes its context as
+/// an identifier and runs through `encrypt_as`, not through the chain.
+fn plan() -> ValuePlan<Value, Laid<Json, JsonDocument>> {
     Plan::value::<Value>()
         .context("users/profile")
-        .encrypt_into::<JsonDocument>()
+        .encrypt_as(Json::new(options()))
         .build()
+        .unwrap()
+}
+
+/// The index options the corpus is sealed under: `$.hello` and
+/// `$.number` carry ordering terms.
+fn options() -> JsonOptions {
+    JsonOptions::default()
+        .ordering(["$.hello", "$.number"])
         .unwrap()
 }
 
@@ -470,7 +482,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
             &runtime,
             keyset.json_subtree_key(
                 &JsonPath::parse(path).unwrap(),
-                JsonOptions::default(),
+                &JsonOptions::default(),
                 column(),
             ),
         )

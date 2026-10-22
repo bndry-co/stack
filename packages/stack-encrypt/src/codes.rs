@@ -94,6 +94,7 @@ mod tests {
             TermError::JsonTooWide => TermError::JsonTooWide,
             TermError::JsonSealedRoot => TermError::JsonSealedRoot,
             TermError::JsonLeafNotOrdered => TermError::JsonLeafNotOrdered,
+            TermError::JsonPathNotOrdered => TermError::JsonPathNotOrdered,
         ]));
         errors.extend(boxed(variants![
             TermBytesError::WrongEqualityTermLength(_) => {
