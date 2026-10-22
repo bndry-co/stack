@@ -79,6 +79,9 @@ mod tests {
         errors.extend(boxed(variants![
             TermError::Prf(_) => TermError::Prf(cause()),
             TermError::Ore(_) => TermError::Ore(cllw_ore::Error),
+            TermError::OreBlockTooLong => TermError::OreBlockTooLong,
+            TermError::OreBlockTrailingNul => TermError::OreBlockTrailingNul,
+            TermError::OreBlock(_) => TermError::OreBlock(cause()),
             TermError::InvalidOptions(_) => TermError::InvalidOptions("k out of range"),
             TermError::EmptyTermText => TermError::EmptyTermText,
             TermError::NoEqualityTerm => TermError::NoEqualityTerm,
@@ -109,6 +112,9 @@ mod tests {
             },
             TermBytesError::MalformedCllwCiphertext(_) => {
                 TermBytesError::MalformedCllwCiphertext(3)
+            },
+            TermBytesError::MalformedOreBlockCiphertext(_) => {
+                TermBytesError::MalformedOreBlockCiphertext(3)
             },
         ]));
         errors.extend(boxed(variants![
@@ -414,6 +420,12 @@ mod tests {
                 Box::new(TermBytesError::MalformedCllwCiphertext(5)),
                 json!({ "len": 5 }),
             ),
+            (
+                Box::new(TermBytesError::MalformedOreBlockCiphertext(7)),
+                json!({ "len": 7 }),
+            ),
+            (Box::new(TermError::OreBlockTooLong), json!({})),
+            (Box::new(TermError::OreBlockTrailingNul), json!({})),
             (
                 Box::new(TermBytesError::MatchPositionOutOfRange {
                     position: 900,

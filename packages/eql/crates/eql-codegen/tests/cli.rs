@@ -35,7 +35,7 @@ fn tempdir() -> TempDir {
 /// the output-root override (test isolation) and never touches the committed
 /// `crates/eql-bindings/src/v3/*.rs`. The count is one file per scalar family
 /// plus the jsonb family's generated `jsonb_storage.rs`, `payload.rs`,
-/// `query_payload.rs`, `targets.rs`, and `inventory.rs`.
+/// `query_payload.rs`, `targets.rs`, `answers.rs` and `inventory.rs`.
 #[test]
 fn bindings_subcommand_succeeds_and_reports_count() {
     let out_root = tempdir();
@@ -51,11 +51,12 @@ fn bindings_subcommand_succeeds_and_reports_count() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     // v3: scalar families + json_storage + payload + query_payload +
-    // inventory. v4: every family with a scalar domain + targets + inventory.
+    // inventory. v4: every family with a scalar domain + targets + answers +
+    // inventory.
     let expected = eql_domains::scalar_families().count()
         + 4
         + eql_domains::families_with_scalar_domains().count()
-        + 2;
+        + 3;
     assert!(
         stdout.contains(&format!("bindings: ok ({expected} files)")),
         "expected 'bindings: ok ({expected} files)' in stdout, got:\n{stdout}"

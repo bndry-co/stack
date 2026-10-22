@@ -810,7 +810,7 @@ mod tests {
             assert_eq!(plan_check(&plan), Ok(()), "the eql build runs TextEq");
             // A type the engine cannot produce, and one that does not exist,
             // are refused at plan_check.
-            for name in ["TextOrdOre", "Nope"] {
+            for name in ["DateOrdOre", "Nope"] {
                 let refused = encoded(object(vec![(
                     "email",
                     object(vec![

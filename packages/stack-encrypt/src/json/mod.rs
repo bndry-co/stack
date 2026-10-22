@@ -86,10 +86,10 @@
 //! term kind's are ([`sem`](crate::sem)): a change to any of them is a new
 //! version, never an edit in place.
 use std::collections::BTreeSet;
-use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use vitaminc_protected::OpaqueDebug;
 
 use crate::target::{DecryptField, DecryptInto, Decryptable, Decryption};
 
@@ -192,12 +192,19 @@ impl Default for JsonOptions {
 /// root; it parses nothing else. The epoch is reserved for bounding a revealed token
 /// in time (the design's "Epochs"); writing it now keeps that a new value
 /// rather than a new layout.
-#[derive(Clone, PartialEq, Eq)]
+///
+/// `Debug` ([`OpaqueDebug`]) prints the keyset and the layout, which say
+/// what a header is for, and masks the ZeroKMS `iv` and `tag`, which
+/// retrieve the data key.
+#[derive(Clone, PartialEq, Eq, OpaqueDebug)]
 pub struct JsonHeader {
+    #[non_sensitive]
     keyset_id: Uuid,
     iv: stack_kms::Iv,
     tag: Vec<u8>,
+    #[non_sensitive]
     sealed_root: bool,
+    #[non_sensitive]
     epoch: u32,
 }
 
@@ -303,18 +310,6 @@ impl JsonHeader {
             sealed_root,
             epoch: 0,
         }
-    }
-}
-
-/// The keyset and the layout; the key material's identifiers are not
-/// secret, but a header prints as what it is for.
-impl fmt::Debug for JsonHeader {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("JsonHeader")
-            .field("keyset_id", &self.keyset_id)
-            .field("sealed_root", &self.sealed_root)
-            .field("epoch", &self.epoch)
-            .finish_non_exhaustive()
     }
 }
 
@@ -842,12 +837,12 @@ mod tests {
     }
 
     #[test]
-    fn a_header_prints_its_keyset_and_layout() {
+    fn a_header_prints_its_keyset_and_layout_and_masks_the_key_identifiers() {
         let header = JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![1, 2, 3], true);
         assert_eq!(
             format!("{header:?}"),
             format!(
-                "JsonHeader {{ keyset_id: {:?}, sealed_root: true, epoch: 0, .. }}",
+                "stack_encrypt::json::JsonHeader {{ keyset_id: {:?}, iv: \"***\", tag: \"***\", sealed_root: true, epoch: 0 }}",
                 Uuid::from_u128(7)
             )
         );

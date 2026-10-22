@@ -154,6 +154,11 @@ const (
 	IndexOre      IndexName = "ore"
 	IndexOpe      IndexName = "ope"
 	IndexJSON     IndexName = "json"
+	// IndexOreBlock is block ORE (ore-rs's 6-bit schemes): the index of an
+	// EQL type's ORE term (`ob`), TextOrdOre's and IntegerOrdOre's. It is
+	// not a tag word: a field reaches it by naming such an EQL type
+	// (encrypt_into=), and indexNames leaves it out.
+	IndexOreBlock IndexName = "ore_block"
 )
 
 // indexNames lists every index, in the order the generated type lists their
@@ -172,6 +177,8 @@ func (n IndexName) GoName() string {
 		return "Ore"
 	case IndexOpe:
 		return "Ope"
+	case IndexOreBlock:
+		return "OreBlock"
 	case IndexJSON:
 		return "JSON"
 	}

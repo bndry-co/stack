@@ -360,3 +360,102 @@ async fn eq_term_across_versions_compares_text(pool: PgPool) -> Result<()> {
     );
     Ok(())
 }
+
+/// SQLSTATE `invalid_parameter_value`.
+const INVALID_PARAMETER_VALUE: &str = "22023";
+
+/// A text search query operand of `version` built from the first fixture row
+/// whose filter is not empty, minus the ciphertext, the block ORE term and
+/// the keys in `drop`.
+fn search_operand(version: u8, drop: &[&str]) -> String {
+    let mut operand = format!(
+        "jsonb_set((SELECT payload - 'c' - 'ob' FROM fixtures.eql_v3_text \
+         WHERE jsonb_array_length(payload -> 'bf') > 0 ORDER BY id LIMIT 1), '{{v}}', '{version}')"
+    );
+    for key in drop {
+        operand = format!("({operand} - '{key}')");
+    }
+    format!("({operand})::eql_v{version}.query_text_search")
+}
+
+/// The two versions part on the text search query operand (ADR-0002,
+/// amended 2026-10-19). v3's is cipherstash-client's and needs `hm`, `op`
+/// and `bf`. v4's needs any one of them, since Stack Encrypt sends only the
+/// term its operator reads, and each v4 operator refuses an operand without
+/// its term instead of comparing a NULL and matching no row.
+#[sqlx::test(fixtures(path = "../fixtures", scripts("eql_v3_text")))]
+async fn a_v4_search_query_needs_one_term_and_a_v3_one_needs_all(pool: PgPool) -> Result<()> {
+    install_v4(&pool).await?;
+
+    let one_term: [&[&str]; 3] = [&["op", "bf"], &["hm", "bf"], &["hm", "op"]];
+    sqlx::query(&format!("SELECT {}", search_operand(3, &[])))
+        .execute(&pool)
+        .await?;
+    for drop in one_term {
+        let err = sqlx::query(&format!("SELECT {}", search_operand(3, drop)))
+            .execute(&pool)
+            .await
+            .expect_err("a v3 search query needs every term");
+        assert_eq!(
+            sqlstate(&err).as_deref(),
+            Some(CHECK_VIOLATION),
+            "v3 without {drop:?}: {err}"
+        );
+    }
+    for drop in std::iter::once(&[][..]).chain(one_term) {
+        sqlx::query(&format!("SELECT {}", search_operand(4, drop)))
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("v4 without {drop:?}: {e}"));
+    }
+    let err = sqlx::query(&format!(
+        "SELECT {}",
+        search_operand(4, &["hm", "op", "bf"])
+    ))
+    .execute(&pool)
+    .await
+    .expect_err("a v4 search query needs a term");
+    assert_eq!(sqlstate(&err).as_deref(), Some(CHECK_VIOLATION), "{err}");
+
+    sqlx::raw_sql(
+        "CREATE TABLE t4s (c public.eql_v4_text_search);
+         INSERT INTO t4s SELECT jsonb_set(payload - 'ob', '{v}', '4')::public.eql_v4_text_search
+           FROM fixtures.eql_v3_text WHERE jsonb_array_length(payload -> 'bf') > 0;",
+    )
+    .execute(&pool)
+    .await?;
+    for (op, term, rest) in [
+        ("=", "hm", ["op", "bf"]),
+        ("<=", "op", ["hm", "bf"]),
+        ("@@", "bf", ["hm", "op"]),
+    ] {
+        // With its term, the operator answers: the operand's own row.
+        let n: i64 = sqlx::query_scalar(&format!(
+            "SELECT count(*) FROM t4s WHERE c {op} {}",
+            search_operand(4, &rest)
+        ))
+        .fetch_one(&pool)
+        .await?;
+        assert!(n >= 1, "c {op} with only {term} finds its own row");
+        // Without it, the operator refuses, naming the term.
+        let err = sqlx::query(&format!(
+            "SELECT count(*) FROM t4s WHERE c {op} {}",
+            search_operand(4, &[term])
+        ))
+        .execute(&pool)
+        .await
+        .expect_err("an operator refuses an operand without its term");
+        assert_eq!(
+            sqlstate(&err).as_deref(),
+            Some(INVALID_PARAMETER_VALUE),
+            "c {op} without {term}: {err}"
+        );
+        assert!(
+            err.to_string().contains(&format!(
+                "eql_v4.query_text_search value has no \"{term}\" term"
+            )),
+            "c {op} without {term}: {err}"
+        );
+    }
+    Ok(())
+}
