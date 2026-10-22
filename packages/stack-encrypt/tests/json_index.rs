@@ -1504,10 +1504,33 @@ async fn an_accessor_is_refused_before_its_keyset_loads() {
         matches!(not_ordered, Err(Error::Term(TermError::JsonPathNotOrdered))),
         "{not_ordered:?}"
     );
+    // An open that names a context the plan already has is refused the
+    // same way, one document or a batch, before the keyset loads.
+    let doc = seal(&stack_cipher().await, &fixture()).await;
+    let clash = cipher
+        .open(doc.clone())
+        .context("users/other")
+        .using(&plan)
+        .keyset("tenant")
+        .await;
+    assert!(
+        matches!(clash, Err(Error::Plan(PlanError::TwoContextSources { .. }))),
+        "{clash:?}"
+    );
+    let clash = cipher
+        .open(vec![doc])
+        .context("users/other")
+        .using(&plan)
+        .keyset("tenant")
+        .await;
+    assert!(
+        matches!(clash, Err(Error::Plan(PlanError::TwoContextSources { .. }))),
+        "{clash:?}"
+    );
     assert_eq!(
         loads.load(std::sync::atomic::Ordering::SeqCst),
         0,
-        "no keyset was loaded for a refused query"
+        "no keyset was loaded for a refused query or open"
     );
     // The same query with a path the index takes does load it.
     let _ = cipher
