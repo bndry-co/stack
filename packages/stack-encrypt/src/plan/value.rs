@@ -653,6 +653,14 @@ where
     }
 }
 
+impl<S, X: ValueLayout<S>> ValuePlan<S, X> {
+    /// The indexes the plan declares, as data: what a query through it may
+    /// ask for ([`ValueLayout::specs`]).
+    pub fn specs(&self) -> Vec<IndexSpec> {
+        self.shape.specs()
+    }
+}
+
 impl<S, T> ValuePlan<S, Typed<T>> {
     /// The description of one run under a context the caller hands over
     /// whole, of any type `C` the target accepts: `T`'s layout,

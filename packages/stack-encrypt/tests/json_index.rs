@@ -1048,19 +1048,46 @@ async fn an_accessor_asks_at_a_path() {
 async fn a_laid_out_plan_opens_what_it_wrote() {
     let cipher = stack_cipher().await;
     let plan = ordered_plan();
+    let options = ordering(&["$.hello", "$.number", "$.flag"]);
+    assert_eq!(plan.layout().options(), &options);
+    assert_eq!(plan.specs(), [IndexSpec::Json(options.clone())]);
     assert_eq!(
-        plan.layout().options(),
-        &ordering(&["$.hello", "$.number", "$.flag"])
+        stack_encrypt::target::Layout::<Value>::specs(&Json::new(options.clone())),
+        [IndexSpec::Json(options)]
+    );
+    assert!(
+        format!("{plan:?}").contains("Laid<stack_encrypt::json::JsonDocument>(Json"),
+        "{plan:?}"
     );
     let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
     let back: Value = cipher.open(doc.clone()).using(&plan).await.unwrap();
     assert_eq!(back, fixture());
     let docs: Vec<Value> = cipher
-        .open(vec![doc.clone(), doc])
+        .open(vec![doc.clone(), doc.clone()])
         .using(&plan)
         .await
         .unwrap();
     assert_eq!(docs, [fixture(), fixture()]);
+    // The plan was built with its context, so an open that names one is
+    // refused, one document or a batch, before any key is requested.
+    let clash = cipher
+        .open(doc.clone())
+        .context("users/other")
+        .using(&plan)
+        .await;
+    assert!(
+        matches!(clash, Err(Error::Plan(PlanError::TwoContextSources { .. }))),
+        "{clash:?}"
+    );
+    let clash = cipher
+        .open(vec![doc.clone()])
+        .context("users/other")
+        .using(&plan)
+        .await;
+    assert!(
+        matches!(clash, Err(Error::Plan(PlanError::TwoContextSources { .. }))),
+        "{clash:?}"
+    );
     // The index named on the query says only which: the plan's own, with
     // its options, answers.
     let through_default = cipher
