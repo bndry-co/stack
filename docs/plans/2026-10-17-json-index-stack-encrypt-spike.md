@@ -441,7 +441,20 @@ After the Phase 3b measurement the largest field in a stored document was `op`, 
 - **A plan can be laid out by a value.** The typed plan had no place for options: `encrypt_into::<JsonDocument>()` reads the type's own `EncryptFrom`, which is static, so every typed plan sealed under the defaults and a query under other options was refused as `PlanError::IndexOptions`. The new `target::Layout<S>` trait is a target's layout chosen by value, with the index it answers queries through; `Json::new(options)` implements it for `JsonDocument`, and `Plan::value().encrypt_as(Json::new(options))` builds a `ValuePlan<_, Laid<Json, JsonDocument>>` that seals under the options and resolves every query through the plan's own index, so a query does not name the options again. The EQL type has the same by value: `eql_bindings::v4::JsonTree::new(options)` lays a value out as a `JsonTreeDocument` under an identifier.
 - **Nothing changes in SQL.** `ord_term` was already NULL for an entry without `op`, and the entry validator already admitted its absence; the functional btree on `eql_v4.ord_term(col -> sel)` indexes the leaves at one selector, which under the opt-in are the leaves of one ordered path.
 
-What remains of the per-path policy is the `vs` half (equality off for a low-cardinality field) and opaque subtrees; neither is scheduled. The storage this buys depends on how many paths a column orders: with none, the nested benchmark document loses the whole 24.8 KB of `op` (−29% of its characters, −35% of its heap size on the earlier re-encoding estimate); with two ordered scalar paths it loses all but 160 bytes of it.
+What remains of the per-path policy is the `vs` half (equality off for a low-cardinality field) and opaque subtrees; neither is scheduled.
+
+### Measured (cipherstash/benches cd9643d)
+
+The benches re-sealed both corpora with one ordered path each, the one their range and ordering scenarios use (`$.age` on the flat corpus, `$.company.salary` on the nested), at 10,000 and 100,000 rows, and the correctness check passed at both tiers (462 of 462). "Before" is the Phase 3b form with `op` on every number and string leaf.
+
+| | flat, 10,000 rows | nested, 10,000 rows | nested, 100,000 rows |
+|---|--:|--:|--:|
+| `pg_column_size` per row | 2,250 → 1,596 B (−29%) | 62,143 → 40,578 B (−35%) | 62,092 → 40,549 B |
+| heap with TOAST | 27.1 → 17.0 MiB | 620.9 → 407.5 MiB (−34%) | 6,201 → 4,069 MiB |
+| containment GIN | 0.98 → 1.03 MiB | 39.9 MiB, unchanged | 358 MiB, unchanged |
+| total with indexes | 28.4 → 18.4 MiB | 662.0 → 448.6 MiB | 6,569 → 4,437 MiB |
+
+The nested document is now 18 times its plaintext on disk (was 26 at Phase 3b, 40 at Phase 3). Two side effects: a flat document at 1,596 bytes sits under PostgreSQL's TOAST threshold, so the flat heap moves from TOAST into the main relation (0.5 to 17 MiB at 10,000 rows) and the earlier note about a TOASTed column making a sequential scan look cheap no longer applies to that corpus; and the flat GIN grew 12% at 100,000 rows with an identical projection, because the rows now spread over many more heap pages and the index's row-address deltas are wider. Query timings were not re-run for this measurement.
 
 ## Decisions to take before Phase 1
 
