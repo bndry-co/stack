@@ -293,7 +293,9 @@ equality term on the same column still reveals which rows share a timestamp.
   problem, as it is for a plaintext float column.
 - **Order:** every scalar kind except `Bool`, under all three schemes, with
   one exception: block ORE for text, which waits for ore-rs's variable-length
-  block ORE (see Deferred).
+  block ORE (see Deferred). *Amended 2026-10-19:* the exception is gone.
+  ore-rs 0.9.0 released its chained scheme, and Stack Encrypt orders text
+  with it (see "EQL v4").
 - **`Bool` has a ciphertext only.** A keyed hash or an order term over a
   domain of two values hides nothing: it splits the rows into two groups, and
   an order term also says which group is `true`. Stack Encrypt stops
@@ -443,6 +445,67 @@ without loss, and refuses it otherwise.
 - **During the overlap**, expected to last a quarter or more, cipherstash-client
   takes fixes only. New kinds and domains are produced through Stack Encrypt
   and v4. An exception is a decision written down in its issue.
+- *Amended 2026-10-19:* **a v4 search query carries only the terms its
+  operator reads.** The text search query domains (`eql_v4.query_text_search`
+  and `eql_v4.query_text_search_ore`, whose terms include the match term
+  `bf` beside others) require at least one of their terms rather than all
+  of them. Text shorter than one 3-gram has no match term, so a query that
+  had to carry every term could not express `=` or `<` on short text.
+  Stack Encrypt emits only the term of the index that answers the query's
+  operator. Every extractor over such an operand raises wherever it reads
+  the operand when the term it reads is absent, JSON `null` or an empty
+  array, naming the domain, the term and the operators that compare it, and
+  never the operand's contents, rather than reading it as `NULL` (no row) or
+  as an empty filter. The raise is at evaluation: a literal operand is
+  folded and raises at plan time, while a bound parameter under a generic
+  plan whose predicate is never reached returns no row and no error. A
+  stored search value carries every term, and text too short for a match
+  term stores the empty filter (`"bf": []`), the stored side's answer in
+  Stack Encrypt: `=` and `<` find it, and no `@@` query does, because a
+  query's filter is never empty (the extractor refuses `"bf": []`). That is
+  a claim about queries: `@@` between two stored values (a self-join
+  `a.name @@ b.name`, or `matches(col, <a stored value as jsonb>)`) keeps
+  the shared guard, so two stored empty filters match each other there, as
+  they do in v3. No producer builds that predicate. A match
+  query of such text is refused, as it is for `TextMatch`, whose stored
+  value still refuses it too. The v3 domains are cipherstash-client's format
+  and keep requiring every term, byte for byte, so here the v4 SQL differs
+  from the v3 SQL. The one source holds both forms between version-block directive lines (`-- {{#v3}}` … `-- {{/v3}}`,
+  `-- {{#v4}}` … `-- {{/v4}}`), which the renderer keeps for their own
+  version and drops from the other, so the v3 bundle renders exactly as it
+  did before the block was written.
+- *Amended 2026-10-19:* **a v4 `ob` term is ore-rs's 6-bit block ORE.** The
+  key name is v3's, but the format is not. Stack Encrypt writes one term per
+  value, the whole ore-rs ciphertext (left and right halves) as one hex
+  element: the fixed-width scheme (`Bit6BlockOre`, wire header `02 02`) for
+  the integers and floats, and the chained scheme (`ChainedBlockOre`, `02
+  03`, then the padding policy) for text, padded with NUL bytes to a
+  power-of-two bucket of at least 16 bytes. v3's `ob` is cipherstash-client's
+  8-bit block ORE, up to six terms per text value. The two need different
+  comparators, so the v4 SQL holds its own (a version block in
+  `sem/ore_block_256/functions.sql`), and every name built on the block ORE
+  type is a placeholder too: `{{ore_block}}` renders as `ore_block_256` in
+  v3 and `ore_block_v2` (ore-rs's wire version 2) in v4, so no v4 object
+  carries the 8-bit format's name. The v3 bundle renders byte for byte as
+  before.
+
+  The v4 comparator checks both terms' shape before it compares (header,
+  block count, exact length, padding policy, every permuted symbol below 64)
+  and raises, naming the length and never the bytes, on a malformed term, on
+  terms of different schemes, on fixed-width terms of different block counts
+  and on chained terms padded under different policies. For terms of one
+  shape it runs a constant operation count: one statement per block
+  evaluates both of its comparisons and latches the first difference
+  arithmetically, and the hash runs exactly once on every path
+  (`packages/eql/tests/timing/ore_block_v2/` measures it).
+  The hash is ore-rs's σ-MMO over AES under a fixed public key, which
+  pgcrypto computes. A query carries the full ciphertext too, not the left
+  half alone, because a btree index or `between` can pass the stored value
+  first, and the comparator reads its second operand's right half.
+
+  A comparison of two chained terms reveals the length of their common
+  prefix in 6-bit blocks, and a chained term reveals its text's length
+  bucket. Both are ore-rs's documented leakage for the chained scheme.
 
 ### Review
 
@@ -534,9 +597,12 @@ through a wildcard.
 
 ## Deferred
 
-- **Block ORE for text** waits for ore-rs's chained, variable-length block ORE
+- ~~**Block ORE for text** waits for ore-rs's chained, variable-length block ORE
   to be reviewed and released, then arrives in a minor release of
-  `vitaminc-ore`. Until then it is an entry in the exceptions list.
+  `vitaminc-ore`. Until then it is an entry in the exceptions list.~~
+  *Amended 2026-10-19:* done. ore-rs 0.9.0's `vitaminc` feature implements
+  `OrderScheme` for its chained scheme, and Stack Encrypt produces
+  `TextOrdOre` and `TextSearchOre` with it (see "EQL v4").
 - **Block ORE for `Bool`.** Block ORE stored as right ciphertexts only is
   fully randomised and semantically secure, so a two-value domain leaks
   nothing through it. `Bool` could support that scheme alone, enforced by a

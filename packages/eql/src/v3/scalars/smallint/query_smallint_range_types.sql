@@ -83,7 +83,7 @@ BEGIN
 END
 $$;
 
--- Without the default btree operator class on {{prefix}}_internal.ore_block_256
+-- Without the default btree operator class on {{prefix}}_internal.{{ore_block}}
 -- (the installer skips it on insufficient_privilege), ore_fallback.sql has
 -- created {{prefix}}_internal.ore_domain_unavailable and poisoned the
 -- single-bound ORE domains. It cannot reach this ORE range, which exists in
@@ -96,7 +96,7 @@ BEGIN
     JOIN pg_catalog.pg_am am ON am.oid = c.opcmethod
     WHERE am.amname = 'btree'
       AND c.opcdefault
-      AND c.opcintype = '{{prefix}}_internal.ore_block_256'::pg_catalog.regtype
+      AND c.opcintype = '{{prefix}}_internal.{{ore_block}}'::pg_catalog.regtype
   ) THEN
     RETURN;
   END IF;

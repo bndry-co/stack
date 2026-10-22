@@ -15,10 +15,10 @@
 --! same pattern as {{prefix}}_internal.hmac_256 over text). That keeps the whole
 --! comparison chain inlinable, so a functional btree index on
 --! `{{prefix}}.ord_term(col)` engages structurally for the `_ord` / `_ord_ope`
---! domains' comparison operators. Contrast {{prefix}}_internal.ore_block_256 (`ob`),
+--! domains' comparison operators. Contrast {{prefix}}_internal.{{ore_block}} (`ob`),
 --! the block-ORE term behind the `_ord_ore` escape hatch, compared by a custom
 --! N-block protocol.
 --!
 --! @note Transient type used only during query execution.
---! @see {{prefix}}_internal.ore_block_256
+--! @see {{prefix}}_internal.{{ore_block}}
 CREATE DOMAIN {{prefix}}_internal.ope_cllw AS bytea;

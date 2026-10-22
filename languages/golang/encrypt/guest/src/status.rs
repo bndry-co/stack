@@ -432,8 +432,8 @@ mod tests {
                 name: "Nope".into(),
             },
             TargetError::Unproducible {
-                name: "TextOrdOre".into(),
-                reason: "block ORE".into(),
+                name: "DateOrdOre".into(),
+                reason: "no kind for this family".into(),
             },
             TargetError::Extended {
                 name: "email".into(),

@@ -89,6 +89,8 @@
 //! require::<TextEq>();
 //! ```
 
+pub mod query;
+
 // The by-name dispatch over the EQL v4 types (`targets` feature). A plain
 // comment: a doc comment here would resolve the module's own links from
 // this scope.
@@ -99,10 +101,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 #[allow(deprecated)]
 use stack_encrypt::sem::MatchTerm;
 use stack_encrypt::sem::{
-    EqualityTerm, MatchConfig, MatchOptions, OpeTerm, Orderable, TermError, Tokenizer,
+    EqualityTerm, MatchConfig, MatchOptions, OpeTerm, Orderable, OreBlockTerm, TermError, Tokenizer,
 };
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
-use stack_encrypt::target::{self, AeadContext, CallerContext};
+use stack_encrypt::target::{self, AeadContext, CallerContext, IndexSpec};
 use stack_encrypt::{
     CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
     Describe, Description, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
@@ -110,7 +112,8 @@ use stack_encrypt::{
 };
 
 use crate::{
-    v3::terms::{BloomFilter, Ciphertext, Hmac256, OpeCllw},
+    v3::terms::{BloomFilter, Ciphertext, Hmac256, OpeCllw, OreBlock256},
+    v4::terms::SearchBloomFilter,
     Identifier,
 };
 
@@ -133,6 +136,20 @@ impl Identifier {
             t: table.into(),
             c: column.into(),
         })
+    }
+
+    /// The column a two-segment label names, table then column, or `None`
+    /// for a label of any other length. One reading of a label for the
+    /// by-name dispatch (`targets::Identifier::from_label`) and the typed
+    /// query chain ([`query`]).
+    pub(crate) fn column_of(label: &stack_encrypt::Label) -> Option<NonEmpty<Self>> {
+        let mut segments = label.segments();
+        let (Some(table), Some(column), None) = (segments.next(), segments.next(), segments.next())
+        else {
+            return None;
+        };
+        // A label segment is plain, so never empty.
+        Self::for_column(table, column).ok()
     }
 }
 
@@ -242,8 +259,14 @@ pub struct EqualityVisitor;
 impl Visitor for EqualityVisitor {
     type Value = Hmac256;
     fn equality(self, term: EqualityTerm) -> Result<Self::Value, Error> {
-        Ok(Hmac256(hex::encode(term.as_bytes())))
+        Ok(hmac256(&term))
     }
+}
+
+/// EQL's `hm` for an equality term: the HMAC, hex encoded. One encoding for
+/// stored values and query twins alike.
+fn hmac256(term: &EqualityTerm) -> Hmac256 {
+    Hmac256(hex::encode(term.as_bytes()))
 }
 impl Transcode for Hmac256 {
     type Visitor = EqualityVisitor;
@@ -258,6 +281,11 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for Hmac256 {
         S: 's,
     {
         target::equality().transcode()
+    }
+    /// The equality index: a plan for a type holding an `hm` answers
+    /// `op::Eq` through it.
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Equality]
     }
 }
 impl Decryptable for Hmac256 {
@@ -304,11 +332,12 @@ impl MatchConfig for EqlMatch {
 ///
 /// Text that cuts no token (empty, separator-only, or shorter than a 3-gram)
 /// is refused with [`TermError::EmptyTermText`], stored or queried. Stack
-/// Encrypt stores such a value as the empty filter, but EQL treats an empty
-/// filter as contained by every stored filter, and this one type builds both
-/// the stored filter and the query operand, so it cannot tell a query from a
-/// stored value: refusing both is the one way a query cannot match every
-/// row.
+/// Encrypt stores such a value as the empty filter, but this type is the
+/// filter of every match query, and a query's filter must never be empty;
+/// it is also `TextMatch`'s stored filter, and a `TextMatch` value with an
+/// empty filter is a row no operator can find. A search domain's stored
+/// filter, which `=` and `<` find through its other terms, is
+/// [`SearchBloomFilter`] and takes the empty filter ([`SearchMatchVisitor`]).
 #[doc(hidden)]
 pub struct MatchVisitor;
 impl Visitor for MatchVisitor {
@@ -321,21 +350,26 @@ impl Visitor for MatchVisitor {
         if terms.positions().is_empty() {
             return Err(Error::Term(TermError::EmptyTermText));
         }
-        terms
-            .positions()
-            .iter()
-            .map(|&position| {
-                i16::try_from(position).map_err(|_| {
-                    Error::Other(
-                        "a match position does not fit a smallint; EQL's bloom filter stores \
-                         filters of at most 32768 bits"
-                            .into(),
-                    )
-                })
-            })
-            .collect::<Result<_, _>>()
-            .map(BloomFilter)
+        bloom_filter(terms.positions())
     }
+}
+
+/// EQL's `bf` for a filter's set positions, each as a `smallint`. One
+/// encoding for stored values and query twins alike.
+fn bloom_filter(positions: &[u16]) -> Result<BloomFilter, Error> {
+    positions
+        .iter()
+        .map(|&position| {
+            i16::try_from(position).map_err(|_| {
+                Error::Other(
+                    "a match position does not fit a smallint; EQL's bloom filter stores \
+                     filters of at most 32768 bits"
+                        .into(),
+                )
+            })
+        })
+        .collect::<Result<_, _>>()
+        .map(BloomFilter)
 }
 impl Transcode for BloomFilter {
     type Visitor = MatchVisitor;
@@ -357,11 +391,60 @@ impl<S: AsRef<str>> EncryptFrom<S> for BloomFilter {
         let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
         terms.transcode()
     }
+    /// The match index under [`EqlMatch`]: a plan for a type holding a
+    /// `bf` answers `op::Matches` through it.
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Match(EqlMatch::options())]
+    }
 }
 impl Decryptable for BloomFilter {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for BloomFilter {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
+/// Builds a stored search value's filter: [`MatchVisitor`]'s filter, except
+/// that text which cuts no token stores the empty filter instead of being
+/// refused (see [`SearchBloomFilter`]).
+#[doc(hidden)]
+pub struct SearchMatchVisitor;
+impl Visitor for SearchMatchVisitor {
+    type Value = SearchBloomFilter;
+    // As in `MatchVisitor`: the one spelling of the terms' type that compiles
+    // against both the crates.io stack-encrypt and the tree.
+    #[allow(deprecated)]
+    fn matching<O: MatchConfig>(self, terms: MatchTerm<O>) -> Result<Self::Value, Error> {
+        if terms.positions().is_empty() {
+            return Ok(SearchBloomFilter(BloomFilter(Vec::new())));
+        }
+        MatchVisitor.matching(terms).map(SearchBloomFilter)
+    }
+}
+impl Transcode for SearchBloomFilter {
+    type Visitor = SearchMatchVisitor;
+    fn visitor() -> Self::Visitor {
+        SearchMatchVisitor
+    }
+}
+impl<S: AsRef<str>> EncryptFrom<S> for SearchBloomFilter {
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    where
+        S: 's,
+    {
+        // Configuration named by the type, as for `BloomFilter`.
+        #[allow(deprecated)]
+        let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
+        terms.transcode()
+    }
+}
+impl Decryptable for SearchBloomFilter {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for SearchBloomFilter {
     fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
         None
     }
@@ -407,6 +490,52 @@ impl Decryptable for OpeCllw {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for OpeCllw {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
+/// Builds EQL v4's `ob` from the native block ORE term: one element, the
+/// hex of the whole ore-rs ciphertext.
+///
+/// The ciphertext is ore-rs's 6-bit block ORE of the value's ADR-0002 order
+/// key (`OreBlockTerm`): the fixed-width scheme for integers and floats, the
+/// chained one, padded to a power-of-two length bucket of at least 16
+/// bytes, for text. EQL v4 compares `ob` with the comparator for that
+/// format, which takes exactly one element; EQL v3's `ob` holds 8-bit block
+/// terms, up to six for text, that cipherstash-client writes. A query
+/// carries the full ciphertext too: the comparator reads the right half of
+/// the operand a btree index or `between` passes second.
+///
+/// Text with no fold, text whose fold ends in NUL or is longer than 1023
+/// bytes has no block ORE term and is refused, stored or queried.
+#[doc(hidden)]
+pub struct OreBlockVisitor;
+impl Visitor for OreBlockVisitor {
+    type Value = OreBlock256;
+    fn ore_block<T: Orderable>(self, term: OreBlockTerm<T>) -> Result<Self::Value, Error> {
+        Ok(OreBlock256(vec![hex::encode(term.as_bytes())]))
+    }
+}
+impl Transcode for OreBlock256 {
+    type Visitor = OreBlockVisitor;
+    fn visitor() -> Self::Visitor {
+        OreBlockVisitor
+    }
+}
+impl<S: Orderable + Clone> EncryptFrom<S> for OreBlock256 {
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    where
+        S: 's,
+    {
+        target::ore_block().transcode()
+    }
+}
+impl Decryptable for OreBlock256 {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for OreBlock256 {
     fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
         None
     }

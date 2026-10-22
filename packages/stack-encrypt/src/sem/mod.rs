@@ -182,6 +182,12 @@ const ORE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ore-key/v2";
 /// encrypt-only, so the two schemes must never share a key). `v2` as for
 /// [`ORE_KEY_DOMAIN`].
 const OPE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ope-key/v2";
+/// PAE domain for block ORE key derivation, distinct from both CLLW
+/// domains so no two schemes share a key. One key per index: ore-rs derives
+/// the 6-bit scheme's key and the chained scheme's from it under labels of
+/// its own, and binds the scheme, the target and the context into each
+/// term's salt.
+const ORE_BLOCK_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ore-block-key/v1";
 
 /// Errors from SEM term generation.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -199,6 +205,35 @@ pub enum TermError {
     #[error("ORE/OPE encryption failed: {0}")]
     #[diagnostic(code(stack_encrypt::ore_failed))]
     Ore(#[from] cllw_ore::Error),
+    /// Block ORE ([`OreBlockTerm`]) orders text and bytes of at most 1023
+    /// bytes, counted after the order encoding (text folded): the chained
+    /// scheme's 1024-byte ceiling, less the one marker byte it puts in
+    /// front of a variable-width value. The ceiling bounds what one value
+    /// costs: a term of 1023 bytes is already about 34 KB.
+    #[error(
+        "the value is too long for a block ORE term: its order encoding is longer than 1023 bytes"
+    )]
+    #[diagnostic(
+        code(stack_encrypt::ore_block_too_long),
+        help("Block ORE orders text and bytes of at most 1023 bytes, counted after text is folded. Order a shorter prefix of the value, or index the column with OPE.")
+    )]
+    OreBlockTooLong,
+    /// Text whose order encoding ends in NUL has no block ORE term: the
+    /// chained scheme pads text with NUL bytes to its length bucket, so
+    /// `"a\0"` would encrypt the same as `"a"`. PostgreSQL `text` cannot
+    /// hold NUL.
+    #[error("text that ends in NUL has no block ORE term")]
+    #[diagnostic(
+        code(stack_encrypt::ore_block_trailing_nul),
+        help("Block ORE pads text with NUL bytes, so text that ends in NUL would order as the text without it. Remove the trailing NUL characters before encrypting.")
+    )]
+    OreBlockTrailingNul,
+    /// Block ORE encryption failed in the scheme: its key or its
+    /// randomness. The scheme's error is the
+    /// [`source`](std::error::Error::source); it names no part of the value.
+    #[error("block ORE encryption failed")]
+    #[diagnostic(code(stack_encrypt::ore_block_failed))]
+    OreBlock(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The supplied [`MatchOptions`] are invalid.
     #[error("invalid match options: {0}")]
     #[diagnostic(code(stack_encrypt::invalid_match_options))]
@@ -286,6 +321,9 @@ impl crate::ErrorPayload for TermError {
             Self::JsonPath(error) => error.payload(),
             Self::Prf(_)
             | Self::Ore(_)
+            | Self::OreBlockTooLong
+            | Self::OreBlockTrailingNul
+            | Self::OreBlock(_)
             | Self::InvalidOptions(_)
             | Self::EmptyTermText
             | Self::NoEqualityTerm
@@ -346,6 +384,12 @@ pub enum TermBytesError {
     #[error("{0} bytes do not fit this CLLW ciphertext shape")]
     #[diagnostic(code(stack_encrypt::cllw_ciphertext_length))]
     MalformedCllwCiphertext(usize),
+    /// The bytes are not a block ORE ciphertext ore-rs's comparator reads:
+    /// neither the 6-bit scheme's header and length nor the chained
+    /// scheme's. The length is all there is to report.
+    #[error("{0} bytes are not a block ORE ciphertext")]
+    #[diagnostic(code(stack_encrypt::ore_block_ciphertext_shape))]
+    MalformedOreBlockCiphertext(usize),
 }
 
 impl crate::ErrorPayload for TermBytesError {
@@ -354,7 +398,8 @@ impl crate::ErrorPayload for TermBytesError {
         match self {
             Self::WrongEqualityTermLength(len)
             | Self::OddMatchTermsLength(len)
-            | Self::MalformedCllwCiphertext(len) => payload([("len", (*len).into())]),
+            | Self::MalformedCllwCiphertext(len)
+            | Self::MalformedOreBlockCiphertext(len) => payload([("len", (*len).into())]),
             Self::MatchPositionOutOfRange { filter_size, .. } => {
                 payload([("filter_size", (*filter_size).into())])
             }
@@ -1271,6 +1316,7 @@ index_term!(EqualityTerm);
 index_term!(MatchTerms<O>, O: MatchConfig);
 index_term!(OreTerm<T>, T: Orderable);
 index_term!(OpeTerm<T>, T: Orderable);
+index_term!(OreBlockTerm<T>, T: Orderable);
 
 macro_rules! term_wrapper {
     ($name:ident, $inner:ty) => {
@@ -1372,6 +1418,156 @@ macro_rules! term_wrapper {
 term_wrapper!(OreTerm, OreCllw8VariableV1);
 term_wrapper!(OpeTerm, OpeCllw8VariableV1);
 
+/// A block ORE index term for a source value of type `T`: ore-rs's 6-bit
+/// block ORE encryption of the value's `vitaminc-ore` order encoding at
+/// `T`'s [`Orderable`] target, the scheme EQL v4's `_ord_ore` domains
+/// store (`ob`). Comparisons order like the plaintexts, within one index.
+///
+/// Which of ore-rs's two 6-bit schemes encrypts it is fixed by the target:
+///
+/// - **`Bit6BlockOre`** for a target of at most ten bytes: the integers to
+///   64 bits and floats (as the `f64` they widen to). Wire header
+///   `02 02`, then the block count; one block per six bits of the
+///   encoding, so an `i32` is six blocks and an `i64` eleven.
+/// - **`ChainedBlockOre`** for text, bytes and the 128-bit integers. Wire
+///   header `02 03`, the block count, then the padding policy. Text is
+///   padded with NUL bytes to a power of two of at least 16 bytes, so a
+///   term reveals its text's length bucket rather than its length; bytes
+///   and integers are not padded. Text and bytes of more than 1023 bytes
+///   are refused ([`TermError::OreBlockTooLong`]), and text that ends in
+///   NUL ([`TermError::OreBlockTrailingNul`]).
+///
+/// A term is the whole ciphertext, left and right halves. The right half
+/// carries a random nonce, so one value encrypts to different bytes each
+/// time, and those terms compare equal. That is why equality here is the
+/// scheme's comparison, not the bytes: `==` is "orders equal", and there
+/// is no `Eq` or `Hash`, since two terms of different indexes, or a
+/// malformed one, have no order at all.
+///
+/// The query term for every ordering operator is this same full
+/// ciphertext, not its left half alone: EQL v4's comparator takes the
+/// stored term's left half and the query's right half when a btree index
+/// or `eql_v4.between` passes the stored value first.
+///
+/// Comparing two stored terms needs no key, as for any ORE: a full
+/// ciphertext carries its deterministic left half, so anyone holding two
+/// stored terms learns their order and, for the chained scheme, the length
+/// of their common prefix in six-bit blocks.
+pub struct OreBlockTerm<T: Orderable>(Vec<u8>, PhantomData<fn() -> T>);
+
+/// Which of ore-rs's 6-bit schemes encrypts a target's terms: the
+/// fixed-width scheme for a target of at most ten bytes, the chained one
+/// for the rest, text and bytes among them.
+fn ore_block_is_bit6(target: OrderTarget) -> bool {
+    target.width().is_some_and(|width| width <= 10)
+}
+
+/// The order of two block ORE ciphertexts, by the comparator of the scheme
+/// their header names; `None` if either is not a well-formed ciphertext of
+/// that scheme, if they name different schemes, or (chained) if they were
+/// padded under different policies.
+///
+/// These are the comparators `Bit6BlockOre` and `ChainedBlockOre` compare
+/// with. ore-rs's `bit2_w6` module is its 6-bit scheme; the legacy 8-bit
+/// scheme (`BlockOre`, module `bit2`) is not used here.
+fn ore_block_compare(a: &[u8], b: &[u8]) -> Option<std::cmp::Ordering> {
+    use ore_rs::scheme::bit2_w6::OreAes128Bit6ChaCha20;
+    use ore_rs::scheme::chained::OreAes128Bit6ChainedChaCha20;
+    use ore_rs::OreCipher;
+    match (a.get(..2)?, b.get(..2)?) {
+        ([0x02, 0x02], [0x02, 0x02]) => OreAes128Bit6ChaCha20::compare_raw_slices(a, b),
+        ([0x02, 0x03], [0x02, 0x03]) => OreAes128Bit6ChainedChaCha20::compare_raw_slices(a, b),
+        _ => None,
+    }
+}
+
+impl<T: Orderable> OreBlockTerm<T> {
+    /// Decode a term from its frozen byte encoding, the serialised ore-rs
+    /// ciphertext, for terms persisted server-side. Structural only: the
+    /// bytes must be a well-formed 6-bit or chained block ORE ciphertext
+    /// (header, block count, length, padding policy and symbols); the
+    /// caller asserts they were generated for this source type `T` and
+    /// under the same context.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermBytesError> {
+        if ore_block_compare(bytes, bytes).is_none() {
+            return Err(TermBytesError::MalformedOreBlockCiphertext(bytes.len()));
+        }
+        Ok(Self(bytes.to_vec(), PhantomData))
+    }
+
+    /// The frozen byte encoding: the serialised ore-rs ciphertext, header
+    /// first, unframed. EQL v4 stores it hex-encoded as the one element of
+    /// `ob`.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Owned copy of [`as_bytes`](Self::as_bytes).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+
+    /// Unwrap into the serialised ciphertext.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
+    /// The order of the two values, by the scheme's comparator. `None`
+    /// for two terms made under different padding policies, which a
+    /// decoded term can be; two terms of one index always compare. Terms
+    /// of different indexes compare as noise: keep an index's terms
+    /// together.
+    pub fn compare(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        ore_block_compare(&self.0, &other.0)
+    }
+}
+
+/// The inherent `from_bytes` as a std conversion — the same decoder.
+impl<T: Orderable> TryFrom<&[u8]> for OreBlockTerm<T> {
+    type Error = TermBytesError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Self::from_bytes(bytes)
+    }
+}
+
+/// The frozen byte encoding — the same bytes as the inherent `as_bytes`.
+impl<T: Orderable> AsRef<[u8]> for OreBlockTerm<T> {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// The length only: a term is not secret, but it is long.
+impl<T: Orderable> fmt::Debug for OreBlockTerm<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OreBlockTerm")
+            .field("len", &self.0.len())
+            .finish()
+    }
+}
+
+impl<T: Orderable> Clone for OreBlockTerm<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), PhantomData)
+    }
+}
+
+/// Two terms are equal when their values order equal. Their bytes
+/// differ: each carries a random nonce.
+impl<T: Orderable> PartialEq for OreBlockTerm<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.compare(other) == Some(std::cmp::Ordering::Equal)
+    }
+}
+
+/// The scheme's comparison ([`OreBlockTerm::compare`]).
+impl<T: Orderable> PartialOrd for OreBlockTerm<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.compare(other)
+    }
+}
+
 /// A [`PrfVisitor`] that carries the plaintext in and hands the CLLW ORE
 /// ciphertext out. The PRF block keys cllw-ore's vitaminc ORE scheme
 /// *inside* `visit_block` and dies there: the block arrives by value, is
@@ -1435,6 +1631,55 @@ where
     }
 }
 
+/// The block ORE twin of [`OreVisitor`]: same key handling, under its own
+/// domain, and the scheme chosen by the target ([`ore_block_is_bit6`]).
+/// Both schemes are keyed from the one block; ore-rs derives each one's
+/// ORE key from it under a label of its own. The plaintext is held in a
+/// [`Zeroizing`], as [`OreVisitor`]'s is: ore-rs reads it by reference and
+/// works on scrubbed copies, so that drop is the last place its bytes live.
+struct OreBlockVisitor<T: Orderable>(Zeroizing<T>);
+
+impl<T, P> PrfVisitor<[u8; 32], P> for OreBlockVisitor<T>
+where
+    T: Orderable,
+    P: Send + 'static,
+{
+    type Value = Result<Vec<u8>, TermError>;
+
+    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
+        use ore_rs::vitaminc::{Bit6BlockOre, ChainedBlockOre};
+        let key = Protected::new(block);
+        block.zeroize();
+        let term = if ore_block_is_bit6(T::TARGET) {
+            let scheme = Bit6BlockOre::new(key);
+            sealed::Sealed::encrypt_in(&*self.0, &scheme.column(T::TARGET, ()))
+                .map(|term| term.as_ref().to_vec())
+        } else {
+            let scheme = ChainedBlockOre::new(key);
+            sealed::Sealed::encrypt_in(&*self.0, &scheme.column(T::TARGET, ()))
+                .map(|term| term.as_ref().to_vec())
+        };
+        Ok(term.map_err(ore_block_error))
+    }
+}
+
+/// Why ore-rs produced no block ORE term, as a [`TermError`]: the value's
+/// encoding refused it, the value is too long, text ends in NUL, or the
+/// scheme failed. ore-rs's errors name no part of the value. A target the
+/// scheme does not take cannot occur ([`ore_block_is_bit6`] sends every
+/// other target to the chained scheme, which takes them all), and reads as
+/// a scheme failure rather than a panic.
+fn ore_block_error(error: OrderError<ore_rs::OreError>) -> TermError {
+    use ore_rs::OreError;
+    match error {
+        OrderError::Term(error) => TermError::Normalize(error),
+        OrderError::Backend(OreError::TooLong) => TermError::OreBlockTooLong,
+        OrderError::Backend(OreError::TrailingNul) => TermError::OreBlockTrailingNul,
+        OrderError::Backend(error) => TermError::OreBlock(Box::new(error)),
+        other => TermError::OreBlock(other.to_string().into()),
+    }
+}
+
 /// Derive an ORE term: PRF of the encoded context under a PAE-encoded
 /// `[domain, context]` framing — the same framing every other term kind uses
 /// (see the module docs), so no reimplementation of this derivation can
@@ -1484,6 +1729,48 @@ pub(crate) fn ope<T: Orderable>(
         .map(OpeTerm::new)
 }
 
+/// Derive a block ORE term — as [`ore`], under the block ORE domain, so
+/// no CLLW scheme shares its key.
+fn ore_block<T: Orderable>(
+    prf: &HmacSha256Prf,
+    value: T,
+    context: Context<'_>,
+) -> Result<OreBlockTerm<T>, TermError> {
+    // Wrapped before anything can fail, so a refused value is wiped too.
+    let value = Zeroizing::new(value);
+    let context_bytes = context.as_bytes();
+    context_bytes
+        .prf_visit_with_context(
+            prf,
+            Context::pae(&[ORE_BLOCK_KEY_DOMAIN, context_bytes]),
+            OreBlockVisitor(value),
+        )
+        .into_result()
+        .map_err(TermError::from_prf)?
+        .map(|bytes| OreBlockTerm(bytes, PhantomData))
+}
+
+/// Whether block ORE takes `text` as order text: its fold (the order
+/// encoding a [`OreBlockTerm`] encrypts) must exist, fit the chained
+/// scheme's 1023 bytes, and not end in NUL. The refusals derivation makes,
+/// stated without a key, so a binding can refuse a query at its boundary.
+#[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+pub(crate) fn ore_block_text(text: &str) -> Result<(), TermError> {
+    let folded = vitaminc_ore::text(text)?;
+    let folded = vitaminc_protected::Controlled::risky_ref(&folded);
+    if folded.len() > ORE_BLOCK_MAX_BYTES {
+        return Err(TermError::OreBlockTooLong);
+    }
+    if folded.last() == Some(&0) {
+        return Err(TermError::OreBlockTrailingNul);
+    }
+    Ok(())
+}
+
+/// The longest text or bytes order encoding block ORE takes: ore-rs's
+/// chained ceiling (1024 bytes) less the marker byte it puts in front.
+const ORE_BLOCK_MAX_BYTES: usize = ore_rs::scheme::chained::DEFAULT_MAX_STR_BYTES - 1;
+
 /// An ORE term of any [`Orderable`] source. Under the local HMAC
 /// backend, derived during the synchronous build — the returned [`Pending`]
 /// carries no requests.
@@ -1528,6 +1815,30 @@ where
     {
         let context = context.into_prf_context().into_owned();
         let term = ope(cipher.prf(), source, context).map_err(Error::from);
+        Pending::ready(cipher, term)
+    }
+}
+
+/// A block ORE term of any [`Orderable`] source. Under the local HMAC
+/// backend, derived during the synchronous build — the returned [`Pending`]
+/// carries no requests.
+impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OreBlockTerm<S>
+where
+    S: Orderable,
+    T: IntoPrfContext<'c>,
+{
+    // Derived locally: no data key, no descriptor.
+
+    fn encrypt_from<'a>(
+        source: S,
+        cipher: &'a KeysetCipher<'_, K>,
+        context: NonEmpty<T>,
+    ) -> Pending<'a, Self, K>
+    where
+        Self: 'a,
+    {
+        let context = context.into_prf_context().into_owned();
+        let term = ore_block(cipher.prf(), source, context).map_err(Error::from);
         Pending::ready(cipher, term)
     }
 }
@@ -1697,6 +2008,21 @@ impl<K> KeysetCipher<'_, K> {
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, OpeCllw8VariableV1, K> {
         let term = ope(self.prf(), value, descriptor.into_prf_context()).map(OpeTerm::into_inner);
+        Pending::ready(self, term.map_err(Error::from))
+    }
+
+    /// Generate a block ORE term: ore-rs's 6-bit block ORE, the scheme
+    /// EQL v4's `_ord_ore` domains store. Key handling and inputs as for
+    /// [`ore_term`](Self::ore_term), under a key of its own; see
+    /// [`OreBlockTerm`] for which scheme a type is encrypted with and what
+    /// is refused. Byte-identical to the target-directed path's left half
+    /// for the same descriptor; the right half carries a random nonce.
+    pub fn ore_block_term<'c, T: Orderable>(
+        &self,
+        value: T,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Pending<'_, OreBlockTerm<T>, K> {
+        let term = ore_block(self.prf(), value, descriptor.into_prf_context());
         Pending::ready(self, term.map_err(Error::from))
     }
 }

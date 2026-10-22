@@ -487,24 +487,25 @@ The EQL types the engine produces, and the Go field types each takes:
 |---|---|---|
 | `TextEq` | `string` | `=`, `<>` |
 | `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
-| `TextOrd`, `TextOrdOpe` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `TextOrd`, `TextOrdOpe`, `TextOrdOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `TextSearch`, `TextSearchOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY`, `@@` |
 | `Text` | `string` | none: stored and read only |
 | `Smallint` | `int16`, or any Go integer type (see below) | none |
 | `SmallintEq` | the same | `=`, `<>` |
-| `SmallintOrd`, `SmallintOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `SmallintOrd`, `SmallintOrdOpe`, `SmallintOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Integer` | `int32`, or any Go integer type (see below) | none |
 | `IntegerEq` | the same | `=`, `<>` |
-| `IntegerOrd`, `IntegerOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `IntegerOrd`, `IntegerOrdOpe`, `IntegerOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Bigint` | `int64`, or any Go integer type | none |
 | `BigintEq` | the same | `=`, `<>` |
-| `BigintOrd`, `BigintOrdOpe` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `BigintOrd`, `BigintOrdOpe`, `BigintOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Boolean` | `bool` | none |
 | `Real` | `float32` | none |
 | `RealEq` | `float32` | `=`, `<>` |
-| `RealOrd`, `RealOrdOpe` | `float32` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `RealOrd`, `RealOrdOpe`, `RealOrdOre` | `float32` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Double` | `float64` | none |
 | `DoubleEq` | `float64` | `=`, `<>` |
-| `DoubleOrd`, `DoubleOrdOpe` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `DoubleOrd`, `DoubleOrdOpe`, `DoubleOrdOre` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Date` | `encrypt.Date` | none |
 | `DateEq` | `encrypt.Date` | `=`, `<>` |
 | `Timestamp` | `time.Time` | none |
@@ -523,7 +524,13 @@ with `ErrEncoding`, naming the field's kind and not the value.
 exactly their own width.
 
 A `TextMatch` value must be at least three characters long: shorter text has
-no 3-grams to index and is refused. The number equality types compare as
+no 3-grams to index and is refused. A `TextSearch` value of such text, an
+empty string included, is stored with an empty match filter: `Eq`, `Lt`,
+`Lte`, `Gt` and `Gte` find it through its other terms, and no `Matches`
+query does. A `TextSearch` query carries only the term its operator reads,
+so `Eq` and `Lt` on two-letter text work and `Matches` on it is refused; EQL
+v4 raises if a query lacks the term its operator compares. The number
+equality types compare as
 PostgreSQL compares the plain types: an integer equals itself whatever its
 width, and for floats `-0.0 = 0.0` and `NaN = NaN`; the stored value still
 decrypts to exactly what was written. The same holds for the date,
@@ -553,8 +560,19 @@ answers `Eq` through an equality term only. A text order type also stores
 `TextEq`'s equality term, and `=` reads that, so `Café` and `cafe` are
 neither `<` nor `>` each other and not `=` either. Text holding a code point
 Unicode 16 does not assign has no order term and is refused. There is no
-`Between` method yet: a `BETWEEN` needs EQL v4's range query domains. The rest of
-the catalog (ORE ordering, ordered dates, timestamps and decimals, JSON) is listed in
+`Between` method yet: a `BETWEEN` needs EQL v4's range query domains.
+
+The `OrdOre` types and `TextSearchOre` order by the same key, through a block
+ORE term (ore-rs's 6-bit schemes) in place of the OPE term. Each term
+carries a random nonce, so EQL v4's own comparator orders them, not their
+bytes: sort with `ORDER BY eql_v4.ord_term_ore(col)`, and index with
+`CREATE INDEX ON t USING btree (eql_v4.ord_term_ore(col))`. That index needs
+the ORE operator class, which only a superuser install creates; elsewhere
+the installer disables these domains, and the `Ord` types are the ones to
+use. Text whose fold is longer than 1023 bytes, or ends in NUL, has no block
+ORE term and is refused, stored or queried.
+
+The rest of the catalog (ordered dates, timestamps and decimals, JSON) is listed in
 `eql.Types` with the reason it is not produced yet, and `stashgen` refuses it
 with that reason. The guest builds the value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the

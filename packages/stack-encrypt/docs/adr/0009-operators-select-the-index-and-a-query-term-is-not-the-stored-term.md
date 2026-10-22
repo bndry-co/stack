@@ -1,6 +1,7 @@
 ---
 status: proposed
 date: 2026-10-13
+amended: 2026-10-19
 supersedes: ADR-0004 (decision 5)
 extends: ADR-0003, ADR-0007
 ---
@@ -41,6 +42,7 @@ Decision 5 of ADR-0004 assumed they were. In general they are not:
 | --- | --- | --- |
 | HMAC | the HMAC | the same HMAC |
 | ORE | left and right ciphertext | the left ciphertext only |
+| block ORE (6-bit; amended 2026-10-19) | the whole ore-rs ciphertext, left and right | the whole ciphertext too, under a fresh nonce: EQL v4's comparator reads its first operand's left half and its second operand's right half, and a btree index or `between` may pass the stored value first. Equal values compare equal; the bytes never match |
 | OPE | the OPE value of the order key | the same value; equal terms mean equal order keys, which is plaintext equality only when the key is lossless (it is for integers, and not for text after the column's declared transform) |
 | Bloom match | one filter over every n-gram of the value | a filter over the n-grams of the needle: a subset, or bits the stored filter lacks |
 | Bloom prefix (planned) | an HMAC per edge n-gram | one HMAC |
@@ -157,7 +159,11 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
 `query` makes it from the verifier and the terms the index derived for the
 query's input. `QueryToken` can be made only inside the crate, so only a
 query chain calls `query`, and no caller can turn a stored term into a query
-term by hand.
+term by hand. The token also carries the context the terms were derived
+under, for a query term that records it, as an EQL query value stores its
+column; such an index refuses a context it cannot record in a defaulted
+`check_label`, which the chain runs with `check`, before any term exists
+(#1238).
 
 `QueryTerm` and the two traits that refine it are defined in decision 4.
 `Query` is not `Term`. An ORE index's `Supports<Lt, S>::Query` is the left
@@ -505,6 +511,19 @@ vitaminc schemes as the `Text` target, whose order key is vitaminc-ore's
 text order encoding, the system ADR-0002's fold pinned to Unicode 16, and
 the ORE and OPE indexes answer the orderings on text over it. `TextOrdOre` and `TextSearchOre` also need the block ORE scheme EQL
 stores (#1132).
+
+*Amended 2026-10-19:* they have it. A new index, `IndexSpec::OreBlock`
+(wire key `ore_block`), derives ore-rs's 6-bit block ORE under its own key
+domain: `Bit6BlockOre` for targets of at most ten bytes (the integers to 64
+bits and the floats) and `ChainedBlockOre` for text, bytes and the 128-bit
+integers, over the same order keys the CLLW indexes use. It answers the four
+orderings exactly. Its query term is the full ciphertext (see the table
+above), and text it cannot take is refused before any term exists: text
+whose fold is longer than 1023 bytes or ends in NUL. The CLLW `Ore` and
+`Ope` indexes are unchanged, byte for byte. EQL's `ob` key is this index
+(`eql-codegen`'s `index_key` maps it to `ore_block`, not to `ore`, which is
+CLLW ORE and has no EQL domain), so `TextOrdOre`, `TextSearchOre` and the
+integer and float `*OrdOre` types are produced.
 
 A `Ranked` term's `target_limit` applies the index's configured recall
 factor and needs no `Stats`.

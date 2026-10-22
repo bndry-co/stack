@@ -16,11 +16,11 @@ AS $$ SELECT {{prefix}}_internal.hmac_256(a::jsonb) $$;
 
 --! @brief Index extractor for {{prefix}}.query_text_ord_ore.
 --! @param a {{prefix}}.query_text_ord_ore
---! @return {{prefix}}_internal.ore_block_256
+--! @return {{prefix}}_internal.{{ore_block}}
 CREATE FUNCTION {{prefix}}.ord_term_ore(a {{prefix}}.query_text_ord_ore)
-RETURNS {{prefix}}_internal.ore_block_256
+RETURNS {{prefix}}_internal.{{ore_block}}
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT {{prefix}}_internal.ore_block_256(a::jsonb) $$;
+AS $$ SELECT {{prefix}}_internal.{{ore_block}}(a::jsonb) $$;
 
 --! @brief Operator wrapper for {{prefix}}.query_text_ord_ore.
 --! @param a public.{{prefix}}_text_ord_ore

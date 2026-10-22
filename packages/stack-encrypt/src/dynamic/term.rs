@@ -15,12 +15,13 @@
 //!   compared in Unicode 16 NFC, and a date, timestamp, decimal or uuid has
 //!   a domain of its own. A boolean has none.
 //! - **Match** takes text only, cut in Unicode 16 NFC.
-//! - **ORE and OPE** take an integer of 16 bits or wider, a float, text or
-//!   bytes, each handed to cllw-ore as the Rust type the typed path would
-//!   have named: an `i16` as an `i16`, a `u128` as a `u128`. A boolean, a
-//!   `u8` and an `i8` have no order term: over a domain that small (two
-//!   values, or 256) it would tell anyone holding the column which rows are
-//!   `true`, or rank every row among 256. A decimal, a date and a timestamp
+//! - **ORE, OPE and block ORE** take an integer of 16 bits or wider, a
+//!   float, text or bytes, each handed to cllw-ore (ORE, OPE) or ore-rs
+//!   (block ORE) as the Rust type the typed path would have named: an `i16`
+//!   as an `i16`, a `u128` as a `u128`. A boolean, a `u8` and an `i8` have
+//!   no order term: over a domain that small (two values, or 256) it would
+//!   tell anyone holding the column which rows are `true`, or rank every
+//!   row among 256. A decimal, a date and a timestamp
 //!   have none yet: cllw-ore 0.5 does not encode them the ADR-0002 way, and
 //!   their order terms wait for new cllw-ore and ore-rs releases (#1236).
 //!
@@ -54,7 +55,8 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 ///
 /// # Wire form
 ///
-/// An index is its key, a string: `"eq"`, `"match"`, `"ore"` or `"ope"`.
+/// An index is its key, a string: `"eq"`, `"match"`, `"ore"`, `"ope"` or
+/// `"ore_block"`.
 /// `"match"` is a match index under the default options
 /// ([`MatchOptions::default`]), so every plan written before options had a
 /// wire form reads as it always did.
@@ -81,7 +83,7 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 /// `sealed_root` defaults to `true` ([`JsonOptions::default`]). A data plan
 /// reads and writes the JSON index and refuses to run it
 /// ([`Reason::JsonIndexPending`]): the engine's typed path produces a JSON
-/// document, and the binding's half is not written yet. The other three
+/// document, and the binding's half is not written yet. The other four
 /// indexes have no options and no object form.
 ///
 /// Serialized (it is `Serialize`), an index writes the string whenever the
@@ -97,6 +99,7 @@ impl IndexSpec {
             "match" => IndexSpec::Match(MatchOptions::default()),
             "ore" => IndexSpec::Ore,
             "ope" => IndexSpec::Ope,
+            "ore_block" => IndexSpec::OreBlock,
             "json" => IndexSpec::Json(JsonOptions::default()),
             _ => return None,
         })
@@ -122,9 +125,10 @@ impl IndexSpec {
     /// is one scalar the index takes. Equality takes every scalar vitaminc
     /// gives an equality domain (an integer, a float, text, bytes, and a
     /// date, timestamp, decimal or uuid), not a boolean or a null. Match
-    /// takes text. ORE and OPE take an integer of any width, a float, text
-    /// or bytes; not a boolean, and not yet a decimal, date or timestamp
-    /// (#1236). A match index's options do not change what it takes.
+    /// takes text. ORE, OPE and block ORE take an integer of any width, a
+    /// float, text or bytes; not a boolean, and not yet a decimal, date or
+    /// timestamp (#1236). A match index's options do not change what it
+    /// takes.
     ///
     /// This is the one table: [`term`] refuses exactly what it refuses, and
     /// checking it first is how a binding refuses a bad request at its
@@ -161,7 +165,7 @@ impl IndexSpec {
             // vitaminc's table: a kind with an equality domain.
             IndexSpec::Equality => domain_of(ty, value).is_some(),
             IndexSpec::Match(_) => ty.is_none() && matches!(value, Physical::Text(_)),
-            IndexSpec::Ore | IndexSpec::Ope => ty.is_none() && ordered(value),
+            IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => ty.is_none() && ordered(value),
             // A document, not a scalar: the dynamic path has no term for it
             // yet, and the typed path takes a `serde_json::Value`.
             IndexSpec::Json(_) => false,
@@ -169,13 +173,13 @@ impl IndexSpec {
     }
 }
 
-/// Whether CLLW ORE and OPE order this scalar: an integer of 16 bits or
-/// wider, a float, text or bytes. Not a boolean, and not an 8-bit integer:
-/// an order term over so small a domain reveals too much, which rows hold
-/// `true`, or each row's rank among 256 values, which a few known rows
-/// resolve to the values. Not a null. The caller has already refused a
-/// scalar under a logical type: a decimal, date or timestamp's order term
-/// waits for a later release.
+/// Whether the order indexes (CLLW ORE and OPE, and block ORE) order this
+/// scalar: an integer of 16 bits or wider, a float, text or bytes. Not a
+/// boolean, and not an 8-bit integer: an order term over so small a domain
+/// reveals too much, which rows hold `true`, or each row's rank among 256
+/// values, which a few known rows resolve to the values. Not a null. The
+/// caller has already refused a scalar under a logical type: a decimal,
+/// date or timestamp's order term waits for a later release.
 fn ordered(value: &Physical<'_>) -> bool {
     match value {
         Physical::Int(Int::I8(_) | Int::U8(_)) | Physical::Null | Physical::Bool(_) => false,
@@ -197,6 +201,8 @@ impl Serialize for IndexSpec {
             Match(MatchOut),
             Ore,
             Ope,
+            #[serde(rename = "ore_block")]
+            OreBlock,
             #[serde(rename = "json")]
             DefaultJson,
             Json(JsonOut),
@@ -232,6 +238,7 @@ impl Serialize for IndexSpec {
             }),
             IndexSpec::Ore => Out::Ore,
             IndexSpec::Ope => Out::Ope,
+            IndexSpec::OreBlock => Out::OreBlock,
             IndexSpec::Json(options) if *options == JsonOptions::default() => Out::DefaultJson,
             IndexSpec::Json(options) => Out::Json(JsonOut {
                 sealed_root: options.sealed_root,
@@ -253,6 +260,8 @@ pub(super) enum IndexWire {
     Match(Option<MatchWire>),
     Ore,
     Ope,
+    #[serde(rename = "ore_block")]
+    OreBlock,
     Json(Option<JsonWire>),
 }
 
@@ -263,6 +272,7 @@ impl From<IndexWire> for IndexSpec {
             IndexWire::Match(options) => IndexSpec::Match(options.map(|o| o.0).unwrap_or_default()),
             IndexWire::Ore => IndexSpec::Ore,
             IndexWire::Ope => IndexSpec::Ope,
+            IndexWire::OreBlock => IndexSpec::OreBlock,
             IndexWire::Json(options) => IndexSpec::Json(options.map(|o| o.0).unwrap_or_default()),
         }
     }
@@ -535,14 +545,23 @@ where
                 .match_terms_under::<DefaultMatch>(text, context, options.clone())
                 .map(|terms| TermBytes(terms.to_bytes())))
         }
-        IndexSpec::Ore => ore_of(cipher, value, context).ok_or(None),
-        IndexSpec::Ope => ope_of(cipher, value, context).ok_or(None),
+        IndexSpec::Ore => order_of(cipher, OrderIndex::Ore, value, context).ok_or(None),
+        IndexSpec::Ope => order_of(cipher, OrderIndex::Ope, value, context).ok_or(None),
+        IndexSpec::OreBlock => order_of(cipher, OrderIndex::OreBlock, value, context).ok_or(None),
         // `takes` refused it above: no scalar is a document.
         IndexSpec::Json(_) => Err(None),
     }
 }
 
-/// [`IndexSpec::Ore`] per scalar, each handed to the CLLW encryptor as the
+/// The order index a scalar's term is derived under.
+#[derive(Clone, Copy)]
+enum OrderIndex {
+    Ore,
+    Ope,
+    OreBlock,
+}
+
+/// An order index's term per scalar, each handed to the encryptor as the
 /// Rust type the typed path would have named; `None` for a scalar it does
 /// not order ([`ordered`]).
 ///
@@ -556,8 +575,9 @@ where
 /// Each scalar is encoded at the target of the Rust type named here
 /// ([`Orderable`]), as on the typed path: text by the system ADR-0002's
 /// fold, so `café` precomposed or with a combining accent, and `Café`, tie.
-fn ore_of<'a, 'c, K: 'static, D>(
+fn order_of<'a, 'c, K: 'static, D>(
     cipher: &'a KeysetCipher<'_, K>,
+    index: OrderIndex,
     value: Physical<'_>,
     context: NonEmpty<D>,
 ) -> Option<Pending<'a, TermBytes, K>>
@@ -565,51 +585,27 @@ where
     D: IntoPrfContext<'c>,
 {
     Some(match value {
-        Physical::Int(Int::I16(v)) => ore(cipher, v, context),
-        Physical::Int(Int::I32(v)) => ore(cipher, v, context),
-        Physical::Int(Int::I64(v)) => ore(cipher, v, context),
-        Physical::Int(Int::I128(v)) => ore(cipher, v, context),
-        Physical::Int(Int::U16(v)) => ore(cipher, v, context),
-        Physical::Int(Int::U32(v)) => ore(cipher, v, context),
-        Physical::Int(Int::U64(v)) => ore(cipher, v, context),
-        Physical::Int(Int::U128(v)) => ore(cipher, v, context),
-        Physical::Float(Float::F32(v)) => ore(cipher, v, context),
-        Physical::Float(Float::F64(v)) => ore(cipher, v, context),
-        Physical::Text(t) => ore(cipher, t.to_owned(), context),
-        Physical::Bytes(b) => ore(cipher, b.to_vec(), context),
+        Physical::Int(Int::I16(v)) => order(cipher, index, v, context),
+        Physical::Int(Int::I32(v)) => order(cipher, index, v, context),
+        Physical::Int(Int::I64(v)) => order(cipher, index, v, context),
+        Physical::Int(Int::I128(v)) => order(cipher, index, v, context),
+        Physical::Int(Int::U16(v)) => order(cipher, index, v, context),
+        Physical::Int(Int::U32(v)) => order(cipher, index, v, context),
+        Physical::Int(Int::U64(v)) => order(cipher, index, v, context),
+        Physical::Int(Int::U128(v)) => order(cipher, index, v, context),
+        Physical::Float(Float::F32(v)) => order(cipher, index, v, context),
+        Physical::Float(Float::F64(v)) => order(cipher, index, v, context),
+        Physical::Text(t) => order(cipher, index, t.to_owned(), context),
+        Physical::Bytes(b) => order(cipher, index, b.to_vec(), context),
         _ => return None,
     })
 }
 
-/// [`IndexSpec::Ope`] per scalar; see [`ore_of`].
-fn ope_of<'a, 'c, K: 'static, D>(
+/// The term of `value` under `index`. The term's bytes are its frozen
+/// encoding: the raw CLLW ciphertext, or the serialised block ORE one.
+fn order<'a, 'c, K: 'static, T, D>(
     cipher: &'a KeysetCipher<'_, K>,
-    value: Physical<'_>,
-    context: NonEmpty<D>,
-) -> Option<Pending<'a, TermBytes, K>>
-where
-    D: IntoPrfContext<'c>,
-{
-    Some(match value {
-        Physical::Int(Int::I16(v)) => ope(cipher, v, context),
-        Physical::Int(Int::I32(v)) => ope(cipher, v, context),
-        Physical::Int(Int::I64(v)) => ope(cipher, v, context),
-        Physical::Int(Int::I128(v)) => ope(cipher, v, context),
-        Physical::Int(Int::U16(v)) => ope(cipher, v, context),
-        Physical::Int(Int::U32(v)) => ope(cipher, v, context),
-        Physical::Int(Int::U64(v)) => ope(cipher, v, context),
-        Physical::Int(Int::U128(v)) => ope(cipher, v, context),
-        Physical::Float(Float::F32(v)) => ope(cipher, v, context),
-        Physical::Float(Float::F64(v)) => ope(cipher, v, context),
-        Physical::Text(t) => ope(cipher, t.to_owned(), context),
-        Physical::Bytes(b) => ope(cipher, b.to_vec(), context),
-        _ => return None,
-    })
-}
-
-/// The term's raw bytes are its frozen encoding.
-fn ore<'a, 'c, K: 'static, T, D>(
-    cipher: &'a KeysetCipher<'_, K>,
+    index: OrderIndex,
     value: T,
     context: NonEmpty<D>,
 ) -> Pending<'a, TermBytes, K>
@@ -617,24 +613,17 @@ where
     T: Orderable,
     D: IntoPrfContext<'c>,
 {
-    cipher
-        .ore_term(value, context)
-        .map(|term| TermBytes(term.as_ref().to_vec()))
-}
-
-/// See [`ore`].
-fn ope<'a, 'c, K: 'static, T, D>(
-    cipher: &'a KeysetCipher<'_, K>,
-    value: T,
-    context: NonEmpty<D>,
-) -> Pending<'a, TermBytes, K>
-where
-    T: Orderable,
-    D: IntoPrfContext<'c>,
-{
-    cipher
-        .ope_term(value, context)
-        .map(|term| TermBytes(term.as_ref().to_vec()))
+    match index {
+        OrderIndex::Ore => cipher
+            .ore_term(value, context)
+            .map(|term| TermBytes(term.as_ref().to_vec())),
+        OrderIndex::Ope => cipher
+            .ope_term(value, context)
+            .map(|term| TermBytes(term.as_ref().to_vec())),
+        OrderIndex::OreBlock => cipher
+            .ore_block_term(value, context)
+            .map(|term| TermBytes(term.into_bytes())),
+    }
 }
 
 /// A sink that takes one scalar and hands it to `F`, and refuses anything
@@ -1531,6 +1520,7 @@ mod tests {
                 default_match(),
                 IndexSpec::Ore,
                 IndexSpec::Ope,
+                IndexSpec::OreBlock,
             ] {
                 let wire = crate::dynamic::test_frame::value_of(&spec);
                 assert!(

@@ -22,6 +22,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `eql_v4.query_<family>_range_<ore|ope>` domains in the v4 SQL bundle. No
   range type derives Stack Encrypt's traits yet, because the ordered types
   they range over are not producible. There are no v3 range types.
+- **Rust queries an EQL v4 field through Stack Encrypt's typed query chain**
+  (`stack-encrypt` feature, #1238). `cipher.query(op::Eq, v).on(&plan)` on a
+  plan for `TextEq`, `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`,
+  `DoubleEq`, `DateEq`, `TimestampEq` or `NumericEq`
+  (`Plan::value::<S>().context("table/column").encrypt_into::<T>()`)
+  returns the type's query twin (`TextEqQuery`, …), and
+  `cipher.query(op::Matches, text).on(&plan)` on a plan for `TextMatch`
+  returns a `MatchTwin<TextMatchQuery>`: the twin, which it serializes as,
+  with `verify` and `target_limit` under `EqlMatch`. The query is the bytes
+  the data path (`stack_encrypt::dynamic::query_term`) derives for the same
+  field, and `verify` and `target_limit` answer as the data path's do.
+  eql-codegen writes the `op::Answers` impls into `v4::answers`, which needs
+  no `dynamic` layer and so not the `targets` feature, from each type's
+  indexes, by the rule the data path answers an EQL type's operators
+  with. A producible type whose twin carries an order term (`IntegerOrd`,
+  `TextOrd`, …) answers nothing in the typed chain yet: the chain sends one
+  index's term as the twin, and those twins need an order term, or several
+  terms at once. The encryption tests hold that gap to exactly the ordered
+  types, so query them through the data path for now. An operator a type
+  does not answer, or another index named with `.via(..)`, does not
+  compile. Each answering type is an
+  `op::LabelledTarget`. The label must name the column, table then column,
+  and the query must not be extended, or the awaited query is refused
+  before any keyset is resolved, with a `QueryLabelError` in
+  `Error::Other`. `eql_bindings::encryption::query` holds `TwinIndex`
+  (Stack Encrypt's index, its query sent as the twin, for the twin's own
+  plaintext only), `MatchTwin`, `QueryTwin` and `QueryLabelError`.
+  `Hmac256` and `BloomFilter` now declare their indexes (`EncryptFrom::indexes`),
+  so a type holding one declares the equality or match index, and `EqlMatch`
+  implements `op::MatchCase` (case-insensitive).
 - **`eql_bindings::v4` needs the `stack-encrypt` feature.** Only Stack
   Encrypt produces an EQL v4 value (ADR-0002), so the module is compiled with
   that feature alone, and its producible types derive `EncryptFrom` and
@@ -71,6 +101,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   orderable plaintext. Their query twins carry one bound, so the engine
   answers `<`, `<=`, `>` and `>=` (and `=` on text) through them, not
   `BETWEEN`.
+- **`TextSearch` is producible** (`stack-encrypt` feature), from `String`.
+  The stored value carries `TextEq`'s `hm`, `TextOrd`'s `op` and
+  `TextMatch`'s `bf`. Text too short for a 3-gram (an empty string, a
+  two-letter code) is stored with the empty filter, `"bf": []`, where
+  `TextMatch` refuses it: `=` and `<` find the row through `hm` and `op`,
+  and no `@@` query does (a `@@` between two stored values is not a query,
+  and two stored empty filters match each other there, as in v3). Its `bf`
+  field is the new
+  `v4::terms::SearchBloomFilter` (as is `TextSearchOre`'s), whose JSON and
+  JSON Schema are `BloomFilter`'s and which takes the empty filter;
+  `TextMatch` and every query keep `BloomFilter`, which refuses it. Its
+  query is built per index, through
+  `TextSearchEqualityQuery`, `TextSearchOrderQuery` or
+  `TextSearchMatchQuery` (each `EncryptFrom<String>` and
+  `Into<TextSearchQuery>`), so it carries only the term its operator reads:
+  `=` and `<` on two-letter text work, and a match query on it is refused.
+  The by-name dispatch picks the projection for the index it is handed.
+- **The block ORE types are producible** (`stack-encrypt` feature):
+  `IntegerOrdOre`, `SmallintOrdOre`, `BigintOrdOre`, `RealOrdOre` and
+  `DoubleOrdOre` from `i32`, `i16`, `i64`, `f32` and `f64`, and `TextOrdOre` and `TextSearchOre` from
+  `String`. Their `ob` term is Stack Encrypt's block ORE term (ore-rs's
+  6-bit fixed-width scheme for the numbers, its chained scheme for text):
+  one element, the hex of the whole ciphertext. `OreBlock256` implements
+  `EncryptFrom` for any orderable plaintext and never decrypts. This is not
+  EQL v3's `ob` (cipherstash-client's 8-bit blocks, up to six per text
+  value), and only EQL v4's comparator, `compare_ore_block_v2_term`, reads
+  it. Every term carries a random nonce, so a query's `ob` never equals the
+  stored one; the comparator orders them. A query carries the full
+  ciphertext. `TextSearchOre` follows `TextSearch`: its query carries only
+  the term its operator reads. Text whose fold is longer than 1023 bytes or
+  ends in NUL has no block ORE term and is refused. In the target table an
+  `ob` term is the index `ore_block`, not `ore`, which is CLLW ORE.
+- **`encryption::targets::query` takes the index that answers the query's
+  operator** (`targets` feature), an `&IndexSpec` after the name, as Stack
+  Encrypt's `TargetResolver::query` hands it over. An index the type does
+  not carry is refused with `TargetError::NoIndex`, before anything is
+  derived.
 - **`Target::match_options`** (`targets` feature): the options a type's
   match index is built under, `EqlMatch`'s, for a type that carries one
   (`TextMatch`), and `None` otherwise. Stack Encrypt answers `matches`
@@ -109,6 +176,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single-variant enum. A new `all_query()` inventory exposes the query twins
   separately from `all()` (which stays the stored + SteVec conversion-target
   inventory).
+
+### Breaking
+
+- **`v4::text::TextSearchQuery` and `TextSearchOreQuery` hold each term as
+  an `Option`**, left out of the JSON when `None`, to match EQL v4's
+  `query_text_search` and `query_text_search_ore`, which now take any one
+  of their terms (ADR-0002, amended 2026-10-19). `pub hm: Hmac256` is now
+  `pub hm: Option<Hmac256>`, and likewise `op`/`ob` and `bf`: code that
+  builds one of these structs wraps each term in `Some`, code that reads
+  one handles `None`, and a JSON operand missing a term now deserializes
+  where it was refused. `TextSearch` and `TextSearchOre`'s `bf` is
+  `SearchBloomFilter`, not `BloomFilter` (`.0` reaches the `BloomFilter`).
+  No published release of this crate has the `v4` module (3.0.6 does not),
+  so this breaks only code built against unreleased sources; the v3 twins
+  are unchanged, as cipherstash-client's query carries every term.
 
 ### Changed
 

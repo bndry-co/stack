@@ -79,11 +79,13 @@ impl TargetResolver for EqlTargets {
     fn query<'a, K: 'static>(
         &self,
         name: &str,
+        index: &stack_encrypt::target::IndexSpec,
         keyset: &'a stack_encrypt::KeysetCipher<'_, K>,
         label: &stack_encrypt::Label,
         plaintext: stack_encrypt::dynamic::ValueFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_bindings::encryption::targets::query(name, keyset, label, plaintext).map_err(convert)
+        eql_bindings::encryption::targets::query(name, index, keyset, label, plaintext)
+            .map_err(convert)
     }
 }
 
@@ -191,14 +193,17 @@ mod tests {
             [
                 "Integer",
                 "IntegerEq",
+                "IntegerOrdOre",
                 "IntegerOrd",
                 "IntegerOrdOpe",
                 "Smallint",
                 "SmallintEq",
+                "SmallintOrdOre",
                 "SmallintOrd",
                 "SmallintOrdOpe",
                 "Bigint",
                 "BigintEq",
+                "BigintOrdOre",
                 "BigintOrd",
                 "BigintOrdOpe",
                 "Date",
@@ -210,22 +215,27 @@ mod tests {
                 "Text",
                 "TextEq",
                 "TextMatch",
+                "TextOrdOre",
                 "TextOrd",
                 "TextOrdOpe",
+                "TextSearchOre",
+                "TextSearch",
                 "Boolean",
                 "Real",
                 "RealEq",
+                "RealOrdOre",
                 "RealOrd",
                 "RealOrdOpe",
                 "Double",
                 "DoubleEq",
+                "DoubleOrdOre",
                 "DoubleOrd",
                 "DoubleOrdOpe"
             ],
             "the engine's producible types, in catalog order"
         );
         assert!(matches!(
-            resolver().resolve("TextOrdOre"),
+            resolver().resolve("DateOrdOre"),
             Err(TargetError::Unproducible { .. })
         ));
         assert!(matches!(
@@ -251,6 +261,16 @@ mod tests {
                 found: Some(stack_encrypt::dynamic::ValueKind::UInt64),
             }),
             TargetError::Plaintext { target, expected: Some(stack_encrypt::dynamic::ValueKind::String), .. } if target == "TextEq"
+        ));
+        // The engine asks a type's query only through an index the type
+        // carries, so one it does not is the engine's failure, not the
+        // caller's input.
+        assert!(matches!(
+            convert(Eql::NoIndex {
+                name: "TextEq",
+                index: "ope",
+            }),
+            TargetError::Other(_)
         ));
     }
 

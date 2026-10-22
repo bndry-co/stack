@@ -12,7 +12,7 @@
 --! (Supabase/PostgREST calls functions, not operators) invoke them by name.
 --! {{prefix}}_internal houses INTERNAL implementation objects only: the
 --! searchable-encrypted-metadata (SEM) index-term types
---! ({{prefix}}_internal.hmac_256, {{prefix}}_internal.ore_block_256) and their support
+--! ({{prefix}}_internal.hmac_256, {{prefix}}_internal.{{ore_block}}) and their support
 --! functions, the unsupported-operator blockers (which only raise), and the
 --! aggregate state functions. Together the two schemas are self-contained —
 --! they own every type they need and have no runtime dependency on another EQL

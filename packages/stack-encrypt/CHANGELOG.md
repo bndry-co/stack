@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended
+  2026-10-19). It derives ore-rs 0.9.0's 6-bit block ORE under its own key
+  domain, over the same order keys as the CLLW indexes:
+  `ore_rs::vitaminc::Bit6BlockOre` for targets of at most ten bytes (the
+  integers from 16 to 64 bits and both floats) and `ChainedBlockOre` for
+  text, bytes and the 128-bit integers, text padded to a power-of-two bucket
+  of at least 16 bytes. As for ORE and OPE, a boolean and an 8-bit integer
+  have no block ORE term. `sem::OreBlockTerm` is the term, the whole ciphertext; it carries
+  a random nonce, so it compares by the scheme's comparator (`compare`,
+  `PartialEq`, `PartialOrd`), never by its bytes, and
+  `OreBlockTerm::from_bytes` checks a stored term's structure. The typed
+  path reaches it with `.via(OreBlock)` and `target::ore_block()`, the
+  dynamic path as the index `ore_block`, and `KeysetCipher::ore_block_term`
+  derives one directly. A query is the full ciphertext too: EQL v4's
+  comparator reads the right half of the operand a btree index passes
+  second. Text whose fold is longer than 1023 bytes is refused with
+  `TermError::OreBlockTooLong`, text whose fold ends in NUL with
+  `TermError::OreBlockTrailingNul`, before any key is touched on the query
+  path; `TermError::OreBlock` carries a scheme failure and
+  `TermBytesError::MalformedOreBlockCiphertext` a malformed stored term. The
+  CLLW `Ore` and `Ope` indexes are unchanged, byte for byte.
+
 - **Every integer width, 128-bit integers, dates, timestamps and decimals
   as dynamic values** (`dynamic` feature; #1144, ADR-0002). They are
   vitaminc leaves in a `ValueFrame`, with no new `FfiValue` variant:
@@ -29,6 +51,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole integer into a decimal at scale 0). `tests/value_kinds.rs` and its
   fixture hold the record path, the data query path and the typed path to
   the same bytes, and the Go SDK reads the fixture too.
+- **A target sealed under a context of its own can opt in to queries on
+  its plan** (#1238). `op::LabelledTarget` says a target type's stored terms
+  were derived under the context a plan's label names. A typed plan for such
+  a type (`Plan::value::<S>().encrypt_into::<T>()`) answers the operators its
+  `op::Answers` impls name, and needs only the indexes `T` declares, not a
+  context the label converts into: an EQL v4 type, sealed under its column,
+  is queried through its plan though it cannot be encrypted through it.
+  A target type answers queries on its plan only when it implements this
+  as well as `op::Answers`, whatever context it is sealed under; this
+  crate's term targets implement both. A type sealed under a context no
+  label names must not implement it, so its plan answers no query. Naming
+  an index with `.via(..)` still needs a type sealed under the label itself.
+  `op::QueryToken` carries the context the query's terms were derived under
+  (`label`, `is_extended`), for a query term that records it, and
+  `op::Supports::check_label` (defaulted to `Ok`) lets such an index refuse
+  a context it cannot record when the query is awaited, before any keyset
+  is resolved or term derived.
 - **A binding queries by operator** (`dynamic` feature; ADR-0009, ADR-0007
   amended 2026-10-16). `dynamic::query_term(keyset, &plan, field, op,
   input, &resolver)` derives the query term for a field of a data plan, an
@@ -179,6 +218,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`IndexSpec` has a fifth variant, `OreBlock`** (the block ORE index
+  above). The enum is exhaustive on purpose, since a binding has to be
+  taught each index, so a `match` over it needs an arm for `OreBlock`. The
+  dynamic path answers an ordering through ORE, else block ORE, else OPE,
+  whichever the field declares.
+- **A target's query is handed the index that answers its operator**
+  (`dynamic` feature). `TargetResolver::query` and `record::query` take an
+  `&IndexSpec` after the type's name and the field respectively;
+  `query_term` passes the index `OpSpec::answered_by` picks over the type's
+  indexes. A type whose query carries every term may ignore it. One whose
+  terms are optional derives that index's term alone, so EQL v4's
+  `TextSearch` answers `=` and `<` on text too short to make a match term,
+  and makes one only for `matches`. A resolver adds the parameter; a caller
+  of `record::query` passes the index it queries through.
 - **A ciphertext that opens as the wrong type is `Error::OpenedType`, not
   `Error::Aead`** (#1118). A typed decrypt of a leaf that authenticates but
   holds another type (an integer opened as `String`, a value too wide for
