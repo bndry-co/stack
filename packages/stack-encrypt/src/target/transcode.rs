@@ -9,7 +9,7 @@
 //! What a reader hands over is what the cipher produced, no more: a sealed
 //! leaf or marker is authenticated ciphertext, but passthrough metadata and
 //! terms are not, and a visitor must not present them as such.
-use crate::sem::{EqualityTerm, MatchConfig, MatchTerms, OpeTerm, OreTerm};
+use crate::sem::{EqualityTerm, MatchConfig, MatchTerms, OpeTerm, OreBlockTerm, OreTerm};
 use crate::{CipherText, Error, PassthroughFrame, SealedValue, StackCipherText};
 
 /// An encrypted output that can drive a destination visitor.
@@ -120,6 +120,14 @@ pub trait Visitor: Sized {
     fn ope<T: crate::sem::Orderable>(self, _: OpeTerm<T>) -> Result<Self::Value, Error> {
         Err(Error::UnsupportedShape)
     }
+    /// A block ORE term. One-way, and not authenticated.
+    ///
+    /// # Errors
+    ///
+    /// Refuses with [`Error::UnsupportedShape`] unless overridden.
+    fn ore_block<T: crate::sem::Orderable>(self, _: OreBlockTerm<T>) -> Result<Self::Value, Error> {
+        Err(Error::UnsupportedShape)
+    }
 }
 /// A destination that names its visitor, so an
 /// [`Encryption`](super::Encryption) can be transcoded into it by type alone.
@@ -201,5 +209,10 @@ impl<T: crate::sem::Orderable> Reader for OreTerm<T> {
 impl<T: crate::sem::Orderable> Reader for OpeTerm<T> {
     fn read<V: Visitor>(self, visitor: V) -> Result<V::Value, Error> {
         visitor.ope(self)
+    }
+}
+impl<T: crate::sem::Orderable> Reader for OreBlockTerm<T> {
+    fn read<V: Visitor>(self, visitor: V) -> Result<V::Value, Error> {
+        visitor.ore_block(self)
     }
 }

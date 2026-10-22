@@ -33,6 +33,10 @@ var eqlTypes = []struct {
 	{stashgen.EQLType{Name: "Text", Plaintext: stashgen.KindString, Producible: true}, ""},
 	{stashgen.EQLType{Name: "TextEq", Plaintext: stashgen.KindString, Indexes: []stashgen.IndexName{stashgen.IndexEquality}, Query: "TextEqQuery", Producible: true}, ""},
 	{stashgen.EQLType{Name: "TextMatch", Plaintext: stashgen.KindString, Indexes: []stashgen.IndexName{stashgen.IndexMatch}, Query: "TextMatchQuery", Producible: true}, ""},
+	{stashgen.EQLType{Name: "TextSearch", Plaintext: stashgen.KindString, Indexes: []stashgen.IndexName{stashgen.IndexEquality, stashgen.IndexOpe, stashgen.IndexMatch}, Query: "TextSearchQuery", Producible: true}, ""},
+	{stashgen.EQLType{Name: "TextOrdOre", Plaintext: stashgen.KindString, Indexes: []stashgen.IndexName{stashgen.IndexEquality, stashgen.IndexOreBlock}, Query: "TextOrdOreQuery", Producible: true}, ""},
+	{stashgen.EQLType{Name: "TextSearchOre", Plaintext: stashgen.KindString, Indexes: []stashgen.IndexName{stashgen.IndexEquality, stashgen.IndexOreBlock, stashgen.IndexMatch}, Query: "TextSearchOreQuery", Producible: true}, ""},
+	{stashgen.EQLType{Name: "IntegerOrdOre", Plaintext: stashgen.KindInt, Indexes: []stashgen.IndexName{stashgen.IndexOreBlock}, Query: "IntegerOrdOreQuery", Producible: true}, "int32"},
 	{stashgen.EQLType{Name: "Boolean", Plaintext: stashgen.KindBool, Producible: true}, ""},
 	{stashgen.EQLType{Name: "Real", Plaintext: stashgen.KindFloat, Producible: true}, "float32"},
 	{stashgen.EQLType{Name: "Double", Plaintext: stashgen.KindFloat, Producible: true}, "float64"},
@@ -182,7 +186,7 @@ func (e Static) operators(ctx context.Context, d stashgen.Declaration) (map[stri
 
 // answeredBy mirrors OpSpec::answered_by in stack-encrypt: eq through an
 // equality index, matches through a match index, and the orderings through
-// ORE, or OPE when there is no ORE, over an integer or text; each only
+// ORE, else block ORE, else OPE, over an integer or text; each only
 // where the index applies to the type.
 func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName) (stashgen.IndexName, bool) {
 	declared := func(want stashgen.IndexName) bool {
@@ -203,8 +207,10 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 	if !orderable {
 		return "", false
 	}
-	if declared(stashgen.IndexOre) {
-		return stashgen.IndexOre, true
+	for _, index := range []stashgen.IndexName{stashgen.IndexOre, stashgen.IndexOreBlock} {
+		if declared(index) {
+			return index, true
+		}
 	}
 	return stashgen.IndexOpe, declared(stashgen.IndexOpe)
 }
@@ -252,7 +258,7 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 			return nil
 		}
 		return fmt.Errorf("match applies to a string, not to %s", t)
-	case stashgen.IndexOre, stashgen.IndexOpe:
+	case stashgen.IndexOre, stashgen.IndexOpe, stashgen.IndexOreBlock:
 		switch t.Kind {
 		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat:
 			return nil

@@ -20,14 +20,14 @@ func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 		}
 	}
 	want := []string{
-		"Integer", "IntegerEq", "IntegerOrd", "IntegerOrdOpe",
-		"Smallint", "SmallintEq", "SmallintOrd", "SmallintOrdOpe",
-		"Bigint", "BigintEq", "BigintOrd", "BigintOrdOpe",
+		"Integer", "IntegerEq", "IntegerOrdOre", "IntegerOrd", "IntegerOrdOpe",
+		"Smallint", "SmallintEq", "SmallintOrdOre", "SmallintOrd", "SmallintOrdOpe",
+		"Bigint", "BigintEq", "BigintOrdOre", "BigintOrd", "BigintOrdOpe",
 		"Date", "DateEq", "Timestamp", "TimestampEq", "Numeric", "NumericEq",
-		"Text", "TextEq", "TextMatch", "TextOrd", "TextOrdOpe",
+		"Text", "TextEq", "TextMatch", "TextOrdOre", "TextOrd", "TextOrdOpe", "TextSearchOre", "TextSearch",
 		"Boolean",
-		"Real", "RealEq", "RealOrd", "RealOrdOpe",
-		"Double", "DoubleEq", "DoubleOrd", "DoubleOrdOpe",
+		"Real", "RealEq", "RealOrdOre", "RealOrd", "RealOrdOpe",
+		"Double", "DoubleEq", "DoubleOrdOre", "DoubleOrd", "DoubleOrdOpe",
 	}
 	if len(producible) != len(want) {
 		t.Fatalf("producible = %v, want %v", producible, want)
@@ -37,7 +37,7 @@ func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 			t.Fatalf("producible = %v, want %v", producible, want)
 		}
 	}
-	for name, plaintext := range map[string]string{"Integer": "int32", "IntegerEq": "int32", "IntegerOrd": "int32", "Smallint": "int16", "SmallintEq": "int16", "SmallintOrdOpe": "int16", "Bigint": "int64", "BigintEq": "int64", "BigintOrdOpe": "int64", "Boolean": "bool", "Real": "float32", "RealEq": "float32", "RealOrd": "float32", "Double": "float64", "DoubleEq": "float64", "DoubleOrdOpe": "float64", "TextOrd": "string", "Date": "date", "DateEq": "date", "Timestamp": "timestamp", "TimestampEq": "timestamp", "Numeric": "decimal", "NumericEq": "decimal"} {
+	for name, plaintext := range map[string]string{"Integer": "int32", "IntegerEq": "int32", "IntegerOrdOre": "int32", "TextOrdOre": "string", "IntegerOrd": "int32", "Smallint": "int16", "SmallintEq": "int16", "SmallintOrdOre": "int16", "SmallintOrdOpe": "int16", "Bigint": "int64", "BigintEq": "int64", "BigintOrdOpe": "int64", "Boolean": "bool", "Real": "float32", "RealEq": "float32", "RealOrd": "float32", "Double": "float64", "DoubleEq": "float64", "DoubleOrdOpe": "float64", "TextOrd": "string", "Date": "date", "DateEq": "date", "Timestamp": "timestamp", "TimestampEq": "timestamp", "Numeric": "decimal", "NumericEq": "decimal"} {
 		if typ, ok := eql.Lookup(name); !ok || typ.Plaintext != plaintext {
 			t.Errorf("%s: Plaintext = %q, want %q", name, typ.Plaintext, plaintext)
 		}

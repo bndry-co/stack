@@ -19,7 +19,7 @@
 --! (or `pg_get_functiondef`); tracked as a follow-up.
 --!
 --! Operators on `{{prefix}}` types (the jsonb-backed encrypted-domain families and
---! the SEM index-term type `{{prefix}}_internal.ore_block_256`) whose
+--! the SEM index-term type `{{prefix}}_internal.{{ore_block}}`) whose
 --! implementation functions fail any of these rules silently fall back to seq
 --! scan when the documented functional indexes (`{{prefix}}.eq_term(col)`,
 --! `{{prefix}}.ord_term(col)`) are in place. This lint surfaces every such case.
@@ -58,7 +58,7 @@
 --!                                functional index on the extractor instead.
 --!   `schema_placement`        — a naked composite or enum TYPE lives in the
 --!                                public `{{prefix}}` schema. Internal index-term
---!                                types (e.g. `ore_block_256_term`) belong in
+--!                                types (e.g. `{{ore_block}}_term`) belong in
 --!                                `{{prefix}}_internal`; a composite/enum in
 --!                                `{{prefix}}` clutters the Supabase Table Builder
 --!                                type picker, which the schema split exists to

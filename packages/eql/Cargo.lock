@@ -582,8 +582,8 @@ dependencies = [
  "log",
  "miette",
  "opaque-debug",
- "orderable-bytes",
- "ore-rs",
+ "orderable-bytes 0.1.1",
+ "ore-rs 0.8.3",
  "percent-encoding",
  "rand 0.8.6",
  "recipher 0.2.3",
@@ -650,7 +650,7 @@ dependencies = [
  "blake3",
  "chrono",
  "hex",
- "orderable-bytes",
+ "orderable-bytes 0.1.1",
  "rust_decimal",
  "subtle",
  "thiserror 1.0.69",
@@ -2668,6 +2668,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "orderable-bytes"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c7d30b72ffca73d9936fe5fc80a9c9520c73f5b4f64839a810211903d5ace3c"
+
+[[package]]
 name = "ore-rs"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2680,12 +2686,35 @@ dependencies = [
  "hex",
  "lazy_static",
  "num",
- "orderable-bytes",
+ "orderable-bytes 0.1.1",
  "rand 0.8.6",
  "rand_chacha 0.3.1",
  "rust_decimal",
  "subtle-ng",
  "thiserror 1.0.69",
+ "zeroize",
+]
+
+[[package]]
+name = "ore-rs"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e1d6cb8c1249643266bd60269547c93d3cd263d5385f1262902bbb295ff9a5e"
+dependencies = [
+ "aes",
+ "block-modes",
+ "byteorder",
+ "hex",
+ "num",
+ "orderable-bytes 0.2.1",
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
+ "subtle-ng",
+ "thiserror 1.0.69",
+ "vitaminc-hmac",
+ "vitaminc-ore",
+ "vitaminc-prf",
+ "vitaminc-protected 0.6.1",
  "zeroize",
 ]
 
@@ -4239,6 +4268,7 @@ dependencies = [
  "base64ct",
  "cllw-ore 0.5.2-rc.1",
  "miette",
+ "ore-rs 0.9.0",
  "serde",
  "serde_json",
  "sha2 0.11.0",

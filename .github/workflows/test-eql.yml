@@ -597,6 +597,12 @@ jobs:
           rustup component add --toolchain "${active_rust_toolchain}" rustfmt clippy
           mise run test:crates
 
+      # The block ORE timing harness's ciphertext generator is a detached
+      # workspace with its own Cargo.lock that no job builds, so its lock is
+      # checked here rather than left to drift until someone runs the harness.
+      - name: Check the timing harness's Cargo.lock
+        run: cargo metadata --locked --format-version 1 --manifest-path tests/timing/ore_block_v2/ctgen/Cargo.toml > /dev/null
+
       # The three encryption checks are mise tasks rather than raw cargo here,
       # so `eql-suite-ci.test.mjs` counts them among the cargo tasks a root
       # workflow must reach, and `eql-workflow-filters.test.mjs` derives the

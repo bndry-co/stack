@@ -184,10 +184,16 @@ mod given_text_eq {
     async fn query_bytes_are_the_typed_query_twin() {
         let (cipher, calls) = common::cipher().await;
         let keyset = cipher.default_keyset();
-        let by_name = targets::query("TextEq", &keyset, &email(), text("alice@example.com"))
-            .unwrap()
-            .await
-            .unwrap();
+        let by_name = targets::query(
+            "TextEq",
+            &common::index_of("TextEq"),
+            &keyset,
+            &email(),
+            text("alice@example.com"),
+        )
+        .unwrap()
+        .await
+        .unwrap();
         let typed: TextEqQuery = keyset
             .encrypt_as(&"alice@example.com".to_owned(), column())
             .await
@@ -255,6 +261,7 @@ mod given_text_eq {
         );
         let error = refused(targets::query(
             "TextEq",
+            &common::index_of("TextEq"),
             &keyset,
             &email(),
             frame(None::<i32>),
@@ -354,7 +361,13 @@ mod given_a_name_the_engine_cannot_produce {
                 name,
             );
             unproducible(
-                refused(targets::query(name, &keyset, &email(), text("x"))),
+                refused(targets::query(
+                    name,
+                    &common::index_of(name),
+                    &keyset,
+                    &email(),
+                    text("x"),
+                )),
                 name,
             );
             unproducible(
@@ -362,15 +375,15 @@ mod given_a_name_the_engine_cannot_produce {
                 name,
             );
         }
-        let error = refused(targets::encrypt("TextOrdOre", &keyset, &email(), text("x")));
+        let error = refused(targets::encrypt("DateOrdOre", &keyset, &email(), text("x")));
         assert_eq!(
             error.to_string(),
-            "the engine cannot produce TextOrdOre yet: EQL stores block ORE terms and the engine \
-             derives CLLW ORE (#1132)"
+            "the engine cannot produce DateOrdOre yet: the engine derives no order term for a date, \
+             timestamp or decimal yet: how they are ordered is not decided (#1236)"
         );
         // Refused by name before the label or the value is looked at.
         let error = refused(targets::encrypt(
-            "TextOrdOre",
+            "DateOrdOre",
             &keyset,
             &Label::new(["one"]).unwrap(),
             frame(None::<i32>),
@@ -404,7 +417,13 @@ mod given_an_unknown_name {
                 &email(),
                 text("x"),
             )));
-            unknown(refused(targets::query(name, &keyset, &email(), text("x"))));
+            unknown(refused(targets::query(
+                name,
+                &common::index_of(name),
+                &keyset,
+                &email(),
+                text("x"),
+            )));
             unknown(refused(targets::decrypt(name, &cipher, &email(), b"{}")));
         }
         assert_eq!(
@@ -434,7 +453,7 @@ mod the_table {
         match term {
             Term::Hm => "eq",
             Term::Bloom => "match",
-            Term::Ore => "ore",
+            Term::Ore => "ore_block",
             Term::Ope => "ope",
         }
     }
@@ -565,10 +584,10 @@ mod the_table {
 
     /// The types the engine produces in EQL v4 today: the storage and
     /// equality domains of every family whose plaintext eql-bindings names,
-    /// the OPE-ordered domains of those the engine derives an order term
-    /// for, and text match.
+    /// the ordered domains (OPE and block ORE) of those the engine derives
+    /// an order term for, and text match and search.
     #[test]
-    fn the_producible_types_are_the_ones_with_no_ore_and_a_rust_plaintext() {
+    fn the_producible_types_are_the_ones_with_a_rust_plaintext() {
         let producible: Vec<&str> = targets::targets()
             .iter()
             .filter(|t| t.producible)
@@ -579,14 +598,17 @@ mod the_table {
             [
                 "Integer",
                 "IntegerEq",
+                "IntegerOrdOre",
                 "IntegerOrd",
                 "IntegerOrdOpe",
                 "Smallint",
                 "SmallintEq",
+                "SmallintOrdOre",
                 "SmallintOrd",
                 "SmallintOrdOpe",
                 "Bigint",
                 "BigintEq",
+                "BigintOrdOre",
                 "BigintOrd",
                 "BigintOrdOpe",
                 "Date",
@@ -598,15 +620,20 @@ mod the_table {
                 "Text",
                 "TextEq",
                 "TextMatch",
+                "TextOrdOre",
                 "TextOrd",
                 "TextOrdOpe",
+                "TextSearchOre",
+                "TextSearch",
                 "Boolean",
                 "Real",
                 "RealEq",
+                "RealOrdOre",
                 "RealOrd",
                 "RealOrdOpe",
                 "Double",
                 "DoubleEq",
+                "DoubleOrdOre",
                 "DoubleOrd",
                 "DoubleOrdOpe"
             ],
@@ -619,8 +646,6 @@ mod the_table {
                 ("date" | "timestamp" | "numeric", "Ord" | "OrdOpe" | "OrdOre") => {
                     "no order term for a date, timestamp or decimal yet"
                 }
-                (_, "OrdOre" | "SearchOre") => "derives CLLW ORE (#1132)",
-                ("text", "Search") => "carries a match term",
                 (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };
             assert!(reason.contains(expected), "{}: {reason}", row.name);
@@ -687,10 +712,16 @@ mod the_cross_language_fixture {
     async fn the_text_eq_query_fixture_is_what_the_dispatch_derives() {
         let (cipher, calls) = common::cipher().await;
         let keyset = cipher.default_keyset();
-        let query = targets::query("TextEq", &keyset, &email(), text(PLAINTEXT))
-            .unwrap()
-            .await
-            .unwrap();
+        let query = targets::query(
+            "TextEq",
+            &common::index_of("TextEq"),
+            &keyset,
+            &email(),
+            text(PLAINTEXT),
+        )
+        .unwrap()
+        .await
+        .unwrap();
         assert!(
             calls.lock().unwrap().generate.is_empty(),
             "a query mints nothing"

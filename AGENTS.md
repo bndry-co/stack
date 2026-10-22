@@ -707,8 +707,12 @@ exact pin would stop the suite sharing one `cts-common` with it.
 - **Three Cargo workspaces, not one.** The root workspace (the six stack-*
   crates and the three node binding crates), protect-ffi's and EQL's. The root
   `Cargo.toml` excludes the other two, and they pin their own vitaminc. The
-  three fuzz crates and the two Go guests are detached workspaces too, each
-  with its own `Cargo.lock`.
+  three fuzz crates, the two Go guests and the EQL v4 block ORE timing
+  harness's ciphertext generator
+  (`packages/eql/tests/timing/ore_block_v2/ctgen`) are detached workspaces
+  too, each with its own `Cargo.lock`. None of them has a Dependabot entry.
+  CI builds the generator nowhere, so `test-eql.yml` checks its lock with
+  `cargo metadata --locked`, and `run.sh` builds it with `--locked`.
 - **The toolchain is pinned in the root `mise.toml`:** Rust 1.94.1 (the
   `stack-encrypt` `tests/ui` trybuild snapshots record its diagnostics) and
   Go 1.26. EQL's `mise.toml` overrides the Rust pin in its folder.

@@ -1365,14 +1365,17 @@ fn targets_lists_what_the_build_holds() {
         [
             "Integer",
             "IntegerEq",
+            "IntegerOrdOre",
             "IntegerOrd",
             "IntegerOrdOpe",
             "Smallint",
             "SmallintEq",
+            "SmallintOrdOre",
             "SmallintOrd",
             "SmallintOrdOpe",
             "Bigint",
             "BigintEq",
+            "BigintOrdOre",
             "BigintOrd",
             "BigintOrdOpe",
             "Date",
@@ -1384,15 +1387,20 @@ fn targets_lists_what_the_build_holds() {
             "Text",
             "TextEq",
             "TextMatch",
+            "TextOrdOre",
             "TextOrd",
             "TextOrdOpe",
+            "TextSearchOre",
+            "TextSearch",
             "Boolean",
             "Real",
             "RealEq",
+            "RealOrdOre",
             "RealOrd",
             "RealOrdOpe",
             "Double",
             "DoubleEq",
+            "DoubleOrdOre",
             "DoubleOrd",
             "DoubleOrdOpe"
         ],
@@ -1788,13 +1796,20 @@ fn the_catalog_lists_each_types_operators() {
                 ("index", index),
             ]
         };
-        let orderings = || ["lt", "lte", "gt", "gte"].map(|op| exact(op, "ope"));
+        // OPE for Ord and OrdOpe, block ORE for OrdOre and SearchOre.
+        let order_index = if name.ends_with("Ore") {
+            "ore_block"
+        } else {
+            "ope"
+        };
+        let orderings = || ["lt", "lte", "gt", "gte"].map(|op| exact(op, order_index));
         match name.as_str() {
-            "IntegerOrd" | "IntegerOrdOpe" | "SmallintOrd" | "SmallintOrdOpe" | "BigintOrd"
-            | "BigintOrdOpe" | "RealOrd" | "RealOrdOpe" | "DoubleOrd" | "DoubleOrdOpe" => {
+            "IntegerOrd" | "IntegerOrdOpe" | "IntegerOrdOre" | "SmallintOrd" | "SmallintOrdOpe"
+            | "SmallintOrdOre" | "BigintOrd" | "BigintOrdOpe" | "BigintOrdOre" | "RealOrd"
+            | "RealOrdOpe" | "RealOrdOre" | "DoubleOrd" | "DoubleOrdOpe" | "DoubleOrdOre" => {
                 assert_eq!(listed, orderings().to_vec(), "{name}");
             }
-            "TextOrd" | "TextOrdOpe" => {
+            "TextOrd" | "TextOrdOpe" | "TextOrdOre" => {
                 let mut want = vec![exact("eq", "eq")];
                 want.extend(orderings());
                 assert_eq!(listed, want, "{name}");
@@ -1812,6 +1827,19 @@ fn the_catalog_lists_each_types_operators() {
                 ("arity", "one"),
                 ("index", "match"),
             ]),
+            // Each operator through its own index, whose term alone the
+            // query carries.
+            "TextSearch" | "TextSearchOre" => {
+                let mut want = vec![exact("eq", "eq")];
+                want.extend(orderings());
+                want.push(vec![
+                    ("operator", "matches"),
+                    ("fidelity", "probabilistic"),
+                    ("arity", "one"),
+                    ("index", "match"),
+                ]);
+                assert_eq!(listed, want, "{name}");
+            }
             _ => {
                 // A type the engine does not produce answers nothing, and
                 // the other produced types are storage-only: no twin.

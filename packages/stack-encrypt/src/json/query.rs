@@ -16,8 +16,8 @@ use super::derive::{JsonTerms, TermNode};
 use super::path::JsonPath;
 use super::{hex, JsonDocument, JsonEntry, JsonOptions, Tag};
 use crate::op::{
-    Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input, Lt, Lte,
-    One, Pair, Pathed, QueryTerm, QueryToken, Supports,
+    Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
+    LabelledTarget, Lt, Lte, One, Pair, Pathed, QueryTerm, QueryToken, Supports,
 };
 use crate::sem::{RangeQuery, TermError};
 use crate::target::{DeclaredContext, Index, Json, Owned, Pending};
@@ -494,6 +494,14 @@ where
 // =============================================================================
 // What the index answers
 // =============================================================================
+
+/// A document is sealed under the caller's context ([`json_document`]
+/// takes a [`CallerContext`](crate::target::CallerContext)), which is the
+/// label a plan names, so its terms and a query's derive under the same
+/// context and a plan typed with it answers the operators below.
+///
+/// [`json_document`]: crate::target::json_document
+impl LabelledTarget for JsonDocument {}
 
 /// Containment, both ways: the needle's projection, which the SQL compares
 /// against the stored projection in the direction the operator says.

@@ -11,9 +11,10 @@
 //!
 //! One free is excluded by name: vitaminc-encrypt 0.6.0's aws-lc backend
 //! (`backend::aws_lc::CipherKey::seal`, native builds only) frees an unwiped
-//! plaintext buffer on every seal. That is vitaminc's to fix; the spy
-//! recognises those frees by their backtrace, so a build without symbols
-//! fails rather than passes.
+//! plaintext buffer on every seal; that is vitaminc's to fix. It is counted
+//! and printed, never silent, and every other free on those paths is still
+//! watched. The spy recognises these frees by their backtrace, so a build
+//! without symbols fails rather than passes.
 
 //!
 //! Unix only: the spy scans a freed block with libc's `memmem`, not as a
@@ -42,12 +43,16 @@ thread_local! {
 /// threads, and the findings below are one set.
 static GATE: Mutex<()> = Mutex::new(());
 
-/// The marked frees seen, as backtraces; and how many were vitaminc's.
+/// The marked frees seen, as backtraces; and how many each exclusion took.
 static FOUND: Mutex<Vec<String>> = Mutex::new(Vec::new());
-static UPSTREAM: Mutex<usize> = Mutex::new(0);
+static EXCLUDED: Mutex<[usize; 1]> = Mutex::new([0; 1]);
 
-/// The vitaminc frame whose free is excluded (see the module docs).
-const UPSTREAM_SEAL: &str = "vitaminc_encrypt::backend::aws_lc::CipherKey::seal";
+/// The frames whose frees are excluded, each with what it is (see the module
+/// docs): vitaminc's aws-lc seal.
+const EXCLUSIONS: [(&str, &str); 1] = [(
+    "vitaminc_encrypt::backend::aws_lc::CipherKey::seal",
+    "vitaminc's aws-lc seal",
+)];
 
 /// Whether the `len` bytes at `ptr` hold [`MARK`]. A freed block can hold
 /// bytes Rust never initialised (a `Vec`'s spare capacity, a struct's
@@ -87,8 +92,12 @@ unsafe impl GlobalAlloc for Spy {
                 // Symbol demangling differs by platform: Linux writes
                 // `<…::CipherKey>::seal`, macOS `…::CipherKey::seal`. Match
                 // with the angle brackets dropped.
-                if trace.replace(['<', '>'], "").contains(UPSTREAM_SEAL) {
-                    *UPSTREAM.lock().unwrap() += 1;
+                let plain = trace.replace(['<', '>'], "");
+                if let Some(at) = EXCLUSIONS
+                    .iter()
+                    .position(|(frame, _)| plain.contains(frame))
+                {
+                    EXCLUDED.lock().unwrap()[at] += 1;
                 } else {
                     FOUND
                         .lock()
@@ -110,14 +119,16 @@ static SPY: Spy = Spy;
 fn watched<T>(what: &str, f: impl FnOnce() -> T) -> T {
     let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     FOUND.lock().unwrap().clear();
-    *UPSTREAM.lock().unwrap() = 0;
+    *EXCLUDED.lock().unwrap() = [0; 1];
     WATCHING.with(|on| on.set(true));
     let out = f();
     WATCHING.with(|on| on.set(false));
     let found = std::mem::take(&mut *FOUND.lock().unwrap());
-    let upstream = std::mem::take(&mut *UPSTREAM.lock().unwrap());
-    if upstream > 0 {
-        eprintln!("{what}: skipped {upstream} unwiped frees in vitaminc's aws-lc seal");
+    let excluded = std::mem::take(&mut *EXCLUDED.lock().unwrap());
+    for ((_, name), skipped) in EXCLUSIONS.iter().zip(excluded) {
+        if skipped > 0 {
+            eprintln!("{what}: skipped {skipped} unwiped frees in {name}");
+        }
     }
     assert!(
         found.is_empty(),
@@ -136,14 +147,37 @@ fn text(value: &str) -> ValueFrame {
     ValueFrame::of(value).unwrap()
 }
 
+/// Every index the target carries, each of which a query may be asked
+/// through. A type whose query is built per index (`TextSearch`) runs a
+/// different projection, and its conversion into the query twin, for each.
+fn indexes_of(target: &targets::Target) -> Vec<stack_encrypt::target::IndexSpec> {
+    target
+        .indexes
+        .iter()
+        .map(|key| stack_encrypt::target::IndexSpec::parse(key).expect("an engine index key"))
+        .collect()
+}
+
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap()
 }
 
-/// The producible EQL types over text, each with whether it has a query.
-const TEXT_TARGETS: [(&str, bool); 3] = [("Text", false), ("TextEq", true), ("TextMatch", true)];
+/// The producible EQL types over text, read from the target table so a type
+/// that becomes producible is watched without an edit here.
+fn text_targets() -> Vec<&'static targets::Target> {
+    let found: Vec<_> = targets::targets()
+        .iter()
+        .filter(|target| target.family == "text" && target.producible)
+        .collect();
+    assert!(
+        found.iter().any(|target| target.query.is_none())
+            && found.iter().any(|target| target.query.is_some()),
+        "the table lists a storage-only and a queried text type"
+    );
+    found
+}
 
 #[test]
 fn a_text_target_leaves_no_plaintext_on_the_heap() {
@@ -157,7 +191,8 @@ fn a_text_target_leaves_no_plaintext_on_the_heap() {
     });
     let keyset = cipher.default_keyset();
     let label = Label::new(["users", "email"]).unwrap();
-    for (name, has_query) in TEXT_TARGETS {
+    for target in text_targets() {
+        let name = target.name;
         let plaintext = text(&marked("stored"));
         let stored = watched(&format!("{name} encrypt"), || {
             rt.block_on(async {
@@ -189,11 +224,14 @@ fn a_text_target_leaves_no_plaintext_on_the_heap() {
             });
             drop(opened);
         });
-        if has_query {
+        if target.query.is_none() {
+            continue;
+        }
+        for index in indexes_of(target) {
             let query = text(&marked("query"));
-            watched(&format!("{name} query"), || {
+            watched(&format!("{name} query through {}", index.key()), || {
                 rt.block_on(async {
-                    targets::query(name, &keyset, &label, query)
+                    targets::query(name, &index, &keyset, &label, query)
                         .unwrap()
                         .await
                         .unwrap()

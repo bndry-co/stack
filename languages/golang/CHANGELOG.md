@@ -116,6 +116,26 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   that orders by ADR-0002's order key: floats as PostgreSQL's `float8`
   sorts them, text by its fold. No `Between` yet: it needs EQL v4's range
   query domains.
+- **`IntegerOrdOre`, `SmallintOrdOre`, `BigintOrdOre`, `RealOrdOre`,
+  `DoubleOrdOre`, `TextOrdOre` and `TextSearchOre`**: a field tagged `encrypt_into=` one of
+  them gets `Lt`, `Lte`, `Gt` and `Gte` (and on text `Eq`, and on
+  `TextSearchOre` `Matches`), as the `Ord` types do. They store a block ORE
+  term (ore-rs's 6-bit schemes), compared by EQL v4's comparator; each
+  write and each query carries a fresh nonce, so two terms of one value
+  never share bytes. Text whose fold is longer than 1023 bytes or ends in
+  NUL is refused, stored or queried. The engine reports their ordering
+  operators through the index `ore_block` (`record.OreBlock`,
+  `stashgen.IndexOreBlock`), which a struct reaches only by naming one of
+  these types: it is not a tag word.
+- **`TextSearch`**: a `string` field tagged `encrypt_into=TextSearch` gets
+  `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, one column for all of them.
+  The stored value keeps all three terms. Text shorter than three
+  characters, an empty string included, is stored with an empty match
+  filter, where `TextMatch` refuses it with `ErrTerm`: `Eq`, `Lt`, `Lte`,
+  `Gt` and `Gte` find the row, and no `Matches` query does. Each query
+  carries only the term its operator reads, so `Eq` and `Lt` take a
+  two-letter value and `Matches` refuses one (`ErrTerm`). Needs the EQL v4
+  SQL from this release, whose `eql_v4.query_text_search` accepts one term.
 - **Ordering methods on text.** A string field with `index=ore` or
   `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`. Text orders by its
   folded form (ADR-0002: case and accents folded, under Unicode 16), so

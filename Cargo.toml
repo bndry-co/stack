@@ -85,6 +85,11 @@ recipher = "=0.3.1"
 # which Stack Encrypt's order terms are encrypted through. It first ships
 # in a pre-release, and Cargo resolves a pre-release only when named.
 cllw-ore = { version = "=0.5.2-rc.1", default-features = false, features = ["vitaminc"] }
+# ore-rs's `vitaminc` feature implements the same traits for block ORE:
+# `Bit6BlockOre` (fixed width up to ten bytes) and `ChainedBlockOre`
+# (variable length), the 6-bit schemes EQL v4's `_ord_ore` domains store.
+# Both wire formats are frozen as of 0.9.0. ore-rs feeds only stack-encrypt.
+ore-rs = { version = "0.9.0", default-features = false, features = ["vitaminc"] }
 
 # External dependencies, with the suite's feature lists.
 base64 = "0.22.0"

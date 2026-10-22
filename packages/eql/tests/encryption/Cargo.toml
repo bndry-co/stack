@@ -11,6 +11,12 @@ name = "text_eq_example"
 path = "../../crates/eql-bindings/src/encryption/example.rs"
 harness = false
 
+# The same, for the typed query example in `eql_bindings::encryption::query`.
+[[test]]
+name = "query_example"
+path = "../../crates/eql-bindings/src/encryption/query_example.rs"
+harness = false
+
 # Keep crypto/Postgres test dependencies out of eql-bindings' default test build.
 [dev-dependencies]
 # `chrono` and `rust_decimal`: the date, timestamp and decimal plaintexts
@@ -47,10 +53,6 @@ postgres = "0.19"
 # crates protect-ffi ships. Primitive dependencies such as blake3 are not
 # compared.
 #
-# The EQL v4 range tests (tests/v4_range.rs) use it too: EQL compares
-# block-ORE and CLLW-OPE terms, which Stack Encrypt does not derive for EQL
-# yet, so cipherstash-client's `OreIndexer` / `OpeIndexer` write the order
-# terms of their rows and ranges, offline over the same index key.
 cipherstash-client = "=0.42.3"
 # The tampering test decodes a stored body, changes one byte and re-encodes
 # it. The same line eql-bindings uses, so the lockfile gains no second copy.
