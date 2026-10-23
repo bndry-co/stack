@@ -964,7 +964,11 @@ async fn equality_at_the_root_is_not_containment() {
         .on(&plan)
         .await
         .unwrap();
-    let contains: JsonQuery = cipher.query(op::Contains, &json!(1)).on(&plan).await.unwrap();
+    let contains: JsonQuery = cipher
+        .query(op::Contains, &json!(1))
+        .on(&plan)
+        .await
+        .unwrap();
     let scalar = cipher.encrypt(&json!(1)).using(&plan).await.unwrap();
     let array = cipher.encrypt(&json!([1])).using(&plan).await.unwrap();
     assert!(at_root.matches(&scalar.projection()));

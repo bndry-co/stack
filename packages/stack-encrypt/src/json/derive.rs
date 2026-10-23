@@ -527,10 +527,9 @@ impl Walker<'_> {
         let mut count: u32 = 0;
         match value {
             Value::Object(map) => {
-                let ordinals: Option<BTreeMap<String, u32>> =
-                    token
-                        .map(|t| shuffled_ordinals(self.prf, self.context, &t, map))
-                        .transpose()?;
+                let ordinals: Option<BTreeMap<String, u32>> = token
+                    .map(|t| shuffled_ordinals(self.prf, self.context, &t, map))
+                    .transpose()?;
                 for (key, child) in map {
                     let ordinal = ordinals.as_ref().and_then(|o| o.get(key).copied());
                     let _ = self.visit(
