@@ -44,7 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the rows open to the same value either way, over `JsonPath::select`,
   which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
   of `q`, `p`, `op`, `h`, tokens and gates) is padded standard base64, and
-  the ciphertext `c` is RFC 1924 base85 (`base85-simd`).
+  the ciphertext `c` is RFC 1924 base85 (`base85-simd`). The document's
+  plaintext is held under `Protected` throughout, as the scalar paths hold
+  theirs: each node's plaintext is encoded straight from the caller's value
+  into a `Protected<Vec<u8>>` for the cipher, and what an entry opens to
+  (a key, a scalar, a sealed root's document) stays wrapped until it is
+  handed to the caller, so the sealed-root fallback's whole document is
+  wiped once the walked path is selected from it.
 
 - **A layout chosen by value, `target::Layout`, and
   `Plan::value().encrypt_as(layout)`.** `EncryptFrom` is a type's own

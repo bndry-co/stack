@@ -19,6 +19,9 @@ use vitaminc_prf::{BlockVisitor, IntoPrfContext, PrfValue};
 use vitaminc_protected::{Controlled, Protected};
 
 use super::path::{JsonPath, Segment};
+use super::plain::{
+    insert_member, protected_array, protected_object, push_element, read_protected, PlainJson,
+};
 use super::query::{Gate, JsonSelector, JsonSubtreeKey};
 use super::{JsonDocument, JsonEntry, JsonHeader, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::sem::TermError;
@@ -122,11 +125,23 @@ impl Kind {
     }
 }
 
-/// A node's label under its parent.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// An opened node's label under its parent. A key is plaintext, so it is
+/// held in a `Protected` until it is moved into the value the caller asked
+/// for.
+#[derive(Clone, Debug)]
 pub(crate) enum Label {
     Root,
-    Key(String),
+    Key(Protected<String>),
+    Index(u64),
+}
+
+/// A node's label as the walk reads it from the caller's value, borrowed:
+/// the walk encodes it straight into the node's plaintext and keeps no
+/// copy.
+#[derive(Clone, Copy)]
+enum LabelRef<'a> {
+    Root,
+    Key(&'a str),
     Index(u64),
 }
 
@@ -149,14 +164,6 @@ pub(crate) struct TermNode {
     pub(crate) element: Option<usize>,
     /// Whether this node is an array element that is a container.
     pub(crate) container_element: bool,
-}
-
-/// One node's plaintext, as its ciphertext encodes it.
-struct NodePlain {
-    label: Label,
-    kind: Kind,
-    scalar: Option<Value>,
-    children: u32,
 }
 
 /// The one-way terms of a document: one term node per node, in the
@@ -393,7 +400,10 @@ fn leaf_op(
 
 struct Walked {
     terms: JsonTerms,
-    plain: Vec<NodePlain>,
+    /// Each node's plaintext as its ciphertext encodes it, in the walk's
+    /// order, built under `Protected` from the caller's value and handed to
+    /// the cipher as it is.
+    plain: Vec<Protected<Vec<u8>>>,
 }
 
 struct Walker<'p> {
@@ -401,7 +411,7 @@ struct Walker<'p> {
     context: &'p Context<'p>,
     options: &'p JsonOptions,
     nodes: Vec<TermNode>,
-    plain: Vec<NodePlain>,
+    plain: Vec<Protected<Vec<u8>>>,
 }
 
 /// Flatten `value` into its terms and its nodes' plaintexts.
@@ -423,7 +433,7 @@ fn walk(
         value,
         &JsonPath::root(),
         &JsonPath::root(),
-        Label::Root,
+        LabelRef::Root,
         None,
         None,
         None,
@@ -454,7 +464,7 @@ impl Walker<'_> {
         value: &Value,
         positional: &JsonPath,
         wild: &JsonPath,
-        label: Label,
+        label: LabelRef<'_>,
         parent: Option<usize>,
         parent_token: Option<Tag>,
         ordinal: Option<u32>,
@@ -489,7 +499,13 @@ impl Walker<'_> {
         } else {
             None
         };
-        let container_element = matches!(label, Label::Index(_)) && kind.is_container();
+        let container_element = matches!(label, LabelRef::Index(_)) && kind.is_container();
+        let children = match value {
+            Value::Object(map) => map.len(),
+            Value::Array(items) => items.len(),
+            _ => 0,
+        };
+        let children = u32::try_from(children).map_err(|_| TermError::JsonTooWide)?;
         let index = self.nodes.len();
         self.nodes.push(TermNode {
             positional: positional.clone(),
@@ -502,18 +518,12 @@ impl Walker<'_> {
             element,
             container_element,
         });
-        self.plain.push(NodePlain {
-            label,
-            kind,
-            scalar: (!kind.is_container()).then(|| value.clone()),
-            children: 0,
-        });
+        self.plain.push(encode_node(kind, children, label, value));
         let child_element = if container_element {
             Some(index)
         } else {
             element
         };
-        let mut count: u32 = 0;
         match value {
             Value::Object(map) => {
                 let ordinals: Option<BTreeMap<String, u32>> = token
@@ -525,14 +535,13 @@ impl Walker<'_> {
                         child,
                         &positional.then(Segment::Key(key.clone())),
                         &wild.then(Segment::Key(key.clone())),
-                        Label::Key(key.clone()),
+                        LabelRef::Key(key),
                         Some(index),
                         token,
                         ordinal,
                         child_element,
                         depth + 1,
                     )?;
-                    count += 1;
                 }
             }
             Value::Array(items) => {
@@ -546,19 +555,17 @@ impl Walker<'_> {
                         child,
                         &positional.then(Segment::Index(i)),
                         &wild.then(Segment::Wildcard),
-                        Label::Index(i),
+                        LabelRef::Index(i),
                         Some(index),
                         token,
                         ordinal,
                         child_element,
                         depth + 1,
                     )?;
-                    count += 1;
                 }
             }
             _ => {}
         }
-        self.plain[index].children = count;
         Ok(index)
     }
 }
@@ -625,7 +632,7 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         Err(error) => return Pending::failed(cipher, error.into()),
     };
     let whole = if options.sealed_root {
-        match serde_json::to_vec(&value) {
+        match sealed_root_plaintext(&value) {
             Ok(bytes) => Some(bytes),
             Err(error) => return Pending::failed(cipher, Error::Other(Box::new(error))),
         }
@@ -662,34 +669,94 @@ fn leaf_cipher(key: &stack_kms::DataKey) -> Result<Aes256Cipher, Error> {
 }
 
 /// A node's plaintext: its kind, its child count, its label and, for a
-/// scalar, its value.
-fn encode_node(plain: &NodePlain) -> Vec<u8> {
-    let mut out = vec![plain.kind.byte()];
-    out.extend_from_slice(&plain.children.to_le_bytes());
-    match &plain.label {
-        Label::Root => out.push(0x00),
-        Label::Key(key) => {
-            out.push(0x01);
-            out.extend_from_slice(&(key.len() as u32).to_le_bytes());
-            out.extend_from_slice(key.as_bytes());
+/// scalar, its value. Built under `Protected` straight from the caller's
+/// value, sized before it is written so it never reallocates and leaves a
+/// copy behind, and handed to the cipher as it is.
+fn encode_node(
+    kind: Kind,
+    children: u32,
+    label: LabelRef<'_>,
+    value: &Value,
+) -> Protected<Vec<u8>> {
+    // A number's text is a new allocation: it is made wrapped too.
+    let number = match value {
+        Value::Number(n) => Some(Protected::new(n.to_string())),
+        _ => None,
+    };
+    let size = encoded_len(label, value, number.as_ref());
+    Protected::generate(|| {
+        let mut out = Vec::with_capacity(size);
+        out.push(kind.byte());
+        out.extend_from_slice(&children.to_le_bytes());
+        match label {
+            LabelRef::Root => out.push(0x00),
+            LabelRef::Key(key) => {
+                out.push(0x01);
+                out.extend_from_slice(&(key.len() as u32).to_le_bytes());
+                out.extend_from_slice(key.as_bytes());
+            }
+            LabelRef::Index(index) => {
+                out.push(0x02);
+                out.extend_from_slice(&index.to_le_bytes());
+            }
         }
-        Label::Index(index) => {
-            out.push(0x02);
-            out.extend_from_slice(&index.to_le_bytes());
+        match value {
+            Value::String(text) => out.extend_from_slice(text.as_bytes()),
+            Value::Bool(flag) => out.push(u8::from(*flag)),
+            _ => {
+                if let Some(text) = &number {
+                    out.extend_from_slice(text.risky_ref().as_bytes());
+                }
+            }
+        }
+        out
+    })
+}
+
+/// How many bytes [`encode_node`] writes: the kind, the child count, the
+/// label and the scalar, `number` being a number's text.
+fn encoded_len(label: LabelRef<'_>, value: &Value, number: Option<&Protected<String>>) -> usize {
+    let label_len = match label {
+        LabelRef::Root => 1,
+        LabelRef::Key(key) => 1 + 4 + key.len(),
+        LabelRef::Index(_) => 1 + 8,
+    };
+    let scalar_len = match value {
+        Value::String(text) => text.len(),
+        Value::Bool(_) => 1,
+        _ => number.map_or(0, |text| text.risky_ref().len()),
+    };
+    1 + 4 + label_len + scalar_len
+}
+
+/// A sealed root's plaintext: [`SEALED_ROOT`], then the whole document as
+/// JSON, built under `Protected`. The JSON is measured first, so the buffer
+/// is allocated once at its final size and no reallocation leaves a copy of
+/// the document behind.
+fn sealed_root_plaintext(value: &Value) -> Result<Protected<Vec<u8>>, serde_json::Error> {
+    struct Measure(usize);
+    impl std::io::Write for Measure {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
         }
     }
-    match &plain.scalar {
-        Some(Value::String(s)) => out.extend_from_slice(s.as_bytes()),
-        Some(Value::Number(n)) => out.extend_from_slice(n.to_string().as_bytes()),
-        Some(Value::Bool(b)) => out.push(u8::from(*b)),
-        _ => {}
-    }
-    out
+    let mut measure = Measure(0);
+    serde_json::to_writer(&mut measure, value)?;
+    Protected::generate_ok(|| {
+        let mut out = Vec::with_capacity(1 + measure.0);
+        out.push(SEALED_ROOT);
+        serde_json::to_writer(&mut out, value)?;
+        Ok(out)
+    })
 }
 
 fn seal(
     walked: Walked,
-    whole: Option<Vec<u8>>,
+    mut whole: Option<Protected<Vec<u8>>>,
     keyset_id: Uuid,
     key: stack_kms::DataKeyWithTag,
     aad: &Context<'_>,
@@ -703,21 +770,17 @@ fn seal(
     let cipher = leaf_cipher(&key.key)?;
     let iv = key.key.iv;
     let tag = key.tag;
-    let nodes = &walked.terms.nodes;
+    let Walked { terms, plain } = walked;
+    let nodes = &terms.nodes;
     let mut entries = Vec::with_capacity(nodes.len());
-    for (j, (node, plain)) in nodes.iter().zip(&walked.plain).enumerate() {
-        let plaintext = match (&whole, j) {
-            (Some(whole), 0) => {
-                let mut out = Vec::with_capacity(whole.len() + 1);
-                out.push(SEALED_ROOT);
-                out.extend_from_slice(whole);
-                out
-            }
-            _ => encode_node(plain),
-        };
+    for (j, (node, plain)) in nodes.iter().zip(plain).enumerate() {
+        // The root's plaintext, the first, is the whole document when the
+        // root is sealed (`whole` is taken there, and is `None` after); the
+        // node encoding it replaces is wiped as it drops.
+        let plaintext = whole.take().unwrap_or(plain);
         let c = cipher
             .seal(
-                Protected::new(plaintext),
+                plaintext,
                 &entry_aad(keyset_id, aad, &tag, &node.s, j as u64),
             )
             .map_err(|_| Error::Aead)?;
@@ -745,28 +808,41 @@ fn seal(
 // Opening
 // =============================================================================
 
-/// An opened node.
+/// An opened node. Every part that holds plaintext (a key, a scalar, a
+/// sealed root's document) is under `Protected`; the kind and child count
+/// are the node's framing.
 struct Opened {
     label: Label,
     kind: Kind,
-    scalar: Option<Value>,
+    scalar: Option<Protected<PlainJson>>,
     children: u32,
     /// The whole document, from a sealed root.
-    whole: Option<Value>,
+    whole: Option<Protected<PlainJson>>,
 }
 
 fn shape(expected: &'static str) -> Error {
     Error::OpenedType { expected }
 }
 
-fn decode_node(bytes: &[u8]) -> Result<Opened, Error> {
+/// Decode an opened entry's plaintext. The bytes stay in the cipher's
+/// `Protected`: the framing (kind, child count, label tag, key length) is
+/// read in place, and every part that carries plaintext is read out
+/// through [`read_protected`], wrapped as it is made.
+fn decode_node(plaintext: &Protected<Vec<u8>>) -> Result<Opened, Error> {
     let refused = || shape("a JSON index node");
+    let bytes: &[u8] = plaintext.risky_ref();
     let (&first, rest) = bytes.split_first().ok_or_else(refused)?;
     if first == SEALED_ROOT {
-        let whole: Value = serde_json::from_slice(rest).map_err(|_| refused())?;
+        let mut kind = None;
+        let whole = read_protected(plaintext, |bytes: &Vec<u8>| {
+            let whole = PlainJson::parse(bytes.get(1..)?)?;
+            kind = Some(Kind::of(whole.value()));
+            Some(whole)
+        })
+        .ok_or_else(refused)?;
         return Ok(Opened {
             label: Label::Root,
-            kind: Kind::of(&whole),
+            kind: kind.ok_or_else(refused)?,
             scalar: None,
             children: 0,
             whole: Some(whole),
@@ -779,43 +855,51 @@ fn decode_node(bytes: &[u8]) -> Result<Opened, Error> {
     let (count, rest) = rest.split_at(4);
     let children = u32::from_le_bytes([count[0], count[1], count[2], count[3]]);
     let (&label_tag, rest) = rest.split_first().ok_or_else(refused)?;
-    let (label, rest) = match label_tag {
-        0x00 => (Label::Root, rest),
+    // Offsets into `bytes`, so the plaintext parts are read out of the
+    // `Protected` itself.
+    let at = bytes.len() - rest.len();
+    let (label, scalar_at) = match label_tag {
+        0x00 => (Label::Root, at),
         0x01 => {
             if rest.len() < 4 {
                 return Err(refused());
             }
-            let (len, rest) = rest.split_at(4);
-            let len = u32::from_le_bytes([len[0], len[1], len[2], len[3]]) as usize;
-            if rest.len() < len {
-                return Err(refused());
-            }
-            let (key, rest) = rest.split_at(len);
-            let key = std::str::from_utf8(key).map_err(|_| refused())?;
-            (Label::Key(key.to_owned()), rest)
+            let len = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
+            let start = at + 4;
+            let end = start.checked_add(len).filter(|end| *end <= bytes.len());
+            let end = end.ok_or_else(refused)?;
+            let key = read_protected(plaintext, |bytes: &Vec<u8>| {
+                std::str::from_utf8(bytes.get(start..end)?)
+                    .ok()
+                    .map(str::to_owned)
+            })
+            .ok_or_else(refused)?;
+            (Label::Key(key), end)
         }
         0x02 => {
             if rest.len() < 8 {
                 return Err(refused());
             }
-            let (index, rest) = rest.split_at(8);
-            let mut bytes = [0; 8];
-            bytes.copy_from_slice(index);
-            (Label::Index(u64::from_le_bytes(bytes)), rest)
+            let mut index = [0; 8];
+            index.copy_from_slice(&rest[..8]);
+            (Label::Index(u64::from_le_bytes(index)), at + 8)
         }
         _ => return Err(refused()),
     };
     let scalar = match kind {
-        Kind::Null => Some(Value::Null),
-        Kind::Bool => Some(Value::Bool(rest.first().is_some_and(|&b| b != 0))),
-        Kind::Number => {
-            let text = std::str::from_utf8(rest).map_err(|_| refused())?;
-            Some(Value::Number(text.parse().map_err(|_| refused())?))
-        }
-        Kind::String => Some(Value::String(
-            std::str::from_utf8(rest).map_err(|_| refused())?.to_owned(),
-        )),
         Kind::Object | Kind::Array => None,
+        _ => Some(
+            read_protected(plaintext, |bytes: &Vec<u8>| {
+                let rest = bytes.get(scalar_at..)?;
+                Some(PlainJson::from_value(match kind {
+                    Kind::Null => Value::Null,
+                    Kind::Bool => Value::Bool(rest.first().is_some_and(|&b| b != 0)),
+                    Kind::Number => Value::Number(std::str::from_utf8(rest).ok()?.parse().ok()?),
+                    _ => Value::String(std::str::from_utf8(rest).ok()?.to_owned()),
+                }))
+            })
+            .ok_or_else(refused)?,
+        ),
     };
     Ok(Opened {
         label,
@@ -826,6 +910,8 @@ fn decode_node(bytes: &[u8]) -> Result<Opened, Error> {
     })
 }
 
+/// Open one entry. The plaintext the cipher returns stays in its
+/// `Protected` and is wiped when decoding is done.
 fn open_entry(
     cipher: &Aes256Cipher,
     header: &JsonHeader,
@@ -839,12 +925,19 @@ fn open_entry(
             &entry_aad(header.keyset_id, aad, &header.tag, &entry.s, j),
         )
         .map_err(|_| Error::Aead)?;
-    decode_node(&plaintext.risky_unwrap())
+    decode_node(&plaintext)
+}
+
+/// Take a node's label out of it, so the rebuild can consume the node.
+fn take_label(mut node: Opened) -> (Label, Opened) {
+    (std::mem::replace(&mut node.label, Label::Root), node)
 }
 
 /// Rebuild the value of `node`, taking its descendants from `rest`, the
 /// pre-order sequence after it. Every child is taken with `next`, so each
-/// step consumes an entry and the rebuild ends on any sequence.
+/// step consumes an entry and the rebuild ends on any sequence. The value
+/// is built under `Protected`: each member and element is moved in from
+/// its own, so a rebuild that fails part-way wipes what it had.
 ///
 /// `depth` is `node`'s depth below the rebuild's start. Each entry is
 /// authentic, but which entries the server returned, and so how deep the
@@ -852,47 +945,53 @@ fn open_entry(
 /// list only the containers of a wide document, would otherwise recurse as
 /// deep as there are rows. Nothing the index seals nests deeper than
 /// [`MAX_DEPTH`], so deeper is refused as a shape mismatch.
-fn rebuild<'a>(
-    node: &'a Opened,
-    rest: &mut impl Iterator<Item = &'a Opened>,
+fn rebuild(
+    node: Opened,
+    rest: &mut impl Iterator<Item = Opened>,
     depth: usize,
-) -> Result<Value, Error> {
-    if let Some(whole) = &node.whole {
-        return Ok(whole.clone());
+) -> Result<Protected<PlainJson>, Error> {
+    if let Some(whole) = node.whole {
+        return Ok(whole);
     }
     if depth > MAX_DEPTH {
         return Err(shape("a JSON document no deeper than the index seals"));
     }
     match node.kind {
         Kind::Object => {
-            let mut map = Map::new();
+            let mut object = protected_object();
             for _ in 0..node.children {
-                let member = next_child(rest)?;
-                let Label::Key(key) = &member.label else {
+                let (label, member) = take_label(next_child(rest)?);
+                let Label::Key(key) = label else {
                     return Err(shape("an object member"));
                 };
                 let value = rebuild(member, rest, depth + 1)?;
-                let _ = map.insert(key.clone(), value);
+                insert_member(&mut object, key, value);
             }
-            Ok(Value::Object(map))
+            Ok(object)
         }
         Kind::Array => {
-            let mut items = Vec::with_capacity(node.children as usize);
+            let mut array = protected_array(node.children as usize);
             for i in 0..node.children {
                 let element = next_child(rest)?;
-                if element.label != Label::Index(u64::from(i)) {
+                if !matches!(element.label, Label::Index(at) if at == u64::from(i)) {
                     return Err(shape("an array element in order"));
                 }
-                items.push(rebuild(element, rest, depth + 1)?);
+                push_element(&mut array, rebuild(element, rest, depth + 1)?);
             }
-            Ok(Value::Array(items))
+            Ok(array)
         }
-        _ => node.scalar.clone().ok_or_else(|| shape("a JSON scalar")),
+        _ => node.scalar.ok_or_else(|| shape("a JSON scalar")),
     }
 }
 
-fn next_child<'a>(rest: &mut impl Iterator<Item = &'a Opened>) -> Result<&'a Opened, Error> {
+fn next_child(rest: &mut impl Iterator<Item = Opened>) -> Result<Opened, Error> {
     rest.next().ok_or_else(|| shape("a complete JSON subtree"))
+}
+
+/// The value the caller asked for, out of the `Protected` that held it:
+/// the one place an opened JSON plaintext is unwrapped.
+fn hand_over(value: Protected<PlainJson>) -> Value {
+    value.risky_unwrap().into_value()
 }
 
 /// The retrieve request for a document's one data key, and the AAD its
@@ -931,6 +1030,7 @@ fn open_document<'a, K>(
                 .ok_or_else(|| shape("a document with a root entry"))?;
             return open_entry(&aes, &doc.header, &aad, root, 0)?
                 .whole
+                .map(hand_over)
                 .ok_or_else(|| shape("a sealed root"));
         }
         let opened = doc
@@ -939,7 +1039,7 @@ fn open_document<'a, K>(
             .enumerate()
             .map(|(j, entry)| open_entry(&aes, &doc.header, &aad, entry, j as u64))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut rest = opened.iter();
+        let mut rest = opened.into_iter();
         let root = rest
             .next()
             .ok_or_else(|| shape("a document with a root entry"))?;
@@ -947,7 +1047,7 @@ fn open_document<'a, K>(
         if rest.next().is_some() {
             return Err(shape("a document with no entries past its root"));
         }
-        Ok(value)
+        Ok(hand_over(value))
     })
 }
 
@@ -977,6 +1077,7 @@ impl DecryptInto<Value> for JsonNode {
                 opened
                     .whole
                     .or(opened.scalar)
+                    .map(hand_over)
                     .ok_or_else(|| shape("a JSON scalar, or a sealed root"))
             })
         })
@@ -992,8 +1093,9 @@ impl DecryptInto<Value> for JsonNode {
 /// whole, and the key's path selects over it to the same values the walked
 /// rows open to: one per node the path reaches, for a key with gates
 /// (`json_tree_subtree_at`); the children of the one node at the path, for
-/// a key without (`json_tree_subtree`). An object's members come in an order neither
-/// form fixes, and without their keys; open it as a [`Value`] to keep them.
+/// a key without (`json_tree_subtree`). An object's members come in an
+/// order neither form fixes, and without their keys; open it as a
+/// [`Value`] to keep them.
 impl DecryptInto<Vec<Value>> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {
@@ -1001,18 +1103,30 @@ impl DecryptInto<Vec<Value>> for JsonSubtree {
             if self.is_sealed_root() {
                 let below = self.below;
                 return open_fallback(self, cipher, context).try_map(move |(path, whole)| {
-                    let found = path.select(&whole);
-                    if !below {
-                        return Ok(found.into_iter().cloned().collect());
-                    }
-                    match found.as_slice() {
-                        [node] => Ok(children(node)),
-                        _ => Err(shape("one node at the walked path")),
-                    }
+                    // The selection is made inside the document's
+                    // `Protected` and comes out wrapped; the document is
+                    // wiped when it drops at the end of this closure.
+                    let selected = read_protected(&whole, |doc: &PlainJson| {
+                        let found = path.select(doc.value());
+                        let selected = if below {
+                            match found.as_slice() {
+                                [node] => children(node),
+                                _ => return None,
+                            }
+                        } else {
+                            found.into_iter().cloned().collect()
+                        };
+                        Some(PlainJson::from_value(Value::Array(selected)))
+                    })
+                    .ok_or_else(|| shape("one node at the walked path"))?;
+                    Ok(match hand_over(selected) {
+                        Value::Array(items) => items,
+                        other => vec![other],
+                    })
                 });
             }
             open_subtree(self, cipher, context)
-                .map(|forest| forest.into_iter().map(|(_, v)| v).collect())
+                .map(|forest| forest.into_iter().map(|(_, v)| hand_over(v)).collect())
         })
     }
 }
@@ -1028,62 +1142,76 @@ impl DecryptInto<Vec<Value>> for JsonSubtree {
 /// ([`Error::OpenedType`]): an empty container and a scalar both have no
 /// descendants, and `->` on the node's selector returns the node itself.
 /// The sealed root a walk fell back to opens whole, and the key's path
-/// ([`JsonSubtreeKey::open`]) selects the one value under it; a path that reaches no node, or more than one, is
-/// [`Error::OpenedType`].
+/// ([`JsonSubtreeKey::open`]) selects the one value under it; a path that
+/// reaches no node, or more than one, is [`Error::OpenedType`].
 impl DecryptInto<Value> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
         Decryption::from_open(move |cipher| {
             if self.is_sealed_root() {
                 return open_fallback(self, cipher, context).try_map(|(path, whole)| {
-                    let mut found = path.select(&whole);
-                    match found.len() {
-                        1 => Ok(found.remove(0).clone()),
-                        0 => Err(shape("a node at the walked path")),
-                        _ => Err(shape("one node at the walked path")),
+                    let mut reached = 0;
+                    let selected = read_protected(&whole, |doc: &PlainJson| {
+                        let found = path.select(doc.value());
+                        reached = found.len();
+                        match found.as_slice() {
+                            [node] => Some(PlainJson::from_value((*node).clone())),
+                            _ => None,
+                        }
+                    });
+                    match (selected, reached) {
+                        (Some(value), _) => Ok(hand_over(value)),
+                        (None, 0) => Err(shape("a node at the walked path")),
+                        (None, _) => Err(shape("one node at the walked path")),
                     }
                 });
             }
             let reached = self.nodes.iter().any(|n| n.depth == Some(0));
             open_subtree(self, cipher, context).try_map(move |forest| {
                 if reached {
-                    let mut values: Vec<Value> = forest.into_iter().map(|(_, v)| v).collect();
+                    let mut values: Vec<Protected<PlainJson>> =
+                        forest.into_iter().map(|(_, v)| v).collect();
                     return match values.len() {
-                        1 => Ok(values.remove(0)),
+                        1 => Ok(hand_over(values.remove(0))),
                         _ => Err(shape("one node at the walked path")),
                     };
                 }
-                let mut members = Map::new();
-                let mut elements: Vec<(u64, Value)> = Vec::new();
+                let mut members = None;
+                let mut elements: Vec<(u64, Protected<PlainJson>)> = Vec::new();
                 for (label, value) in forest {
                     match label {
                         Label::Key(key) => {
-                            let _ = members.insert(key, value);
+                            insert_member(members.get_or_insert_with(protected_object), key, value)
                         }
                         Label::Index(i) => elements.push((i, value)),
                         Label::Root => return Err(shape("a subtree below the root")),
                     }
                 }
-                match (members.is_empty(), elements.is_empty()) {
-                    (false, true) => Ok(Value::Object(members)),
-                    (true, false) => {
+                match (members, elements.is_empty()) {
+                    (Some(members), true) => Ok(hand_over(members)),
+                    (None, false) => {
                         elements.sort_by_key(|(i, _)| *i);
-                        Ok(Value::Array(elements.into_iter().map(|(_, v)| v).collect()))
+                        let mut array = protected_array(elements.len());
+                        for (_, element) in elements {
+                            push_element(&mut array, element);
+                        }
+                        Ok(hand_over(array))
                     }
-                    (true, true) => Err(shape("a node with children")),
-                    (false, false) => Err(shape("the children of one node")),
+                    (None, true) => Err(shape("a node with children")),
+                    (Some(_), false) => Err(shape("the children of one node")),
                 }
             })
         })
     }
 }
 
-/// Open every row and rebuild each complete subtree, labelled.
+/// Open every row and rebuild each complete subtree, labelled, each still
+/// under its `Protected`.
 fn open_subtree<'a, K>(
     subtree: JsonSubtree,
     cipher: &'a StackCipher<K>,
     context: AeadContext,
-) -> Pending<'a, Vec<(Label, Value)>, K> {
+) -> Pending<'a, Vec<(Label, Protected<PlainJson>)>, K> {
     let mut nodes = subtree.nodes;
     nodes.sort_by_key(|n| n.j);
     // A walk returns each entry once. Two rows at one ordinal are the
@@ -1111,10 +1239,11 @@ fn open_subtree<'a, K>(
             .map(|n| open_entry(&aes, &header, &aad, &n.entry, n.j))
             .collect::<Result<Vec<_>, _>>()?;
         let mut forest = Vec::new();
-        let mut rest = opened.iter();
+        let mut rest = opened.into_iter();
         while let Some(top) = rest.next() {
+            let (label, top) = take_label(top);
             let value = rebuild(top, &mut rest, 0)?;
-            forest.push((top.label.clone(), value));
+            forest.push((label, value));
         }
         Ok(forest)
     })
@@ -1132,14 +1261,15 @@ fn children(node: &Value) -> Vec<Value> {
     }
 }
 
-/// Open the sealed root a walk fell back to: the whole document, with the
-/// path the rows were keyed from, which the caller selects over. The key
-/// that built the rows attached the path, so it is always there.
+/// Open the sealed root a walk fell back to: the whole document, under its
+/// `Protected`, with the path the rows were keyed from, which the caller
+/// selects over. The key that built the rows attached the path, so it is
+/// always there.
 fn open_fallback<'a, K>(
     subtree: JsonSubtree,
     cipher: &'a StackCipher<K>,
     context: AeadContext,
-) -> Pending<'a, (JsonPath, Value), K> {
+) -> Pending<'a, (JsonPath, Protected<PlainJson>), K> {
     let path = subtree.path().clone();
     let Some(root) = subtree.nodes().first().cloned() else {
         return Pending::failed(cipher, shape("the sealed root"));
@@ -1514,63 +1644,112 @@ mod tests {
         assert_ne!(rank_under(&prf()), rank_under(&other), "keyed");
     }
 
+    /// The plain bytes of a node's encoding, for the test to inspect.
+    fn bytes(plain: &Protected<Vec<u8>>) -> Vec<u8> {
+        plain.risky_ref().clone()
+    }
+
+    fn key_of(label: &Label) -> Option<String> {
+        match label {
+            Label::Key(key) => Some(key.risky_ref().clone()),
+            _ => None,
+        }
+    }
+
     #[test]
     fn a_node_encodes_and_decodes() {
-        for (label, scalar, kind) in [
-            (Label::Root, None, Kind::Object),
-            (Label::Key("k".into()), Some(json!("v")), Kind::String),
-            (Label::Index(3), Some(json!(1.5)), Kind::Number),
-            (Label::Index(0), Some(json!(true)), Kind::Bool),
-            (Label::Key("n".into()), Some(Value::Null), Kind::Null),
-            (Label::Key("a".into()), None, Kind::Array),
+        for (label, value, kind) in [
+            (LabelRef::Root, json!({}), Kind::Object),
+            (LabelRef::Key("k"), json!("v"), Kind::String),
+            (LabelRef::Index(3), json!(1.5), Kind::Number),
+            (LabelRef::Index(0), json!(true), Kind::Bool),
+            (LabelRef::Key("n"), Value::Null, Kind::Null),
+            (LabelRef::Key("a"), json!([]), Kind::Array),
         ] {
-            let plain = NodePlain {
-                label: label.clone(),
-                kind,
-                scalar: scalar.clone(),
-                children: 2,
-            };
-            let opened = decode_node(&encode_node(&plain)).unwrap();
-            assert_eq!(opened.label, label);
+            let opened = decode_node(&encode_node(kind, 2, label, &value)).unwrap();
+            match (label, &opened.label) {
+                (LabelRef::Root, Label::Root) => {}
+                (LabelRef::Index(a), Label::Index(b)) => assert_eq!(a, *b),
+                (LabelRef::Key(a), Label::Key(_)) => {
+                    assert_eq!(key_of(&opened.label).as_deref(), Some(a))
+                }
+                _ => panic!("{kind:?}: the label changed kind"),
+            }
             assert_eq!(opened.kind, kind);
-            assert_eq!(opened.scalar, scalar);
+            let scalar = opened.scalar.map(|s| s.risky_unwrap().into_value());
+            assert_eq!(scalar, (!kind.is_container()).then_some(value));
             assert_eq!(opened.children, 2);
         }
-        assert!(decode_node(&[]).is_err());
-        assert!(decode_node(&[9, 0, 0, 0, 0, 0]).is_err());
+        assert!(decode_node(&Protected::new(vec![])).is_err());
+        assert!(decode_node(&Protected::new(vec![9, 0, 0, 0, 0, 0])).is_err());
 
         // The empty key is a key: its label is the tag and a zero length,
         // and nothing after it.
-        let empty_key = NodePlain {
-            label: Label::Key(String::new()),
-            kind: Kind::Object,
-            scalar: None,
-            children: 0,
-        };
-        let encoded = encode_node(&empty_key);
-        assert_eq!(encoded.len(), 1 + 4 + 1 + 4);
+        let encoded = encode_node(Kind::Object, 0, LabelRef::Key(""), &json!({}));
+        assert_eq!(encoded.risky_ref().len(), 1 + 4 + 1 + 4);
         assert_eq!(
-            decode_node(&encoded).unwrap().label,
-            Label::Key(String::new())
+            key_of(&decode_node(&encoded).unwrap().label).as_deref(),
+            Some("")
         );
+        // The encoding is allocated once at its size: nothing reallocated
+        // and left a copy behind.
+        for (label, value) in [
+            (LabelRef::Key("key"), json!("a string value")),
+            (LabelRef::Index(9), json!(-12.25)),
+            (LabelRef::Root, json!(false)),
+            (LabelRef::Key("z"), Value::Null),
+            (LabelRef::Root, json!({"a": 1})),
+        ] {
+            let plain = encode_node(Kind::of(&value), 0, label, &value);
+            let number = match &value {
+                Value::Number(n) => Some(Protected::new(n.to_string())),
+                _ => None,
+            };
+            assert_eq!(
+                encoded_len(label, &value, number.as_ref()),
+                plain.risky_ref().len(),
+                "measured before it is written"
+            );
+            assert_eq!(plain.risky_ref().len(), plain.risky_ref().capacity());
+        }
         // Every truncation of a labelled node is refused, not read past.
-        let keyed = encode_node(&NodePlain {
-            label: Label::Key("key".into()),
-            kind: Kind::Array,
-            scalar: None,
-            children: 1,
-        });
-        let indexed = encode_node(&NodePlain {
-            label: Label::Index(7),
-            kind: Kind::Object,
-            scalar: None,
-            children: 1,
-        });
-        for bytes in [&keyed, &indexed, &encoded] {
-            for len in 0..bytes.len() {
-                assert!(decode_node(&bytes[..len]).is_err(), "{len} of {bytes:?}");
+        let keyed = bytes(&encode_node(
+            Kind::Array,
+            1,
+            LabelRef::Key("key"),
+            &json!([]),
+        ));
+        let indexed = bytes(&encode_node(
+            Kind::Object,
+            1,
+            LabelRef::Index(7),
+            &json!({}),
+        ));
+        let encoded = bytes(&encoded);
+        for whole in [&keyed, &indexed, &encoded] {
+            for len in 0..whole.len() {
+                assert!(
+                    decode_node(&Protected::new(whole[..len].to_vec())).is_err(),
+                    "{len} of {whole:?}"
+                );
             }
         }
+    }
+
+    #[test]
+    fn a_sealed_root_plaintext_is_the_document_allocated_once() {
+        let value = json!({"a": [1, "two", {"three": null}], "b": "x".repeat(300)});
+        let plain = sealed_root_plaintext(&value).unwrap();
+        assert_eq!(plain.risky_ref()[0], SEALED_ROOT);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&plain.risky_ref()[1..]).unwrap(),
+            value
+        );
+        assert_eq!(plain.risky_ref().len(), plain.risky_ref().capacity());
+        let opened = decode_node(&plain).unwrap();
+        assert!(matches!(opened.label, Label::Root));
+        assert_eq!(opened.kind, Kind::Object);
+        assert_eq!(opened.whole.map(hand_over), Some(value));
     }
 
     #[test]
@@ -1589,7 +1768,7 @@ mod tests {
             };
             seal(
                 walked,
-                Some(serde_json::to_vec(&value).unwrap()),
+                Some(sealed_root_plaintext(&value).unwrap()),
                 Uuid::from_u128(1),
                 key,
                 &context,

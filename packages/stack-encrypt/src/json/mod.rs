@@ -106,6 +106,7 @@ use crate::target::{DecryptField, DecryptInto, Decryptable, Decryption};
 
 mod derive;
 mod path;
+mod plain;
 mod query;
 
 pub use derive::JsonTerms;
