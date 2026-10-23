@@ -111,8 +111,8 @@ impl IndexSpec {
 
     /// Whether the scheme defines this index's term for `value`: whether it
     /// is one scalar the index takes. Equality takes every scalar vitaminc
-    /// gives an equality domain (an integer, a float, text, bytes, and a
-    /// date, timestamp, decimal or uuid), not a boolean or a null. Match
+    /// gives an equality domain (an integer, a float, text, bytes, a date,
+    /// timestamp, decimal or uuid, and a null), not a boolean. Match
     /// takes text. ORE, OPE and block ORE take an integer of any width, a
     /// float, text or bytes; not a boolean, and not yet a decimal, date or
     /// timestamp (#1236). A match index's options do not change what it

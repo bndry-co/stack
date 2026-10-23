@@ -255,16 +255,16 @@ pub enum TermError {
     )]
     EmptyTermText,
     /// The value is not one scalar an equality term is defined for: a
-    /// null, a boolean, a container, or a value of a logical type vitaminc
-    /// gives no equality domain. Equality derives over one scalar, in the
-    /// domain `vitaminc-normalize` gives its kind (every integer width one
-    /// domain, both float widths one, text, bytes, and the dates,
-    /// timestamps, decimals and uuids that opt in); there is no term for
-    /// anything else.
+    /// boolean, a container, or a value of a logical type vitaminc gives no
+    /// equality domain. Equality derives over one scalar, in the domain
+    /// `vitaminc-normalize` gives its kind (every integer width one domain,
+    /// both float widths one, text, bytes, the dates, timestamps, decimals
+    /// and uuids that opt in, and a null); there is no term for anything
+    /// else.
     #[error("no equality term is defined for this value")]
     #[diagnostic(
         code(stack_encrypt::no_equality_term),
-        help("An equality term is defined for one integer, float, text, bytes, date, timestamp, decimal or uuid value, not for a boolean, a null or a container.")
+        help("An equality term is defined for one integer, float, text, bytes, date, timestamp, decimal, uuid or null value, not for a boolean or a container.")
     )]
     NoEqualityTerm,
     /// The value cannot be normalized for its term: text with a code point
@@ -1839,10 +1839,10 @@ impl<K> KeysetCipher<'_, K> {
     /// PRF sees it: every integer width of one number is one term
     /// (`34u32` and `34i64` match), both float widths of one number are one
     /// term, text is compared in Unicode 16 NFC, and a date, timestamp,
-    /// decimal or uuid derives in a domain of its own. A boolean, a null or
-    /// a container has no term ([`TermError::NoEqualityTerm`]), and text with
-    /// a code point unassigned in Unicode 16 is refused
-    /// ([`TermError::Normalize`]).
+    /// decimal or uuid derives in a domain of its own, and every null shares
+    /// one term. A boolean or a container has no term
+    /// ([`TermError::NoEqualityTerm`]), and text with a code point
+    /// unassigned in Unicode 16 is refused ([`TermError::Normalize`]).
     pub fn equality_term<'c, T>(
         &self,
         value: T,
