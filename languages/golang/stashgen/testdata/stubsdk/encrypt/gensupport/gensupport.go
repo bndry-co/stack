@@ -184,6 +184,11 @@ func Deref[T any](p *T) any {
 	return *p
 }
 
+// EncryptNull seals nil for a field that stores it as a sealed null.
+func (f Field[T]) EncryptNull(context.Context, *encrypt.Cipher) (Output, error) {
+	return Output{}, nil
+}
+
 // NullTerm derives an exact operator's term for nil.
 func (f Field[T]) NullTerm(context.Context, *encrypt.Cipher, string) ([]byte, error) {
 	return nil, nil

@@ -89,6 +89,25 @@ func TestOptionalFieldsStoreNilAsTheirTagsSay(t *testing.T) {
 	if err != nil || !bytes.Equal(ageNull, absent.Age.Equality) {
 		t.Fatalf("Age.EqNull is the query of the stored nils: %v", err)
 	}
+	// One column set to nil: EncryptNull seals what a whole record's nil
+	// seals, as long as a value, with the term every nil shares.
+	dobNil, err := testusers.PersonFields.DOB.EncryptNull(ctx, cipher)
+	if err != nil || cOf(t, dobNil) != cOf(t, present.DOB) {
+		t.Fatalf("DOB.EncryptNull is as long as a date: %v", err)
+	}
+	bornNil, err := testusers.PersonFields.Born.EncryptNull(ctx, cipher)
+	if err != nil || hmOf(t, bornNil) != hmOf(t, absent.Born) {
+		t.Fatalf("Born.EncryptNull stores the nils' term: %v", err)
+	}
+	ageNil, err := testusers.PersonFields.Age.EncryptNull(ctx, cipher)
+	if err != nil || len(ageNil.Ciphertext) != len(present.Age.Ciphertext) || !bytes.Equal(ageNil.Equality, absent.Age.Equality) {
+		t.Fatalf("Age.EncryptNull is as long as an int32 and stores the nils' term: %v", err)
+	}
+	updated, err := testusers.DecryptPerson(ctx, cipher, []testusers.EncryptedPerson{{ID: 4, DOB: dobNil, Born: bornNil, Age: ageNil}})
+	if err != nil || updated[0].DOB != nil || updated[0].Born != nil || updated[0].Age != nil {
+		t.Fatalf("what EncryptNull seals decrypts to nil: %v, %+v", err, updated)
+	}
+
 	// A SQL null: nothing stored, so the column holds NULL.
 	if absent.Joined != nil || absent.Score != nil || absent.Nick != nil {
 		t.Fatalf("a nil null=sql field stores nothing: %+v", absent)

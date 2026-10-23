@@ -646,25 +646,17 @@ func (w *writer) fieldEntries(f *genFile) {
 		w.p("}")
 		w.nl()
 		w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.valueExpr, g.outputType)
-		switch {
-		case g.Verb == VerbEncryptInto:
-			w.p("\tout, err := f.field.Encrypt(ctx, c, v)")
-			w.p("\treturn %s(out.EQL), err", g.outputType)
-		case len(g.outputs) == 1:
-			w.p("\tout, err := f.field.Encrypt(ctx, c, v)")
-			w.p("\treturn %s{%s: out.%s}, err", g.outputType, g.outputs[0].name, g.outputs[0].name)
-		default:
-			w.p("\tout, err := f.field.Encrypt(ctx, c, v)")
-			w.p("\tif err != nil {")
-			w.p("\t\treturn %s{}, err", g.outputType)
-			w.p("\t}")
-			parts := make([]string, len(g.outputs))
-			for i, o := range g.outputs {
-				parts[i] = fmt.Sprintf("%s: out.%s", o.name, o.name)
-			}
-			w.p("\treturn %s{%s}, nil", g.outputType, strings.Join(parts, ", "))
-		}
+		w.sealedOutput(g, "f.field.Encrypt(ctx, c, v)")
 		w.p("}")
+		if g.Null == NullSealed {
+			// The update of one column to nil: a sealed null is a value,
+			// so writing SQL NULL would not store it.
+			w.nl()
+			w.b.WriteString(wrapComment(fmt.Sprintf("EncryptNull seals nil for %s, as long as a value, for an update that sets the column to nil. Write what it returns, not SQL NULL: the field stores nil as a sealed null.", g.GoName), 80))
+			w.p("func (f %s) EncryptNull(ctx context.Context, c *encrypt.Cipher) (%s, error) {", g.fieldType, g.outputType)
+			w.sealedOutput(g, "f.field.EncryptNull(ctx, c)")
+			w.p("}")
+		}
 		for _, q := range g.queries {
 			w.nl()
 			w.query(g, q)
@@ -679,6 +671,28 @@ func (w *writer) fieldEntries(f *genFile) {
 				w.p("}")
 			}
 		}
+	}
+}
+
+// sealedOutput writes the body of a method that seals through call, a
+// gensupport.Field method returning an Output, and converts the Output to
+// the field's output type.
+func (w *writer) sealedOutput(g genField, call string) {
+	w.p("\tout, err := %s", call)
+	switch {
+	case g.Verb == VerbEncryptInto:
+		w.p("\treturn %s(out.EQL), err", g.outputType)
+	case len(g.outputs) == 1:
+		w.p("\treturn %s{%s: out.%s}, err", g.outputType, g.outputs[0].name, g.outputs[0].name)
+	default:
+		w.p("\tif err != nil {")
+		w.p("\t\treturn %s{}, err", g.outputType)
+		w.p("\t}")
+		parts := make([]string, len(g.outputs))
+		for i, o := range g.outputs {
+			parts[i] = fmt.Sprintf("%s: out.%s", o.name, o.name)
+		}
+		w.p("\treturn %s{%s}, nil", g.outputType, strings.Join(parts, ", "))
 	}
 }
 

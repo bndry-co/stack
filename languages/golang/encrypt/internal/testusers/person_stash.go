@@ -206,12 +206,28 @@ func (f PersonDOBField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encryp
 	return eql.Date(out.EQL), err
 }
 
+// EncryptNull seals nil for DOB, as long as a value, for an update that sets
+// the column to nil. Write what it returns, not SQL NULL: the field stores nil
+// as a sealed null.
+func (f PersonDOBField) EncryptNull(ctx context.Context, c *encrypt.Cipher) (eql.Date, error) {
+	out, err := f.field.EncryptNull(ctx, c)
+	return eql.Date(out.EQL), err
+}
+
 type PersonBornField struct {
 	field gensupport.Field[encrypt.Date]
 }
 
 func (f PersonBornField) Encrypt(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (eql.DateEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
+	return eql.DateEq(out.EQL), err
+}
+
+// EncryptNull seals nil for Born, as long as a value, for an update that sets
+// the column to nil. Write what it returns, not SQL NULL: the field stores nil
+// as a sealed null.
+func (f PersonBornField) EncryptNull(ctx context.Context, c *encrypt.Cipher) (eql.DateEq, error) {
+	out, err := f.field.EncryptNull(ctx, c)
 	return eql.DateEq(out.EQL), err
 }
 
@@ -247,6 +263,17 @@ type PersonAgeField struct {
 
 func (f PersonAgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (EncryptedPersonAge, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
+	if err != nil {
+		return EncryptedPersonAge{}, err
+	}
+	return EncryptedPersonAge{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
+}
+
+// EncryptNull seals nil for Age, as long as a value, for an update that sets
+// the column to nil. Write what it returns, not SQL NULL: the field stores nil
+// as a sealed null.
+func (f PersonAgeField) EncryptNull(ctx context.Context, c *encrypt.Cipher) (EncryptedPersonAge, error) {
+	out, err := f.field.EncryptNull(ctx, c)
 	if err != nil {
 		return EncryptedPersonAge{}, err
 	}

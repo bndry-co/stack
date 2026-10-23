@@ -50,12 +50,32 @@ func (f Field[T]) Encrypt(ctx context.Context, c *encrypt.Cipher, v T) (Output, 
 	if f.err != nil {
 		return Output{}, f.err
 	}
-	if c == nil {
-		return Output{}, fmt.Errorf("gensupport: %s: Encrypt needs a cipher", f.name)
-	}
 	value, err := asKind(f.kind(), v)
 	if err != nil {
 		return Output{}, fmt.Errorf("gensupport: %s: %w", f.name, err)
+	}
+	return f.seal(ctx, c, "Encrypt", value)
+}
+
+// EncryptNull seals nil for a field that stores nil as a sealed null: a
+// ciphertext as long as a value's, and the term every nil of the field
+// shares. It is the update that sets one such column to nil, which writing
+// SQL NULL is not. A field that stores nil any other way is refused: under
+// null=sql nil is SQL NULL, and a field of no null mode has no nil.
+func (f Field[T]) EncryptNull(ctx context.Context, c *encrypt.Cipher) (Output, error) {
+	if f.err != nil {
+		return Output{}, f.err
+	}
+	if pf := f.plan.Field(f.name); pf == nil || pf.Null != record.SealedNull {
+		return Output{}, fmt.Errorf("%w: gensupport: %s: EncryptNull seals nil only for a field that stores it as a sealed null (null=sealed)", encrypt.ErrEncoding, f.name)
+	}
+	return f.seal(ctx, c, "EncryptNull", nil)
+}
+
+// seal seals one value of the field, or nil, through the field's own plan.
+func (f Field[T]) seal(ctx context.Context, c *encrypt.Cipher, method string, value any) (Output, error) {
+	if c == nil {
+		return Output{}, fmt.Errorf("gensupport: %s: %s needs a cipher", f.name, method)
 	}
 	row := record.Source{f.name: value}
 	if f.plan.ContextField != "" {

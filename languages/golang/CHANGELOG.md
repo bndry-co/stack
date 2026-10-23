@@ -26,7 +26,9 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   other: a null has an equality term and no other, and text shows its
   length. Beside equality a sealed null stores the term every nil of the
   field shares, and a generated `EqNull` method derives its `eq` query,
-  which finds the rows whose value is absent. A stored null read into a
+  which finds the rows whose value is absent. A generated `EncryptNull`
+  method seals `nil` for an update of one such column, which writing SQL
+  `NULL` would not store. A stored null read into a
   field that is not a pointer is an error from `Decrypt`. `-model` does not
   map a `null=sql` field yet.
 
