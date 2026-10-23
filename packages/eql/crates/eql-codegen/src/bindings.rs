@@ -726,7 +726,7 @@ fn encryption_attrs(
                 (false, false, true) => "order",
                 _ => "equality",
             };
-            let null = if nullable(family.name, domain) {
+            let null = if nullable_terms(domain) {
                 format!(
                     ", and `EncryptFrom<Option<{shown}>>`, whose `None` is the query of a stored \
                      null"
@@ -738,7 +738,7 @@ fn encryption_attrs(
                 " Plaintext input: {named}. Implements `EncryptFrom<{shown}>` to build {terms} \
                  query terms{null}. Query operands do not decrypt."
             )
-        } else if nullable(family.name, domain) {
+        } else if nullable_terms(domain) {
             format!(
                 " Plaintext input and decrypted output: {named}. Implements \
                  `EncryptFrom<{shown}>` and `DecryptInto<{shown}>`, and both for \
@@ -756,7 +756,7 @@ fn encryption_attrs(
     // A type whose terms a null has (none, or equality's alone) may be
     // sealed, or queried, from an `Option` too (#1298).
     let nullable =
-        nullable(family.name, domain).then(|| quote!(#[stash(plaintext = Option<#plaintext_ty>)]));
+        nullable_terms(domain).then(|| quote!(#[stash(plaintext = Option<#plaintext_ty>)]));
     // The twin of an optional-term query is built by its projections
     // (`render_query_projections`), one per index, so it carries no derive.
     if query && v4_optional_query_terms(domain) {
@@ -795,16 +795,11 @@ fn encryption_attrs(
     )
 }
 
-/// Whether the type may be sealed or queried from an `Option` of its
-/// plaintext (#1298). A null must have every term the domain carries, and
-/// it has an equality term (`hm`, vitaminc-normalize 0.8) and no other. The
-/// plaintext must also be of fixed width, so a sealed null is as long as a
-/// value: text's ciphertext is as long as the text, so a null would stand
-/// out beside it, and the engine's plans refuse a sealed null of text for
-/// the same reason. An optional text column stores SQL `NULL`.
-pub(crate) fn nullable(family: &str, domain: &Domain) -> bool {
-    let fixed_width = matches!(plaintext_of(family), Some((kind, _)) if kind != "string");
-    fixed_width && domain.terms.iter().all(|term| *term == Term::Hm)
+/// Whether a null has every term the domain carries, so its type may be
+/// sealed or queried from an `Option` of its plaintext (#1298): a null has
+/// an equality term (`hm`, vitaminc-normalize 0.8) and no other.
+pub(crate) fn nullable_terms(domain: &Domain) -> bool {
+    domain.terms.iter().all(|term| *term == Term::Hm)
 }
 
 /// A v4 struct's `DomainType::schema_id` overrides: the trait's defaults name

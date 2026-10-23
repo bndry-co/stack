@@ -425,14 +425,12 @@ fn render_targets_from(rows: &[Row]) -> String {
         let source = format_ident!("{}", rust.rsplit("::").next().unwrap_or(rust));
         (name.clone(), quote!(super::#module::#ty), quote!(#source))
     };
-    // A type of fixed width whose terms a null has (none, or equality's
-    // alone) seals, opens and queries an `Option` of its plaintext: a value
-    // exactly as the plaintext does, and a null as a null with a null's
-    // terms (#1298). Text has no fixed width, so its null is SQL's. Whether
-    // a field may hold one is its plan's.
+    // A type whose terms a null has (none, or equality's alone) seals,
+    // opens and queries an `Option` of its plaintext: a value exactly as the
+    // plaintext does, and a null as a null with a null's terms (#1298).
+    // Whether a field may hold one is its plan's.
     let stored_source = |r: &Row, source: TokenStream| {
-        let fixed_width = matches!(plaintext_of(r.family), Some((kind, _)) if kind != "string");
-        if fixed_width && r.indexes.iter().all(|index| *index == "eq") {
+        if r.indexes.iter().all(|index| *index == "eq") {
             quote!(Option<#source>)
         } else {
             source
@@ -840,10 +838,9 @@ mod tests {
             let module = family.name;
             let (_, plaintext) = plaintext_of(family.name).expect("a derived family's plaintext");
             let plaintext = plaintext.rsplit("::").next().unwrap();
-            // A type of fixed width whose terms a null has (none, or
-            // equality's alone) stores, opens and queries an `Option` of
-            // its plaintext.
-            let source = if crate::bindings::nullable(family.name, domain) {
+            // A type whose terms a null has (none, or equality's alone)
+            // stores, opens and queries an `Option` of its plaintext.
+            let source = if crate::bindings::nullable_terms(domain) {
                 format!("Option<{plaintext}>")
             } else {
                 plaintext.to_owned()
@@ -1095,10 +1092,9 @@ mod tests {
     }
 
     /// A producible type with no query twin — the storage-only `Text` —
-    /// renders encrypt and decrypt arms over its plaintext, and no query
-    /// arm: the query dispatch's fall-through refuses it as answering no
-    /// query. The arms take a `String`, not an `Option` of one: text has no
-    /// fixed width, so a sealed null would stand out beside it (#1298).
+    /// renders encrypt and decrypt arms over an `Option` of its plaintext,
+    /// so it stores a null (#1298), and no query arm: the query dispatch's
+    /// fall-through refuses it as answering no query.
     #[test]
     fn a_producible_type_without_a_query_twin_gets_no_query_arm() {
         let rows = rows();
@@ -1113,12 +1109,12 @@ mod tests {
             .join(" ");
         let arms_for = |helper: &str| {
             out.matches(&format!(
-                "\"Text\" => {{ {helper}::<super::text::Text, String, K>(\"Text\","
+                "\"Text\" => {{ {helper}::<super::text::Text, Option<String>, K>(\"Text\","
             ))
             .count()
                 + out
                     .matches(&format!(
-                        "\"Text\" => {helper}::<super::text::Text, String, K>(\"Text\","
+                        "\"Text\" => {helper}::<super::text::Text, Option<String>, K>(\"Text\","
                     ))
                     .count()
         };

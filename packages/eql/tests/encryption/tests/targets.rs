@@ -276,34 +276,16 @@ mod given_text_eq {
             ),
             "{error}"
         );
-        // A null of a type of fixed width is a query of its own: the stored
-        // nulls' equality term (#1298). Text has no fixed width, so it
-        // stores no sealed null and its query refuses one.
+        // A null is a query of its own: the stored nulls' equality term
+        // (#1298).
         assert!(targets::query(
-            "IntegerEq",
-            &common::index_of("IntegerEq"),
-            &keyset,
-            &email(),
-            frame(None::<i32>),
-        )
-        .is_ok());
-        let error = refused(targets::query(
             "TextEq",
             &common::index_of("TextEq"),
             &keyset,
             &email(),
             frame(None::<String>),
-        ));
-        assert!(
-            matches!(
-                error,
-                TargetError::Plaintext {
-                    target: "TextEq",
-                    ..
-                }
-            ),
-            "{error}"
-        );
+        )
+        .is_ok());
         assert!(
             calls.lock().unwrap().generate.is_empty(),
             "nothing was minted"
