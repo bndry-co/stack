@@ -279,6 +279,7 @@ pub mod op;
 pub mod plan;
 pub mod sem;
 pub mod target;
+pub mod value;
 
 pub use cipher::{
     Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue, StackCipher,

@@ -36,15 +36,16 @@
 //! declared kind: `eq` through an equality index, `matches` through a match
 //! index over text, and the orderings (`lt`, `lte`, `gt`, `gte`,
 //! `between`) through an ORE index over an integer of 16 bits or wider, a
-//! float or text, else a block ORE index, else an OPE index. The typed
+//! float, text, a date, a timestamp or a decimal, else a block ORE index,
+//! else an OPE index. The typed
 //! path's default for an ordering is ORE, and block ORE and OPE are the
 //! typed path's `.via(OreBlock)` and `.via(Ope)`; here a field that
 //! declares only one of them is answered through it. Every order term is
 //! derived over the value's ADR-0002 order key: a float's ties `-0.0` with
 //! `0.0` and sorts every NaN last, and text's is its fold. An ordering over
 //! bytes is not answered, as `op::Ordered` does not cover them. Nor is one
-//! over an 8-bit integer, which has no order term, or over a decimal, date
-//! or timestamp: a plan cannot declare an order index on one yet.
+//! over an 8-bit integer, which has no order term. A timestamp orders by the
+//! microsecond and a decimal by value, so `1.5` ties `1.50`.
 //!
 //! A field that names an EQL type answers what its
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
@@ -205,11 +206,11 @@ impl fmt::Display for OpSpec {
 }
 
 /// The kinds the ordering operators are answered over: the integers of 16
-/// bits and wider, `int16` to `uint128`, the floats and text, as
-/// [`op::Ordered`](crate::op::Ordered) covers them in the typed path. Not
-/// `int8` or `uint8`, which have no order term. Each orders by its ADR-0002
-/// order key; a `float32` is ordered as the `f64` it widens to, as the
-/// typed path asks.
+/// bits and wider, `int16` to `uint128`, the floats, text, and dates,
+/// timestamps and decimals, as [`op::Ordered`](crate::op::Ordered) covers
+/// them in the typed path. Not `int8` or `uint8`, which have no order term.
+/// Each orders by its ADR-0002 order key; a `float32` is ordered as the
+/// `f64` it widens to, as the typed path asks.
 fn ordered(kind: ValueKind) -> bool {
     matches!(
         kind,
@@ -224,6 +225,9 @@ fn ordered(kind: ValueKind) -> bool {
             | ValueKind::Float32
             | ValueKind::Float64
             | ValueKind::String
+            | ValueKind::Decimal
+            | ValueKind::Date
+            | ValueKind::Timestamp
     )
 }
 
@@ -1238,6 +1242,9 @@ mod tests {
                 ValueKind::Float32,
                 ValueKind::Float64,
                 ValueKind::String,
+                ValueKind::Decimal,
+                ValueKind::Date,
+                ValueKind::Timestamp,
             ] {
                 assert_eq!(
                     answered(op, kind, &all),
@@ -1255,13 +1262,7 @@ mod tests {
                     "{op} {kind}"
                 );
             }
-            for kind in [
-                ValueKind::Bytes,
-                ValueKind::Bool,
-                ValueKind::Decimal,
-                ValueKind::Date,
-                ValueKind::Timestamp,
-            ] {
+            for kind in [ValueKind::Bytes, ValueKind::Bool] {
                 assert_eq!(
                     answered(op, kind, &all),
                     None,

@@ -1153,6 +1153,9 @@ where
 /// | `f32`, `f64` | `F64`: an `f32` widens to it exactly, `-0.0` ties `0.0`, every NaN is one value after `+Infinity` |
 /// | `String` | `Text`: Unicode 16 NFC with case and accents folded |
 /// | `Vec<u8>` | `Bytes`, as they are |
+/// | [`value::Date`](crate::value::Date) | `Date`: the day |
+/// | [`value::Timestamp`](crate::value::Timestamp) | `Timestamp`: the instant truncated to the microsecond, so instants in one microsecond tie |
+/// | [`value::Decimal`](crate::value::Decimal) | `Decimal`: the number with its scale normalised, so `1.5` ties `1.50` |
 ///
 /// A borrowed text or byte string is not a source: an order term takes
 /// its value by ownership (the visitor carries it), so pass a `String` or
@@ -1230,6 +1233,8 @@ orderable!(
     i16 => I16, i32 => I32, i64 => I64, i128 => I128,
     f32 => F64, f64 => F64,
     String => Text, Vec<u8> => Bytes,
+    crate::value::Date => Date, crate::value::Timestamp => Timestamp,
+    crate::value::Decimal => Decimal,
 );
 
 /// Why clww-ore produced no order term, as a [`TermError`]: the value's
@@ -1391,14 +1396,14 @@ term_wrapper!(OpeTerm, OpeClww8VariableV1);
 /// 6-bit engines when the space is opened:
 ///
 /// - **`OreAes128Bit6`** for a target of at most ten bytes: the integers to
-///   64 bits and floats (as the `f64` they widen to). Wire header
-///   `02 02`, then the block count; one block per six bits of the
-///   encoding, so an `i32` is six blocks and an `i64` eleven.
-/// - **`OreAes128Bit6Chained`** for text, bytes and the 128-bit integers. Wire
-///   header `02 03`, the block count, then the padding policy. Text is
-///   padded with NUL bytes to a power of two of at least 16 bytes, so a
-///   term reveals its text's length bucket rather than its length; bytes
-///   and integers are not padded. Text and bytes of more than 1023 bytes
+///   64 bits, floats (as the `f64` they widen to) and dates (four bytes).
+///   Wire header `02 02`, then the block count; one block per six bits of
+///   the encoding, so an `i32` or a date is six blocks and an `i64` eleven.
+/// - **`OreAes128Bit6Chained`** for text, bytes, the 128-bit integers,
+///   timestamps (twelve bytes) and decimals (fourteen). Wire header `02 03`,
+///   the block count, then the padding policy. Text is padded with NUL
+///   bytes to a power of two of at least 16 bytes, so a term reveals its
+///   text's length bucket rather than its length; nothing else is padded. Text and bytes of more than 1023 bytes
 ///   are refused ([`TermError::OreBlockTooLong`]), and text that ends in
 ///   NUL ([`TermError::OreBlockTrailingNul`]).
 ///
