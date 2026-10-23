@@ -110,7 +110,15 @@ AS $$
 $$;
 
 --! @brief How many ordinals a walk tries under each node: one more than the
---!        largest ordinal any entry of the document carries.
+--!        largest ordinal any entry of the document carries, and never more
+--!        than the document has entries.
+--!
+--! A node's children sit at ordinals below its child count, which is below
+--! the document's entry count, so the cap changes nothing for a sealed
+--! document. It is there for a stored one: `o` is not authenticated, and
+--! without the cap one entry carrying `o = 2147483646` would make every
+--! level of every walk hash two billion candidate tags.
+--!
 --! @internal
 --! @param val jsonb The document.
 --! @return integer The fan-out bound; `0` for a document with no chained
@@ -119,7 +127,7 @@ CREATE FUNCTION {{prefix}}_internal.json_tree_fanout(val jsonb)
   RETURNS integer
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT COALESCE(MAX((elem ->> 'o')::integer), -1) + 1
+  SELECT LEAST(COALESCE(MAX((elem ->> 'o')::integer), -1) + 1, count(*)::integer)
   FROM jsonb_array_elements(val -> 'sv') AS elem
 $$;
 
@@ -427,7 +435,10 @@ $$;
 --! and the client reads the node's kind from its children's labels, or
 --! fetches the node by its selector.
 --! The walk descends at most 127 levels, the deepest a sealed document
---! nests, so a stored document whose tags do not form a tree still ends it.
+--! nests, and returns at most as many rows as the document has entries,
+--! which a tree never exceeds. A stored document whose tags form a longer
+--! chain or a loop therefore still ends it, after at most its entry count
+--! times its fan-out in hashes.
 --!
 --! **The budget.** A walk costs the fan-out in hashes per node it visits,
 --! and returns about four hundred characters per entry, where a sealed root
@@ -460,6 +471,7 @@ AS $$
              {{prefix}}_internal.json_tree_by_parent(e::jsonb) AS map,
              {{prefix}}.json_tree_meta(e::jsonb) AS meta,
              e::jsonb -> 'sv' -> 0 AS root,
+             jsonb_array_length(e::jsonb -> 'sv') AS entries,
              budget > 0 AND {{prefix}}_internal.json_tree_sealed_root(e::jsonb ->> 'h') AS capped
     ),
     walk(depth, t, entry) AS (
@@ -475,15 +487,26 @@ AS $$
           SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, w.t, o) AS entry
         ) AS c
         -- No sealed document nests deeper than 127 levels. A stored one
-        -- whose tags form a cycle or a longer chain, which whoever holds a
-        -- token can write, stops here instead of recursing without end.
+        -- whose tags form a longer chain, which whoever holds a token can
+        -- write, stops here. A cycle that branches is stopped by `visited`.
         WHERE c.entry IS NOT NULL AND w.depth < 127
+    ),
+    -- A walk of a sealed document reaches each entry at most once, so it
+    -- has at most as many rows as the document has entries, the seed row
+    -- standing in for the root. A stored document can loop instead: `w`
+    -- is not authenticated, so whoever holds a token can wrap a child's
+    -- token to its parent's, and two such children double the rows at
+    -- every level the depth bound allows. PostgreSQL computes a recursive
+    -- query only as far as its reader pulls rows, so this limit stops the
+    -- recursion, and not only the output.
+    visited AS MATERIALIZED (
+      SELECT w.* FROM walk AS w LIMIT (SELECT doc.entries FROM doc)
     ),
     -- One row past the budget is enough to know the walk went over; a walk
     -- under it is the subtree complete. Uncapped, the limit is NULL: all.
     found AS MATERIALIZED (
       SELECT w.depth, w.entry
-      FROM walk AS w
+      FROM visited AS w
       WHERE w.entry IS NOT NULL
       LIMIT (SELECT CASE WHEN doc.capped THEN budget + 1 END FROM doc)
     ),
@@ -535,6 +558,7 @@ AS $$
              {{prefix}}_internal.json_tree_by_parent(e::jsonb) AS map,
              {{prefix}}.json_tree_meta(e::jsonb) AS meta,
              e::jsonb -> 'sv' -> 0 AS root,
+             jsonb_array_length(e::jsonb -> 'sv') AS entries,
              budget > 0 AND {{prefix}}_internal.json_tree_sealed_root(e::jsonb ->> 'h') AS capped
     ),
     walk(depth, t, entry, hit) AS (
@@ -551,13 +575,24 @@ AS $$
           SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, w.t, o) AS entry
         ) AS c
         -- No sealed document nests deeper than 127 levels. A stored one
-        -- whose tags form a cycle or a longer chain, which whoever holds a
-        -- token can write, stops here instead of recursing without end.
+        -- whose tags form a longer chain, which whoever holds a token can
+        -- write, stops here. A cycle that branches is stopped by `visited`.
         WHERE c.entry IS NOT NULL AND w.depth < 127
+    ),
+    -- A walk of a sealed document reaches each entry at most once, so it
+    -- has at most as many rows as the document has entries, the seed row
+    -- standing in for the root. A stored document can loop instead: `w`
+    -- is not authenticated, so whoever holds a token can wrap a child's
+    -- token to its parent's, and two such children double the rows at
+    -- every level the depth bound allows. PostgreSQL computes a recursive
+    -- query only as far as its reader pulls rows, so this limit stops the
+    -- recursion, and not only the output.
+    visited AS MATERIALIZED (
+      SELECT w.* FROM walk AS w LIMIT (SELECT doc.entries FROM doc)
     ),
     found AS MATERIALIZED (
       SELECT w.depth, w.entry
-      FROM walk AS w
+      FROM visited AS w
       WHERE w.entry IS NOT NULL AND w.hit
       LIMIT (SELECT CASE WHEN doc.capped THEN budget + 1 END FROM doc)
     ),
