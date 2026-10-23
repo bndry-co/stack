@@ -63,8 +63,10 @@ fn options() -> JsonOptions {
         .unwrap()
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+/// Padded standard base64, as the wire spells a selector.
+fn base64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 #[tokio::test]
@@ -162,7 +164,7 @@ async fn the_query_operands_are_the_engines_terms_in_the_sql_contract() {
     let typed = seal(&cipher, &fixture()).await;
     assert_eq!(engine.entries().len(), typed.sv.len());
     for (a, b) in engine.entries().iter().zip(&typed.sv) {
-        assert_eq!(hex(a.selector()), b.s.0);
+        assert_eq!(base64(a.selector()), b.s.0);
     }
     assert_eq!(
         serde_json::to_value(engine.projection()).unwrap(),

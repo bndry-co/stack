@@ -20,7 +20,7 @@
 --!
 --! The design is `docs/plans/2026-10-17-json-index-stack-encrypt-spike.md`
 --! at the repository root. The document's per-entry fields:
---!   `s`  path selector (16 bytes, hex): every element of an array shares its
+--!   `s`  path selector (16 bytes, base64): every element of an array shares its
 --!        parent's, so a path reads `$.a[*].x`.
 --!   `c`  the node's own ciphertext (base64): its label, its kind and, for a
 --!        scalar, its value. The root's is the whole document when the root is
@@ -31,7 +31,7 @@
 --!        holding `t(parent)` probes them in turn until the first miss, and
 --!        derives each hit's own token as `H("t" ‖ t(parent) ‖ LE32(o))`.
 --!        Nothing stores a token or an ordinal.
---!   `op` the leaf ordering term (CLLW OPE, hex) on number and string leaves.
+--!   `op` the leaf ordering term (CLLW OPE, base64) on number and string leaves.
 --! The header `h` (base64) carries the document's data key material once; the
 --! SQL reads only the sealed-root flag at byte offset 1 and the ZeroKMS `iv`
 --! at byte offset 22 of it, the per-document salt of the parent tags, and

@@ -244,11 +244,16 @@ pub(super) fn child_token(parent: &Tag, ordinal: u32) -> Tag {
     h16(&[b"t", parent, &ordinal.to_le_bytes()])
 }
 
-/// `H("p" ‖ iv ‖ t(parent) ‖ LE32(ordinal))`: position-keyed, so siblings
-/// are unlinkable at rest, and salted by the document, so the same position
-/// in two rows is too.
-pub(super) fn parent_tag(iv: &[u8], parent: &Tag, ordinal: u32) -> Tag {
-    h16(&[b"p", iv, parent, &ordinal.to_le_bytes()])
+/// The first eight bytes of `H("p" ‖ iv ‖ t(parent) ‖ LE32(ordinal))`:
+/// position-keyed, so siblings are unlinkable at rest, and salted by the
+/// document, so the same position in two rows is too. Eight bytes, since a
+/// parent tag only has to be distinct within its document
+/// ([`ParentTag`](super::ParentTag)).
+pub(super) fn parent_tag(iv: &[u8], parent: &Tag, ordinal: u32) -> super::ParentTag {
+    let full = h16(&[b"p", iv, parent, &ordinal.to_le_bytes()]);
+    let mut tag = super::ParentTag::default();
+    tag.copy_from_slice(&full[..8]);
+    tag
 }
 
 /// `H("o" ‖ t(parent) ‖ key)`: what an object's members are ranked by for
@@ -1178,7 +1183,7 @@ impl<K> KeysetCipher<'_, K> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::hex;
+    use super::super::base64;
     use super::*;
     use serde_json::json;
     use vitaminc_prf::PrfKeyInit;
@@ -1301,15 +1306,19 @@ mod tests {
         assert_eq!(Some(*k.token_bytes()), a.token);
         assert_eq!(
             k.gates(),
-            [hex(&b.s), "#1".to_owned(), hex(&at(&t, "$.a.b[1].c").s)]
+            [
+                base64(&b.s),
+                "#1".to_owned(),
+                base64(&at(&t, "$.a.b[1].c").s)
+            ]
         );
         let k = key(&options, "$.a.b[*].c").unwrap();
         assert_eq!(
             k.gates(),
             [
-                hex(&b.s),
-                hex(&at(&t, "$.a.b[0]").s),
-                hex(&at(&t, "$.a.b[1].c").s)
+                base64(&b.s),
+                base64(&at(&t, "$.a.b[0]").s),
+                base64(&at(&t, "$.a.b[1].c").s)
             ]
         );
         // Under the sealed root the root has no token; under an open root

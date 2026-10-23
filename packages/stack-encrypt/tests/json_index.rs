@@ -165,15 +165,21 @@ async fn the_wire_form_is_what_the_sql_domain_stores() {
                 "entry {j} carries an unknown key {key}"
             );
         }
-        for tag in ["s", "p"] {
-            if let Some(hex) = entry.get(tag) {
+        for (tag, chars, bytes) in [("s", 24, 16), ("p", 12, 8)] {
+            if let Some(text) = entry.get(tag) {
                 assert_eq!(
-                    hex.as_str().unwrap().len(),
-                    32,
-                    "entry {j}'s {tag} is 16 bytes of hex"
+                    text.as_str().unwrap().len(),
+                    chars,
+                    "entry {j}'s {tag} is {bytes} bytes of padded base64"
                 );
             }
         }
+        let c = entry["c"].as_str().unwrap();
+        assert!(
+            c.bytes()
+                .all(|b| b.is_ascii_graphic() && b != b'"' && b != b'\\'),
+            "entry {j}'s c is base85 in an alphabet a JSON string carries unescaped"
+        );
     }
     let back: JsonDocument = serde_json::from_value(wire).unwrap();
     assert_eq!(back, doc);
@@ -394,9 +400,9 @@ async fn a_token_derived_from_the_path_alone_unlocks_exactly_its_subtree() {
     assert_eq!(
         gated.gates(),
         [
-            hex(doc.entries()[4].selector()),
-            hex(doc.entries()[5].selector()),
-            hex(doc.entries()[6].selector()),
+            base64(doc.entries()[4].selector()),
+            base64(doc.entries()[5].selector()),
+            base64(doc.entries()[6].selector()),
         ]
     );
     // Under an open root the whole chain is derivable down to the first
@@ -1209,15 +1215,20 @@ async fn no_stored_tag_is_a_token() {
     assert_eq!(tokens.len(), 7, "nested and its six descendants");
     for entry in doc.entries() {
         if let Some(p) = entry.parent_tag() {
-            assert!(!tokens.contains(p), "a parent tag is not a token");
+            assert!(
+                !tokens.iter().any(|t| t.starts_with(p)),
+                "a parent tag is not a prefix of a token"
+            );
         }
         assert!(!tokens.contains(entry.selector()));
     }
-    assert_eq!(nested.token(), hex(nested.token_bytes()));
+    assert_eq!(nested.token(), base64(nested.token_bytes()));
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+/// Padded standard base64, as the SQL reads and writes it.
+fn base64(bytes: &[u8]) -> String {
+    use base64ct::{Base64, Encoding};
+    Base64::encode_string(bytes)
 }
 
 /// A document, an extracted node and a walked subtree are each the one

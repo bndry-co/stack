@@ -31,14 +31,35 @@ use stack_encrypt::{
 };
 use ts_rs::TS;
 
-use crate::v3::terms::{EntryCiphertext, KeyHeader, OpeCllw, Selector};
+use crate::v3::terms::KeyHeader;
 use crate::v4::{DomainType, SchemaVersion};
 use crate::Identifier;
 
-/// A sixteen-byte chain tag, hex: a parent tag `p`. Per document, salted
-/// by the document's `iv`, so unlinkable across rows at rest.
+/// A path selector `s` (and the value selector `vs` of a projection pair):
+/// sixteen bytes, padded standard base64, as PostgreSQL's `encode(x,
+/// 'base64')` writes it. Column-wide: the same path has the same selector
+/// in every row, which is what `->` and containment match on.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
+pub struct JsonTreeSelector(pub String);
+
+/// A node's ciphertext `c`: RFC 1924 base85 (`base85-simd`), which no SQL
+/// function decodes. The AES-GCM envelope of the node's label, kind, child
+/// count and scalar value under the document's data key.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
+pub struct JsonTreeCiphertext(pub String);
+
+/// An eight-byte parent tag `p`, padded base64: the first eight bytes of
+/// the parent-tag hash, per document, salted by the document's `iv`, so
+/// unlinkable across rows at rest. `eql_v4.json_tree_subtree_at` derives
+/// the same text with `encode(substr(…, 1, 8), 'base64')` to find a child.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
 pub struct JsonTreeTag(pub String);
+
+/// A leaf ordering term `op`, padded base64: the CLLW OPE term of a number
+/// or string leaf at a path the index orders. `eql_v4.ord_term` decodes it
+/// to the bytea-backed `eql_v4_internal.ope_cllw` domain.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
+pub struct JsonTreeOrderingTerm(pub String);
 
 /// `public.eql_v4_json_tree`: a JSON tree document, `{v, i, h, sv:
 /// [entry], q: group}`. Strict. `h` is the document's key header, stored
@@ -67,14 +88,14 @@ pub struct JsonTreeDocument {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JsonTreeEntry {
-    pub s: Selector,
-    pub c: EntryCiphertext,
+    pub s: JsonTreeSelector,
+    pub c: JsonTreeCiphertext,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub p: Option<JsonTreeTag>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub op: Option<OpeCllw>,
+    pub op: Option<JsonTreeOrderingTerm>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub h: Option<KeyHeader>,
@@ -96,8 +117,8 @@ pub struct JsonTreeEntry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JsonTreeQueryPair {
-    pub s: Selector,
-    pub vs: Selector,
+    pub s: JsonTreeSelector,
+    pub vs: JsonTreeSelector,
 }
 
 /// One group of a containment needle: the pairs that sit directly in it,
@@ -130,8 +151,8 @@ pub struct JsonTreeQuery {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JsonTreeLeafQuery {
-    pub s: Selector,
-    pub op: OpeCllw,
+    pub s: JsonTreeSelector,
+    pub op: JsonTreeOrderingTerm,
 }
 
 /// The rows a subtree walk returned (`eql_v4.json_tree_subtree` or

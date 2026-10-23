@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use super::derive::{JsonTerms, TermNode};
 use super::path::JsonPath;
-use super::{hex, JsonDocument, JsonOptions, Tag};
+use super::{base64, JsonDocument, JsonOptions, Tag};
 use crate::op::{
     Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
     LabelledTarget, Lt, Lte, One, Pair, Pathed, QueryTerm, QueryToken, Supports,
@@ -149,8 +149,8 @@ impl From<&JsonProjection> for GroupWire {
                 .sv
                 .iter()
                 .map(|p| PairWire {
-                    s: hex(&p.s),
-                    vs: hex(&p.vs),
+                    s: base64(&p.s),
+                    vs: base64(&p.vs),
                 })
                 .collect(),
             el: group.el.iter().map(GroupWire::from).collect(),
@@ -176,7 +176,7 @@ impl TryFrom<GroupWire> for JsonProjection {
     type Error = super::WireError;
     fn try_from(w: GroupWire) -> Result<Self, Self::Error> {
         let tag = |text: &str| {
-            Tag::try_from(super::unhex(text)?).map_err(|_| super::WireError("not 16 bytes"))
+            Tag::try_from(super::unbase64(text)?).map_err(|_| super::WireError("not 16 bytes"))
         };
         Ok(Self {
             sv: w
@@ -264,8 +264,8 @@ struct LeafWire {
 impl Serialize for JsonLeafQuery {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         LeafWire {
-            s: hex(&self.s),
-            op: hex(&self.op),
+            s: base64(&self.s),
+            op: base64(&self.op),
         }
         .serialize(s)
     }
@@ -274,17 +274,17 @@ impl Serialize for JsonLeafQuery {
 impl<'de> Deserialize<'de> for JsonLeafQuery {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let wire = LeafWire::deserialize(d)?;
-        let s = super::unhex(&wire.s)
+        let s = super::unbase64(&wire.s)
             .ok()
             .and_then(|b| Tag::try_from(b).ok())
             .ok_or_else(|| serde::de::Error::custom("not a selector"))?;
-        let op = super::unhex(&wire.op).map_err(serde::de::Error::custom)?;
+        let op = super::unbase64(&wire.op).map_err(serde::de::Error::custom)?;
         Ok(Self { s, op })
     }
 }
 
 /// A path selector: what `->` and the path functions take. Prints and
-/// serializes as the hex the stored entry carries in `s`.
+/// serializes as the base64 the stored entry carries in `s`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct JsonSelector(pub(crate) Tag);
 
@@ -297,19 +297,19 @@ impl JsonSelector {
 
 impl fmt::Display for JsonSelector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&hex(&self.0))
+        f.write_str(&base64(&self.0))
     }
 }
 
 impl fmt::Debug for JsonSelector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "JsonSelector({})", hex(&self.0))
+        write!(f, "JsonSelector({})", base64(&self.0))
     }
 }
 
 impl Serialize for JsonSelector {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&hex(&self.0))
+        s.serialize_str(&base64(&self.0))
     }
 }
 
@@ -325,11 +325,11 @@ pub(crate) enum Gate {
 }
 
 impl Gate {
-    /// The gate as `json_tree_subtree_at` takes it: the selector's hex, or
+    /// The gate as `json_tree_subtree_at` takes it: the selector's base64, or
     /// `#n` for a position.
     fn text(&self) -> String {
         match self {
-            Gate::Selector(s) => hex(s),
+            Gate::Selector(s) => base64(s),
             Gate::Slot(n) => format!("#{n}"),
         }
     }
@@ -345,9 +345,9 @@ pub struct JsonSubtreeKey {
 }
 
 impl JsonSubtreeKey {
-    /// The token, as the hex the walk takes.
+    /// The token, as the base64 the walk takes.
     pub fn token(&self) -> String {
-        hex(&self.token)
+        base64(&self.token)
     }
 
     /// The token's bytes. A token is a capability over the structure of
@@ -358,7 +358,7 @@ impl JsonSubtreeKey {
     }
 
     /// The gates the walk descends through below the token, one per step,
-    /// as `json_tree_subtree_at` takes them: a selector's hex, or `#n` for
+    /// as `json_tree_subtree_at` takes them: a selector's base64, or `#n` for
     /// an array position. Empty when the token names the walked node
     /// itself, which `json_tree_subtree` takes.
     pub fn gates(&self) -> Vec<String> {
@@ -384,7 +384,7 @@ impl Serialize for JsonSubtreeKey {
             g: Vec<String>,
         }
         Wire {
-            t: hex(&self.token),
+            t: base64(&self.token),
             g: self.gates(),
         }
         .serialize(s)
@@ -708,8 +708,8 @@ mod tests {
         assert_eq!(
             json,
             json!({
-                "sv": [{"s": "01".repeat(16), "vs": "02".repeat(16)}],
-                "el": [{"sv": [{"s": "03".repeat(16), "vs": "04".repeat(16)}], "el": []}],
+                "sv": [{"s": "AQEBAQEBAQEBAQEBAQEBAQ==", "vs": "AgICAgICAgICAgICAgICAg=="}],
+                "el": [{"sv": [{"s": "AwMDAwMDAwMDAwMDAwMDAw==", "vs": "BAQEBAQEBAQEBAQEBAQEBA=="}], "el": []}],
             })
         );
         let back: JsonQuery = serde_json::from_value(json).unwrap();
@@ -717,23 +717,23 @@ mod tests {
     }
 
     #[test]
-    fn a_selector_prints_as_its_hex_and_a_subtree_key_hides_its_token() {
+    fn a_selector_prints_as_its_base64_and_a_subtree_key_hides_its_token() {
         let selector = JsonSelector([0xab; 16]);
-        assert_eq!(selector.to_string(), "ab".repeat(16));
+        assert_eq!(selector.to_string(), "q6urq6urq6urq6urq6urqw==");
         assert_eq!(
             format!("{selector:?}"),
-            format!("JsonSelector({})", "ab".repeat(16))
+            format!("JsonSelector({})", "q6urq6urq6urq6urq6urqw==")
         );
         let key = JsonSubtreeKey {
             token: [0xcd; 16],
             gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3)],
         };
-        assert_eq!(key.token(), "cd".repeat(16));
+        assert_eq!(key.token(), "zc3Nzc3Nzc3Nzc3Nzc3NzQ==");
         assert_eq!(key.token_bytes(), &[0xcd; 16]);
-        assert_eq!(key.gates(), ["ab".repeat(16), "#3".to_owned()]);
+        assert_eq!(key.gates(), ["q6urq6urq6urq6urq6urqw==", "#3"]);
         assert_eq!(
             serde_json::to_value(&key).unwrap(),
-            serde_json::json!({"t": "cd".repeat(16), "g": ["ab".repeat(16), "#3"]})
+            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ==", "g": ["q6urq6urq6urq6urq6urqw==", "#3"]})
         );
         assert_eq!(
             format!("{key:?}"),
@@ -746,7 +746,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_value(&bare).unwrap(),
-            serde_json::json!({"t": "cd".repeat(16)})
+            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ=="})
         );
     }
 
@@ -789,8 +789,8 @@ mod tests {
         assert_eq!(
             wire,
             serde_json::json!({
-                "sv": [{"s": "01".repeat(16), "vs": "02".repeat(16)}],
-                "el": [{"sv": [{"s": "03".repeat(16), "vs": "04".repeat(16)}], "el": []}],
+                "sv": [{"s": "AQEBAQEBAQEBAQEBAQEBAQ==", "vs": "AgICAgICAgICAgICAgICAg=="}],
+                "el": [{"sv": [{"s": "AwMDAwMDAwMDAwMDAwMDAw==", "vs": "BAQEBAQEBAQEBAQEBAQEBA=="}], "el": []}],
             })
         );
         let back: JsonProjection = serde_json::from_value(wire).unwrap();

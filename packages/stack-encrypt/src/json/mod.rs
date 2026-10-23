@@ -12,8 +12,8 @@
 //!   value, and for a container its child count. Nothing beneath a node is
 //!   encrypted in that node's entry, so a document's ciphertext is linear
 //!   in its size;
-//! - the **parent tag** `p`, `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`, which
-//!   lets the server walk the subtree under a node from one client-derived
+//! - the **parent tag** `p`, the first eight bytes of
+//!   `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`, which lets the server walk the subtree under a node from one client-derived
 //!   token and nothing else: the ordinals `o` under a node are dense from
 //!   zero, so a walk probes them in turn until the first miss, and derives
 //!   each hit's own token as `H("t" ‖ t(parent) ‖ LE32(o))`;
@@ -78,10 +78,18 @@
 //!
 //! # Byte encodings
 //!
-//! The document's wire form is JSON, as the EQL domain stores it:
-//! sixteen-byte fields (`s`, `p`, and the pairs of `q`) and the OPE term `op`
-//! in lowercase hex, the ciphertext `c` and the header `h` in standard
-//! base64. The header's bytes are a frozen layout, [`JsonHeader`]. The
+//! The document's wire form is JSON, as the EQL domain stores it. Every
+//! field the SQL compares, derives or decodes is standard base64 with
+//! padding, which is what PostgreSQL's `encode(x, 'base64')` writes and
+//! `decode(x, 'base64')` reads: the selectors `s` and the pairs of `q`
+//! (sixteen bytes, 24 characters), the parent tag `p` (eight bytes, 12
+//! characters), the ordering term `op`, the tokens and gates a walk
+//! takes, and the header `h`, which the SQL reads the `iv` and the
+//! sealed-root flag from. The ciphertext `c`, which nothing in SQL
+//! decodes, is RFC 1924 base85 (`base85-simd`): five characters per four
+//! bytes against base64's eight per six, on the one field that is most of
+//! a document. The alphabet has no `"` or `\`, so a JSON string carries it
+//! unescaped. The header's bytes are a frozen layout, [`JsonHeader`]. The
 //! derivations are versioned by their PAE domain labels, as every other
 //! term kind's are ([`sem`](crate::sem)): a change to any of them is a new
 //! version, never an edit in place.
@@ -105,8 +113,16 @@ pub use query::{
 
 pub(crate) use derive::{seal_pending, terms_pending};
 
-/// A sixteen-byte tag: a selector, a token or a parent tag.
+/// A sixteen-byte tag: a selector or a token.
 pub type Tag = [u8; 16];
+
+/// An eight-byte parent tag: the first eight bytes of the parent-tag hash.
+/// A parent tag is a lookup key for the server's walk and nothing else (an
+/// entry's AAD binds its selector and ordinal, not its parent tag), so it
+/// needs only to be distinct among the entries of one document; eight
+/// bytes put a collision in a document of ten thousand nodes below one in
+/// 10^11, and save eight bytes an entry over the full hash.
+pub type ParentTag = [u8; 8];
 
 /// How a JSON index lays a document out, and which of its leaves it
 /// orders. Part of the index's identity: a stored document and the query
@@ -322,7 +338,7 @@ impl JsonHeader {
 pub struct JsonEntry {
     s: Tag,
     c: Vec<u8>,
-    p: Option<Tag>,
+    p: Option<ParentTag>,
     op: Option<Vec<u8>>,
 }
 
@@ -336,7 +352,7 @@ impl JsonEntry {
         &self.c
     }
     /// The parent tag, when the parent has a token.
-    pub fn parent_tag(&self) -> Option<&Tag> {
+    pub fn parent_tag(&self) -> Option<&ParentTag> {
         self.p.as_ref()
     }
     /// The leaf ordering term, on a number or string leaf at an ordered
@@ -603,49 +619,36 @@ where
 // Wire form
 // =============================================================================
 
-/// Lowercase hex, as the SQL decodes with `decode(x, 'hex')`.
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(DIGITS[usize::from(b >> 4)] as char);
-        out.push(DIGITS[usize::from(b & 0xf)] as char);
-    }
-    out
-}
-
-/// The inverse of [`hex`]; either case.
-pub(crate) fn unhex(text: &str) -> Result<Vec<u8>, WireError> {
-    fn nibble(c: u8) -> Result<u8, WireError> {
-        match c {
-            b'0'..=b'9' => Ok(c - b'0'),
-            b'a'..=b'f' => Ok(c - b'a' + 10),
-            b'A'..=b'F' => Ok(c - b'A' + 10),
-            _ => Err(WireError("not hex")),
-        }
-    }
-    let bytes = text.as_bytes();
-    if !bytes.len().is_multiple_of(2) {
-        return Err(WireError("odd hex length"));
-    }
-    bytes
-        .chunks_exact(2)
-        .map(|pair| Ok(nibble(pair[0])? << 4 | nibble(pair[1])?))
-        .collect()
-}
-
-fn unhex16(text: &str) -> Result<Tag, WireError> {
-    Tag::try_from(unhex(text)?).map_err(|_| WireError("not 16 bytes"))
-}
-
-fn base64(bytes: &[u8]) -> String {
+/// Standard base64 with padding, as PostgreSQL's `encode(x, 'base64')`
+/// writes it and `decode(x, 'base64')` reads it (which refuses the unpadded
+/// form): every field the SQL compares, derives or decodes.
+pub(crate) fn base64(bytes: &[u8]) -> String {
     use base64ct::{Base64, Encoding};
     Base64::encode_string(bytes)
 }
 
-fn unbase64(text: &str) -> Result<Vec<u8>, WireError> {
+/// The inverse of [`base64`]: padded, canonical.
+pub(crate) fn unbase64(text: &str) -> Result<Vec<u8>, WireError> {
     use base64ct::{Base64, Encoding};
     Base64::decode_vec(text).map_err(|_| WireError("not base64"))
+}
+
+fn unbase64_16(text: &str) -> Result<Tag, WireError> {
+    Tag::try_from(unbase64(text)?).map_err(|_| WireError("not 16 bytes"))
+}
+
+fn unbase64_8(text: &str) -> Result<ParentTag, WireError> {
+    ParentTag::try_from(unbase64(text)?).map_err(|_| WireError("not 8 bytes"))
+}
+
+/// RFC 1924 base85: the ciphertext, which nothing in SQL decodes. Five
+/// characters per four bytes; the alphabet has no `"` or `\`.
+fn base85(bytes: &[u8]) -> String {
+    base85_simd::encode(bytes)
+}
+
+fn unbase85(text: &str) -> Result<Vec<u8>, WireError> {
+    base85_simd::decode(text).map_err(|_| WireError("not base85"))
 }
 
 /// A wire field that does not decode. Names the field's fault and never its
@@ -664,7 +667,8 @@ struct DocumentWire {
     q: query::GroupWire,
 }
 
-/// One entry, as stored: tags in hex, the ciphertext in base64.
+/// One entry, as stored: the tags and the ordering term in base64, the
+/// ciphertext in base85.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EntryWire {
@@ -679,10 +683,10 @@ struct EntryWire {
 impl From<&JsonEntry> for EntryWire {
     fn from(e: &JsonEntry) -> Self {
         Self {
-            s: hex(&e.s),
-            c: base64(&e.c),
-            p: e.p.as_ref().map(|t| hex(t)),
-            op: e.op.as_deref().map(hex),
+            s: base64(&e.s),
+            c: base85(&e.c),
+            p: e.p.as_ref().map(|t| base64(t)),
+            op: e.op.as_deref().map(base64),
         }
     }
 }
@@ -692,10 +696,10 @@ impl TryFrom<EntryWire> for JsonEntry {
 
     fn try_from(w: EntryWire) -> Result<Self, WireError> {
         Ok(Self {
-            s: unhex16(&w.s)?,
-            c: unbase64(&w.c)?,
-            p: w.p.as_deref().map(unhex16).transpose()?,
-            op: w.op.as_deref().map(unhex).transpose()?,
+            s: unbase64_16(&w.s)?,
+            c: unbase85(&w.c)?,
+            p: w.p.as_deref().map(unbase64_8).transpose()?,
+            op: w.op.as_deref().map(unbase64).transpose()?,
         })
     }
 }
@@ -849,10 +853,35 @@ mod tests {
     }
 
     #[test]
-    fn hex_round_trips_and_refuses_what_is_not_hex() {
-        assert_eq!(hex(&[0, 15, 255]), "000fff");
-        assert_eq!(unhex("000FfF").unwrap(), vec![0, 15, 255]);
-        assert!(unhex("abc").is_err());
-        assert!(unhex("zz").is_err());
+    fn the_encodings_round_trip_and_refuse_what_they_are_not() {
+        assert_eq!(base64(&[0, 15, 255]), "AA//");
+        assert_eq!(unbase64("AA//").unwrap(), vec![0, 15, 255]);
+        assert_eq!(base64(&[1; 16]).len(), 24, "a sixteen-byte tag, padded");
+        assert_eq!(
+            base64(&[1; 8]).len(),
+            12,
+            "an eight-byte parent tag, padded"
+        );
+        assert!(
+            unbase64("AA/").is_err(),
+            "unpadded, which the SQL refuses too"
+        );
+        assert!(unbase64("AA//=").is_err());
+        assert!(unbase64("zz").is_err());
+        assert!(unbase64_16("AA//").is_err());
+        assert!(unbase64_8("AA//").is_err());
+        assert_eq!(unbase64_8(&base64(&[7; 8])).unwrap(), [7; 8]);
+
+        assert_eq!(base85(&[0, 15, 255]), "01y8");
+        assert_eq!(unbase85("01y8").unwrap(), vec![0, 15, 255]);
+        let bytes: Vec<u8> = (0..=255).collect();
+        assert_eq!(unbase85(&base85(&bytes)).unwrap(), bytes);
+        assert_eq!(base85(&bytes).len(), 320, "five characters per four bytes");
+        assert!(
+            !base85(&bytes).contains(['"', '\\']),
+            "unescaped in a JSON string"
+        );
+        assert!(unbase85("\"").is_err());
+        assert!(unbase85("z").is_err(), "a one-character tail is no byte");
     }
 }

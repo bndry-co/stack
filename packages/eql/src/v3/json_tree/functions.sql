@@ -14,8 +14,8 @@
 --! extension, no superuser, so the surface installs wherever the rest of
 --! {{prefix}} does.
 --!
---! `selector` parameters are *encrypted-side* selectors, the hex the index
---! emits in `s`; `token` parameters are the hex of a chain token the client
+--! `selector` parameters are *encrypted-side* selectors, the base64 the index
+--! emits in `s`; `token` parameters are the base64 of a chain token the client
 --! derived from a path. Plaintext paths are never accepted.
 
 ------------------------------------------------------------------------------
@@ -59,17 +59,20 @@ AS $$
 $$;
 
 --! @brief The parent tag a child at ordinal `o` under the node with token
---!        `token` carries: `H("p" ‖ iv ‖ token ‖ LE32(o))`.
+--!        `token` carries: the first eight bytes of
+--!        `H("p" ‖ iv ‖ token ‖ LE32(o))`. Eight, since the tag is a lookup
+--!        key within one document and nothing else: an entry's AAD binds
+--!        its selector and ordinal, not its parent tag.
 --! @internal
 --! @param iv bytea The document's iv.
 --! @param token bytea The parent's token, sixteen bytes.
 --! @param o integer The child's ordinal.
---! @return text The tag, hex, as the entry's `p` spells it.
+--! @return text The tag, padded base64, as the entry's `p` spells it.
 CREATE FUNCTION {{prefix}}_internal.json_tree_parent_tag(iv bytea, token bytea, o integer)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT encode({{prefix}}_internal.json_tree_h16('p'::bytea || iv || token || {{prefix}}_internal.json_tree_le32(o)), 'hex')
+  SELECT encode(substr({{prefix}}_internal.json_tree_h16('p'::bytea || iv || token || {{prefix}}_internal.json_tree_le32(o)), 1, 8), 'base64')
 $$;
 
 --! @brief The token of the child at ordinal `o` under the node with token
@@ -101,6 +104,24 @@ CREATE FUNCTION {{prefix}}_internal.json_tree_sealed_root(h text)
 AS $$
   SELECT (get_byte(decode(h, 'base64'), 1) & 1) = 1
 $$;
+
+--! @brief The CLLW OPE term of a JSON tree entry or ordering operand: its
+--!        `op`, base64-decoded. The JSON tree spells `op` in base64 like
+--!        its other fields, where the scalar types' shared
+--!        `{{prefix}}_internal.ope_cllw(jsonb)` reads hex, so the family
+--!        has its own extractor.
+--! @internal
+--! @param val jsonb An entry or a `query_json_tree_leaf`, as jsonb.
+--! @return {{prefix}}_internal.ope_cllw The term; NULL when there is none.
+CREATE FUNCTION {{prefix}}_internal.json_tree_ope_cllw(val jsonb)
+  RETURNS {{prefix}}_internal.ope_cllw
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT decode(val ->> 'op', 'base64')::{{prefix}}_internal.ope_cllw
+$$;
+
+COMMENT ON FUNCTION {{prefix}}_internal.json_tree_ope_cllw(jsonb) IS
+  'eql-inline-critical: raw-jsonb CLLW OPE extractor of the JSON tree family; must stay inlinable (unpinned search_path)';
 
 --! @brief The chained entries of a document keyed by parent tag: one object
 --!        whose keys are each entry's `p` and whose values are the entry
@@ -166,7 +187,7 @@ $$;
 --! own: it carries the document's header `h` and its own ordinal `j`.
 --!
 --! @param val jsonb The document.
---! @param selector text The path selector, hex.
+--! @param selector text The path selector, base64.
 --! @return SETOF public.{{prefix}}_json_tree_entry The matching entries, in
 --!         document order.
 CREATE FUNCTION {{prefix}}.json_tree_path_query(val jsonb, selector text)
@@ -192,7 +213,7 @@ COMMENT ON FUNCTION {{prefix}}.json_tree_path_query(jsonb, text) IS
 --! operand's selectivity is a guess, the default cost chose the scan.
 --!
 --! @param val jsonb The document.
---! @param selector text The path selector, hex.
+--! @param selector text The path selector, base64.
 --! @return public.{{prefix}}_json_tree_entry The entry, or NULL when the document
 --!         has no node at that path.
 CREATE FUNCTION {{prefix}}.json_tree_path_query_first(val jsonb, selector text)
@@ -212,7 +233,7 @@ COMMENT ON FUNCTION {{prefix}}.json_tree_path_query_first(jsonb, text) IS
 
 --! @brief Whether the document has a node at the path `selector` names.
 --! @param val jsonb The document.
---! @param selector text The path selector, hex.
+--! @param selector text The path selector, base64.
 --! @return boolean True when some entry carries the selector.
 CREATE FUNCTION {{prefix}}.json_tree_path_exists(val jsonb, selector text)
   RETURNS boolean
@@ -363,7 +384,7 @@ $$;
 --! level below the node they reach.
 --!
 --! @param e public.{{prefix}}_json_tree The stored document.
---! @param token text The start node's token, hex: derived by the client
+--! @param token text The start node's token, base64: derived by the client
 --!        from the path alone, and never stored.
 --! @param gates text[] One gate per step below the token, as
 --!        `json_tree_subtree_at` takes them. Default none.
@@ -381,7 +402,7 @@ AS $$
     ),
     -- The walk of `json_tree_subtree_at`, cut one level below the gates.
     walk(depth, pt, o, entry, t, ppass, pass) AS (
-        SELECT 0, NULL::bytea, NULL::integer, NULL::jsonb, decode(token, 'hex'), true, true
+        SELECT 0, NULL::bytea, NULL::integer, NULL::jsonb, decode(token, 'base64'), true, true
       UNION ALL
         SELECT probe.depth, probe.pt, probe.o, hit.entry,
                {{prefix}}_internal.json_tree_child_token(probe.pt, probe.o),
@@ -419,7 +440,7 @@ $$;
 --!        the length of an encrypted array, or the member count of an
 --!        object.
 --! @param e public.{{prefix}}_json_tree The stored document.
---! @param token text The start node's token, hex.
+--! @param token text The start node's token, base64.
 --! @param gates text[] One gate per step below the token. Default none.
 --! @return integer The count; `0` for a node with no children, a token that
 --!         names no node included.
@@ -459,8 +480,8 @@ $$;
 --! is always walked in full, since its root holds no document to return.
 --!
 --! @param e public.{{prefix}}_json_tree The stored document.
---! @param token text The start node's token, hex.
---! @param gates text[] One gate per step below the token: a selector, hex,
+--! @param token text The start node's token, base64.
+--! @param gates text[] One gate per step below the token: a selector, base64,
 --!        or `#n` for the array position `n`. Empty for the whole subtree.
 --! @param budget integer The most entries to return before falling back to
 --!        the sealed root; `0` to always walk out. Default 64.
@@ -485,7 +506,7 @@ AS $$
     -- own token; `ppass` whether every gate down to its parent admitted the
     -- parent, `pass` whether this hit's gate admits it too.
     walk(depth, pt, o, entry, t, ppass, pass) AS (
-        SELECT 0, NULL::bytea, NULL::integer, NULL::jsonb, decode(token, 'hex'), true, true
+        SELECT 0, NULL::bytea, NULL::integer, NULL::jsonb, decode(token, 'base64'), true, true
       UNION ALL
         SELECT probe.depth, probe.pt, probe.o, hit.entry,
                {{prefix}}_internal.json_tree_child_token(probe.pt, probe.o),
@@ -547,7 +568,7 @@ $$;
 --! @brief Every entry under the node whose token is `token`:
 --!        `json_tree_subtree_at` with no gates.
 --! @param e public.{{prefix}}_json_tree The stored document.
---! @param token text The subtree's token, hex.
+--! @param token text The subtree's token, base64.
 --! @param budget integer The most entries to return before falling back to
 --!        the sealed root; `0` to always walk the subtree out. Default 64.
 --! @return SETOF public.{{prefix}}_json_tree_entry The descendants, each with its
@@ -566,7 +587,7 @@ $$;
 
 --! @brief The path selector of an entry.
 --! @param entry public.{{prefix}}_json_tree_entry The entry.
---! @return text Its `s`, hex.
+--! @return text Its `s`, base64.
 CREATE FUNCTION {{prefix}}.selector(entry public.{{prefix}}_json_tree_entry)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
@@ -577,7 +598,7 @@ $$;
 --! @brief The leaf ordering term of an entry, for ordered comparison.
 --!
 --! The CLLW OPE term the index derived for a number or string leaf, keyed by
---! the column, hex-decoded to the bytea-backed `{{prefix}}_internal.ope_cllw`
+--! the column, base64-decoded to the bytea-backed `{{prefix}}_internal.ope_cllw`
 --! domain: native byte order is plaintext order, so a functional btree on
 --! `{{prefix}}.ord_term(col -> 'selector')` engages with the DEFAULT opclass. NULL
 --! for an entry with no term (a container, a boolean, a null), which btree's
@@ -589,23 +610,23 @@ CREATE FUNCTION {{prefix}}.ord_term(entry public.{{prefix}}_json_tree_entry)
   RETURNS {{prefix}}_internal.ope_cllw
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT {{prefix}}_internal.ope_cllw(entry::jsonb)
+  SELECT {{prefix}}_internal.json_tree_ope_cllw(entry::jsonb)
 $$;
 
 --! @brief The leaf ordering term of an ordering operand.
 --! @param q {{prefix}}.query_json_tree_leaf The operand.
---! @return {{prefix}}_internal.ope_cllw Its `op`, hex-decoded.
+--! @return {{prefix}}_internal.ope_cllw Its `op`, base64-decoded.
 CREATE FUNCTION {{prefix}}.ord_term(q {{prefix}}.query_json_tree_leaf)
   RETURNS {{prefix}}_internal.ope_cllw
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT {{prefix}}_internal.ope_cllw(q::jsonb)
+  SELECT {{prefix}}_internal.json_tree_ope_cllw(q::jsonb)
 $$;
 
 --! @brief The path selector of an ordering operand: what `->` takes to reach
 --!        the leaf the operand compares against.
 --! @param q {{prefix}}.query_json_tree_leaf The operand.
---! @return text Its `s`, hex.
+--! @return text Its `s`, base64.
 CREATE FUNCTION {{prefix}}.selector(q {{prefix}}.query_json_tree_leaf)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
