@@ -351,31 +351,24 @@ impl JsonDocument {
 
     /// The children of the node whose token is `token`, as the server
     /// finds them: every entry whose parent tag is the tag of `token` at
-    /// some ordinal, with its own token unwrapped. The ordinals tried are
+    /// the entry's own ordinal, with its own token unwrapped, in ordinal
+    /// order. The SQL walk finds the same entries by trying the ordinals
     /// `0..F`, where `F` is one more than the largest ordinal in the
-    /// document, as the SQL walk tries them. A token that names no node
-    /// yields nothing.
+    /// document; checking each entry at its own ordinal gives the same
+    /// answer without a loop whose length a stored document chooses. A
+    /// token that names no node yields nothing.
     ///
     /// What a `jsonb_array_elements(doc, token)` returns; one level of the
     /// walk [`subtree`](Self::subtree) runs to the bottom.
     pub fn children(&self, token: &Tag) -> Vec<(usize, &JsonEntry, Tag)> {
         let iv = &self.header.iv;
-        let fanout = self
-            .entries
-            .iter()
-            .filter_map(|e| e.o)
-            .max()
-            .map_or(0, |o| o + 1);
-        let tags: Vec<Tag> = (0..fanout)
-            .map(|o| derive::parent_tag(iv, token, o))
-            .collect();
         let mut out: Vec<(usize, &JsonEntry, Tag)> = self
             .entries
             .iter()
             .enumerate()
             .filter_map(|(j, e)| {
                 let (p, w, o) = (e.p.as_ref()?, e.w.as_ref()?, e.o?);
-                (tags.get(o as usize) == Some(p)).then(|| {
+                (derive::parent_tag(iv, token, o) == *p).then(|| {
                     let child = derive::xor(w, &derive::mask(iv, token, &e.c));
                     (j, e, child)
                 })
@@ -389,6 +382,13 @@ impl JsonDocument {
     /// below that node, as the server's recursive walk finds them: the node
     /// itself is not included, since the walk addresses nodes by their
     /// parent. In depth-first order, siblings by ordinal.
+    ///
+    /// A stored document is untrusted, and its tags need not form a tree:
+    /// whoever holds a token can write a chain deeper than any document the
+    /// index seals, or a cycle. The walk stops descending below the deepest
+    /// level a sealed document has, and stops once it has returned as many
+    /// entries as the document holds, which a tree never exceeds, so it
+    /// ends, and in bounded stack, on any document.
     pub fn subtree(&self, token: &Tag) -> Vec<(usize, &JsonEntry, u32)> {
         let mut out = Vec::new();
         self.walk(token, 1, &mut out);
@@ -396,7 +396,13 @@ impl JsonDocument {
     }
 
     fn walk<'a>(&'a self, token: &Tag, depth: u32, out: &mut Vec<(usize, &'a JsonEntry, u32)>) {
+        if depth as usize > derive::MAX_DEPTH {
+            return;
+        }
         for (j, entry, child) in self.children(token) {
+            if out.len() >= self.entries.len() {
+                return;
+            }
             out.push((j, entry, depth));
             self.walk(&child, depth + 1, out);
         }
@@ -819,6 +825,92 @@ mod tests {
                 "stack_encrypt::json::JsonHeader {{ keyset_id: {:?}, iv: \"***\", tag: \"***\", sealed_root: true, epoch: 0 }}",
                 Uuid::from_u128(7)
             )
+        );
+    }
+
+    /// A chained entry that unwraps to `child` under `parent` at ordinal `o`,
+    /// as whoever holds `parent` can write one.
+    fn chained(iv: &[u8], parent: &Tag, o: u32, child: &Tag, c: Vec<u8>) -> JsonEntry {
+        JsonEntry {
+            s: [0; 16],
+            vs: [0; 16],
+            o: Some(o),
+            p: Some(derive::parent_tag(iv, parent, o)),
+            w: Some(derive::xor(child, &derive::mask(iv, parent, &c))),
+            n: None,
+            g: None,
+            op: None,
+            c,
+        }
+    }
+
+    fn root() -> JsonEntry {
+        JsonEntry {
+            s: [0; 16],
+            vs: [0; 16],
+            c: vec![0],
+            o: None,
+            p: None,
+            w: None,
+            n: None,
+            g: None,
+            op: None,
+        }
+    }
+
+    fn document(entries: Vec<JsonEntry>) -> JsonDocument {
+        JsonDocument::new(
+            JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![], true),
+            entries,
+        )
+    }
+
+    #[test]
+    fn an_ordinal_at_the_top_of_its_range_is_an_entry_like_any_other() {
+        let token = [1; 16];
+        let mut entry = chained(&[9; 16], &token, u32::MAX, &[2; 16], vec![3; 20]);
+        let doc = document(vec![root(), entry.clone()]);
+        let children = doc.children(&token);
+        assert_eq!(children.len(), 1, "found at its own ordinal, no fan-out");
+        assert_eq!(children[0].2, [2; 16]);
+        assert!(doc.children(&[7; 16]).is_empty());
+        entry.p = Some([0; 16]);
+        assert!(document(vec![root(), entry]).children(&token).is_empty());
+    }
+
+    #[test]
+    fn a_walk_ends_on_tags_that_do_not_form_a_tree() {
+        let iv = [9; 16];
+        let token = [1; 16];
+        // Two children of the token that each unwrap to the token itself:
+        // a cycle that doubles at every level.
+        let cycle = document(vec![
+            root(),
+            chained(&iv, &token, 0, &token, vec![4; 20]),
+            chained(&iv, &token, 1, &token, vec![5; 20]),
+        ]);
+        assert_eq!(
+            cycle.subtree(&token).len(),
+            cycle.entries().len(),
+            "no more entries than the document holds"
+        );
+
+        // A chain longer than any document the index seals.
+        let mut entries = vec![root()];
+        let mut parent = token;
+        for i in 0..1000u32 {
+            let mut child = [0; 16];
+            child[..4].copy_from_slice(&i.to_le_bytes());
+            child[15] = 0xee;
+            entries.push(chained(&iv, &parent, 0, &child, i.to_le_bytes().to_vec()));
+            parent = child;
+        }
+        let chain = document(entries);
+        let walked = chain.subtree(&token);
+        assert_eq!(walked.len(), derive::MAX_DEPTH, "cut at the deepest level");
+        assert_eq!(
+            walked.last().map(|(_, _, depth)| *depth as usize),
+            Some(derive::MAX_DEPTH)
         );
     }
 

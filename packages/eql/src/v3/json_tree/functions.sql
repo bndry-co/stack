@@ -426,6 +426,8 @@ $$;
 --! node itself is not returned: the walk addresses nodes by their parent,
 --! and the client reads the node's kind from its children's labels, or
 --! fetches the node by its selector.
+--! The walk descends at most 127 levels, the deepest a sealed document
+--! nests, so a stored document whose tags do not form a tree still ends it.
 --!
 --! **The budget.** A walk costs the fan-out in hashes per node it visits,
 --! and returns about four hundred characters per entry, where a sealed root
@@ -472,7 +474,10 @@ AS $$
         CROSS JOIN LATERAL (
           SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, w.t, o) AS entry
         ) AS c
-        WHERE c.entry IS NOT NULL
+        -- No sealed document nests deeper than 127 levels. A stored one
+        -- whose tags form a cycle or a longer chain, which whoever holds a
+        -- token can write, stops here instead of recursing without end.
+        WHERE c.entry IS NOT NULL AND w.depth < 127
     ),
     -- One row past the budget is enough to know the walk went over; a walk
     -- under it is the subtree complete. Uncapped, the limit is NULL: all.
@@ -545,7 +550,10 @@ AS $$
         CROSS JOIN LATERAL (
           SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, w.t, o) AS entry
         ) AS c
-        WHERE c.entry IS NOT NULL
+        -- No sealed document nests deeper than 127 levels. A stored one
+        -- whose tags form a cycle or a longer chain, which whoever holds a
+        -- token can write, stops here instead of recursing without end.
+        WHERE c.entry IS NOT NULL AND w.depth < 127
     ),
     found AS MATERIALIZED (
       SELECT w.depth, w.entry
@@ -593,6 +601,11 @@ $$;
 --! `{{prefix}}.ord_term(col -> 'selector')` engages with the DEFAULT opclass. NULL
 --! for an entry with no term (a container, a boolean, a null), which btree's
 --! NULL handling drops from range queries.
+--!
+--! Order rows by this, `ORDER BY {{prefix}}.ord_term(col -> 'sel')`, never by
+--! the entry itself: `ORDER BY col -> 'sel'` uses jsonb's default ordering of
+--! the entry object, which sorts by ciphertext, and an operator class that
+--! would redirect it needs a superuser to install.
 --!
 --! @param entry public.{{prefix}}_json_tree_entry The entry.
 --! @return {{prefix}}_internal.ope_cllw The term, or NULL.

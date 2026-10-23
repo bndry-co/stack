@@ -34,10 +34,25 @@ const VALUE_DOMAIN: &[u8] = b"stack-encrypt/json/value/v1";
 const TOKEN_DOMAIN: &[u8] = b"stack-encrypt/json/token/v1";
 /// PAE domain of an entry's AAD.
 const ENTRY_AAD_DOMAIN: &[u8] = b"stack-encrypt/json/entry/v1";
+/// PAE domain of a token step: a child's token, from its parent's token and
+/// its label. Keyed, so a token does not let its holder test key names.
+const STEP_DOMAIN: &[u8] = b"stack-encrypt/json/token-step/v1";
+/// PAE domain of an object member's rank under its parent's token, which
+/// orders the members' ordinals. Keyed for the same reason.
+const RANK_DOMAIN: &[u8] = b"stack-encrypt/json/rank/v1";
 
-/// Deeper than this is refused rather than walked: the walk recurses, and a
+/// Deeper than this is refused rather than sealed: the walk recurses, and a
 /// document built in memory can nest deeper than any parser admits.
-const MAX_DEPTH: usize = 512;
+///
+/// The bound is what reading the document back needs, not what the walk
+/// could manage. A sealed root's plaintext is the document as JSON, which
+/// `serde_json` parses with a nesting limit of 128 containers, so a
+/// document whose innermost value sits 128 levels down seals and then never
+/// opens. Refusing it here moves that failure from the read, where the
+/// value is lost, to the write, where the caller still holds it. The bound
+/// is the same under either root option, so the option never changes which
+/// documents the index accepts.
+pub(crate) const MAX_DEPTH: usize = 127;
 
 /// The byte that leads a sealed root's plaintext: the whole document, not a
 /// node.
@@ -149,14 +164,29 @@ struct NodePlain {
 /// The one-way terms of a document: one term node per node, in the
 /// walk's order, with the root first. The term of the
 /// [`Json`](struct@crate::target::Json) index, and what every query term is built
-/// from; it holds no plaintext and no key.
-#[derive(Clone, Debug)]
+/// from. It holds no scalar value and no key, but it does hold the
+/// document's shape: each node's positional path, whose key names are
+/// plaintext, and each node's chain token, which is a capability over its
+/// subtree in every row. `Debug` prints neither, only how many nodes there
+/// are, and the terms should not be logged or sent anywhere but into a
+/// query.
+#[derive(Clone)]
 pub struct JsonTerms {
     nodes: Vec<TermNode>,
     /// For a document whose root is a scalar: the selector pair the same
     /// scalar has as an element of a root array, so a containment needle
     /// can match a stored `["a"]` as `jsonb @>` does.
     alt: Option<(Tag, Tag)>,
+}
+
+/// The key names and the tokens are what the terms must not leak, so the
+/// output is the node count alone.
+impl std::fmt::Debug for JsonTerms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsonTerms")
+            .field("nodes", &self.nodes.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl JsonTerms {
@@ -235,13 +265,28 @@ fn h16(parts: &[&[u8]]) -> Tag {
     truncate(&hasher.finalize())
 }
 
-/// `H("t" ‖ t(parent) ‖ 0x01 ‖ key)` or `H("t" ‖ t(parent) ‖ 0x02 ‖ LE64(index))`.
-fn child_token(parent: &Tag, label: &Label) -> Tag {
-    match label {
-        Label::Key(key) => h16(&[b"t", parent, &[0x01], key.as_bytes()]),
-        Label::Index(index) => h16(&[b"t", parent, &[0x02], &index.to_le_bytes()]),
-        Label::Root => *parent,
-    }
+/// A child's token: `PRF(json/token-step ‖ column, PAE(t(parent), 0x01,
+/// key))` for an object member, `PAE(t(parent), 0x02, LE64(index))` for an
+/// array element, the first sixteen bytes.
+///
+/// Keyed with the index key (the design's decision 11). An unkeyed hash of
+/// the parent's token and the label would let anyone holding a token test a
+/// guessed key name against every child token the walk unwraps below it, in
+/// every row of the column. The server never derives a child token from a
+/// label (it unwraps `w`), so only the client computes this step, and the
+/// client holds the key.
+fn child_token(
+    prf: &HmacSha256Prf,
+    context: &Context<'_>,
+    parent: &Tag,
+    label: &Label,
+) -> Result<Tag, TermError> {
+    let framed = match label {
+        Label::Key(key) => Context::pae(&[parent, &[0x01], key.as_bytes()]),
+        Label::Index(index) => Context::pae(&[parent, &[0x02], &index.to_le_bytes()]),
+        Label::Root => return Ok(*parent),
+    };
+    prf16(prf, STEP_DOMAIN, context, framed.as_bytes())
 }
 
 /// `H("p" ‖ iv ‖ t(parent) ‖ LE32(ordinal))`: position-keyed, so siblings
@@ -260,14 +305,18 @@ fn group_tag(iv: &[u8], token: &Tag) -> Tag {
     h16(&[b"g", iv, token])
 }
 
-/// `H("o" ‖ t(parent) ‖ key)`: what an object's members are ranked by for
-/// their ordinals, so an ordinal does not rank key names.
-fn rank(parent: &Tag, key: &str) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(b"o");
-    hasher.update(parent);
-    hasher.update(key.as_bytes());
-    hasher.finalize().into()
+/// `PRF(json/rank ‖ column, PAE(t(parent), key))`: what an object's members
+/// are ranked by for their ordinals, so an ordinal does not rank key names.
+/// Keyed, as [`child_token`] is, so a token's holder cannot rank guessed
+/// key names and compare the order with the ordinals it sees.
+fn rank(
+    prf: &HmacSha256Prf,
+    context: &Context<'_>,
+    parent: &Tag,
+    key: &str,
+) -> Result<Tag, TermError> {
+    let framed = Context::pae(&[parent, key.as_bytes()]);
+    prf16(prf, RANK_DOMAIN, context, framed.as_bytes())
 }
 
 pub(super) fn xor(a: &Tag, b: &Tag) -> Tag {
@@ -446,7 +495,9 @@ impl Walker<'_> {
                 self.context,
                 &positional.token_bytes().unwrap_or_default(),
             )?),
-            _ => parent_token.map(|p| child_token(&p, &label)),
+            _ => parent_token
+                .map(|p| child_token(self.prf, self.context, &p, &label))
+                .transpose()?,
         };
         let op = leaf_op(self.prf, self.context, value)?;
         let container_element = matches!(label, Label::Index(_)) && kind.is_container();
@@ -476,8 +527,9 @@ impl Walker<'_> {
         let mut count: u32 = 0;
         match value {
             Value::Object(map) => {
-                let ordinals: Option<BTreeMap<String, u32>> =
-                    token.map(|t| shuffled_ordinals(&t, map));
+                let ordinals: Option<BTreeMap<String, u32>> = token
+                    .map(|t| shuffled_ordinals(self.prf, self.context, &t, map))
+                    .transpose()?;
                 for (key, child) in map {
                     let ordinal = ordinals.as_ref().and_then(|o| o.get(key).copied());
                     let _ = self.visit(
@@ -525,14 +577,22 @@ impl Walker<'_> {
 /// An object's members' ordinals: their positions in the order of their
 /// ranks under the parent's token, so the ordinals rank nothing a reader
 /// without the token can see.
-fn shuffled_ordinals(parent: &Tag, map: &Map<String, Value>) -> BTreeMap<String, u32> {
-    let mut ranked: Vec<([u8; 32], &String)> = map.keys().map(|k| (rank(parent, k), k)).collect();
+fn shuffled_ordinals(
+    prf: &HmacSha256Prf,
+    context: &Context<'_>,
+    parent: &Tag,
+    map: &Map<String, Value>,
+) -> Result<BTreeMap<String, u32>, TermError> {
+    let mut ranked: Vec<(Tag, &String)> = map
+        .keys()
+        .map(|k| Ok((rank(prf, context, parent, k)?, k)))
+        .collect::<Result<_, TermError>>()?;
     ranked.sort();
-    ranked
+    Ok(ranked
         .into_iter()
         .enumerate()
         .map(|(o, (_, key))| (key.clone(), o as u32))
-        .collect()
+        .collect())
 }
 
 // =============================================================================
@@ -812,12 +872,23 @@ fn open_entry(
 /// Rebuild the value of `node`, taking its descendants from `rest`, the
 /// pre-order sequence after it. Every child is taken with `next`, so each
 /// step consumes an entry and the rebuild ends on any sequence.
+///
+/// `depth` is `node`'s depth below the rebuild's start. Each entry is
+/// authentic, but which entries the server returned, and so how deep the
+/// containers it lines up nest, is not: rows that repeat one container, or
+/// list only the containers of a wide document, would otherwise recurse as
+/// deep as there are rows. Nothing the index seals nests deeper than
+/// [`MAX_DEPTH`], so deeper is refused as a shape mismatch.
 fn rebuild<'a>(
     node: &'a Opened,
     rest: &mut impl Iterator<Item = &'a Opened>,
+    depth: usize,
 ) -> Result<Value, Error> {
     if let Some(whole) = &node.whole {
         return Ok(whole.clone());
+    }
+    if depth > MAX_DEPTH {
+        return Err(shape("a JSON document no deeper than the index seals"));
     }
     match node.kind {
         Kind::Object => {
@@ -827,7 +898,7 @@ fn rebuild<'a>(
                 let Label::Key(key) = &member.label else {
                     return Err(shape("an object member"));
                 };
-                let value = rebuild(member, rest)?;
+                let value = rebuild(member, rest, depth + 1)?;
                 let _ = map.insert(key.clone(), value);
             }
             Ok(Value::Object(map))
@@ -839,7 +910,7 @@ fn rebuild<'a>(
                 if element.label != Label::Index(u64::from(i)) {
                     return Err(shape("an array element in order"));
                 }
-                items.push(rebuild(element, rest)?);
+                items.push(rebuild(element, rest, depth + 1)?);
             }
             Ok(Value::Array(items))
         }
@@ -899,7 +970,7 @@ fn open_document<'a, K>(
         let root = rest
             .next()
             .ok_or_else(|| shape("a document with a root entry"))?;
-        let value = rebuild(root, &mut rest)?;
+        let value = rebuild(root, &mut rest, 0)?;
         if rest.next().is_some() {
             return Err(shape("a document with no entries past its root"));
         }
@@ -1016,6 +1087,12 @@ fn open_subtree<'a, K>(
 ) -> Pending<'a, Vec<(Label, Value)>, K> {
     let mut nodes = subtree.nodes;
     nodes.sort_by_key(|n| n.j);
+    // A walk returns each entry once. Two rows at one ordinal are the
+    // server repeating an entry, which would let it line up one container
+    // as many times as it likes.
+    if nodes.windows(2).any(|pair| pair[0].j == pair[1].j) {
+        return Pending::failed(cipher, shape("rows of distinct entries"));
+    }
     let Some(first) = nodes.first() else {
         return Pending::ready(cipher, Ok(Vec::new()));
     };
@@ -1037,7 +1114,7 @@ fn open_subtree<'a, K>(
         let mut forest = Vec::new();
         let mut rest = opened.iter();
         while let Some(top) = rest.next() {
-            let value = rebuild(top, &mut rest)?;
+            let value = rebuild(top, &mut rest, 0)?;
             forest.push((top.label.clone(), value));
         }
         Ok(forest)
@@ -1109,7 +1186,7 @@ fn token_for(
             // `anchor` cut the path before any wildcard.
             Segment::Wildcard => return Err(TermError::JsonSealedRoot),
         };
-        token = child_token(&token, &label);
+        token = child_token(prf, context, &token, &label)?;
     }
     Ok(token)
 }
@@ -1227,6 +1304,19 @@ mod tests {
     }
 
     #[test]
+    fn the_terms_print_neither_key_names_nor_tokens() {
+        let t = terms(
+            &json!({"alice@example.com": {"ssn": "123"}}),
+            JsonOptions::default(),
+        );
+        let printed = format!("{t:?}");
+        assert_eq!(printed, "JsonTerms { nodes: 3, .. }");
+        let token = t.nodes()[1].token.unwrap();
+        assert!(!printed.contains("alice"));
+        assert!(!printed.contains(&super::super::hex(&token)));
+    }
+
+    #[test]
     fn every_element_of_an_array_shares_a_selector_and_values_do_not() {
         let t = terms(&json!({"a": [1, 2, 1]}), JsonOptions::default());
         let nodes = t.nodes();
@@ -1311,14 +1401,47 @@ mod tests {
             .iter()
             .map(|k| (k.to_string(), json!(1)))
             .collect();
-        let ordinals = shuffled_ordinals(&[1; 16], &map);
+        let context = Context::from_encoded(b"users/profile");
+        let ordinals = shuffled_ordinals(&prf(), &context, &[1; 16], &map).unwrap();
         let mut seen: Vec<u32> = ordinals.values().copied().collect();
         seen.sort_unstable();
         assert_eq!(seen, [0, 1, 2, 3]);
-        let other = shuffled_ordinals(&[2; 16], &map);
+        let other = shuffled_ordinals(&prf(), &context, &[2; 16], &map).unwrap();
         assert_ne!(
             ordinals, other,
             "a different token shuffles differently (with overwhelming probability)"
+        );
+    }
+
+    /// A token's holder cannot test key names: the step from a parent's
+    /// token to a child's, and an object member's rank, are keyed with the
+    /// index key, so the same parent token and label give unrelated bytes
+    /// under another key, and nothing public reproduces them.
+    #[test]
+    fn the_token_step_and_the_rank_are_keyed() {
+        let context = Context::from_encoded(b"users/profile");
+        let other = HmacSha256Prf::new(Protected::new([8; 32]));
+        let parent = [5; 16];
+        let key = Label::Key("email@example.com".into());
+        let step = |prf: &HmacSha256Prf, label: &Label| {
+            child_token(prf, &context, &parent, label).unwrap()
+        };
+        assert_eq!(step(&prf(), &key), step(&prf(), &key), "deterministic");
+        assert_ne!(step(&prf(), &key), step(&other, &key), "keyed");
+        assert_ne!(
+            step(&prf(), &key),
+            h16(&[b"t", &parent, &[0x01], b"email@example.com"]),
+            "not the unkeyed hash"
+        );
+        assert_ne!(
+            step(&prf(), &Label::Index(0)),
+            step(&prf(), &Label::Key("0".into())),
+            "an element is not a member"
+        );
+        assert_ne!(
+            rank(&prf(), &context, &parent, "a").unwrap(),
+            rank(&other, &context, &parent, "a").unwrap(),
+            "the rank is keyed"
         );
     }
 

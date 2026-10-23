@@ -719,6 +719,32 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .collect();
     assert_eq!(sorted, [3, 1, 2], "aaa, world-1, world-2");
 
+    // An ordering operand that lost its `query_json_tree_leaf` cast is plain
+    // jsonb, and every comparison of an entry with plain jsonb raises,
+    // either way round, instead of comparing the entry's ciphertext.
+    for op in ["<", "<=", ">", ">=", "=", "<>"] {
+        for sql in [
+            format!("SELECT id FROM json_tree_rows WHERE (doc -> $1::text) {op} $2::text::jsonb"),
+            format!("SELECT id FROM json_tree_rows WHERE $2::text::jsonb {op} (doc -> $1::text)"),
+        ] {
+            match db.query(&sql, &[&number, &at_least_one]) {
+                Ok(rows) => panic!("{sql} must be blocked, but returned {} rows", rows.len()),
+                Err(error) => {
+                    let message = error
+                        .as_db_error()
+                        .map(|e| e.message().to_owned())
+                        .unwrap_or_else(|| error.to_string());
+                    assert!(
+                        message.contains(&format!(
+                            "operator {op} is not supported for public.eql_v4_json_tree_entry"
+                        )),
+                        "{sql}: {message}"
+                    );
+                }
+            }
+        }
+    }
+
     // The native jsonb operators are blocked on the column. The operand is
     // typed, as every EQL jsonb domain requires: an untyped literal resolves
     // to the native operator on the base type.
