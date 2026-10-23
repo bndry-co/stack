@@ -136,11 +136,13 @@ func TestEQLOrderMatchesPlaintextInPostgres(t *testing.T) {
 	}
 }
 
-// eqlOrderIndex is the order index typ carries, or "" for none.
+// eqlOrderIndex is the order index typ carries, or "" for none: an index
+// that answers `lt` in eqlIndexOperators, the list the round-trip test fails
+// without. So an order index added there is tested here too, and fails at
+// the extractor until it has one, rather than being skipped.
 func eqlOrderIndex(typ eql.Type) string {
 	for _, index := range typ.Indexes {
-		switch index {
-		case "ope", "ore", "ore_block":
+		if slices.Contains(eqlIndexOperators[index], "lt") {
 			return index
 		}
 	}
