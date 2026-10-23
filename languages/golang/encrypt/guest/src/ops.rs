@@ -45,13 +45,13 @@
 //! the output. Control data (a plan, a context, an options object, query
 //! statistics) carries no secret and is read from its frame with serde.
 
+use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext, Frame};
 use stack_encrypt::dynamic::{self, Scope, ValueFrame};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::ErrorPayload;
 use stack_encrypt::{CipherText, KeysetCipher, Label, Node, SealedValue, StackCipherText};
 use stack_kms::DataKeySource;
-use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext, Frame};
 use zeroize::Zeroizing;
 
 use stack_guest_abi::last_error;
@@ -86,7 +86,7 @@ type BytesTree = Node<Vec<u8>>;
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
 /// — or an array of parts, nested as deep as the transport codec allows
-/// ([`MAX_DEPTH`](vitaminc_aead_frame::MAX_DEPTH) levels from the root of the frame; deeper
+/// ([`MAX_DEPTH`](stack_encrypt::dynamic::frame::MAX_DEPTH) levels from the root of the frame; deeper
 /// is [`STATUS_ENCODING`] before the context is read), exactly as a plan
 /// field's; [`dynamic::context`] is the one home of that grammar. Shape is identity:
 /// `[x]` is a PAE-framed list and `x` is not, so a probe takes the context
@@ -559,8 +559,9 @@ fn not_a_frame() -> u32 {
 /// is sized as every other output is. A query term's search tokens are
 /// derived from plaintext, so the staging buffer is wiped once copied.
 fn encode_answer<T: serde::Serialize>(answer: &T) -> Result<Vec<u8>, u32> {
-    let frame =
-        Zeroizing::new(vitaminc_aead_frame::serde::to_vec(answer).map_err(|_| STATUS_ENCODING)?);
+    let frame = Zeroizing::new(
+        stack_encrypt::dynamic::frame::serde::to_vec(answer).map_err(|_| STATUS_ENCODING)?,
+    );
     let mut out = exact_buffer(Some(frame.len()))?;
     out.extend_from_slice(&frame);
     Ok(out)
@@ -654,7 +655,7 @@ fn tree_encoded_len(tree: &BytesTree) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::support::Tree;
-    use vitaminc_protected::Controlled;
+    use stack_encrypt::Controlled;
 
     // `tree_encoded_len` re-derives the codec's arithmetic; the codec exports
     // no `encoded_len` of its own, so this pin is the only thing that fails if

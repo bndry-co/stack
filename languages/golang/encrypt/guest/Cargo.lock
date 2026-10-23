@@ -2201,9 +2201,6 @@ dependencies = [
  "stack-guest-abi",
  "stack-kms",
  "uuid",
- "vitaminc-aead 0.8.0",
- "vitaminc-aead-frame",
- "vitaminc-protected 0.8.0",
  "zeroize",
  "zerokms-protocol",
 ]

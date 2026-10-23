@@ -302,8 +302,9 @@ updates:
       # vitaminc: a new release can change every stored order term.
       - dependency-name: "clww-ore"
       - dependency-name: "ore-rs"
-      # vitaminc is pinned at 0.8.0 across the crates and the guests; the
-      # guests' `ValueFrame: Decrypt` bound fails if two versions resolve.
+      # vitaminc is pinned at 0.8.0 across the crates. The encrypt guest
+      # takes it only through stack-encrypt's re-exports, so it cannot
+      # resolve a second version; one would fail at `ValueFrame: Decrypt`.
       - dependency-name: "vitaminc*"
       # Major bumps are reviewed and applied manually, not by Dependabot.
       - dependency-name: "*"

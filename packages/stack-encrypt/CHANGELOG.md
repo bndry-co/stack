@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The vitaminc a binding speaks through is re-exported.** `dynamic::frame`
+  is `vitaminc-aead-frame` (the transport frame and ciphertext codec, with
+  its `serde` module), `dynamic::plaintext` is vitaminc-aead's value model,
+  for implementing `Encrypt` on a binding's own values, and the crate root
+  adds `DecodeError`, `Protected` and `Controlled`. A binding that takes
+  these from stack-encrypt cannot resolve a second vitaminc, which would
+  fail only at a `ValueFrame: Decrypt` bound. The Go guest now takes
+  vitaminc only this way.
+
 - **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended
   2026-10-19). It derives ore-rs 0.9.0's 6-bit block ORE under its own key
   domain, over the same order keys as the CLLW indexes:
