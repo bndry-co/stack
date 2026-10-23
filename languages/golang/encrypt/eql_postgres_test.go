@@ -106,26 +106,7 @@ func TestEQLTypesRoundTripAndQueryInPostgres(t *testing.T) {
 	ctx := context.Background()
 	c := deterministicEQLClient(t)
 	cipher := c.DefaultKeyset()
-
-	db, err := sql.Open("pgx", url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	// One connection: the tables are temporary and live in this session.
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-
-	var installed bool
-	if err := conn.QueryRowContext(ctx, `SELECT to_regnamespace('eql_v4') IS NOT NULL`).Scan(&installed); err != nil {
-		t.Fatal(err)
-	}
-	if !installed {
-		t.Fatal("EQL v4 is not installed in DATABASE_URL: install the bundle built from the tree (`mise run build` in packages/eql writes release/cipherstash-encrypt-v4.sql), or run `mise run go:test:postgres`")
-	}
+	conn := eqlPostgresConn(t, ctx, url)
 
 	covered := 0
 	for _, typ := range eql.Types {
@@ -175,6 +156,32 @@ func TestEQLTypesRoundTripAndQueryInPostgres(t *testing.T) {
 	if covered == 0 {
 		t.Fatal("eql.Types lists no producible type, so this test checked nothing")
 	}
+}
+
+// eqlPostgresConn opens one connection to url, which must have EQL v4
+// installed. One connection, because the tests' tables are temporary and
+// live in this session.
+func eqlPostgresConn(t *testing.T, ctx context.Context, url string) *sql.Conn {
+	t.Helper()
+	db, err := sql.Open("pgx", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	var installed bool
+	if err := conn.QueryRowContext(ctx, `SELECT to_regnamespace('eql_v4') IS NOT NULL`).Scan(&installed); err != nil {
+		t.Fatal(err)
+	}
+	if !installed {
+		t.Fatal("EQL v4 is not installed in DATABASE_URL: install the bundle built from the tree (`mise run build` in packages/eql writes release/cipherstash-encrypt-v4.sql), or run `mise run go:test:postgres`")
+	}
+	return conn
 }
 
 type eqlHarness struct {
