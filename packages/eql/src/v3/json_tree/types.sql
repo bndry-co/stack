@@ -29,8 +29,8 @@
 --!        the node's ordinal under its parent: present below the chain's
 --!        heads. The ordinals under a node are dense from 0, so a walk
 --!        holding `t(parent)` probes them in turn until the first miss, and
---!        derives each hit's own token as `H("t" ‖ t(parent) ‖ LE32(o))`.
---!        Nothing stores a token or an ordinal.
+--!        derives each hit's own token as `H("t" ‖ t(parent) ‖ s ‖ LE32(o))`
+--!        from the hit's selector. Nothing stores a token or an ordinal.
 --!   `op` the leaf ordering term (CLLW OPE, base64) on number and string leaves.
 --! The header `h` (base64) carries the document's data key material once; the
 --! SQL reads only the sealed-root flag at byte offset 1 and the ZeroKMS `iv`

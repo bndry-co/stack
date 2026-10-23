@@ -732,9 +732,13 @@ fn postgres_extracts_walks_and_orders_by_path() {
     assert_eq!(values, vec![json!(1), json!(2)]);
 
     // A positional path below a key step: the second element's subtree,
-    // through the list's selector and the position `#1`.
+    // through the list's selector and the position `#1`, with the selector
+    // every element of the list carries.
     let second = subtree_key("$.nested.list[1]");
-    assert_eq!(second.gates()[1], "#1");
+    assert_eq!(
+        second.gates()[1],
+        format!("#1:{}", selector("$.nested.list[*]"))
+    );
     let walked: Vec<JsonTreeEntry> = db
         .query(
             "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[]) e WHERE id = 1",
@@ -889,6 +893,118 @@ fn postgres_extracts_walks_and_orders_by_path() {
     }
 }
 
+/// Needs an EQL v4 installation. A position names an array element and
+/// nothing else, in every row of the column, as a strict SQL/JSON path does
+/// (`jsonb_path_query_first(plain, 'strict $.a[1]')`): where a
+/// row's node at the path is an object, an object member ranked at that
+/// ordinal is not returned, whether the client derived the position's
+/// token (`$.a[1]`, directly after the head) or the walk took it as a gate
+/// (`$.h.a[0]`, below a key step). Each walk's rows open to the plaintext's
+/// value at the strict path, or come back empty where it has none. (`#>`
+/// would not do as the oracle: it reads `1` as a key of an object.)
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_a_position_reaches_array_elements_only() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = wait(&runtime, common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = connect();
+    db.batch_execute(
+        "CREATE TEMP TABLE json_tree_positions (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_tree NOT NULL)",
+    )
+    .unwrap();
+    let rows = [
+        json!({"a": [{"x": 1}, {"x": 2}], "h": {"a": [{"x": 3}, {"x": 4}]}}),
+        json!({"a": {"k": {"x": 9}, "m": {"x": 6}}, "h": {"a": {"k": {"x": 8}, "m": {"x": 5}}}}),
+        json!({"a": {"0": {"x": 7}, "1": {"x": 7}}, "h": {"a": {"0": {"x": 7}}}}),
+    ];
+    for (id, plain) in (1..).zip(&rows) {
+        let stored = wait(&runtime, seal(&cipher, plain));
+        let stored = serde_json::to_string(&stored).unwrap();
+        db.execute(
+            "INSERT INTO json_tree_positions VALUES ($1, $2::text::jsonb, $3::text::jsonb::public.eql_v4_json_tree)",
+            &[&id, &plain.to_string(), &stored],
+        )
+        .unwrap();
+    }
+    for path in ["$.a[1]", "$.h.a[0]"] {
+        let key = wait(
+            &runtime,
+            keyset.json_subtree_key(&JsonPath::parse(path).unwrap(), &options(), column()),
+        )
+        .unwrap();
+        for id in 1..=3 {
+            let walked: Vec<JsonTreeEntry> = db
+                .query(
+                    "SELECT e::jsonb::text FROM json_tree_positions, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[], 0) e WHERE id = $3",
+                    &[&key.token(), &key.gates(), &id],
+                )
+                .unwrap()
+                .iter()
+                .map(|r| serde_json::from_str(&r.get::<_, String>(0)).unwrap())
+                .collect();
+            let expected: Option<String> = db
+                .query_one(
+                    "SELECT jsonb_path_query_first(plain, ('strict ' || $1::text)::jsonpath, '{}', true)::text FROM json_tree_positions WHERE id = $2",
+                    &[&path, &id],
+                )
+                .unwrap()
+                .get(0);
+            match expected {
+                None => assert!(walked.is_empty(), "{path}, row {id}: jsonb has no node"),
+                Some(expected) => {
+                    let value: Value = wait(
+                        &runtime,
+                        cipher.decrypt_as(
+                            JsonTreeSubtree::new(walked).at(JsonPath::parse(path).unwrap()),
+                            column(),
+                        ),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        value,
+                        serde_json::from_str::<Value>(&expected).unwrap(),
+                        "{path}, row {id}"
+                    );
+                }
+            }
+        }
+    }
+    // A position gate that does not name the elements' selector admits
+    // nothing: an ordinal alone cannot tell an element from a member.
+    let key = wait(
+        &runtime,
+        keyset.json_subtree_key(&JsonPath::parse("$.h.a[0]").unwrap(), &options(), column()),
+    )
+    .unwrap();
+    let bare = [key.gates()[0].clone(), "#0".to_owned()];
+    let none: i64 = db
+        .query_one(
+            "SELECT count(*) FROM json_tree_positions, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[], 0) e",
+            &[&key.token(), &bare.as_slice()],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(none, 0);
+    let counts: Vec<(i32, i32)> = db
+        .query(
+            "SELECT id, eql_v4.json_tree_child_count(doc, $1::text, $2::text[]) FROM json_tree_positions ORDER BY id",
+            &[&key.token(), &key.gates()],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect();
+    assert_eq!(
+        counts,
+        [(1, 1), (2, 0), (3, 0)],
+        "one member, x, under $.h.a[0] in row 1 only"
+    );
+}
+
 /// Needs an EQL v4 installation. A stored document is untrusted input: its
 /// parent tags are not authenticated, so whoever holds a token can write a
 /// chain of them deeper than any sealed document. A child's token is a
@@ -913,13 +1029,13 @@ fn postgres_walks_end_on_hostile_documents() {
              ), link(n, t) AS (
                  SELECT 0, decode(repeat('00', 16), 'hex')
                UNION ALL
-                 SELECT n + 1, eql_v4_internal.json_tree_child_token(t, 0) FROM link WHERE n < 299
+                 SELECT n + 1, eql_v4_internal.json_tree_child_token(t, decode(repeat('00', 16), 'hex'), 0) FROM link WHERE n < 299
              )
              SELECT (jsonb_build_object(
                'v', 4, 'i', jsonb_build_object('t', 'users', 'c', 'profile'),
                'h', (SELECT encode(h, 'base64') FROM k),
-               'sv', jsonb_build_array(jsonb_build_object('s', 'aa', 'c', 'AA=='))
-                     || (SELECT jsonb_agg(jsonb_build_object('s', 'aa', 'c', 'AA==', 'p', eql_v4_internal.json_tree_parent_tag(k.iv, link.t, 0)) ORDER BY n) FROM link, k),
+               'sv', jsonb_build_array(jsonb_build_object('s', 'AAAAAAAAAAAAAAAAAAAAAA==', 'c', '00'))
+                     || (SELECT jsonb_agg(jsonb_build_object('s', 'AAAAAAAAAAAAAAAAAAAAAA==', 'c', '00', 'p', eql_v4_internal.json_tree_parent_tag(k.iv, link.t, 0)) ORDER BY n) FROM link, k),
                'q', '{{\"sv\": [], \"el\": []}}'::jsonb))::public.eql_v4_json_tree"
         )
     };

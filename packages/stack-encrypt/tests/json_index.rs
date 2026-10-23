@@ -384,7 +384,11 @@ async fn a_token_derived_from_the_path_alone_unlocks_exactly_its_subtree() {
         "anchored at the head"
     );
     assert_eq!(deeper.gates().len(), 2, "list, then [1]");
-    assert_eq!(deeper.gates()[1], "#1");
+    assert_eq!(
+        deeper.gates()[1],
+        format!("#1:{}", base64(doc.entries()[5].selector())),
+        "the position, and the selector every element of the list carries"
+    );
     let list_token = doc
         .children(key.token_bytes())
         .into_iter()
@@ -1357,6 +1361,58 @@ async fn no_stored_tag_is_a_token() {
         assert!(!tokens.contains(entry.selector()));
     }
     assert_eq!(nested.token(), base64(nested.token_bytes()));
+}
+
+/// A position names an array element and nothing else. A column's rows
+/// need not agree on a node's kind, and an object member's ordinal is a
+/// rank among its siblings, so a token derived for `$.a[0]` must not open
+/// the rank-0 member of a row whose `$.a` is an object: `jsonb` has no
+/// node at `{a,0}` there, and neither does the index.
+#[tokio::test]
+async fn a_position_reaches_no_object_member() {
+    let cipher = stack_cipher().await;
+    let first = subtree_key(&cipher, "$.a[0]", JsonOptions::default())
+        .await
+        .unwrap();
+    assert!(
+        first.gates().is_empty(),
+        "a position after the head derives"
+    );
+    let array = seal(&cipher, &json!({"a": [{"x": 2}]})).await;
+    let found: Vec<usize> = array
+        .subtree(first.token_bytes())
+        .iter()
+        .map(|(j, _, _)| *j)
+        .collect();
+    assert_eq!(found, [3], "$, $.a, $.a[0], $.a[0].x");
+    for object in [
+        json!({"a": {"k": {"x": 1}}}),
+        json!({"a": {"k": [1, 2]}}),
+        json!({"a": {"0": {"x": 1}}}),
+    ] {
+        let doc = seal(&cipher, &object).await;
+        assert!(
+            doc.subtree(first.token_bytes()).is_empty(),
+            "{object}: an object member is not an element"
+        );
+    }
+    // The same below a key step, where the position is a gate: the walk
+    // from the head reaches `$.h.a` by its selector, and the gate at the
+    // next step admits an element only. A member at ordinal 0 under an
+    // object `$.h.a` carries its own selector, not the element's.
+    let gated = subtree_key(&cipher, "$.h.a[0]", JsonOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(gated.gates().len(), 2);
+    let element = cipher
+        .default_keyset()
+        .json_selector(
+            &JsonPath::parse("$.h.a[*]").unwrap(),
+            nonempty!("users").with("profile"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(gated.gates()[1], format!("#0:{element}"));
 }
 
 /// Padded standard base64, as the SQL reads and writes it.

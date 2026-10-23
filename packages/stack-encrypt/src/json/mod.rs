@@ -16,7 +16,9 @@
 //!   `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`, which lets the server walk the subtree under a node from one client-derived
 //!   token and nothing else: the ordinals `o` under a node are dense from
 //!   zero, so a walk probes them in turn until the first miss, and derives
-//!   each hit's own token as `H("t" ‖ t(parent) ‖ LE32(o))`;
+//!   each hit's own token as `H("t" ‖ t(parent) ‖ s ‖ LE32(o))` from the
+//!   hit's own selector `s`, which keeps an array element's token apart
+//!   from an object member's at the same ordinal;
 //! - a leaf ordering term `op` on the number and string leaves at the
 //!   paths the index declares ordered ([`JsonOptions::ordered`]), the
 //!   same OPE term the scalar [`Ope`](crate::target::Ope) index derives,
@@ -67,8 +69,9 @@
 //! - **Tokens chain by ordinal, not by label, and nothing stores a token.**
 //!   The design wraps each child's label-derived token under its parent's
 //!   (`w`) and stores the ordinal (`o`) so the server can find and unmask
-//!   it. Here a child's token is a hash of its parent's token and its
-//!   ordinal, so the server derives it as it walks and both fields go. The
+//!   it. Here a child's token is a hash of its parent's token, its own
+//!   selector and its ordinal, so the server derives it as it walks and
+//!   both fields go. The
 //!   ordinals under a node are dense from zero, so the walk needs no
 //!   fan-out bound either: it probes until the first miss. The price is
 //!   that the client cannot derive an object member's token (its ordinal
@@ -422,7 +425,7 @@ impl JsonDocument {
             else {
                 break;
             };
-            out.push((j, entry, derive::child_token(token, o)));
+            out.push((j, entry, derive::child_token(token, &entry.s, o)));
         }
         out
     }
@@ -912,7 +915,7 @@ mod tests {
         let mut parent = token;
         for _ in 0..1000 {
             entries.push(chained(&iv, &parent, 0));
-            parent = derive::child_token(&parent, 0);
+            parent = derive::child_token(&parent, &[0; 16], 0);
         }
         let chain = JsonDocument::new(
             JsonHeader::new(Uuid::from_u128(7), iv, vec![], true),

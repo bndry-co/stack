@@ -331,24 +331,28 @@ pub(crate) enum Gate {
     /// The selector of the path down to that depth: a key step, or a
     /// wildcard, whose selector every element carries.
     Selector(Tag),
-    /// An array position: the one ordinal probed at that depth.
-    Slot(u32),
+    /// An array position: the one ordinal probed at that depth, and the
+    /// selector of an element there (the wildcard's), which the entry at
+    /// that ordinal must carry. The ordinal alone would admit an object
+    /// member that ranks there in a row whose node at the path is an
+    /// object.
+    Slot(u32, Tag),
 }
 
 impl Gate {
     /// The gate as `json_tree_subtree_at` takes it: the selector's base64, or
-    /// `#n` for a position.
+    /// `#n:` and the element selector's base64 for a position.
     fn text(&self) -> String {
         match self {
             Gate::Selector(s) => base64(s),
-            Gate::Slot(n) => format!("#{n}"),
+            Gate::Slot(n, s) => format!("#{n}:{}", base64(s)),
         }
     }
 }
 
 /// The key of a subtree walk: the token of the deepest node on the path
 /// the client can derive, and one gate per step below it. Serializes as
-/// `{"t": "…", "g": ["…", "#0", …]}`, `g` omitted when empty.
+/// `{"t": "…", "g": ["…", "#0:…", …]}`, `g` omitted when empty.
 #[derive(Clone, PartialEq, Eq)]
 pub struct JsonSubtreeKey {
     pub(crate) token: Tag,
@@ -369,9 +373,10 @@ impl JsonSubtreeKey {
     }
 
     /// The gates the walk descends through below the token, one per step,
-    /// as `json_tree_subtree_at` takes them: a selector's base64, or `#n` for
-    /// an array position. Empty when the token names the walked node
-    /// itself, which `json_tree_subtree` takes.
+    /// as `json_tree_subtree_at` takes them: a selector's base64, or
+    /// `#n:<selector>` for an array position, the selector being the array
+    /// elements' own. Empty when the token names the walked node itself,
+    /// which `json_tree_subtree` takes.
     pub fn gates(&self) -> Vec<String> {
         self.gates.iter().map(Gate::text).collect()
     }
@@ -750,14 +755,17 @@ mod tests {
         );
         let key = JsonSubtreeKey {
             token: [0xcd; 16],
-            gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3)],
+            gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3, [0xab; 16])],
         };
         assert_eq!(key.token(), "zc3Nzc3Nzc3Nzc3Nzc3NzQ==");
         assert_eq!(key.token_bytes(), &[0xcd; 16]);
-        assert_eq!(key.gates(), ["q6urq6urq6urq6urq6urqw==", "#3"]);
+        assert_eq!(
+            key.gates(),
+            ["q6urq6urq6urq6urq6urqw==", "#3:q6urq6urq6urq6urq6urqw=="]
+        );
         assert_eq!(
             serde_json::to_value(&key).unwrap(),
-            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ==", "g": ["q6urq6urq6urq6urq6urqw==", "#3"]})
+            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ==", "g": ["q6urq6urq6urq6urq6urqw==", "#3:q6urq6urq6urq6urq6urqw=="]})
         );
         assert_eq!(
             format!("{key:?}"),

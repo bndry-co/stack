@@ -76,19 +76,23 @@ AS $$
 $$;
 
 --! @brief The token of the child at ordinal `o` under the node with token
---!        `token`: `H("t" ‖ token ‖ LE32(o))`. Column-wide like every
---!        token, with no document salt, so a client derives an array
---!        element's token from the path alone and the walk derives a hit's
---!        token from its parent's on the spot. Nothing stores a token.
+--!        `token`, whose selector is `s`: `H("t" ‖ token ‖ s ‖ LE32(o))`.
+--!        Column-wide like every token, with no document salt, so a client
+--!        derives an array element's token from the path alone and the walk
+--!        derives a hit's token from its parent's and the hit's own `s` on
+--!        the spot. Nothing stores a token. The selector keeps an array
+--!        element apart from an object member at the same ordinal, which a
+--!        row whose node at the path is an object would otherwise put there.
 --! @internal
 --! @param token bytea The parent's token, sixteen bytes.
+--! @param s bytea The child's selector, sixteen bytes.
 --! @param o integer The child's ordinal.
 --! @return bytea The child's token, sixteen bytes.
-CREATE FUNCTION {{prefix}}_internal.json_tree_child_token(token bytea, o integer)
+CREATE FUNCTION {{prefix}}_internal.json_tree_child_token(token bytea, s bytea, o integer)
   RETURNS bytea
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT {{prefix}}_internal.json_tree_h16('t'::bytea || token || {{prefix}}_internal.json_tree_le32(o))
+  SELECT {{prefix}}_internal.json_tree_h16('t'::bytea || token || s || {{prefix}}_internal.json_tree_le32(o))
 $$;
 
 --! @brief Whether the document's root is sealed: its header's sealed-root
@@ -355,9 +359,10 @@ $$;
 --! `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`. So from a token the walk probes
 --! ordinal 0, then 1, and so on, looking each tag up in the document's
 --! parent map ({{prefix}}_internal.json_tree_by_parent), and stops at the
---! first miss. A hit's own token is `H("t" ‖ t(parent) ‖ LE32(o))`,
---! derived on the spot ({{prefix}}_internal.json_tree_child_token), and the
---! walk recurses under it. A subtree of `N` nodes therefore costs about
+--! first miss. A hit's own token is `H("t" ‖ t(parent) ‖ s ‖ LE32(o))`,
+--! `s` being the hit's own selector, derived on the spot
+--! ({{prefix}}_internal.json_tree_child_token), and the walk recurses under
+--! it. A subtree of `N` nodes therefore costs about
 --! `2N` probes, `N` hits and a miss for every node visited (the end of a
 --! parent's children, or a leaf's lack of any), each probe one SHA-256 and
 --! one map lookup, plus one SHA-256 per hit for its token: about `3N`
@@ -368,11 +373,13 @@ $$;
 --! keys, which the client does not know, so the client derives a token
 --! only for a chain head and the array positions that directly follow it,
 --! and walks the rest through one gate per further step: either the step's selector,
---! which the entry at that depth must carry in `s`, or `#n`, an array
---! position, which is the one ordinal probed at that depth. A wildcard
---! step's selector is every element's, so it admits them all. Entries are
---! returned from the depth of the last gate down: the node each gate chain
---! reaches, and everything beneath it.
+--! which the entry at that depth must carry in `s`, or `#n:<selector>`, an
+--! array position, which is the one ordinal probed at that depth and whose
+--! entry must carry the array elements' selector, so that an object member
+--! ranked at ordinal `n` in a row whose node there is an object is not
+--! taken for an element. A wildcard step's selector is every element's, so
+--! it admits them all. Entries are returned from the depth of the last gate
+--! down: the node each gate chain reaches, and everything beneath it.
 
 --! @brief The children of the node the gates reach from the node whose
 --!        token is `token`, as rows.
@@ -405,19 +412,20 @@ AS $$
         SELECT 0, NULL::bytea, NULL::integer, NULL::jsonb, decode(token, 'base64'), true, true
       UNION ALL
         SELECT probe.depth, probe.pt, probe.o, hit.entry,
-               {{prefix}}_internal.json_tree_child_token(probe.pt, probe.o),
+               {{prefix}}_internal.json_tree_child_token(probe.pt, decode(hit.entry ->> 's', 'base64'), probe.o),
                probe.ppass,
                probe.ppass AND (
                  probe.depth > doc.gated
-                 OR COALESCE(gates[probe.depth], '') LIKE '#%'
-                 OR hit.entry ->> 's' = gates[probe.depth])
+                 OR hit.entry ->> 's' = CASE WHEN gates[probe.depth] LIKE '#%'
+                                             THEN split_part(gates[probe.depth], ':', 2)
+                                             ELSE gates[probe.depth] END)
         FROM walk AS w
         CROSS JOIN doc
         CROSS JOIN LATERAL (
           SELECT w.depth + 1 AS depth,
                  w.t AS pt,
                  CASE WHEN COALESCE(gates[w.depth + 1], '') LIKE '#%'
-                      THEN substr(gates[w.depth + 1], 2)::integer
+                      THEN split_part(substr(gates[w.depth + 1], 2), ':', 1)::integer
                       ELSE 0 END AS o,
                  w.pass AS ppass
           WHERE w.pass AND w.depth <= doc.gated
@@ -460,8 +468,8 @@ $$;
 --! yields no row, and nothing in a row is linkable to anything without the
 --! token. At depth `d` (1 below the token) the gate `gates[d]`, if there
 --! is one, decides which hits the walk descends through: an entry whose
---! `s` is the gate's selector, or, for a gate `#n`, the one hit at
---! ordinal `n`. Rows are returned from the depth of the last gate down: the
+--! `s` is the gate's selector, or, for a gate `#n:<selector>`, the one hit
+--! at ordinal `n` if it carries that selector. Rows are returned from the depth of the last gate down: the
 --! node a gate chain reaches, with `d = 0`, and everything beneath it, with
 --! `d` its depth below that node. The start node is never returned. With
 --! no gates, every descendant of the start node, with `d` its depth below
@@ -482,7 +490,8 @@ $$;
 --! @param e public.{{prefix}}_json_tree The stored document.
 --! @param token text The start node's token, base64.
 --! @param gates text[] One gate per step below the token: a selector, base64,
---!        or `#n` for the array position `n`. Empty for the whole subtree.
+--!        or `#n:<selector>` for the array position `n`, with the array
+--!        elements' selector. Empty for the whole subtree.
 --! @param budget integer The most entries to return before falling back to
 --!        the sealed root; `0` to always walk out. Default 64.
 --! @return SETOF public.{{prefix}}_json_tree_entry The entries, each with its
@@ -509,12 +518,13 @@ AS $$
         SELECT 0, NULL::bytea, NULL::integer, NULL::jsonb, decode(token, 'base64'), true, true
       UNION ALL
         SELECT probe.depth, probe.pt, probe.o, hit.entry,
-               {{prefix}}_internal.json_tree_child_token(probe.pt, probe.o),
+               {{prefix}}_internal.json_tree_child_token(probe.pt, decode(hit.entry ->> 's', 'base64'), probe.o),
                probe.ppass,
                probe.ppass AND (
                  probe.depth > doc.gated
-                 OR COALESCE(gates[probe.depth], '') LIKE '#%'
-                 OR hit.entry ->> 's' = gates[probe.depth])
+                 OR hit.entry ->> 's' = CASE WHEN gates[probe.depth] LIKE '#%'
+                                             THEN split_part(gates[probe.depth], ':', 2)
+                                             ELSE gates[probe.depth] END)
         FROM walk AS w
         CROSS JOIN doc
         CROSS JOIN LATERAL (
@@ -523,7 +533,7 @@ AS $$
           SELECT w.depth + 1 AS depth,
                  w.t AS pt,
                  CASE WHEN COALESCE(gates[w.depth + 1], '') LIKE '#%'
-                      THEN substr(gates[w.depth + 1], 2)::integer
+                      THEN split_part(substr(gates[w.depth + 1], 2), ':', 1)::integer
                       ELSE 0 END AS o,
                  w.pass AS ppass
           WHERE w.pass

@@ -263,13 +263,22 @@ fn h16(parts: &[&[u8]]) -> Tag {
     truncate(&hasher.finalize())
 }
 
-/// `H("t" ‖ t(parent) ‖ LE32(ordinal))`: the token of the child at
-/// `ordinal` under a node. Column-wide like every token (no document salt),
-/// so the client derives an array element's token from the path alone, and
-/// the server derives every hit's from its parent's as it walks; no token
-/// is ever stored.
-pub(super) fn child_token(parent: &Tag, ordinal: u32) -> Tag {
-    h16(&[b"t", parent, &ordinal.to_le_bytes()])
+/// `H("t" ‖ t(parent) ‖ s(child) ‖ LE32(ordinal))`: the token of the child
+/// at `ordinal` under a node, whose selector is `selector`. Column-wide like
+/// every token (no document salt), so the client derives an array
+/// element's token from the path alone, and the server derives every hit's
+/// from its parent's and the hit's stored `s` as it walks; no token is ever
+/// stored.
+///
+/// The selector is what keeps an element apart from an object member. An
+/// ordinal alone does not: a member's is its rank among its siblings, and
+/// rows of one column need not agree on a node's kind, so without it the
+/// token of `$.a[0]` would be the token of whichever member of an object
+/// `$.a` ranks first, in every row whose `$.a` is an object. An element's
+/// selector is the wildcard's and a member's names its key, so the two
+/// never share a token.
+pub(super) fn child_token(parent: &Tag, selector: &Tag, ordinal: u32) -> Tag {
+    h16(&[b"t", parent, selector, &ordinal.to_le_bytes()])
 }
 
 /// The first eight bytes of `H("p" ‖ iv ‖ t(parent) ‖ LE32(ordinal))`:
@@ -470,7 +479,9 @@ impl Walker<'_> {
                 self.context,
                 &positional.token_bytes().unwrap_or_default(),
             )?),
-            _ => parent_token.zip(ordinal).map(|(p, o)| child_token(&p, o)),
+            _ => parent_token
+                .zip(ordinal)
+                .map(|(p, o)| child_token(&p, &s, o)),
         };
         let op = if self.options.orders(positional) {
             leaf_op(self.prf, self.context, value)?
@@ -1159,13 +1170,15 @@ fn open_fallback<'a, K>(
 /// client can derive, and one gate per step below that.
 ///
 /// A chain head's token is a PRF of its path. An array element's is one
-/// hash under its parent's, by its position, so the client follows array
-/// steps as far as they run from the head. An object member's ordinal is a
-/// rank among its siblings' keys, which the client does not know, so from
-/// the first key step on the client cannot derive tokens and the server
-/// walks instead, through gates: the step's selector for a key or a
-/// wildcard (every element's selector is the wildcard's, so a wildcard
-/// admits them all), the position for an array step.
+/// hash under its parent's, by its position and the element selector, so
+/// the client follows array steps as far as they run from the head. An
+/// object member's ordinal is a rank among its siblings' keys, which the
+/// client does not know, so from the first key step on the client cannot
+/// derive tokens and the server walks instead, through gates: the step's
+/// selector for a key or a wildcard (every element's selector is the
+/// wildcard's, so a wildcard admits them all), and for an array step the
+/// position with the element selector, so a member that happens to sit at
+/// that ordinal under an object is not taken for an element.
 fn subtree_key_for(
     prf: &HmacSha256Prf,
     context: &Context<'_>,
@@ -1193,7 +1206,8 @@ fn subtree_key_for(
         match segment {
             Segment::Index(index) => {
                 let o = u32::try_from(*index).map_err(|_| TermError::JsonTooWide)?;
-                token = child_token(&token, o);
+                let element = prf16(prf, SELECTOR_DOMAIN, context, &prefix.selector_bytes())?;
+                token = child_token(&token, &element, o);
             }
             Segment::Key(_) | Segment::Wildcard => {
                 gates.push(Gate::Selector(prf16(
@@ -1209,9 +1223,10 @@ fn subtree_key_for(
     for segment in rest {
         prefix = prefix.then(segment.clone());
         gates.push(match segment {
-            Segment::Index(index) => {
-                Gate::Slot(u32::try_from(*index).map_err(|_| TermError::JsonTooWide)?)
-            }
+            Segment::Index(index) => Gate::Slot(
+                u32::try_from(*index).map_err(|_| TermError::JsonTooWide)?,
+                prf16(prf, SELECTOR_DOMAIN, context, &prefix.selector_bytes())?,
+            ),
             Segment::Key(_) | Segment::Wildcard => Gate::Selector(prf16(
                 prf,
                 SELECTOR_DOMAIN,
@@ -1392,12 +1407,19 @@ mod tests {
             assert!(k.gates().is_empty(), "{path}");
         }
         // The server derives an object member's token the same way, from
-        // its parent's and its ordinal.
+        // its parent's, its selector and its ordinal.
         let a = at(&t, "$.a");
         let b = at(&t, "$.a.b");
         assert_eq!(
             b.token,
-            Some(child_token(&a.token.unwrap(), b.ordinal.unwrap()))
+            Some(child_token(&a.token.unwrap(), &b.s, b.ordinal.unwrap()))
+        );
+        // The selector is bound: the same parent and ordinal under another
+        // selector (an element where the row holds a member) is another
+        // token.
+        assert_ne!(
+            b.token,
+            Some(child_token(&a.token.unwrap(), &a.s, b.ordinal.unwrap()))
         );
         // Below a key step, gates: the step's selector, a position, the
         // wildcard's selector (every element's).
@@ -1407,7 +1429,7 @@ mod tests {
             k.gates(),
             [
                 base64(&b.s),
-                "#1".to_owned(),
+                format!("#1:{}", base64(&at(&t, "$.a.b[1]").s)),
                 base64(&at(&t, "$.a.b[1].c").s)
             ]
         );
