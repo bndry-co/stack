@@ -5341,50 +5341,83 @@ mod tests {
 
         /// A null sealed under `"sealed"` is a leaf as long as a value of
         /// the field's type, opens as a null, and costs a data key as a
-        /// value does. A boolean's null is the plain null, already as long.
+        /// value does, for every kind of fixed width. A boolean's null is
+        /// the plain null, already as long. A decimal held in 64 bits is
+        /// sealed in 128, as its null is, and opens in 128.
         #[tokio::test]
         async fn a_sealed_null_is_as_long_as_a_value_and_opens_as_a_null() {
+            use vitaminc_aead::plaintext::TimeUnit;
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let plan = plan(obj(vec![
+            let typed = |logical, value| Tree::Typed(logical, Box::new(value));
+            let fields = [
+                ("flag", "bool", Tree::Bool(true)),
+                ("i8", "int8", Tree::Int8(-8)),
+                ("i16", "int16", Tree::Int16(-16)),
+                ("i32", "int32", Tree::Int32(-32)),
+                ("i64", "int64", Tree::Int64(-64)),
+                ("i128", "int128", Tree::Int128(-128)),
+                ("u8", "uint8", Tree::UInt8(8)),
+                ("u16", "uint16", Tree::UInt16(16)),
+                ("u32", "uint32", Tree::UInt32(32)),
+                ("u64", "uint64", Tree::UInt64(64)),
+                ("u128", "uint128", Tree::UInt128(128)),
+                ("f32", "float32", Tree::Float32(1.5)),
+                ("score", "float64", Tree::Float64(1.5)),
                 (
-                    "dob",
-                    nullable(label("dob"), &["c"], Some("date"), "sealed"),
+                    "price",
+                    "decimal",
+                    typed(Logical::Decimal { scale: 2 }, Tree::Int128(150)),
                 ),
                 (
-                    "score",
-                    nullable(label("score"), &["c"], Some("float64"), "sealed"),
+                    "price64",
+                    "decimal",
+                    typed(Logical::Decimal { scale: 2 }, Tree::Int64(150)),
                 ),
+                ("dob", "date", date(19_000)),
                 (
-                    "flag",
-                    nullable(label("flag"), &["c"], Some("bool"), "sealed"),
+                    "seen",
+                    "timestamp",
+                    typed(Logical::Timestamp(TimeUnit::Nanos), Tree::Int128(1)),
                 ),
-            ]))
+            ];
+            let plan = plan(obj(fields
+                .iter()
+                .map(|(name, kind, _)| (*name, nullable(label(name), &["c"], Some(kind), "sealed")))
+                .collect()))
             .expect("parses");
-            let present = obj(vec![
-                ("dob", date(19_000)),
-                ("score", Tree::Float64(1.5)),
-                ("flag", Tree::Bool(true)),
-            ]);
-            let absent = obj(vec![
-                ("dob", Tree::Null),
-                ("score", Tree::Null),
-                ("flag", Tree::Null),
-            ]);
+            let present = obj(fields
+                .iter()
+                .map(|(name, _, value)| (*name, value.clone()))
+                .collect());
+            let absent = obj(fields
+                .iter()
+                .map(|(name, _, _)| (*name, Tree::Null))
+                .collect());
             check_source(absent.clone(), &plan).expect("a null fits a field that seals one");
             let with = seal(&keyset, present.clone(), &plan).await;
             let without = seal(&keyset, absent.clone(), &plan).await;
-            for field in ["dob", "score", "flag"] {
+            for (field, kind, _) in &fields {
                 assert_eq!(
                     sealed_len(&without, field),
                     sealed_len(&with, field),
-                    "{field}: an absent value is as long as a present one"
+                    "{kind}: an absent value is as long as a present one"
                 );
             }
             let again = seal(&keyset, absent.clone(), &plan).await;
             check_record(again, &plan, None).expect("the stored nulls fit the plan");
+            let widened = obj(fields
+                .iter()
+                .map(|(name, _, value)| match *name {
+                    "price64" => (
+                        *name,
+                        typed(Logical::Decimal { scale: 2 }, Tree::Int128(150)),
+                    ),
+                    _ => (*name, value.clone()),
+                })
+                .collect());
             assert_eq!(open(&cipher, without, &plan).await, absent);
-            assert_eq!(open(&cipher, with, &plan).await, present);
+            assert_eq!(open(&cipher, with, &plan).await, widened);
         }
 
         /// The term under a stored field's output key, as its bytes.
