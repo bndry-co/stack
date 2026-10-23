@@ -382,10 +382,10 @@ func TestVerifyAndTargetLimitNeedNoCipher(t *testing.T) {
 }
 
 // The catalog reports, per EQL type, the operators the engine answers:
-// TextEq answers eq, exactly, through its equality index, and an OPE-ordered
-// type the four orderings of one value through its ope index (Between takes
-// a pair, which a type's one query value does not carry), and eq too when it
-// also stores an equality term.
+// TextEq answers eq, exactly, through its equality index, and an ordered type
+// the four orderings of one value through its order index, ope or ore_block
+// (Between takes a pair, which a type's one query value does not carry), and
+// eq too when it also stores an equality term.
 func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	wasm, err := encrypt.EmbeddedGuest()
 	if errors.Is(err, encrypt.ErrGuestNotBuilt) {
@@ -407,21 +407,39 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	if len(targets) == 0 {
 		t.Skip("this build holds no EQL types: import encrypt/eql")
 	}
+	families := []string{"Integer", "Smallint", "Bigint", "Real", "Double", "Text"}
+	// Stored and compared for equality only today: the engine derives no
+	// order term for these kinds, so their ordered types are refused.
+	equalityOnly := []string{"Date", "Timestamp", "Numeric"}
+	// The index a type answers the orderings through: OPE for Ord and
+	// OrdOpe, block ORE for OrdOre.
+	orderIndex := map[string]record.Output{}
+	for _, family := range families {
+		orderIndex[family+"Ord"] = record.Ope
+		orderIndex[family+"OrdOpe"] = record.Ope
+		orderIndex[family+"OrdOre"] = record.OreBlock
+	}
+	orderings := func(index record.Output) []record.Operator {
+		var ops []record.Operator
+		for _, name := range []string{"lt", "lte", "gt", "gte"} {
+			ops = append(ops, record.Operator{Name: name, Fidelity: record.Exact, Index: index})
+		}
+		return ops
+	}
 	for _, target := range targets {
+		index, ordered := orderIndex[target.Name]
 		switch {
-		case slices.Contains([]string{"TextEq", "IntegerEq", "SmallintEq", "BigintEq", "RealEq", "DoubleEq", "DateEq", "TimestampEq", "NumericEq"}, target.Name):
+		case strings.HasSuffix(target.Name, "Eq") && slices.Contains(slices.Concat(families, equalityOnly), strings.TrimSuffix(target.Name, "Eq")):
 			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
 			if len(target.Operators) != 1 || target.Operators[0] != want[0] {
 				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
 			}
-		case slices.Contains([]string{"IntegerOrd", "IntegerOrdOpe", "SmallintOrd", "SmallintOrdOpe", "BigintOrd", "BigintOrdOpe", "RealOrd", "RealOrdOpe", "DoubleOrd", "DoubleOrdOpe", "TextOrd", "TextOrdOpe"}, target.Name):
+		case ordered:
 			var want []record.Operator
 			if strings.HasPrefix(target.Name, "Text") {
 				want = append(want, record.Operator{Name: "eq", Fidelity: record.Exact, Index: record.Equality})
 			}
-			for _, name := range []string{"lt", "lte", "gt", "gte"} {
-				want = append(want, record.Operator{Name: name, Fidelity: record.Exact, Index: record.Ope})
-			}
+			want = append(want, orderings(index)...)
 			if !slices.Equal(target.Operators, want) {
 				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
 			}
@@ -429,6 +447,18 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 			want := record.Operator{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match}
 			if len(target.Operators) != 1 || target.Operators[0] != want {
 				t.Fatalf("TextMatch answers %+v, want %+v", target.Operators, want)
+			}
+		case target.Name == "TextSearch" || target.Name == "TextSearchOre":
+			// Each through its own index: the query carries that term alone.
+			index := record.Ope
+			if target.Name == "TextSearchOre" {
+				index = record.OreBlock
+			}
+			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
+			want = append(want, orderings(index)...)
+			want = append(want, record.Operator{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match})
+			if !slices.Equal(target.Operators, want) {
+				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
 			}
 		case len(target.Operators) != 0:
 			// Every other type is storage-only or not produced.

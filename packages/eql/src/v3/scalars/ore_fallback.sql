@@ -25,7 +25,7 @@
 --!
 --! Runs after the DO block in src/v3/sem/ore_block_256/operator_class.sql,
 --! which ATTEMPTS to create the default btree operator class for
---! {{prefix}}_internal.ore_block_256 and skips it on insufficient_privilege
+--! {{prefix}}_internal.{{ore_block}} and skips it on insufficient_privilege
 --! (CREATE OPERATOR CLASS requires superuser; managed platforms — cloud
 --! Supabase and most hosted Postgres — run the installer as a non-superuser
 --! role). When the class was created, this file is a no-op.
@@ -62,7 +62,7 @@ BEGIN
     JOIN pg_catalog.pg_am am ON am.oid = c.opcmethod
     WHERE am.amname = 'btree'
       AND c.opcdefault
-      AND c.opcintype = '{{prefix}}_internal.ore_block_256'::pg_catalog.regtype
+      AND c.opcintype = '{{prefix}}_internal.{{ore_block}}'::pg_catalog.regtype
   ) THEN
     RETURN;
   END IF;

@@ -316,7 +316,9 @@ fn index_value(index: &IndexSpec) -> serde_json::Value {
                 }
             })
         }
-        IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope => index.key().into(),
+        IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => {
+            index.key().into()
+        }
     }
 }
 

@@ -14,6 +14,7 @@ use quote::{format_ident, quote};
 use eql_domains::{Domain, DomainFamily, Term, CATALOG, ENVELOPE_KEYS, RANGE_BOUND_KEYS};
 
 use crate::consts::RUST_GENERATED_MARKER;
+use crate::context::v4_optional_query_terms;
 use crate::render::EqlVersion;
 use crate::writer::{
     ensure_generated_paths_writable, normalized_set, remove_generated_orphans,
@@ -198,7 +199,7 @@ fn render_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) -> Tok
     fields.extend(quote! { pub c: Ciphertext, });
     for term in Term::payload_terms(domain.terms) {
         let fid = format_ident!("{}", term.json_key());
-        let tid = format_ident!("{}", term.binding_newtype());
+        let tid = format_ident!("{}", stored_term_newtype(eql, domain, term));
         fields.extend(quote! { pub #fid: #tid, });
     }
 
@@ -276,13 +277,30 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
         .map(|o| format!("`{o}`"))
         .collect::<Vec<_>>()
         .join(" ");
-    let keys_str = ["v", "i"]
-        .into_iter()
-        .chain(Term::term_json_keys(domain.terms))
-        .map(|k| format!("`{k}`"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let detail = format!(" Operators: {ops_str}. Required keys: {keys_str}.");
+    let quoted = |keys: &mut dyn Iterator<Item = &str>| {
+        keys.map(|k| format!("`{k}`")).collect::<Vec<_>>().join(" ")
+    };
+    // An EQL v4 query whose terms are optional carries the one its operator
+    // reads (ADR-0002, amended 2026-10-19): each term is an `Option`, absent
+    // from the JSON when `None`, and the SQL domain requires one of them.
+    let optional = eql == EqlVersion::V4 && v4_optional_query_terms(domain);
+    let detail = if optional {
+        format!(
+            " Operators: {ops_str}. Required keys: {}, and at least one of {}: a query carries \
+             the term its operator reads.",
+            quoted(&mut ["v", "i"].into_iter()),
+            quoted(&mut Term::term_json_keys(domain.terms).into_iter()),
+        )
+    } else {
+        format!(
+            " Operators: {ops_str}. Required keys: {}.",
+            quoted(
+                &mut ["v", "i"]
+                    .into_iter()
+                    .chain(Term::term_json_keys(domain.terms))
+            )
+        )
+    };
 
     // Envelope minus `c`: `v`/`i` only. Kept in lockstep with the storage
     // struct's envelope triple (see `envelope_fields_match_catalog_keys`).
@@ -292,9 +310,17 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
     for term in Term::payload_terms(domain.terms) {
         let fid = format_ident!("{}", term.json_key());
         let tid = format_ident!("{}", term.binding_newtype());
-        fields.extend(quote! { pub #fid: #tid, });
+        fields.extend(if optional {
+            quote! {
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub #fid: Option<#tid>,
+            }
+        } else {
+            quote! { pub #fid: #tid, }
+        });
     }
     let term_keys = Term::term_json_keys(domain.terms);
+    let projections = render_query_projections(eql, family, domain);
 
     quote! {
         #[doc = #summary]
@@ -330,6 +356,8 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
             }
             #schema_id
         }
+
+        #projections
     }
 }
 
@@ -411,24 +439,164 @@ fn render_range_query_struct(family: &DomainFamily, term: Term) -> TokenStream {
     }
 }
 
+/// The newtype of a stored struct's `term` field. The term's own
+/// ([`Term::binding_newtype`]), except the match term of an EQL v4 search
+/// domain (one whose query terms are optional, [`v4_optional_query_terms`]):
+/// `SearchBloomFilter`, the same JSON as `BloomFilter`, into which Stack
+/// Encrypt derives the empty filter for text too short for a 3-gram instead
+/// of refusing it. Such a value is still found by `=` and `<` through its
+/// other terms; a query, and `TextMatch`, which has no other term, keep
+/// `BloomFilter` and keep refusing that text.
+pub fn stored_term_newtype(eql: EqlVersion, domain: &Domain, term: Term) -> &'static str {
+    if eql == EqlVersion::V4 && term == Term::Bloom && v4_optional_query_terms(domain) {
+        "SearchBloomFilter"
+    } else {
+        term.binding_newtype()
+    }
+}
+
+/// The term newtypes a family module names: each stored struct's
+/// ([`stored_term_newtype`]) and each query struct's
+/// ([`Term::binding_newtype`]), after `Ciphertext`, in first-use order.
+fn family_terms<'d>(
+    eql: EqlVersion,
+    domains: impl Iterator<Item = &'d Domain>,
+) -> Vec<&'static str> {
+    let mut used: Vec<&'static str> = vec!["Ciphertext"];
+    for d in domains {
+        for term in Term::payload_terms(d.terms) {
+            for t in [stored_term_newtype(eql, d, term), term.binding_newtype()] {
+                if !used.contains(&t) {
+                    used.push(t);
+                }
+            }
+        }
+    }
+    used
+}
+
+/// The name of the projection of `domain`'s query twin that carries `term`
+/// alone: `TextSearchEqualityQuery`, `TextSearchOrderQuery`,
+/// `TextSearchMatchQuery`. Named by what the term answers, not by its key,
+/// so the order projection of the ORE twin would read `…OrderQuery` too.
+pub fn query_projection_ident(family: &DomainFamily, domain: &Domain, term: Term) -> String {
+    let role = match term {
+        Term::Hm => "Equality",
+        Term::Ore | Term::Ope => "Order",
+        Term::Bloom => "Match",
+    };
+    format!("{}{role}Query", domain.struct_ident(family.name))
+}
+
+/// For a producible EQL v4 query twin whose terms are optional, one
+/// projection per term: a struct carrying the envelope and that term alone,
+/// deriving `EncryptFrom` so it derives only that term, and converting into
+/// the twin. Stack Encrypt builds the twin through the projection of the
+/// index that answers the query's operator, so a query never derives a term
+/// its operator does not read (a match term, which text shorter than one
+/// 3-gram cannot make, is derived only for `@@`). Not domains: no
+/// `DomainType`, not in the inventory. Empty for every other domain.
+fn render_query_projections(
+    eql: EqlVersion,
+    family: &DomainFamily,
+    domain: &Domain,
+) -> TokenStream {
+    if eql != EqlVersion::V4
+        || !v4_optional_query_terms(domain)
+        || encryption_gap(eql, family, domain).is_some()
+    {
+        return TokenStream::new();
+    }
+    let twin = format_ident!("{}Query", domain.struct_ident(family.name));
+    let query_domain = format!("{}.{}", eql.prefix(), domain.query_name(family.name));
+    let (_, rust) = plaintext_of(family.name).expect("a derived family names its plaintext");
+    let plaintext_ty: syn::Type = syn::parse_str(rust).expect("plaintext is a type path");
+    let shown = rust.rsplit("::").next().unwrap_or(rust);
+    let terms = Term::payload_terms(domain.terms);
+    terms
+        .iter()
+        .map(|&term| {
+            let ident = format_ident!("{}", query_projection_ident(family, domain, term));
+            let fid = format_ident!("{}", term.json_key());
+            let tid = format_ident!("{}", term.binding_newtype());
+            let ops = Term::operators_for_terms(domain.terms)
+                .into_iter()
+                .filter(|op| Term::extractor_for_operator(domain.terms, op) == Some(term.extractor()))
+                .map(|op| format!("`{op}`"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let summary = format!(
+                " The `{query_domain}` query operand for {ops}: the `{}` term alone.",
+                term.json_key()
+            );
+            let detail = format!(
+                " Implements `EncryptFrom<{shown}>`, deriving only this term, and converts into \
+                 [`{twin}`], which is what is bound in SQL."
+            );
+            let others: TokenStream = terms
+                .iter()
+                .filter(|&&other| other != term)
+                .map(|other| {
+                    let oid = format_ident!("{}", other.json_key());
+                    quote!(#oid: None,)
+                })
+                .collect();
+            quote! {
+                #[doc = #summary]
+                #[doc = ""]
+                #[doc = #detail]
+                #[doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."]
+                #[derive(stack_encrypt::EncryptFrom)]
+                #[stash(plaintext = #plaintext_ty)]
+                #[derive(Clone, Debug, PartialEq)]
+                pub struct #ident {
+                    #[stash(default)]
+                    pub v: SchemaVersion,
+                    #[stash(context_field)]
+                    pub i: Identifier,
+                    pub #fid: #tid,
+                }
+
+                impl From<#ident> for #twin {
+                    fn from(query: #ident) -> Self {
+                        #twin {
+                            v: query.v,
+                            i: query.i,
+                            #fid: Some(query.#fid),
+                            #others
+                        }
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
 /// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
 /// `stack-encrypt` derives: the storage and equality domains of every family
-/// whose plaintext eql-bindings names (`plaintext_of`), the OPE-ordered
-/// domains (`ord`, `ord_ope`) of those whose order terms the engine derives,
-/// and text match. Every other stored domain has a reason in
-/// [`encryption_gap`], and a test holds the two together so a new domain
+/// whose plaintext eql-bindings names (`plaintext_of`), the ordered domains
+/// (`ord` and `ord_ope` with an OPE term, `ord_ore` with a block ORE term) of
+/// those whose order terms the engine derives, and text match and search
+/// (`search` and `search_ore`). Every other stored domain has a reason
+/// in [`encryption_gap`], and a test holds the two together so a new domain
 /// cannot arrive without either a derive or a reason.
+///
+/// Listed in catalog order, which is the order the generated target table
+/// lists them in.
 pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("integer", ""),
     ("integer", "eq"),
+    ("integer", "ord_ore"),
     ("integer", "ord"),
     ("integer", "ord_ope"),
     ("smallint", ""),
     ("smallint", "eq"),
+    ("smallint", "ord_ore"),
     ("smallint", "ord"),
     ("smallint", "ord_ope"),
     ("bigint", ""),
     ("bigint", "eq"),
+    ("bigint", "ord_ore"),
     ("bigint", "ord"),
     ("bigint", "ord_ope"),
     ("date", ""),
@@ -440,15 +608,20 @@ pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("text", ""),
     ("text", "eq"),
     ("text", "match"),
+    ("text", "ord_ore"),
     ("text", "ord"),
     ("text", "ord_ope"),
+    ("text", "search_ore"),
+    ("text", "search"),
     ("boolean", ""),
     ("real", ""),
     ("real", "eq"),
+    ("real", "ord_ore"),
     ("real", "ord"),
     ("real", "ord_ope"),
     ("double", ""),
     ("double", "eq"),
+    ("double", "ord_ore"),
     ("double", "ord"),
     ("double", "ord_ope"),
 ];
@@ -511,22 +684,13 @@ pub fn encryption_gap(
     } else if ORDER_PENDING_FAMILIES.contains(&family.name)
         && (domain.terms.contains(&Term::Ope) || domain.terms.contains(&Term::Ore))
     {
-        // Before the ORE branch: the engine derives no order term of either
-        // scheme for these kinds, so block ORE is not the first thing a
-        // `*OrdOre` type of these families waits for.
+        // The engine derives no order term of either scheme for these kinds.
         "the engine derives no order term for a date, timestamp or decimal yet: how they are \
          ordered is not decided (#1236)"
-    } else if domain.terms.contains(&Term::Ore) {
-        "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"
-    } else if domain.terms.contains(&Term::Bloom) && domain.terms.contains(&Term::Ope) {
-        "every query of this type carries a match term, which text shorter than one 3-gram \
-         cannot make, so `=` or `<` on short text would be refused; how a query that is not a \
-         match leaves it out is not decided (#1131)"
     } else {
         // Reached by any unlisted domain of a family whose plaintext is
-        // specified and whose terms are neither ORE nor match-and-order (an
-        // equality or OPE-ordered domain of a family that gains a plaintext,
-        // say): nothing in the catalog today.
+        // specified (a domain added to such a family, say): nothing in the
+        // catalog today.
         "this domain derives the way its family's other domains do; it is not listed in \
          ENCRYPTION_DOMAINS yet"
     })
@@ -555,7 +719,7 @@ fn encryption_attrs(
             let terms = match (
                 domain.terms.contains(&Term::Bloom),
                 domain.terms.contains(&Term::Hm),
-                domain.terms.contains(&Term::Ope),
+                domain.terms.contains(&Term::Ope) || domain.terms.contains(&Term::Ore),
             ) {
                 (true, _, _) => "match",
                 (false, true, true) => "equality and order",
@@ -574,6 +738,28 @@ fn encryption_attrs(
         }
     };
     let plaintext = plaintext_doc(&format!("[`{shown}`]({rust})"));
+    // The twin of an optional-term query is built by its projections
+    // (`render_query_projections`), one per index, so it carries no derive.
+    if query && v4_optional_query_terms(domain) {
+        let projections = Term::payload_terms(domain.terms)
+            .into_iter()
+            .map(|term| format!("[`{}`]", query_projection_ident(family, domain, term)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let built = format!(
+            " Plaintext input: [`{shown}`]({rust}), through one projection per index — \
+             {projections} — each `EncryptFrom<{shown}>` and `Into<Self>`: a query carries the \
+             term of the index that answers its operator. Query operands do not decrypt."
+        );
+        return (
+            quote! {
+                #[doc = ""]
+                #[doc = #built]
+            },
+            quote!(),
+            quote!(),
+        );
+    }
     (
         quote! {
             #[doc = ""]
@@ -636,15 +822,7 @@ fn family_imports(version: EqlVersion, used: &[&'static str]) -> TokenStream {
 /// (exactly the term newtypes the family uses) followed by every domain's
 /// storage struct + impl, then a query twin for each term-bearing domain.
 pub fn render_family_bindings(version: EqlVersion, family: &DomainFamily) -> String {
-    let mut used: Vec<&'static str> = vec!["Ciphertext"];
-    for d in family.domains {
-        for term in Term::payload_terms(d.terms) {
-            let t = term.binding_newtype();
-            if !used.contains(&t) {
-                used.push(t);
-            }
-        }
-    }
+    let used = family_terms(version, family.domains.iter());
     let imports = family_imports(version, &used);
 
     // Storage structs for every domain, then a query twin for each term-bearing
@@ -698,15 +876,7 @@ pub fn render_family_bindings(version: EqlVersion, family: &DomainFamily) -> Str
 /// `json.rs` re-exports the generated struct (`pub use ...::Json;`) so
 /// `super::json::Json` resolves for the inventory/payload renderers.
 pub fn render_scalar_only_bindings(version: EqlVersion, family: &DomainFamily) -> String {
-    let mut used: Vec<&'static str> = vec!["Ciphertext"];
-    for d in family.domains.iter().filter(|d| d.is_scalar()) {
-        for term in Term::payload_terms(d.terms) {
-            let t = term.binding_newtype();
-            if !used.contains(&t) {
-                used.push(t);
-            }
-        }
-    }
+    let used = family_terms(version, family.domains.iter().filter(|d| d.is_scalar()));
     let imports = family_imports(version, &used);
 
     // Scalar storage structs only, then a query twin for each term-bearing scalar
@@ -1204,7 +1374,8 @@ fn render_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
 /// mixed family's scalar domains under its own name, since v4 has no
 /// hand-written SteVec module to sit beside), and the Stack Encrypt target
 /// table and dispatch (`targets.rs`, declared under the `targets` feature in
-/// the hand-written `v4/mod.rs`). Stack Encrypt produces v4 only, so the
+/// the hand-written `v4/mod.rs`), and the typed query chain's impls
+/// (`answers.rs`, `stack-encrypt` alone). Stack Encrypt produces v4 only, so the
 /// target table lives here.
 fn render_v4_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
     let mut rendered: Vec<(PathBuf, String)> = eql_domains::families_with_scalar_domains()
@@ -1218,6 +1389,7 @@ fn render_v4_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
         })
         .collect();
     rendered.push((dir.join("targets.rs"), crate::targets::render_targets_rs()));
+    rendered.push((dir.join("answers.rs"), crate::targets::render_answers_rs()));
     rendered.push((dir.join("inventory.rs"), render_v4_inventory_rs()));
     rendered
 }
@@ -1458,6 +1630,50 @@ mod tests {
         );
     }
 
+    /// A v4 search domain's stored filter is `SearchBloomFilter`, which takes
+    /// the empty filter of text too short for a 3-gram; `TextMatch` and every
+    /// query keep `BloomFilter`, which refuses that text. v3 is untouched.
+    #[test]
+    fn a_v4_search_domain_stores_a_filter_that_may_be_empty() {
+        let v4 = render_family_bindings(EqlVersion::V4, family("text"));
+        let field = |out: &str, name: &str| {
+            let start = out
+                .find(&format!("pub struct {name} {{"))
+                .unwrap_or_else(|| panic!("no struct {name}"));
+            let body = &out[start..];
+            let body = &body[..body.find('}').unwrap()];
+            body.lines()
+                .find(|line| line.contains("pub bf:"))
+                .map(|line| line.trim().to_owned())
+        };
+        assert_eq!(
+            field(&v4, "TextSearch").as_deref(),
+            Some("pub bf: SearchBloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextSearchOre").as_deref(),
+            Some("pub bf: SearchBloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextMatch").as_deref(),
+            Some("pub bf: BloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextMatchQuery").as_deref(),
+            Some("pub bf: BloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextSearchMatchQuery").as_deref(),
+            Some("pub bf: BloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextSearchQuery").as_deref(),
+            Some("pub bf: Option<BloomFilter>,")
+        );
+        let v3 = render_family_bindings(EqlVersion::V3, family("text"));
+        assert!(!v3.contains("SearchBloomFilter"));
+    }
+
     #[test]
     fn bool_storage_only_family_has_one_struct_no_terms() {
         let out = render_family_bindings(EqlVersion::V3, family("boolean"));
@@ -1507,7 +1723,7 @@ mod tests {
         // inventory.
         let families = eql_domains::scalar_families().count();
         let v4_families = eql_domains::families_with_scalar_domains().count();
-        assert_eq!(written.len(), (families + 4) + (v4_families + 2));
+        assert_eq!(written.len(), (families + 4) + (v4_families + 3));
         assert!(dir.join("integer.rs").is_file());
         assert!(dir.join("text.rs").is_file());
         assert!(dir.join("json_storage.rs").is_file());
@@ -1520,6 +1736,7 @@ mod tests {
         assert!(v4.join("text.rs").is_file());
         assert!(v4.join("json.rs").is_file());
         assert!(v4.join("targets.rs").is_file());
+        assert!(v4.join("answers.rs").is_file());
         assert!(v4.join("inventory.rs").is_file());
         for d in [&dir, &v4] {
             assert!(
@@ -1873,17 +2090,8 @@ mod tests {
                         "no Rust plaintext type for this family"
                     } else if ORDER_PENDING_FAMILIES.contains(&family.name) {
                         "no order term for a date, timestamp or decimal"
-                    } else if domain.terms.contains(&Term::Ore) {
-                        "block ORE terms"
-                    } else if domain.terms.contains(&Term::Bloom)
-                        && domain.terms.contains(&Term::Ope)
-                    {
-                        "carries a match term"
                     } else {
-                        panic!(
-                            "{full}: every specified domain without ORE or a match-and-order \
-                             query is derived: {reason}"
-                        )
+                        panic!("{full}: every domain of a specified family is derived: {reason}")
                     };
                     assert!(reason.contains(expected), "{full}: {reason}");
                 }
@@ -1904,9 +2112,12 @@ mod tests {
                 let attrs = encryption_attrs(EqlVersion::V4, family, domain, query)
                     .0
                     .to_string();
+                // A query whose terms are optional is built by its per-index
+                // projections, which derive in its place.
+                let projected = query && v4_optional_query_terms(domain);
                 assert_eq!(
                     attrs.contains("stack_encrypt :: EncryptFrom"),
-                    listed,
+                    listed && !projected,
                     "{} (query = {query})",
                     domain.full_name(family.name)
                 );

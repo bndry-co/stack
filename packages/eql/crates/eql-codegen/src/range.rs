@@ -267,7 +267,7 @@ pub fn render_range_functions_file(spec: &DomainFamily) -> Option<String> {
     };
     for &term in &terms {
         let range = spec.range_query_name(term);
-        let returns = format!("{INTERNAL_SCHEMA}.{}", term.ctor());
+        let returns = format!("{INTERNAL_SCHEMA}.{}", crate::consts::sql_ctor(term));
         for (side, function_name, bound) in [
             ("low", "lo", RANGE_BOUND_KEYS[0]),
             ("high", "hi", RANGE_BOUND_KEYS[1]),
@@ -280,7 +280,7 @@ pub fn render_range_functions_file(spec: &DomainFamily) -> Option<String> {
                 returns: returns.clone(),
                 body: format!(
                     "{INTERNAL_SCHEMA}.{}(jsonb_build_object('{}', r::jsonb -> '{}'))",
-                    term.ctor(),
+                    crate::consts::sql_ctor(term),
                     sql_str(term.json_key()),
                     sql_str(bound)
                 ),
@@ -456,9 +456,9 @@ mod tests {
         for (side, bound) in [("lo", "lo"), ("hi", "hi")] {
             assert!(v4.contains(&format!(
                 "CREATE FUNCTION eql_v4_internal.{side}(r eql_v4.query_integer_range_ore)\n\
-                 RETURNS eql_v4_internal.ore_block_256\n\
+                 RETURNS eql_v4_internal.ore_block_v2\n\
                  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE\n\
-                 AS $$ SELECT eql_v4_internal.ore_block_256(jsonb_build_object('ob', r::jsonb -> '{bound}')) $$;"
+                 AS $$ SELECT eql_v4_internal.ore_block_v2(jsonb_build_object('ob', r::jsonb -> '{bound}')) $$;"
             )), "{side} ORE");
             assert!(v4.contains(&format!(
                 "CREATE FUNCTION eql_v4_internal.{side}(r eql_v4.query_integer_range_ope)\n\
@@ -582,8 +582,9 @@ mod tests {
                 )),
                 "{v4}"
             );
-            assert!(v4
-                .contains("AND c.opcintype = 'eql_v4_internal.ore_block_256'::pg_catalog.regtype"));
+            assert!(
+                v4.contains("AND c.opcintype = 'eql_v4_internal.ore_block_v2'::pg_catalog.regtype")
+            );
         }
     }
 

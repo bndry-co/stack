@@ -55,10 +55,10 @@ use crate::target::IndexSpec;
 /// `vitaminc-normalize` gives an equality domain, which is every integer
 /// of every width, both floats, a decimal, a date, a timestamp, text and
 /// bytes, and not a boolean. The rest are this crate's: match over text
-/// alone, and ORE and OPE over the integers of 16 bits and wider, both
-/// floats, text and bytes. A boolean and an 8-bit integer have no order
-/// term: over so small a domain it would reveal which rows are `true`, or
-/// each row's rank among 256 values.
+/// alone, and ORE, OPE and block ORE over the integers of 16 bits and
+/// wider, both floats, text and bytes. A boolean and an 8-bit integer have
+/// no order term: over so small a domain it would reveal which rows are
+/// `true`, or each row's rank among 256 values.
 /// A decimal, a date and a timestamp have none yet: their order encodings
 /// wait for new cllw-ore and ore-rs releases (#1236), and [`not_admitted`]
 /// names that reason. A composite (`array`, `object`) has no term. Only the
@@ -86,7 +86,7 @@ pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
 /// Why `kind` does not admit `index`, or `None` when it does: the reason a
 /// plan that declares the pair is refused with.
 ///
-/// [`Reason::OrderTermPending`] for an ORE or OPE index on a decimal, date
+/// [`Reason::OrderTermPending`] for an order index on a decimal, date
 /// or timestamp, whose order terms wait for new cllw-ore and ore-rs
 /// releases (#1236). [`Reason::IndexNotAdmitted`] for every other pair
 /// [`admits`] refuses.
@@ -103,7 +103,7 @@ pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
     if admits(kind, index) {
         return None;
     }
-    let ordering = matches!(index, IndexSpec::Ore | IndexSpec::Ope);
+    let ordering = matches!(index, IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock);
     let pending = matches!(
         kind,
         ValueKind::Decimal | ValueKind::Date | ValueKind::Timestamp
@@ -581,12 +581,13 @@ mod tests {
         }
     }
 
-    fn indexes() -> [IndexSpec; 4] {
+    fn indexes() -> [IndexSpec; 5] {
         [
             IndexSpec::Equality,
             IndexSpec::Match(MatchOptions::default()),
             IndexSpec::Ore,
             IndexSpec::Ope,
+            IndexSpec::OreBlock,
         ]
     }
 
@@ -622,6 +623,9 @@ mod tests {
         assert!(!admits(ValueKind::Bool, &IndexSpec::Ope));
         assert!(!admits(ValueKind::Object, &IndexSpec::Ope));
         assert!(!admits(ValueKind::Array, &IndexSpec::Ore));
+        assert!(admits(ValueKind::Int32, &IndexSpec::OreBlock));
+        assert!(admits(ValueKind::String, &IndexSpec::OreBlock));
+        assert!(!admits(ValueKind::Bool, &IndexSpec::OreBlock));
     }
 
     /// Equality is vitaminc's table: a kind admits it exactly when
@@ -677,6 +681,7 @@ mod tests {
             assert!(admits(kind, &IndexSpec::Equality), "{kind} equality");
             assert!(admits(kind, &IndexSpec::Ore), "{kind} ore");
             assert!(admits(kind, &IndexSpec::Ope), "{kind} ope");
+            assert!(admits(kind, &IndexSpec::OreBlock), "{kind} ore_block");
             assert!(!admits(kind, &matched), "{kind} match");
         }
         // An 8-bit integer keeps its equality term and, like a boolean,
@@ -696,6 +701,7 @@ mod tests {
             assert!(admits(kind, &IndexSpec::Equality), "{kind} equality");
             assert!(!admits(kind, &IndexSpec::Ore), "{kind} ore");
             assert!(!admits(kind, &IndexSpec::Ope), "{kind} ope");
+            assert!(!admits(kind, &IndexSpec::OreBlock), "{kind} ore_block");
             assert!(!admits(kind, &matched), "{kind} match");
         }
     }
@@ -709,11 +715,12 @@ mod tests {
             for index in indexes() {
                 let reason = not_admitted(kind, &index);
                 assert_eq!(reason.is_none(), admits(kind, &index), "{kind} and {index}");
-                let pending = matches!(index, IndexSpec::Ore | IndexSpec::Ope)
-                    && matches!(
-                        kind,
-                        ValueKind::Decimal | ValueKind::Date | ValueKind::Timestamp
-                    );
+                let pending =
+                    matches!(index, IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock)
+                        && matches!(
+                            kind,
+                            ValueKind::Decimal | ValueKind::Date | ValueKind::Timestamp
+                        );
                 if pending {
                     assert_eq!(reason, Some(Reason::OrderTermPending), "{kind} and {index}");
                 } else if reason.is_some() {
@@ -737,11 +744,18 @@ mod tests {
             not_admitted(ValueKind::Date, &IndexSpec::Match(MatchOptions::default())),
             Some(Reason::IndexNotAdmitted)
         );
-        assert_eq!(not_admitted(ValueKind::Int16, &IndexSpec::Ore), None);
         assert_eq!(
-            not_admitted(ValueKind::Int8, &IndexSpec::Ore),
-            Some(Reason::IndexNotAdmitted)
+            not_admitted(ValueKind::Timestamp, &IndexSpec::OreBlock),
+            Some(Reason::OrderTermPending)
         );
+        assert_eq!(not_admitted(ValueKind::Int16, &IndexSpec::Ore), None);
+        for index in [IndexSpec::Ore, IndexSpec::Ope, IndexSpec::OreBlock] {
+            assert_eq!(
+                not_admitted(ValueKind::Int8, &index),
+                Some(Reason::IndexNotAdmitted),
+                "an 8-bit integer is refused {index} as a boolean is, not as pending"
+            );
+        }
         assert!(Reason::OrderTermPending.to_string().contains("#1236"));
     }
 

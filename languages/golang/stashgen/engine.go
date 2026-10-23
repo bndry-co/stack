@@ -277,8 +277,11 @@ var outputOfIndex = map[IndexName]record.Output{
 	IndexEquality: record.Equality, IndexMatch: record.Match, IndexOre: record.Ore, IndexOpe: record.Ope,
 }
 
+// indexOfOutput also names block ORE, which only an EQL type carries: it has
+// no entry in outputOfIndex, so no tag asks for it.
 var indexOfOutput = map[record.Output]IndexName{
 	record.Equality: IndexEquality, record.Match: IndexMatch, record.Ore: IndexOre, record.Ope: IndexOpe,
+	record.OreBlock: IndexOreBlock,
 }
 
 // wireKind is the record kind of a Go type: the same mapping the emitter

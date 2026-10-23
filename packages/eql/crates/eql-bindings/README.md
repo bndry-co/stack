@@ -112,13 +112,13 @@ plaintext, or, for a date, a timestamp or a decimal, one of
 
 | v4 type | Plaintext |
 | --- | --- |
-| `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe` | `String` |
-| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe` | `i16` |
-| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe` | `i32` |
-| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe` | `i64` |
+| `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe`, `TextOrdOre`, `TextSearch`, `TextSearchOre` | `String` |
+| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe`, `SmallintOrdOre` | `i16` |
+| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe`, `IntegerOrdOre` | `i32` |
+| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe`, `BigintOrdOre` | `i64` |
 | `Boolean` | `bool` |
-| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe` | `f32` |
-| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe` | `f64` |
+| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe`, `RealOrdOre` | `f32` |
+| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe`, `DoubleOrdOre` | `f64` |
 | `Date`, `DateEq` | `v4::plaintext::Date`: an `i32` of days since 1970-01-01 |
 | `Timestamp`, `TimestampEq` | `v4::plaintext::Timestamp`: `i64` Unix seconds and `u32` nanoseconds, UTC, no leap seconds |
 | `Numeric`, `NumericEq` | `v4::plaintext::Decimal`: an `i128` mantissa (below 2^96) and a `u8` scale (at most 28) |
@@ -162,11 +162,31 @@ where that matters. Write the stored column on the left, `col @@ query`: the
 other order finds nothing until #1171 is fixed. Text too short to make a
 3-gram (empty strings, two-letter codes) cannot be stored in a `TextMatch`
 column yet, and a `TextMatchQuery` for it is refused too: one filter type
-builds both, and an empty filter as a query would match every row. The ORE
-types (`*OrdOre`, `TextSearchOre`) wait for block ORE (#1132), `TextSearch`
-for how a query that is not a match leaves out its match term (#1131),
-`Date`, `Timestamp` and `Numeric` for a choice of their Rust plaintext types
-(#1130), and `Json` for a decision on sealing a document as one leaf.
+builds both, and an empty filter as a query would match every row.
+`TextSearch` stores all three terms (`TextEq`'s `hm`, `TextOrd`'s `op` and
+`TextMatch`'s `bf`). Text too short for a 3-gram is stored with the empty
+filter (`"bf": []`, the `SearchBloomFilter` field type): `=` and `<` find it
+through `hm` and `op`, and no `@@` query does, because a query's filter is
+never empty. (A `@@` between two stored values, which no producer builds, is
+not a query: two stored empty filters match each other there, as in v3.) Its query carries only the term its operator reads: build it
+through `TextSearchEqualityQuery` (`=`, `<>`), `TextSearchOrderQuery` (`<`,
+`<=`, `>`, `>=`) or `TextSearchMatchQuery` (`@@`) and convert into
+`TextSearchQuery`, and the by-name dispatch picks the one for the index that
+answers the operator. So `=` and `<` work on short text, a match query on it
+is refused, and EQL v4 raises on an operator whose term the query lacks (or
+holds as `null`, or as an empty filter).
+The ORE types (`*OrdOre`, `TextSearchOre`) store a block ORE term (`ob`):
+one element, the hex of a whole ore-rs 6-bit block ORE ciphertext (the
+fixed-width scheme for numbers, the chained scheme for text, padded to a
+power-of-two bucket of at least 16 bytes). They order by the same key as the
+`Ord` types, but EQL v4 compares them with its own comparator,
+`eql_v4_internal.compare_ore_block_v2_term`, and `ORDER BY` reads
+`eql_v4.ord_term_ore(col)`. Every term carries a random nonce, so a query's
+`ob` never equals the stored bytes; the comparator orders them. Text whose
+fold is longer than 1023 bytes or ends in NUL has no block ORE term and is
+refused. `TextSearchOre` follows `TextSearch`, with `ob` in place of `op`.
+`Date`, `Timestamp` and `Numeric` wait for a choice of their Rust plaintext
+types, and `Json` for a decision on sealing a document as one leaf.
 
 Each ordered v4 family also has two range query types, one per order term:
 `IntegerRangeOreQuery` and `IntegerRangeOpeQuery`, and so on
@@ -228,6 +248,71 @@ The `Identifier` stored in `i` is Stack Encrypt's `Describe`: its ZeroKMS
 descriptor is `<table>/<column>`, two parts, the same context and descriptor as
 a two-segment `stack_encrypt::Label`. A table or column containing `/` is
 escaped in the descriptor rather than read as two names.
+
+### Querying an EQL v4 field from Rust
+
+A query names an operator, and a plan for the column's EQL type finds the
+index that answers it (Stack Encrypt's ADR-0009). The term that comes back
+is the type's query twin, the value the `eql_v4.query_*` domain takes:
+
+```rust,ignore
+use eql_bindings::v4::text::{TextEq, TextMatch};
+use stack_encrypt::op::{self, Probabilistic, Stats};
+use stack_encrypt::Plan;
+
+// A plan for the column's type, under the label that names the column:
+// "users/email" is Identifier::for_column("users", "email").
+let email_plan = Plan::value::<String>().context("users/email").encrypt_into::<TextEq>().build()?;
+let query = cipher.query(op::Eq, "alice@example.com").on(&email_plan).await?; // a TextEqQuery
+// WHERE email = $1::eql_v4.query_text_eq, binding sqlx::types::Json(&query)
+
+let name_plan = Plan::value::<String>().context("users/name").encrypt_into::<TextMatch>().build()?;
+let query = cipher.query(op::Matches, "ali").on(&name_plan).await?; // a MatchTwin<TextMatchQuery>
+let fetch = query.target_limit(10, &Stats::declared(1_000_000)).fetch_or(50);
+// WHERE name @@ $1::eql_v4.query_text_match LIMIT $2, then keep the
+// decrypted rows for which query.verify(&name) is true.
+```
+
+| v4 type | Operator | Query term |
+| --- | --- | --- |
+| `TextEq` | `op::Eq` | `TextEqQuery` |
+| `SmallintEq`, `IntegerEq`, `BigintEq`, `RealEq`, `DoubleEq` | `op::Eq` | `SmallintEqQuery`, `IntegerEqQuery`, `BigintEqQuery`, `RealEqQuery`, `DoubleEqQuery` |
+| `DateEq`, `TimestampEq`, `NumericEq` | `op::Eq` | `DateEqQuery`, `TimestampEqQuery`, `NumericEqQuery` (from `v4::plaintext::Date`, `Timestamp`, `Decimal`) |
+| `TextMatch` | `op::Matches` | `MatchTwin<TextMatchQuery>` |
+
+`MatchTwin` serializes as the twin and adds `verify` and `target_limit`
+under `EqlMatch`: a filter can match a row that does not hold the query's
+text, so keep only the decrypted rows that verify. An exact query has no
+`verify`. An operator a type does not answer does not compile: `op::Lt` on
+`TextEq`, or `op::Matches` on `IntegerEq`. Nor does naming another index
+with `.via(..)`, such as the bare `Equality`, whose term the type's SQL does
+not take. The ordered types (`IntegerOrd`, `TextOrd`, …) answer nothing in
+the typed chain yet: their twins need an order term, or several terms at
+once, and the chain sends one index's term. Query them through the data
+path (`stack_encrypt::dynamic::query_term`) for now.
+
+The label must name the column the value was written under, as two
+segments, table then column. A label of any other length, and a query
+extended with `.extend(..)` (whose terms would be derived under more than
+the column the twin stores), are refused when the query is awaited, before
+any keyset is resolved, with an `encryption::query::QueryLabelError` in
+`Error::Other`. A label's segments are plain, so a table or column name
+that is not a plain label segment cannot be named on a plan, and such a
+column, which `Identifier::for_column` accepts, cannot be queried this way:
+for instance a name that starts with a digit, `-` or `b64:`, or one holding
+`/`, `(`, `)`, or a control or invisible format character.
+The plan is for queries: write with
+`keyset.encrypt_as(&value, column)` and open with `cipher.decrypt_as`, since
+an EQL type is sealed under its column rather than the plan's label. The
+query is the same bytes the data path derives for a field that names the
+type (`stack_encrypt::dynamic::query_term`), which is what the Go SDK sends,
+and `tests/encryption/tests/typed_queries.rs` checks that for every type and
+operator. The `op::Answers` impls are generated into `src/v4/answers.rs`
+from the catalog by the rule the data path uses, and need only the
+`stack-encrypt` feature, not `targets`; the supporting types are in
+`eql_bindings::encryption::query`, whose
+[executable example](src/encryption/query_example.rs) runs with
+`cargo test -p eql-encryption-tests --test query_example`.
 
 ### Interoperability matrix
 
