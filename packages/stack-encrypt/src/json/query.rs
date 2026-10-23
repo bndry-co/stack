@@ -69,6 +69,17 @@ pub struct JsonQuery {
 }
 
 impl JsonQuery {
+    /// The needle of an accessor: the projection of the document that holds
+    /// the value at the path, with no `alt`. The alternative matches a root
+    /// array that holds a root scalar, which is containment; at a path,
+    /// `("$", 1)` asks for the scalar `1`, not for an array holding it.
+    pub(crate) fn at_path(terms: &JsonTerms) -> Self {
+        Self {
+            group: group_of(terms.nodes(), None),
+            alt: None,
+        }
+    }
+
     pub(crate) fn of_terms(terms: &JsonTerms) -> Self {
         let alt = terms.alt().map(|(s, vs)| JsonProjection {
             sv: vec![Pair16 { s, vs }],
@@ -529,36 +540,49 @@ macro_rules! containment {
 containment!(Contains, ContainedBy);
 
 /// Equality at a path: the needle that holds the value at the path,
-/// projected, which containment answers exactly. A position in the path
-/// reads as the wildcard, since selectors do not tell positions apart.
+/// projected, with no `alt`. For a scalar, containment of that needle is
+/// equality of the value at the path. For an object or an array it would be
+/// containment (`{"x": 1}` matching `{"x": 1, "y": 2}`), so a container is
+/// refused with [`TermError::JsonValueNotScalar`] when the query is
+/// awaited. A position in the path reads as the wildcard, since selectors
+/// do not tell positions apart.
 impl<P, V> Supports<AtPath<Eq>, (P, V)> for Json
 where
     P: AsRef<str> + 'static,
-    V: Into<Value> + 'static,
+    V: Into<Value> + Clone + 'static,
 {
     type Query = JsonQuery;
     type Verifier = ();
-    fn check(&self, (path, _): &(P, V)) -> Result<(), Error> {
-        parse_path(path.as_ref()).map(drop)
+    fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
+        let _ = parse_path(path.as_ref())?;
+        scalar(&value.clone().into())
     }
     fn verifier(&self, _: &(P, V)) {}
     fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonQuery {
-        JsonQuery::of_terms(&terms.terms)
+        JsonQuery::at_path(&terms.terms)
     }
 }
 impl<P, V> Answers<AtPath<Eq>, (P, V)> for JsonDocument
 where
     P: AsRef<str> + 'static,
-    V: Into<Value> + 'static,
+    V: Into<Value> + Clone + 'static,
 {
     type Via = Json;
 }
 impl<P, V> DefaultIndex<(P, V)> for AtPath<Eq>
 where
     P: AsRef<str> + 'static,
-    V: Into<Value> + 'static,
+    V: Into<Value> + Clone + 'static,
 {
     type Via = Json;
+}
+
+/// Whether `value` is a scalar, which equality at a path compares.
+fn scalar(value: &Value) -> Result<(), Error> {
+    match value {
+        Value::Object(_) | Value::Array(_) => Err(TermError::JsonValueNotScalar.into()),
+        _ => Ok(()),
+    }
 }
 
 /// Whether `value` is a leaf the index orders: a number or a string.

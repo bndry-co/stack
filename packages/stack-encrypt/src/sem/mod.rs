@@ -312,6 +312,12 @@ pub enum TermError {
         help("The JSON index derives an ordering term for number and string leaves only: query `op::AtPath(op::Eq)` for a boolean or a null.")
     )]
     JsonLeafNotOrdered,
+    #[error("equality at a JSON path takes a scalar")]
+    #[diagnostic(
+        code(stack_encrypt::json_value_not_scalar),
+        help("`op::AtPath(op::Eq)` compares one value at a path: a string, a number, a boolean or a null. To ask whether the value at a path holds an object or an array, query `op::Contains` with the document that holds it there.")
+    )]
+    JsonValueNotScalar,
 }
 
 impl crate::ErrorPayload for TermError {
@@ -331,7 +337,8 @@ impl crate::ErrorPayload for TermError {
             | Self::JsonTooDeep
             | Self::JsonTooWide
             | Self::JsonSealedRoot
-            | Self::JsonLeafNotOrdered => serde_json::Map::new(),
+            | Self::JsonLeafNotOrdered
+            | Self::JsonValueNotScalar => serde_json::Map::new(),
         }
     }
 }

@@ -939,6 +939,38 @@ async fn an_accessor_asks_at_a_path() {
         unordered,
         Err(Error::Term(TermError::JsonLeafNotOrdered))
     ));
+    // Equality at a path compares one value: an object or an array would be
+    // containment, which `op::Contains` asks for.
+    for container in [json!({"deep": "constant"}), json!([]), json!([{"x": 1}])] {
+        let refused = cipher
+            .query(op::AtPath(op::Eq), &("$.nested", container.clone()))
+            .on(&plan)
+            .await;
+        assert!(
+            matches!(refused, Err(Error::Term(TermError::JsonValueNotScalar))),
+            "{container}"
+        );
+    }
+}
+
+/// At the root, equality is of the root value: `("$", 1)` matches a stored
+/// `1` and not a stored `[1]`, which containment of the scalar `1` would.
+#[tokio::test]
+async fn equality_at_the_root_is_not_containment() {
+    let cipher = stack_cipher().await;
+    let plan = plan();
+    let at_root: JsonQuery = cipher
+        .query(op::AtPath(op::Eq), &("$", 1))
+        .on(&plan)
+        .await
+        .unwrap();
+    let contains: JsonQuery = cipher.query(op::Contains, &json!(1)).on(&plan).await.unwrap();
+    let scalar = cipher.encrypt(&json!(1)).using(&plan).await.unwrap();
+    let array = cipher.encrypt(&json!([1])).using(&plan).await.unwrap();
+    assert!(at_root.matches(&scalar.projection()));
+    assert!(!at_root.matches(&array.projection()));
+    assert!(contains.matches(&array.projection()), "jsonb: [1] @> 1");
+    assert!(serde_json::to_value(&at_root).unwrap().get("alt").is_none());
 }
 
 #[tokio::test]
