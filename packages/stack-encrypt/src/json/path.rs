@@ -147,6 +147,12 @@ impl JsonPath {
         &self.segments
     }
 
+    /// Whether some step is an array position (`[2]`), which a selector
+    /// reads as the wildcard.
+    pub(crate) fn names_a_position(&self) -> bool {
+        self.segments.iter().any(|s| matches!(s, Segment::Index(_)))
+    }
+
     /// Whether this path names one node: no step is the wildcard.
     pub fn is_positional(&self) -> bool {
         !self.segments.iter().any(|s| matches!(s, Segment::Wildcard))

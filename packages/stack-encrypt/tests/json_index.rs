@@ -310,7 +310,9 @@ async fn subtree_key(
 }
 
 /// An ordering term sits on a number or string leaf at an ordered path and
-/// nowhere else: a wildcard covers every element, a position one.
+/// nowhere else: a wildcard covers every element. A position is refused,
+/// since `->` reads it as the wildcard and no ordering could reach the leaf
+/// it names.
 #[tokio::test]
 async fn an_ordering_term_sits_only_at_an_ordered_path() {
     let cipher = stack_cipher().await;
@@ -327,11 +329,31 @@ async fn an_ordering_term_sits_only_at_an_ordered_path() {
     assert_eq!(with_term(&doc), [1, 9]);
     let wild = seal_with(&cipher, &fixture(), &ordering(&["$.nested.list[*].x"])).await;
     assert_eq!(with_term(&wild), [6, 8], "a wildcard covers every element");
-    let second = seal_with(&cipher, &fixture(), &ordering(&["$.nested.list[1].x"])).await;
-    assert_eq!(
-        with_term(&second),
-        [8],
-        "a position covers that element alone"
+    assert!(matches!(
+        JsonOptions::default().ordering(["$.nested.list[1].x"]),
+        Err(TermError::JsonOrderingAtPosition)
+    ));
+    assert!(matches!(
+        JsonOptions::default().ordering(["nested"]),
+        Err(TermError::JsonPath(_))
+    ));
+    // Set on the field, which `ordering` guards, a position refuses the
+    // seal rather than put a term no ordering reaches on one element.
+    let mut positional = JsonOptions::default();
+    let _ = positional
+        .ordered
+        .insert(JsonPath::parse("$.nested.list[1].x").unwrap());
+    let refused = cipher
+        .default_keyset()
+        .run(
+            stack_encrypt::target::json_document::<_, stack_encrypt::target::Borrowed>(positional),
+            &fixture(),
+            context(),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(Error::Term(TermError::JsonOrderingAtPosition))),
+        "{refused:?}"
     );
     // A container, a boolean or a null at an ordered path carries none.
     let kinds = seal_with(
@@ -1127,24 +1149,35 @@ async fn an_accessor_asks_at_a_path() {
         matches!(not_ordered, Err(Error::Term(TermError::JsonPathNotOrdered))),
         "{not_ordered:?}"
     );
-    // A wildcard query path is covered by a wildcard, not by a position.
+    // An ordering at a wildcard path is covered by the wildcard. One at a
+    // position is refused whatever the plan orders: `->` reads a position
+    // as the wildcard and would compare the first element, not the one
+    // named.
     let by_element = Plan::value::<Value>()
         .context("users/profile")
-        .encrypt_as(Json::new(ordering(&["$.nested.list[1].x"])))
+        .encrypt_as(Json::new(ordering(&["$.nested.list[*].x"])))
         .build()
         .unwrap();
     assert!(cipher
-        .query(op::AtPath(op::Gt), &("$.nested.list[1].x", 0))
+        .query(op::AtPath(op::Gt), &("$.nested.list[*].x", 0))
         .on(&by_element)
         .await
         .is_ok());
-    for path in ["$.nested.list[*].x", "$.nested.list[0].x"] {
+    for path in ["$.nested.list[1].x", "$.nested.list[0].x"] {
         let refused = cipher
             .query(op::AtPath(op::Gt), &(path, 0))
             .on(&by_element)
             .await;
         assert!(
-            matches!(refused, Err(Error::Term(TermError::JsonPathNotOrdered))),
+            matches!(refused, Err(Error::Term(TermError::JsonOrderingAtPosition))),
+            "{path}: {refused:?}"
+        );
+        let refused = cipher
+            .query(op::AtPath(op::Between), &(path, (0, 5)))
+            .on(&by_element)
+            .await;
+        assert!(
+            matches!(refused, Err(Error::Term(TermError::JsonOrderingAtPosition))),
             "{path}: {refused:?}"
         );
     }
@@ -1317,6 +1350,11 @@ fn the_json_index_has_a_wire_form() {
     .unwrap();
     assert_eq!(IndexSpec::from_frame(&frame).unwrap(), ordered);
     let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["age"]}})).unwrap();
+    assert!(IndexSpec::from_frame(&frame).is_err());
+    // A position in an ordered path refuses the index too: no ordering can
+    // reach the leaf it names.
+    let frame =
+        vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["$.scores[2]"]}})).unwrap();
     assert!(IndexSpec::from_frame(&frame).is_err());
     assert_eq!(
         not_admitted(ValueKind::Object, &IndexSpec::Json(JsonOptions::default())),
@@ -1833,6 +1871,18 @@ async fn an_accessor_is_refused_before_its_keyset_loads() {
     assert!(
         matches!(not_ordered, Err(Error::Term(TermError::JsonPathNotOrdered))),
         "{not_ordered:?}"
+    );
+    let at_position = cipher
+        .query(op::AtPath(op::Gte), &("$.nested.list[0].x", 1))
+        .on(&plan)
+        .keyset("tenant")
+        .await;
+    assert!(
+        matches!(
+            at_position,
+            Err(Error::Term(TermError::JsonOrderingAtPosition))
+        ),
+        "{at_position:?}"
     );
     // An open that names a context the plan already has is refused the
     // same way, one document or a batch, before the keyset loads.

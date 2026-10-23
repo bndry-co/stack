@@ -321,6 +321,18 @@ pub enum TermError {
         help("A leaf carries an ordering term only at a path the index's `ordered` option covers (`$.age`, or `$.orders[*].total` for every element). Declare the path on the index, and re-encrypt the documents stored before it was, then order at it.")
     )]
     JsonPathNotOrdered,
+    /// An ordered path, or an ordering asked at a path, names an array
+    /// position. An ordering compares the leaf `->` extracts by the path's
+    /// selector, and a selector reads every position as the wildcard, so
+    /// `->` returns the first element at the path whatever position was
+    /// named: the comparison would be against another element's leaf, or
+    /// against one with no term.
+    #[error("an ordering at a JSON path cannot name an array position")]
+    #[diagnostic(
+        code(stack_encrypt::json_ordering_at_position),
+        help("Write `[*]` where an ordered path, or the path an ordering asks at, crosses an array: `$.orders[*].total`, not `$.orders[2].total`. The comparison extracts the first element at the path.")
+    )]
+    JsonOrderingAtPosition,
     #[error("equality at a JSON path takes a scalar")]
     #[diagnostic(
         code(stack_encrypt::json_value_not_scalar),
@@ -348,6 +360,7 @@ impl crate::ErrorPayload for TermError {
             | Self::JsonSealedRoot
             | Self::JsonLeafNotOrdered
             | Self::JsonPathNotOrdered
+            | Self::JsonOrderingAtPosition
             | Self::JsonValueNotScalar => serde_json::Map::new(),
         }
     }

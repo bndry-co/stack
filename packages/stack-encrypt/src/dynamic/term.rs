@@ -83,8 +83,8 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 /// `sealed_root` defaults to `true` and `ordered` to none
 /// ([`JsonOptions::default`]); each path in `ordered` is text
 /// [`JsonPath::parse`](crate::json::JsonPath::parse) takes, such as
-/// `"$.age"` or `"$.orders[*].total"`, and one it refuses refuses the
-/// index. A data plan
+/// `"$.age"` or `"$.orders[*].total"`, and one it refuses, or one that
+/// names an array position (`"$.scores[2]"`), refuses the index. A data plan
 /// reads and writes the JSON index and refuses to run it
 /// ([`Reason::JsonIndexPending`]): the engine's typed path produces a JSON
 /// document, and the binding's half is not written yet. The other four
@@ -307,7 +307,7 @@ impl Default for JsonOptionsWire {
 }
 
 impl TryFrom<JsonOptionsWire> for JsonWire {
-    type Error = crate::json::JsonPathError;
+    type Error = crate::sem::TermError;
     fn try_from(wire: JsonOptionsWire) -> Result<Self, Self::Error> {
         let options = JsonOptions {
             sealed_root: wire.sealed_root,

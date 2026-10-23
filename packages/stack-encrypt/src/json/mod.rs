@@ -145,9 +145,13 @@ pub struct JsonOptions {
     /// None by default: an ordering term reveals the order of the leaf
     /// across every row that holds one, and costs about eighty bytes a
     /// leaf, so a path pays for it only when asked. A wildcard step covers
-    /// every element of the array (`$.orders[*].total`); a position covers
-    /// that element alone (`$.scores[0]`). An ordering asked at a path no
-    /// entry here covers is refused
+    /// every element of the array (`$.orders[*].total`). A position
+    /// (`$.scores[2]`) is refused, here and in an ordering query
+    /// ([`TermError::JsonOrderingAtPosition`](crate::sem::TermError::JsonOrderingAtPosition)):
+    /// an ordering compares the leaf `->` extracts by the path's selector,
+    /// which reads every position as the wildcard, so it reaches the first
+    /// element at the path and never the one a position names. An ordering
+    /// asked at a path no entry here covers is refused
     /// ([`TermError::JsonPathNotOrdered`](crate::sem::TermError::JsonPathNotOrdered)).
     pub ordered: BTreeSet<JsonPath>,
 }
@@ -166,16 +170,35 @@ impl JsonOptions {
     ///
     /// # Errors
     ///
-    /// [`JsonPathError`] for a path that is not one.
-    pub fn ordering<I>(mut self, paths: I) -> Result<Self, JsonPathError>
+    /// [`TermError::JsonPath`](crate::sem::TermError::JsonPath) for a path
+    /// that is not one, and
+    /// [`TermError::JsonOrderingAtPosition`](crate::sem::TermError::JsonOrderingAtPosition)
+    /// for a path that names an array position, which no ordering can
+    /// reach (see [`ordered`](Self::ordered)).
+    pub fn ordering<I>(mut self, paths: I) -> Result<Self, crate::sem::TermError>
     where
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
         for path in paths {
-            let _ = self.ordered.insert(JsonPath::parse(path.as_ref())?);
+            let path = JsonPath::parse(path.as_ref())?;
+            if path.names_a_position() {
+                return Err(crate::sem::TermError::JsonOrderingAtPosition);
+            }
+            let _ = self.ordered.insert(path);
         }
         Ok(self)
+    }
+
+    /// Refuse options whose ordered paths name a position, which the
+    /// field admits but [`ordering`](Self::ordering) does not: sealing
+    /// under them would put a term no ordering can reach on the leaf.
+    pub(crate) fn check(&self) -> Result<(), crate::sem::TermError> {
+        if self.ordered.iter().any(JsonPath::names_a_position) {
+            Err(crate::sem::TermError::JsonOrderingAtPosition)
+        } else {
+            Ok(())
+        }
     }
 
     /// Whether the leaf at `path` carries an ordering term: some ordered

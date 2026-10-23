@@ -613,9 +613,14 @@ fn ordered(value: &Value) -> Result<(), Error> {
 }
 
 /// Whether the index orders the leaves at `path`: some path in its
-/// `ordered` option covers it.
+/// `ordered` option covers it. A path that names a position is refused
+/// first: the comparison extracts by selector, which reads the position as
+/// the wildcard, so it would compare the first element at the path rather
+/// than the one named.
 fn orders(index: &Json, path: &JsonPath) -> Result<(), Error> {
-    if index.options.orders(path) {
+    if path.names_a_position() {
+        Err(TermError::JsonOrderingAtPosition.into())
+    } else if index.options.orders(path) {
         Ok(())
     } else {
         Err(TermError::JsonPathNotOrdered.into())

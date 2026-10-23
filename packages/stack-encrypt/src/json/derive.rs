@@ -411,6 +411,7 @@ fn walk(
     prf: &HmacSha256Prf,
     context: &Context<'_>,
 ) -> Result<Walked, TermError> {
+    options.check()?;
     let mut walker = Walker {
         prf,
         context,
