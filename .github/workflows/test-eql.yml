@@ -100,7 +100,8 @@ on:
       - "packages/eql/docker/**"
       - "packages/eql/README.md"
       - "packages/eql/SUPABASE.md"
-      # The `rust-crates` job's encryption steps compile these by PATH
+      # The `rust-crates` and `rust-encryption-postgres` jobs' encryption
+      # steps compile these by PATH
       # (`eql-bindings`' `stack-encrypt` feature): stack-encrypt, its derive
       # and stack-kms through `path =`, and stack-auth and stack-profile
       # through `workspace = true` entries the root `Cargo.toml` resolves to
@@ -449,9 +450,6 @@ jobs:
         run: |
           mise run test:sqlx:partition
 
-  # docs:validate + Clean-DB v3 install smoke. Both are version-relevant, so
-  # they follow the event's PG set (PG17 on PR; 14-17 in the queue). Moved out
-  # of the old per-version test job so they run ONCE per version, not per shard.
   # The Rust encryption suite against a live database, once per supported
   # PostgreSQL version: the JSON tree family's oracle (containment over the
   # encrypted column against native `jsonb @>` over the plaintexts), its
@@ -459,7 +457,9 @@ jobs:
   # the GIN and btree indexes with every setting at its default. Plan choice
   # is a per-version property of the planner, which is why this is a matrix
   # and not a step of `rust-crates`. PR and manual dispatch run PG 17 alone;
-  # a push runs the full set, like the SQLx jobs (see `setup`).
+  # a push or the schedule runs the full set, like the SQLx jobs (see
+  # `setup`). Listed in `ci-required`'s `needs`, like every job here: the
+  # step it replaced sat inside `rust-crates`, which is.
   rust-encryption-postgres:
     name: "Rust encryption with PostgreSQL ${{ matrix.postgres-version }}"
     needs: [changes, setup]
@@ -514,6 +514,9 @@ jobs:
           EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.encryption-postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres"
         run: mise run test:encryption:postgres
 
+  # docs:validate + Clean-DB v3 install smoke. Both are version-relevant, so
+  # they follow the event's PG set (PG17 on PR; 14-17 in the queue). Moved out
+  # of the old per-version test job so they run ONCE per version, not per shard.
   validate:
     name: "Validate (Postgres ${{ matrix.postgres-version }})"
     needs: [changes, setup]
@@ -1053,8 +1056,9 @@ jobs:
   ci-required:
     name: "ci-required"
     needs: [changes, setup, build-archive, test, validate, schema, rust-crates,
-            codegen, self-contained-v3, matrix-coverage, splinter, docs-static,
-            known-failures, doc-anchors, e2e]
+            rust-encryption-postgres, codegen, self-contained-v3,
+            matrix-coverage, splinter, docs-static, known-failures,
+            doc-anchors, e2e]
     if: always()
     runs-on: blacksmith-16vcpu-ubuntu-2204
     # Same opt-out as `setup`, and this is the worse of the two to get wrong:
