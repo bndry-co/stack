@@ -356,8 +356,8 @@ async fn one_value_is_new_bytes_that_compare_equal() {
         assert_ne!(a, b, "a fresh nonce each time");
         assert_eq!(left(&a), left(&b));
         let (a, b) = (
-            OreBlockTerm::<i64>::from_bytes(&a).unwrap(),
-            OreBlockTerm::<i64>::from_bytes(&b).unwrap(),
+            OreBlockTerm::<i64>::from_bytes(a.clone()).unwrap(),
+            OreBlockTerm::<i64>::from_bytes(b.clone()).unwrap(),
         );
         assert_eq!(a.compare(&b), Some(Ordering::Equal));
         assert!(a == b, "== is the scheme's equality");
@@ -497,8 +497,13 @@ async fn decoding_checks_the_shape() {
     let keyset = cipher.default_keyset();
     let bit6 = term(&keyset, 42i64).await.into_bytes();
     let chained = term(&keyset, "alice".to_string()).await.into_bytes();
-    assert!(OreBlockTerm::<i64>::from_bytes(&bit6).is_ok());
-    assert!(OreBlockTerm::<String>::from_bytes(&chained).is_ok());
+    assert!(OreBlockTerm::<i64>::from_bytes(bit6.clone()).is_ok());
+    assert!(OreBlockTerm::<String>::from_bytes(chained.clone()).is_ok());
+    // The std conversions are the same decoder, by value and by copy.
+    let by_value = OreBlockTerm::<i64>::try_from(bit6.clone()).unwrap();
+    assert_eq!(by_value.as_bytes(), &bit6[..]);
+    let by_copy = OreBlockTerm::<String>::try_from(&chained[..]).unwrap();
+    assert_eq!(by_copy.as_bytes(), &chained[..]);
     for bad in [
         &bit6[..bit6.len() - 1],
         &chained[..10],
@@ -506,13 +511,15 @@ async fn decoding_checks_the_shape() {
         &[0x02, 0x04, 0, 1][..],
     ] {
         assert_eq!(
-            OreBlockTerm::<i64>::from_bytes(bad).unwrap_err(),
+            OreBlockTerm::<i64>::from_bytes(bad.to_vec()).unwrap_err(),
             TermBytesError::MalformedOreBlockCiphertext(bad.len())
         );
+        assert!(OreBlockTerm::<i64>::try_from(bad).is_err());
+        assert!(OreBlockTerm::<i64>::try_from(bad.to_vec()).is_err());
     }
     // A 6-bit and a chained term have no order between them.
-    let a = OreBlockTerm::<i64>::from_bytes(&bit6).unwrap();
-    let b = OreBlockTerm::<i64>::from_bytes(&chained).unwrap();
+    let a = OreBlockTerm::<i64>::from_bytes(bit6).unwrap();
+    let b = OreBlockTerm::<i64>::from_bytes(chained).unwrap();
     assert_eq!(a.compare(&b), None);
     assert!(a != b);
 }

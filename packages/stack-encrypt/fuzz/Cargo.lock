@@ -2077,6 +2077,7 @@ dependencies = [
  "ore-rs",
  "serde",
  "serde_json",
+ "serdect",
  "stack-encrypt-derive",
  "stack-kms",
  "thiserror 1.0.69",

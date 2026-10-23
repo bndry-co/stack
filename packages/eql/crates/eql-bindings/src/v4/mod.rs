@@ -20,13 +20,25 @@
 //! operand of `eql_v4.between(column, range)`. EQL v3 has no range domains.
 //!
 //! v4 has no SteVec bindings, payload enums, TypeScript export or
-//! published JSON Schema yet; those follow in `@cipherstash/eql` 4.0. The
-//! term newtypes and the [`DomainType`] trait are shared with v3: a v4
-//! `Ciphertext` or `Hmac256` is v3's type, so a change to a term's validation
-//! in `v3::terms` changes v4 too. The one v4 term v3 has no use for is
-//! [`terms::SearchBloomFilter`], the stored filter of a search domain. What
-//! separates the two on the wire is the envelope's [`SchemaVersion`], which
-//! refuses the other generation's `v`.
+//! published JSON Schema yet; those follow in `@cipherstash/eql` 4.0.
+//!
+//! The order terms are Stack Encrypt's own: an `ob` field is a
+//! [`stack_encrypt::sem::OreBlockTerm`] and an `op` field a
+//! [`stack_encrypt::sem::OpeTerm`], each over the type's plaintext
+//! (`DateOrdOre::ob` is an `OreBlockTerm<Date>`). Each is one lowercase hex
+//! string on the wire, the ore-rs or clww-ore ciphertext, and reading one
+//! checks its structure, so an EQL v3 term, or a term of the other scheme,
+//! is refused when the payload is read. [`terms::OreBlockHex`] and
+//! [`terms::OpeHex`] describe that JSON to TypeScript and JSON Schema. The
+//! domain CHECKs refuse a value that is not such a string.
+//!
+//! The other term newtypes and the [`DomainType`] trait are shared with v3:
+//! a v4 `Ciphertext` or `Hmac256` is v3's type, so a change to its
+//! validation in `v3::terms` changes v4 too. v3's order terms
+//! (`OreBlock256`, `OpeCllw`) are not among them. The one v4 term v3 has no
+//! use for is [`terms::SearchBloomFilter`], the stored filter of a search
+//! domain. What separates the two on the wire is the envelope's
+//! [`SchemaVersion`], which refuses the other generation's `v`.
 
 /// Generated: the `op::Answers` impls through which Stack Encrypt's typed
 /// query chain queries a producible type, each type's
@@ -49,6 +61,7 @@ pub mod numeric;
 pub mod plaintext;
 pub mod real;
 pub mod smallint;
+// Generated: the JSON of the order terms, re-exported from `terms`.
 /// Generated: the table of EQL types a Stack Encrypt data plan may name as
 /// a field target (`TARGETS`) and the by-name dispatch that runs a
 /// producible type's own plan. The descriptor type, the errors and the
@@ -56,16 +69,20 @@ pub mod smallint;
 /// `targets` feature only.
 #[cfg(feature = "targets")]
 pub mod targets;
+mod term_formats;
 pub mod text;
 pub mod timestamp;
 
 pub use crate::v3::domain_type::{DomainType, SQL_SCHEMA};
 pub use inventory::{all, all_query, all_range_query};
 
-/// The wire-field newtypes of the v4 payloads: v3's, shared, and
-/// [`SearchBloomFilter`](terms::SearchBloomFilter).
+/// The wire-field types of the v4 payloads: v3's that are not order terms,
+/// shared; [`SearchBloomFilter`](terms::SearchBloomFilter); and the JSON of
+/// the order terms, [`OreBlockHex`](terms::OreBlockHex) and
+/// [`OpeHex`](terms::OpeHex), whose fields hold Stack Encrypt's terms.
 pub mod terms {
-    pub use crate::v3::terms::*;
+    pub use super::term_formats::{OpeHex, OreBlockHex};
+    pub use crate::v3::terms::{BloomFilter, Ciphertext, Hmac256};
 
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};

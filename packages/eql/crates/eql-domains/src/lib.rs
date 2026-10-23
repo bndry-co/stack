@@ -26,6 +26,8 @@ mod fixtures;
 mod spec;
 mod term;
 
+pub use term::V4TermFormat;
+
 pub use fixtures::{
     kind_for, BoundedIntKind, Fixture, ScalarKind, TypeFixtures, BIGINT_FIXTURES, BIGINT_VALUES,
     BOOLEAN_FIXTURES, DATE_FIXTURES, DOUBLE_FIXTURES, FIXTURES, INTEGER_FIXTURES, INTEGER_VALUES,

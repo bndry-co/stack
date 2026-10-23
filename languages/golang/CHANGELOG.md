@@ -187,6 +187,13 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Changed
 
+- **An EQL v4 block ORE term is one hex string.** The `ob` of a value
+  encrypted into an `_ord_ore` or `text_search_ore` EQL type is
+  `"ob": "0202…"`, where it was a one-element array, and the EQL v4 bundle
+  checks the shape of every `ob` and `op` it stores. A database that
+  installed the EQL v4 bundle attached to `v0.1.0-alpha.1` must drop its
+  stored order domains before installing the new one (EQL's upgrade note
+  U-003).
 - **A call whose context ends fails on its own and leaves the client
   open.** A cancelled or timed-out call used to close the `encrypt.Client`,
   or the `auth` profile behind its strategy, for every later caller, and a
