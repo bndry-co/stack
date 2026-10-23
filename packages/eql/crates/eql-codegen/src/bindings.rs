@@ -739,11 +739,19 @@ fn encryption_attrs(
                  query terms{null}. Query operands do not decrypt."
             )
         } else if nullable_terms(domain) {
+            // A null is padded to a value's length only where values have
+            // one length; text's ciphertext is as long as the text.
+            let length = if family.name == "text" {
+                "a `None` is sealed as a null that is not padded, since text has no \
+                 one length, so its length may show that the value is absent"
+            } else {
+                "a `None` is sealed as long as a value"
+            };
             format!(
                 " Plaintext input and decrypted output: {named}. Implements \
                  `EncryptFrom<{shown}>` and `DecryptInto<{shown}>`, and both for \
-                 `Option<{shown}>`: a `None` is sealed as long as a value, and its terms \
-                 are a null's, which equality has and no other index does."
+                 `Option<{shown}>`: {length}, and its terms are a null's, which equality \
+                 has and no other index does."
             )
         } else {
             format!(

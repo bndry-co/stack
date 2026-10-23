@@ -15,7 +15,7 @@ use ts_rs::TS;
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`, and both for `Option<String>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`, and both for `Option<String>`: a `None` is sealed as a null that is not padded, since text has no one length, so its length may show that the value is absent, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
@@ -65,7 +65,7 @@ impl DomainType for Text {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`, and both for `Option<String>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`, and both for `Option<String>`: a `None` is sealed as a null that is not padded, since text has no one length, so its length may show that the value is absent, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
