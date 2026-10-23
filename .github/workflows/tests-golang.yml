@@ -21,7 +21,9 @@ name: Tests (Go)
 #               the Go module's PostgreSQL tests, against PostgreSQL 17 with
 #               the EQL v4 bundle built from this tree installed: rows the Go
 #               SDK stores in every EQL type it produces, found by the queries
-#               it derives, through EQL's operators.
+#               it derives, through EQL's operators; and a few hundred random
+#               values in every ordered type, which must order as their
+#               plaintexts do.
 #   live        the Go live tests and the stack-encrypt examples, against real
 #               ZeroKMS with the repository's CS_* credentials.
 #
