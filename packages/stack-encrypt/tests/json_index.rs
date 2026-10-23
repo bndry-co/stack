@@ -1365,9 +1365,6 @@ fn base64(bytes: &[u8]) -> String {
     Base64::encode_string(bytes)
 }
 
-/// A document, an extracted node and a walked subtree are each the one
-/// recoverable field of a derived record: each opens through
-/// `DecryptField`, as a record holding one would.
 /// The rows of a gated walk carry the node the gates reached at depth 0
 /// and its descendants beneath. Opened as a value, they are that node's
 /// value; two reached nodes open as a list, or refuse to be one value.
@@ -1447,6 +1444,9 @@ async fn gated_walk_rows_open_to_the_reached_nodes_value() {
     assert_eq!(elements, json!([{"x": 1}, {"x": 2}]));
 }
 
+/// A document, an extracted node and a walked subtree are each the one
+/// recoverable field of a derived record: each opens through
+/// `DecryptField`, as a record holding one would.
 #[tokio::test]
 async fn each_stored_form_opens_as_a_record_field() {
     let cipher = stack_cipher().await;
