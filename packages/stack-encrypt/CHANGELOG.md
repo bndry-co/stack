@@ -29,7 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `JsonLeafNotOrdered`, `JsonPathNotOrdered` and `JsonValueNotScalar`. A
   data plan reads and writes the index (`"json"`, or `{"json":
   {"sealed_root": bool, "ordered": [path, …]}}`) and refuses to run it
-  with `Reason::JsonIndexPending`.
+  with `Reason::JsonIndexPending`. A walk past its budget returns the
+  sealed root in place of the subtree: `JsonSubtree::below(path)` (for
+  `json_tree_subtree`) or `JsonSubtree::at(path)` (for
+  `json_tree_subtree_at`) attaches the walked path, and the rows then open
+  to the same value either way, over `JsonPath::select`, which evaluates a
+  path over a value.
 
 - **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended
   2026-10-19). It derives ore-rs 0.9.0's 6-bit block ORE under its own key

@@ -41,6 +41,10 @@
 --! scalar, its value, bound to `s`, nested by array element. The client
 --! writes it beside `sv` and it is the only place the value selectors
 --! live: the server compares it with a needle by native `jsonb @>`.
+--! The CHECK validates its shape, not that it agrees with `sv`: containment
+--! answers from `q` as written, so a row written by anything but Stack
+--! Encrypt's JSON index can answer `@>` differently from `->`, the walks
+--! and decryption, which answer from `sv`.
 
 --! @brief Validate one JSON tree entry.
 --! @internal
