@@ -8,7 +8,8 @@ on:
     branches:
       - "**"
     # Plan documents under docs/plans/ need none of these jobs. Later patterns
-    # win, so the negation has to come after the catch-all.
+    # win, so the negation has to come after the catch-all. While this filter
+    # stands, `tests-required` must not be a required check: see that job.
     paths:
       - '**'
       - '!docs/plans/**'
@@ -248,8 +249,18 @@ jobs:
         run: pnpm run release:gate
 
 
+      # bench-index-expressions checks that the shipped EQL bundle in
+      # `dist/` is a verbatim copy of the committed one. `dist/` is a build
+      # output, and nothing before this step builds it, so build it here.
+      # EQL_DIST_REQUIRED makes that check fail, not skip, if `dist/` is
+      # missing, so dropping this build cannot silently disable it.
+      - name: Build @cipherstash/eql
+        run: pnpm exec turbo run build --filter @cipherstash/eql
+
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
+        env:
+          EQL_DIST_REQUIRED: '1'
 
       # protect-ffi's JS suite reads the root workflows (lintWiring,
       # integrationSuiteCi) and passes with no binding built, which is a
@@ -885,6 +896,13 @@ jobs:
   # job reports `skipped` on a pull request that cannot affect it, which a
   # rule requiring that job by name would wait on forever; this job reads
   # `skipped` as a pass and anything but `success` otherwise as a failure.
+  #
+  # It does not report on a pull request that changes only `docs/plans/**`:
+  # the workflow-level `paths` filter at the top of this file stops the
+  # whole workflow from starting, and GitHub leaves a required check from a
+  # workflow it never started pending. Before a branch rule requires this
+  # check, remove that filter (and `plan-docs-unread-by-tests.test.mjs`,
+  # which exists because of it), or plans-only pull requests cannot merge.
   tests-required:
     name: tests-required
     needs: [lint, changes, repo-checks, run-tests, e2e-tests, wasm-e2e-tests, run-tests-bun]
