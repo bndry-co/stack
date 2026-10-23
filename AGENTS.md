@@ -689,7 +689,7 @@ monorepo, which is where the silent failures are.
   oracle, containment over the encrypted column against PostgreSQL's own
   `jsonb @>` over the plaintexts, is `packages/eql/tests/encryption/tests/json_tree.rs`,
   run by `mise run test:encryption:postgres`. The design and its
-  implementation notes are `docs/plans/2026-10-17-json-index-stack-encrypt-spike.md`.
+  implementation notes are `docs/plans/2026-10-17-json-tree-index.md`.
   A change to the derivations on one side (a PAE domain, the header layout,
   the projection shape) is a change to the other: the Postgres suite is
   what holds them together.
