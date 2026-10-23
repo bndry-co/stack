@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The order terms are serde types.** `OreTerm`, `OpeTerm` and
+  `OreBlockTerm` serialize as the lowercase hex of their bytes in a
+  human-readable format such as JSON, and as the raw bytes in a binary one,
+  through `serdect`, whose hex is constant-time. Deserializing decodes
+  through `from_bytes`, so it refuses what `from_bytes` refuses, and no
+  error carries a byte of the term. EQL v4's bindings store them this way.
+
 - **Dates, timestamps and decimals are ordered** (#1236). The new
   `value` module holds `Date`, `Timestamp` and `Decimal` (and their
   `RangeError`), moved here from eql-bindings, which re-exports them at
@@ -264,6 +271,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Plan::new_with`.
 
 ### Breaking
+
+- **The order terms' `from_bytes` takes the buffer.** `OreTerm`, `OpeTerm`
+  and `OreBlockTerm::from_bytes` take a `Vec<u8>` and keep it, copying
+  nothing; each also implements `TryFrom<Vec<u8>>`. `TryFrom<&[u8]>`
+  remains, and copies once. `OpeTerm` now refuses a term whose leading
+  carry byte is not 0 or 1, which clww-ore's comparator already refuses
+  (`TermBytesError::MalformedCllwCiphertext`).
 
 - **stack-encrypt requires the vitaminc 0.8 crates, clww-ore 0.6 and
   ore-rs 0.10.** A crate that names a vitaminc type stack-encrypt takes or

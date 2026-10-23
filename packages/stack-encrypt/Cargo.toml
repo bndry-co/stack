@@ -46,6 +46,9 @@ vitaminc-protected = { workspace = true }
 # control data (statistics, options, a plan) into typed messages.
 vitaminc-aead-frame = { workspace = true, optional = true, features = ["serde"] }
 serde = { workspace = true }
+# The order terms' serde: lowercase hex in JSON, raw bytes in a binary
+# format, through serdect's constant-time hex.
+serdect = { workspace = true }
 # `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
 base64ct = { version = "1.7", features = ["alloc"] }
 

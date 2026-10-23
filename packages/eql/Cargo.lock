@@ -4263,6 +4263,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "serdect",
  "stack-encrypt-derive",
  "stack-kms",
  "thiserror 1.0.69",

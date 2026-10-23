@@ -94,12 +94,24 @@
 //! * [`OreTerm`] / [`OpeTerm`] — the raw CLLW ciphertext bytes, unframed
 //!   ([`as_bytes`](OreTerm::as_bytes) / [`to_bytes`](OreTerm::to_bytes) /
 //!   [`from_bytes`](OreTerm::from_bytes)).
+//! * [`OreBlockTerm`] — the serialised ore-rs ciphertext, header first
+//!   ([`as_bytes`](OreBlockTerm::as_bytes) /
+//!   [`from_bytes`](OreBlockTerm::from_bytes)).
 //!
 //! Every kind decodes through `TryFrom<&[u8]>` as well, failing with a
 //! [`TermBytesError`]; [`EqualityTerm`] additionally keeps an infallible
-//! [`from_bytes`](EqualityTerm::from_bytes) over a `[u8; 32]`. `as_bytes`
-//! exists only where the term *is* a contiguous buffer (equality, ORE, OPE);
-//! a [`MatchTerms`] is canonically a position list, so it has none.
+//! [`from_bytes`](EqualityTerm::from_bytes) over a `[u8; 32]`. The three
+//! order terms keep the buffer they decode, so their `from_bytes` takes it
+//! by value (`TryFrom<Vec<u8>>` too) and copies nothing; `TryFrom<&[u8]>`
+//! copies once. `as_bytes` exists only where the term *is* a contiguous
+//! buffer (equality and the order terms); a [`MatchTerms`] is canonically a
+//! position list, so it has none.
+//!
+//! The order terms are also serde types: lowercase hex in a human-readable
+//! format such as JSON, the raw bytes in a binary one, through
+//! [`serdect`](https://docs.rs/serdect), whose hex is constant-time.
+//! Deserializing decodes through `from_bytes`, so it refuses what
+//! `from_bytes` refuses, and its errors carry no byte of the term.
 //!
 //! For equality and ORE/OPE the transport bytes are also the stored form,
 //! and they share the *shape* of the v1 / `cipherstash-client` encodings — a
@@ -1288,7 +1300,7 @@ index_term!(OpeTerm<T>, T: Orderable);
 index_term!(OreBlockTerm<T>, T: Orderable);
 
 macro_rules! term_wrapper {
-    ($name:ident, $inner:ty) => {
+    ($name:ident, $inner:ty, $well_formed:expr) => {
         impl<T: Orderable> $name<T> {
             /// Wrap an already-generated CLLW ciphertext.
             pub fn new(output: $inner) -> Self {
@@ -1307,13 +1319,19 @@ macro_rules! term_wrapper {
 
             /// Decode a term from its frozen byte encoding — the raw CLLW
             /// ciphertext bytes, the inverse of [`as_bytes`](Self::as_bytes)
-            /// — for terms persisted server-side. Structural only (length
-            /// checks); the caller asserts the bytes were generated for this
-            /// source type `T` and under the same context.
-            pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermBytesError> {
-                <$inner>::try_from(bytes)
+            /// — for terms persisted server-side. Takes the buffer and keeps
+            /// it, copying nothing. Structural only (the length, and an OPE
+            /// term's leading carry); the caller asserts the bytes were
+            /// generated for this source type `T` and under the same
+            /// context.
+            pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, TermBytesError> {
+                let len = bytes.len();
+                if !$well_formed(&bytes) {
+                    return Err(TermBytesError::MalformedCllwCiphertext(len));
+                }
+                <$inner>::from_bytes(bytes)
                     .map(Self::new)
-                    .map_err(|_| TermBytesError::MalformedCllwCiphertext(bytes.len()))
+                    .map_err(|_| TermBytesError::MalformedCllwCiphertext(len))
             }
 
             /// The frozen byte encoding: the raw CLLW ciphertext bytes,
@@ -1331,11 +1349,20 @@ macro_rules! term_wrapper {
         }
 
         /// The inherent `from_bytes` as a std conversion — the same decoder.
+        impl<T: Orderable> TryFrom<Vec<u8>> for $name<T> {
+            type Error = TermBytesError;
+
+            fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+                Self::from_bytes(bytes)
+            }
+        }
+
+        /// The inherent `from_bytes` over a copy of `bytes`.
         impl<T: Orderable> TryFrom<&[u8]> for $name<T> {
             type Error = TermBytesError;
 
             fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-                Self::from_bytes(bytes)
+                Self::from_bytes(bytes.to_vec())
             }
         }
 
@@ -1346,6 +1373,8 @@ macro_rules! term_wrapper {
                 self.0.as_ref()
             }
         }
+
+        term_serde!($name);
 
         impl<T: Orderable> fmt::Debug for $name<T> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1384,8 +1413,35 @@ macro_rules! term_wrapper {
     };
 }
 
-term_wrapper!(OreTerm, OreClww8VariableV1);
-term_wrapper!(OpeTerm, OpeClww8VariableV1);
+/// The serde impls of an order term `$name<T>` with `as_bytes` and an
+/// owning `from_bytes`: lowercase hex in a human-readable format, the raw
+/// bytes in a binary one, both through `serdect` (constant-time hex).
+/// Deserializing refuses what `from_bytes` refuses; its errors name a
+/// length or the encoding, never a byte of the term.
+macro_rules! term_serde {
+    ($name:ident) => {
+        impl<T: Orderable> serde::Serialize for $name<T> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serdect::slice::serialize_hex_lower_or_bin(&self.as_bytes(), serializer)
+            }
+        }
+
+        impl<'de, T: Orderable> serde::Deserialize<'de> for $name<T> {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let bytes = serdect::slice::deserialize_hex_or_bin_vec(deserializer)?;
+                Self::from_bytes(bytes).map_err(serde::de::Error::custom)
+            }
+        }
+    };
+}
+
+term_wrapper!(OreTerm, OreClww8VariableV1, |_: &[u8]| true);
+// An OPE term leads with the carry out of its top byte, 0 or 1. clww-ore's
+// comparator refuses any other, and its `from_bytes` does not check it.
+term_wrapper!(OpeTerm, OpeClww8VariableV1, |bytes: &[u8]| matches!(
+    bytes.first(),
+    Some(0 | 1)
+));
 
 /// A block ORE index term for a source value of type `T`: ore-rs's 6-bit
 /// block ORE encryption of the value's `vitaminc-ore` order encoding at
@@ -1439,15 +1495,17 @@ fn ore_block_compare(a: &ore_rs::Term, b: &ore_rs::Term) -> Option<std::cmp::Ord
 
 impl<T: Orderable> OreBlockTerm<T> {
     /// Decode a term from its frozen byte encoding, the serialised ore-rs
-    /// ciphertext, for terms persisted server-side. Structural only: the
-    /// bytes must be a well-formed 6-bit or chained block ORE ciphertext
-    /// (header, block count, length, padding policy and symbols); the
-    /// caller asserts they were generated for this source type `T` and
-    /// under the same context.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermBytesError> {
-        let term = ore_rs::Term::from_bytes(bytes.to_vec());
+    /// ciphertext, for terms persisted server-side. Takes the buffer and
+    /// keeps it, copying nothing. Structural only: the bytes must be a
+    /// well-formed 6-bit or chained block ORE ciphertext (header, block
+    /// count, length, padding policy and symbols); the caller asserts they
+    /// were generated for this source type `T` and under the same context.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, TermBytesError> {
+        let term = ore_rs::Term::from_bytes(bytes);
         if ore_block_compare(&term, &term).is_none() {
-            return Err(TermBytesError::MalformedOreBlockCiphertext(bytes.len()));
+            return Err(TermBytesError::MalformedOreBlockCiphertext(
+                term.as_bytes().len(),
+            ));
         }
         Ok(Self(term, PhantomData))
     }
@@ -1480,13 +1538,24 @@ impl<T: Orderable> OreBlockTerm<T> {
 }
 
 /// The inherent `from_bytes` as a std conversion — the same decoder.
+impl<T: Orderable> TryFrom<Vec<u8>> for OreBlockTerm<T> {
+    type Error = TermBytesError;
+
+    fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+        Self::from_bytes(bytes)
+    }
+}
+
+/// The inherent `from_bytes` over a copy of `bytes`.
 impl<T: Orderable> TryFrom<&[u8]> for OreBlockTerm<T> {
     type Error = TermBytesError;
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        Self::from_bytes(bytes)
+        Self::from_bytes(bytes.to_vec())
     }
 }
+
+term_serde!(OreBlockTerm);
 
 /// The frozen byte encoding — the same bytes as the inherent `as_bytes`.
 impl<T: Orderable> AsRef<[u8]> for OreBlockTerm<T> {
