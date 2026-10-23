@@ -3,6 +3,7 @@ package encrypt_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -22,11 +23,16 @@ import (
 // Rows the Go SDK stores, found by queries the Go SDK derives, inside
 // PostgreSQL with EQL v4 installed: the path a program using the SDK runs.
 // Every EQL type the engine produces gets a temporary table with one column
-// of its domain and four rows, low, middle, middle, high. Each query the
-// type answers is derived through the SDK and run through EQL's operators,
-// and must find exactly the rows its plaintexts say. The values are also
-// read back from the database and opened, since PostgreSQL stores jsonb
-// re-serialised.
+// of its domain and five rows: low, middle, middle, high, and a fifth with
+// no value. Each query the type answers is derived through the SDK and run
+// through EQL's operators, and must find exactly the rows its plaintexts
+// say. The values are also read back from the database and opened, since
+// PostgreSQL stores jsonb re-serialised.
+//
+// The fifth row is nil, stored as the engine requires for the type (#1298).
+// A type of fixed width with no index or equality alone stores a sealed
+// null, as long as a value, which EqNull finds; text and every type with an
+// order or match index store SQL NULL, which no query finds.
 //
 // The list of types is eql.Types, generated from the EQL catalog, so a type
 // the engine starts producing is covered here the day it lands. A type whose
@@ -185,12 +191,18 @@ type eqlHarness struct {
 func runEQLType[T comparable](h eqlHarness, kind gensupport.Kind, values [4]T, match func(gensupport.Field[string]) ([]byte, error)) {
 	t, ctx, typ := h.t, h.ctx, h.typ
 	t.Helper()
-	decl := gensupport.Declare("go_eql_postgres").Passthrough("id").EncryptInto("v", kind, typ.Name)
+	sealedNull := eqlSealsNull(typ)
+	mode, notNull := gensupport.NullSQL, ""
+	if sealedNull {
+		mode, notNull = gensupport.NullSealed, " NOT NULL"
+	}
+	decl := gensupport.Declare("go_eql_postgres").Passthrough("id").EncryptInto("v", kind, typ.Name).Null("v", mode)
 	if err := decl.Err(); err != nil {
 		t.Fatal(err)
 	}
 	field := gensupport.NewField[T](decl, "v")
 	table := "go_eql_" + strings.ToLower(typ.Name)
+	nullRow := len(values) + 1
 
 	exec := func(stmt string, args ...any) {
 		t.Helper()
@@ -198,19 +210,36 @@ func runEQLType[T comparable](h eqlHarness, kind gensupport.Kind, values [4]T, m
 			t.Fatalf("%s: %v", stmt, err)
 		}
 	}
-	exec(fmt.Sprintf(`CREATE TEMPORARY TABLE %s (id int PRIMARY KEY, v %s NOT NULL)`, table, typ.SQLDomain))
+	exec(fmt.Sprintf(`CREATE TEMPORARY TABLE %s (id int PRIMARY KEY, v %s%s)`, table, typ.SQLDomain, notNull))
 	t.Cleanup(func() { _, _ = h.conn.ExecContext(context.Background(), `DROP TABLE IF EXISTS `+table) })
 
+	insert := fmt.Sprintf(`INSERT INTO %s VALUES ($1, $2::text::jsonb::%s)`, table, typ.SQLDomain)
+	var first []byte
 	for i, v := range values {
 		out, err := field.Encrypt(ctx, h.cipher, v)
 		if err != nil {
 			t.Fatal(err)
 		}
-		exec(fmt.Sprintf(`INSERT INTO %s VALUES ($1, $2::text::jsonb::%s)`, table, typ.SQLDomain), i+1, string(out.EQL))
+		if i == 0 {
+			first = out.EQL
+		}
+		exec(insert, i+1, string(out.EQL))
+	}
+	if sealedNull {
+		out, err := field.EncryptNull(ctx, h.cipher)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := eqlCiphertextLen(t, out.EQL), eqlCiphertextLen(t, first); got != want {
+			t.Errorf("a sealed null's c is %d characters, a value's %d: the column shows which rows are absent", got, want)
+		}
+		exec(insert, nullRow, string(out.EQL))
+	} else {
+		exec(insert, nullRow, nil)
 	}
 
-	ids := func(where string, operand []byte) ([]int, error) {
-		rows, err := h.conn.QueryContext(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE %s ORDER BY id`, table, where), string(operand))
+	ids := func(where string, args ...any) ([]int, error) {
+		rows, err := h.conn.QueryContext(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE %s ORDER BY id`, table, where), args...)
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +267,7 @@ func runEQLType[T comparable](h eqlHarness, kind gensupport.Kind, values [4]T, m
 			if err != nil {
 				t.Fatal(err)
 			}
-			found, err := ids("v @@ "+operand, q)
+			found, err := ids("v @@ "+operand, string(q))
 			if err != nil {
 				t.Fatalf("match: %v", err)
 			}
@@ -260,7 +289,7 @@ func runEQLType[T comparable](h eqlHarness, kind gensupport.Kind, values [4]T, m
 			if err != nil {
 				t.Fatalf("%s: %v", op, err)
 			}
-			found, err := ids(fmt.Sprintf("v %s %s", eqlOperators[op], operand), term)
+			found, err := ids(fmt.Sprintf("v %s %s", eqlOperators[op], operand), string(term))
 			if err != nil {
 				t.Fatalf("%s: %v", op, err)
 			}
@@ -268,6 +297,33 @@ func runEQLType[T comparable](h eqlHarness, kind gensupport.Kind, values [4]T, m
 				t.Errorf("v %s middle found rows %v, want %v", eqlOperators[op], found, want)
 			}
 		}
+	}
+
+	// The nil row: a sealed null is the one row EqNull finds, and SQL NULL
+	// is the one row IS NULL finds. No query above found it.
+	if sealedNull && answered["eq"] {
+		term, err := field.NullTerm(ctx, h.cipher, "eq")
+		if err != nil {
+			t.Fatalf("eq of nil: %v", err)
+		}
+		found, err := ids("v = "+operand, string(term))
+		if err != nil {
+			t.Fatalf("eq of nil: %v", err)
+		}
+		if !slices.Equal(found, []int{nullRow}) {
+			t.Errorf("v = EqNull found rows %v, want [%d]", found, nullRow)
+		}
+	}
+	found, err := ids("v IS NULL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []int{nullRow}; sealedNull {
+		if len(found) != 0 {
+			t.Errorf("a sealed null is a value, but IS NULL found rows %v", found)
+		}
+	} else if !slices.Equal(found, want) {
+		t.Errorf("IS NULL found rows %v, want %v", found, want)
 	}
 
 	// What the type does not answer, PostgreSQL refuses rather than
@@ -287,11 +343,16 @@ func runEQLType[T comparable](h eqlHarness, kind gensupport.Kind, values [4]T, m
 	}
 	var stored []gensupport.Record
 	for rows.Next() {
-		var text string
+		var text sql.NullString
 		if err := rows.Scan(&text); err != nil {
 			t.Fatal(err)
 		}
-		stored = append(stored, gensupport.Record{"id": {Value: int32(len(stored) + 1)}, "v": {EQL: []byte(text)}})
+		rec := gensupport.Record{"id": {Value: int32(len(stored) + 1)}}
+		if text.Valid {
+			// SQL NULL leaves the field out, as a generated type does.
+			rec["v"] = gensupport.Output{EQL: []byte(text.String)}
+		}
+		stored = append(stored, rec)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
@@ -304,10 +365,13 @@ func runEQLType[T comparable](h eqlHarness, kind gensupport.Kind, values [4]T, m
 		t.Fatal(err)
 	}
 	// A short read or a short decrypt would otherwise check fewer rows.
-	if len(opened) != len(values) {
-		t.Fatalf("read back and opened %d rows, want %d", len(opened), len(values))
+	if len(opened) != nullRow {
+		t.Fatalf("read back and opened %d rows, want %d", len(opened), nullRow)
 	}
-	for i, vals := range opened {
+	if got, err := gensupport.GetPtr[T](opened[nullRow-1], "v"); err != nil || got != nil {
+		t.Errorf("the nil row opened as %v, %v; want nil", got, err)
+	}
+	for i, vals := range opened[:len(values)] {
 		got, err := gensupport.Get[T](vals, "v")
 		if err != nil {
 			t.Fatal(err)
@@ -316,6 +380,33 @@ func runEQLType[T comparable](h eqlHarness, kind gensupport.Kind, values [4]T, m
 			t.Errorf("row %d opened as %v, want %v", i+1, got, values[i])
 		}
 	}
+}
+
+// eqlSealsNull says whether typ stores nil as a sealed null, as stashgen
+// would choose for it: a plaintext of fixed width, not text, and no index
+// but equality, since a null has an equality term and no other.
+func eqlSealsNull(typ eql.Type) bool {
+	if typ.Plaintext == "string" {
+		return false
+	}
+	for _, index := range typ.Indexes {
+		if index != "eq" {
+			return false
+		}
+	}
+	return true
+}
+
+// eqlCiphertextLen is the length of the `c` an EQL value stores.
+func eqlCiphertextLen(t *testing.T, value []byte) int {
+	t.Helper()
+	var envelope struct {
+		C string `json:"c"`
+	}
+	if err := json.Unmarshal(value, &envelope); err != nil || envelope.C == "" {
+		t.Fatalf("the EQL value has no c: %v: %s", err, value)
+	}
+	return len(envelope.C)
 }
 
 // eqlCodec opens records of one declaration without a generated type: the
