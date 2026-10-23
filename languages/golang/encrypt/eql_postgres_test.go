@@ -86,9 +86,10 @@ var eqlOperators = map[string]string{
 // The queries each index answers, by SDK operator. "match" is not here: it
 // is a match query, derived differently, and handled by its own case.
 var eqlIndexOperators = map[string][]string{
-	"eq":  {"eq"},
-	"ope": {"lt", "lte", "gt", "gte"},
-	"ore": {"lt", "lte", "gt", "gte"},
+	"eq":        {"eq"},
+	"ope":       {"lt", "lte", "gt", "gte"},
+	"ore":       {"lt", "lte", "gt", "gte"},
+	"ore_block": {"lt", "lte", "gt", "gte"},
 }
 
 func TestEQLTypesRoundTripAndQueryInPostgres(t *testing.T) {
