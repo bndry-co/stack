@@ -731,7 +731,9 @@ exact pin would stop the suite sharing one `cts-common` with it.
 - **CI:** `tests-crates.yml` (fmt, clippy, nextest including the trybuild
   `tests/ui` binary, doctests, rustdoc, the node bindings and
   `stack-auth-wasm`), `tests-golang.yml` (WASI checks, the guests, the Go
-  module on Linux, macOS and Windows, and the live tests), `crap-crates.yml`,
+  module on Linux, macOS and Windows, its PostgreSQL tests against the EQL v4
+  bundle built from the tree — `mise run go:test:postgres` locally — and the
+  live tests), `crap-crates.yml`,
   `mutants.yml`, `fuzz.yml`, `miri.yml` and `udeps.yml`.
   `scripts/__tests__/crates-ci.test.mjs` fails when a mise task in the root
   `mise.toml` or the five crate `tasks.toml` files loses its last CI caller.
