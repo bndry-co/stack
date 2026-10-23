@@ -543,9 +543,8 @@ reasons! {
         /// equality or an order index on a boolean, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
         /// The field declares an ORE or OPE index on a decimal, date or
-        /// timestamp. Their order terms wait for clww-ore and ore-rs
-        /// releases that encode them the ADR-0002 way (#1236); equality on
-        /// them works today.
+        /// timestamp. Their order terms are not supported yet (#1236);
+        /// equality on them works today.
         OrderTermPending => "order_term_pending", "an order index on a decimal, date or timestamp is not supported yet (#1236)";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";

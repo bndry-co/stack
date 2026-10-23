@@ -226,8 +226,8 @@ updates:
       # stack-encrypt behind its optional `stack-encrypt` feature. Those crates
       # declare these `{ workspace = true }`, so their requirements come from
       # the root Cargo.toml even when built here. The root entry below ignores
-      # them because they move by hand: the root manifest pins recipher with
-      # `=`, and so does the Go guest, and pins clww-ore and ore-rs with `=`.
+      # them because they move by hand: the root manifest pins recipher,
+      # clww-ore and ore-rs with `=`, and the Go guest pins recipher with `=`.
       # Without these lines this entry bumped them in this lockfile and, to
       # satisfy the exact pins, rewrote the root Cargo.toml without touching
       # the root Cargo.lock or the guest's pin, breaking every root `--locked`

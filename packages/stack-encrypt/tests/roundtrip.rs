@@ -122,6 +122,28 @@ async fn option_none_roundtrips() {
     assert_eq!(pt, None);
 }
 
+/// A plain null opens as `None` of a fixed-width type too. Before vitaminc
+/// 0.8 every `None` was sealed as a plain null, and the dynamic path still
+/// seals one, so rows stored that way must keep opening into an `i64` or an
+/// `f64` field.
+#[tokio::test]
+async fn a_plain_null_opens_as_a_fixed_width_none() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ct = keyset
+        .encrypt(Option::<String>::None, ())
+        .await
+        .expect("encrypt");
+    let pt: Option<i64> = cipher.decrypt(ct, ()).await.expect("decrypt");
+    assert_eq!(pt, None, "i64");
+    let ct = keyset
+        .encrypt(Option::<String>::None, ())
+        .await
+        .expect("encrypt");
+    let pt: Option<f64> = cipher.decrypt(ct, ()).await.expect("decrypt");
+    assert_eq!(pt, None, "f64");
+}
+
 /// A sealed `None` of a fixed-width type is as long as a sealed `Some`:
 /// vitaminc 0.8 seals it as a typed null padded to the type's leaf, so the
 /// length of a ciphertext does not say whether its value was there. It opens

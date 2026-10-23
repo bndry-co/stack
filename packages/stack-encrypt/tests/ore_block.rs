@@ -245,6 +245,24 @@ async fn bytes_order_as_bytes() {
     assert_sorted(&terms, "bytes");
 }
 
+/// Bytes take a term up to 1023 bytes, as text's fold does: ore-rs's
+/// 1024-byte ceiling counts the marker byte in front of them.
+#[tokio::test]
+async fn bytes_of_more_than_1023_bytes_have_no_term() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let longest = term(&keyset, vec![7u8; 1023]).await;
+    assert!(blocks(longest.as_bytes()) > 1023, "every byte is ordered");
+    let too_long = keyset
+        .ore_block_term(vec![7u8; 1024], nonempty!("users/n"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(too_long, Error::Term(TermError::OreBlockTooLong)),
+        "{too_long:?}"
+    );
+}
+
 /// One value encrypts to different bytes each time (the right half's
 /// nonce), and those terms compare equal; the left half is deterministic.
 #[tokio::test]

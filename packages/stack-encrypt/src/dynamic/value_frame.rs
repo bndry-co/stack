@@ -1246,6 +1246,7 @@ mod tests {
 
     /// A null that says what it stands in for, as vitaminc walks a `None`
     /// of a fixed-width type and as a host may send one in a frame.
+    #[derive(Clone)]
     struct TypedNull(FixedType);
 
     impl Encrypt for TypedNull {
@@ -1330,6 +1331,46 @@ mod tests {
             TypedNull(uuid).visit(Opening),
             Err(DecodeError::Expected(EXPECTED))
         ));
+    }
+
+    /// A host's frame of a typed null inside a passthrough.
+    fn hidden_typed_null_frame(ty: FixedType) -> Vec<u8> {
+        let mut out = vec![vitaminc_aead::frame::PASSTHROUGH];
+        out.extend(typed_null_frame(ty));
+        out
+    }
+
+    /// A passthrough holds a typed null to the same rules: one in the model
+    /// is a null, written or read from a host's bytes, and a uuid's is
+    /// refused.
+    #[test]
+    fn a_typed_null_in_a_passthrough_is_held_to_the_model() {
+        let null = frame_of(&Tree::Passthrough(Box::new(Tree::Null)));
+        for ty in typed_nulls_in_the_model() {
+            let written = ValueFrame::of(Hidden(TypedNull(ty))).expect("in the model");
+            assert_eq!(written.risky_ref(), null.risky_ref(), "{ty:?} written");
+            let bytes = hidden_typed_null_frame(ty);
+            assert!(ValueFrame::check(&bytes).is_ok(), "{ty:?} checks");
+            let read = ValueFrame::from_bytes(&bytes).expect("reads");
+            assert_eq!(read.risky_ref(), null.risky_ref(), "{ty:?} read");
+        }
+        assert!(matches!(
+            ValueFrame::of(Hidden(TypedNull(uuid_null()))),
+            Err(DecodeError::Expected(EXPECTED))
+        ));
+        let bytes = hidden_typed_null_frame(uuid_null());
+        for refused in [
+            ValueFrame::check(&bytes).map(drop),
+            ValueFrame::from_bytes(&bytes).map(drop),
+        ] {
+            assert!(
+                matches!(
+                    refused,
+                    Err(FromFrameError::Value(DecodeError::Expected(EXPECTED)))
+                ),
+                "{refused:?}"
+            );
+        }
     }
 
     /// A record source that is a typed null, or holds one as a batch

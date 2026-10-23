@@ -205,13 +205,13 @@ pub enum TermError {
     #[error("ORE/OPE encryption failed: {0}")]
     #[diagnostic(code(stack_encrypt::ore_failed))]
     Ore(#[from] clww_ore::Error),
-    /// Block ORE ([`OreBlockTerm`]) orders text and bytes of at most 1023
-    /// bytes, counted after the order encoding (text folded): the chained
-    /// engine's 1024-byte ceiling, less the one marker byte `vitaminc-ore`
-    /// puts in front of a variable-width value. The ceiling bounds what one value
-    /// costs: a term of 1023 bytes is already about 34 KB.
+    /// Block ORE ([`OreBlockTerm`]) orders text whose fold is at most 1023
+    /// bytes, and bytes of at most 1023: the chained engine's 1024-byte
+    /// ceiling, less the one marker byte `vitaminc-ore` puts in front of a
+    /// variable-width value. The ceiling bounds what one value costs: a term
+    /// of 1023 bytes is already about 34 KB.
     #[error(
-        "the value is too long for a block ORE term: its order encoding is longer than 1023 bytes"
+        "the value is too long for a block ORE term: it is longer than 1023 bytes, text counted by its fold"
     )]
     #[diagnostic(
         code(stack_encrypt::ore_block_too_long),
@@ -1422,7 +1422,7 @@ term_wrapper!(OpeTerm, OpeClww8VariableV1);
 /// ciphertext carries its deterministic left half, so anyone holding two
 /// stored terms learns their order and, for the chained scheme, the length
 /// of their common prefix in six-bit blocks.
-pub struct OreBlockTerm<T: Orderable>(Vec<u8>, PhantomData<fn() -> T>);
+pub struct OreBlockTerm<T: Orderable>(ore_rs::Term, PhantomData<fn() -> T>);
 
 /// The order of two block ORE ciphertexts, by the comparator of the scheme
 /// their header names; `None` if either is not a well-formed ciphertext of
@@ -1432,9 +1432,8 @@ pub struct OreBlockTerm<T: Orderable>(Vec<u8>, PhantomData<fn() -> T>);
 /// `BlockOre::compare` reads the header and compares with that engine's
 /// comparator, `OreAes128Bit6` or `OreAes128Bit6Chained`. ore-rs's legacy
 /// 8-bit engine (module `bit2`) is not used here.
-fn ore_block_compare(a: &[u8], b: &[u8]) -> Option<std::cmp::Ordering> {
-    use ore_rs::{BlockOre, Term};
-    BlockOre::compare(&Term::from_bytes(a.to_vec()), &Term::from_bytes(b.to_vec()))
+fn ore_block_compare(a: &ore_rs::Term, b: &ore_rs::Term) -> Option<std::cmp::Ordering> {
+    ore_rs::BlockOre::compare(a, b)
 }
 
 impl<T: Orderable> OreBlockTerm<T> {
@@ -1445,27 +1444,28 @@ impl<T: Orderable> OreBlockTerm<T> {
     /// caller asserts they were generated for this source type `T` and
     /// under the same context.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermBytesError> {
-        if ore_block_compare(bytes, bytes).is_none() {
+        let term = ore_rs::Term::from_bytes(bytes.to_vec());
+        if ore_block_compare(&term, &term).is_none() {
             return Err(TermBytesError::MalformedOreBlockCiphertext(bytes.len()));
         }
-        Ok(Self(bytes.to_vec(), PhantomData))
+        Ok(Self(term, PhantomData))
     }
 
     /// The frozen byte encoding: the serialised ore-rs ciphertext, header
     /// first, unframed. EQL v4 stores it hex-encoded as the one element of
     /// `ob`.
     pub fn as_bytes(&self) -> &[u8] {
-        &self.0
+        self.0.as_bytes()
     }
 
     /// Owned copy of [`as_bytes`](Self::as_bytes).
     pub fn to_bytes(&self) -> Vec<u8> {
-        self.0.clone()
+        self.0.as_bytes().to_vec()
     }
 
     /// Unwrap into the serialised ciphertext.
     pub fn into_bytes(self) -> Vec<u8> {
-        self.0
+        self.0.into_bytes()
     }
 
     /// The order of the two values, by the scheme's comparator. `None`
@@ -1490,7 +1490,7 @@ impl<T: Orderable> TryFrom<&[u8]> for OreBlockTerm<T> {
 /// The frozen byte encoding — the same bytes as the inherent `as_bytes`.
 impl<T: Orderable> AsRef<[u8]> for OreBlockTerm<T> {
     fn as_ref(&self) -> &[u8] {
-        &self.0
+        self.0.as_bytes()
     }
 }
 
@@ -1498,7 +1498,7 @@ impl<T: Orderable> AsRef<[u8]> for OreBlockTerm<T> {
 impl<T: Orderable> fmt::Debug for OreBlockTerm<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OreBlockTerm")
-            .field("len", &self.0.len())
+            .field("len", &self.0.as_bytes().len())
             .finish()
     }
 }
@@ -1600,13 +1600,12 @@ where
     T: Orderable,
     P: Send + 'static,
 {
-    type Value = Result<Vec<u8>, TermError>;
+    type Value = Result<ore_rs::Term, TermError>;
 
     fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
         let scheme = ore_rs::BlockOre::new(Protected::new(block));
         block.zeroize();
-        let term = sealed::Sealed::encrypt_in(&*self.0, &scheme.target(T::TARGET))
-            .map(ore_rs::Term::into_bytes);
+        let term = sealed::Sealed::encrypt_in(&*self.0, &scheme.target(T::TARGET));
         Ok(term.map_err(ore_block_error))
     }
 }
@@ -1692,13 +1691,14 @@ fn ore_block<T: Orderable>(
         )
         .into_result()
         .map_err(TermError::from_prf)?
-        .map(|bytes| OreBlockTerm(bytes, PhantomData))
+        .map(|term| OreBlockTerm(term, PhantomData))
 }
 
 /// Whether block ORE takes `text` as order text: its order encoding (the
 /// marker byte, then the fold, which a [`OreBlockTerm`] encrypts) must
-/// exist, fit the chained scheme's 1024 bytes, and not end in NUL. The refusals derivation makes,
-/// stated without a key, so a binding can refuse a query at its boundary.
+/// exist, fit the chained scheme's 1024 bytes, and not end in NUL. These
+/// are the refusals derivation makes, stated without a key, so a binding
+/// can refuse a query at its boundary.
 #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
 pub(crate) fn ore_block_text(text: &str) -> Result<(), TermError> {
     let encoded = vitaminc_ore::text(text)?;

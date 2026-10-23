@@ -368,6 +368,26 @@ mod tests {
         assert!(matches!(back.get("ids"), Some(HostValue::List(items)) if items.len() == 2));
     }
 
+    /// A typed null (vitaminc's null of a fixed-width type, padded to the
+    /// type's length) reads as a null: the host has no typed nulls. A guest
+    /// writes none itself, but a frame may hold one.
+    #[test]
+    fn a_typed_null_reads_back_as_a_null() {
+        use vitaminc_aead::plaintext::Width;
+        for ty in [
+            FixedType::new(None, Width::I64),
+            FixedType::new(Some(Logical::Date), Width::I32),
+        ] {
+            let ty = ty.expect("a fixed-width type");
+            let mut frame = Vec::new();
+            vitaminc_aead::leaf::write_typed_null(ty, &mut frame);
+            assert!(
+                matches!(HostValue::decode(&frame), Ok(HostValue::Null)),
+                "{ty:?}"
+            );
+        }
+    }
+
     #[test]
     fn a_map_with_a_repeated_key_does_not_encode() {
         let value = HostValue::Map(vec![
