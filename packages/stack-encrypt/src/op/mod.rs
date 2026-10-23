@@ -343,7 +343,7 @@ impl<S: 'static> Input<Pair> for (S, S) {
 /// [`Between`]) are answered over: the integers of 16 bits and wider, the
 /// floats (`f32` and `f64`) and text (`String`). Not `u8` or `i8`, which
 /// have no order term ([`Orderable`] says why), as `bool` has none. Each is
-/// encoded as its [`Orderable`] target and its terms order as cllw-ore
+/// encoded as its [`Orderable`] target and its terms order as clww-ore
 /// orders that encoding: integers as numbers; floats as Postgres's `float8`
 /// does, `-0.0` tied with `0.0` and every NaN one value above `+Infinity`,
 /// an `f32` as the `f64` it widens to; text by the system ADR-0002's fold,

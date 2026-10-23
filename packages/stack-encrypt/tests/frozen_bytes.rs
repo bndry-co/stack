@@ -470,7 +470,7 @@ async fn ore_term_encoding_is_the_raw_cllw_bytes() {
     // differ (see the `sem` module docs).
     assert_eq!(
         hex(term.as_bytes()),
-        "b8291f846d8028ad4e3a67ef95e541ca3c6d1a2b145f49af3135876ae75c5d7b"
+        "1ba4d59ccb15d505519ad854229ec0c106644fa8b8944ec54c68a1f324499d82"
     );
     assert_eq!(term.to_bytes(), term.as_bytes());
     assert_eq!(term.as_ref(), term.as_bytes());
@@ -496,7 +496,7 @@ async fn ope_term_encoding_is_the_raw_cllw_bytes() {
 
     assert_eq!(
         hex(term.as_bytes()),
-        "00d7a25b801c909f3cb9d177315ba4da7802b9e62eba8c07aab2ad9d64e1a0cfa7"
+        "00a77ed973ff1af2e5d5e3779471df246d17a515f0131eb87e35e02e7a80aa5292"
     );
     assert_eq!(
         OpeTerm::<u32>::from_bytes(term.as_bytes()).expect("decode ope term"),
@@ -510,7 +510,7 @@ async fn ope_term_encoding_is_the_raw_cllw_bytes() {
 
 #[test]
 fn ore_term_from_bytes_rejects_wrong_length() {
-    // Every order term is cllw-ore's variable-length ciphertext: ORE is
+    // Every order term is clww-ore's variable-length ciphertext: ORE is
     // one byte per plaintext bit (a multiple of 8, a u32's 32 here), OPE
     // that plus a leading carry byte. The length checks are structural:
     // the type parameter names the source, and nothing in the bytes does.
@@ -530,9 +530,9 @@ fn ore_term_from_bytes_rejects_wrong_length() {
 
 #[tokio::test]
 async fn variable_length_ore_and_ope_terms_decode() {
-    // Text is encoded behind cllw-ore's one marker byte, so `alice` is six
+    // Text is encoded behind vitaminc-ore's one marker byte, so `alice` is six
     // plaintext bytes: 48 ORE bytes, and 49 for OPE with its leading carry
-    // byte. The decode path is the length-validating TryFrom in cllw-ore.
+    // byte. The decode path is the length-validating TryFrom in clww-ore.
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ore: OreTerm<String> = "alice"

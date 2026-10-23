@@ -481,6 +481,9 @@ mod tests {
                 },
             ))
         }
+        fn typed_null(self, ty: vitaminc_aead::FixedType) -> Result<Self::Ok, Self::Error> {
+            Ok((ty.logical(), None))
+        }
         fn seq(self, _: Option<usize>) -> Result<Self::Seq, Self::Error> {
             unreachable!("a plaintext here is a scalar")
         }

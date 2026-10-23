@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The vitaminc a binding speaks through is re-exported.** `dynamic::frame`
+  is `vitaminc-aead-frame` (the transport frame and ciphertext codec, with
+  its `serde` module), `dynamic::plaintext` is vitaminc-aead's value model,
+  for implementing `Encrypt` on a binding's own values, and the crate root
+  adds `DecodeError`, `Protected` and `Controlled`. A binding that takes
+  these from stack-encrypt cannot resolve a second vitaminc, which would
+  fail only at a `ValueFrame: Decrypt` bound. The Go guest now takes
+  vitaminc only this way.
+
 - **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended
   2026-10-19). It derives ore-rs 0.9.0's 6-bit block ORE under its own key
   domain, over the same order keys as the CLLW indexes:
@@ -217,6 +226,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Plan::new_with`.
 
 ### Breaking
+
+- **stack-encrypt requires the vitaminc 0.8 crates, clww-ore 0.6 and
+  ore-rs 0.10.** A crate that names a vitaminc type stack-encrypt takes or
+  returns moves to 0.8 with it. What changes for a caller:
+  - **Every order term changes.** cllw-ore is now `clww-ore`. Its
+    keystream was fixed, and its schemes' names (`clww-ore`, `clww-ope`),
+    which every term's salt binds, changed, so ORE and OPE terms written
+    before do not compare with new ones. Block ORE goes through ore-rs's
+    single `BlockOre` scheme, which keys its 6-bit and chained engines
+    under a new label, so its terms change too. The wire formats, the key
+    domains of this crate and every sealed ciphertext and equality term are
+    unchanged: a stored row still opens, and its order terms are re-derived.
+    `tests/fixtures/stored_rows_v1.json`'s order terms were re-frozen.
+  - `sem::OreCllw8VariableV1` and `sem::OpeCllw8VariableV1` are renamed
+    `OreClww8VariableV1` and `OpeClww8VariableV1`, as clww-ore names them.
+  - **A sealed `None` of a fixed-width type is as long as a `Some`.**
+    vitaminc 0.8 seals it as a typed null, padded to the type's leaf length,
+    so absent values no longer show in the length of their ciphertexts. A
+    reader on vitaminc 0.7 or older refuses a typed null, so upgrade
+    readers before writers; every null written before still opens. The
+    `dynamic` feature's sinks carry a typed null through the value model,
+    and the frame a binding receives holds the plain null.
+  - **A null still has no equality term.** vitaminc-normalize 0.8 derives
+    one; this crate drops it, so an absent value keeps a SQL `NULL` in its
+    equality column, as before, until the index terms of a null are decided
+    (#1298).
+  - **Block ORE's text ceiling is unchanged, but counted the new way.**
+    `vitaminc-ore` puts the marker byte in front of text itself now, and
+    ore-rs's 1024-byte ceiling counts it, so the fold is still at most 1023
+    bytes.
 
 - **`IndexSpec` has a fifth variant, `OreBlock`** (the block ORE index
   above). The enum is exhaustive on purpose, since a binding has to be

@@ -12,6 +12,12 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Breaking
 
+- **Every order term changes: re-derive stored `ore`, `ope` and
+  `ore_block` index terms.** The engine moved to vitaminc 0.8, clww-ore 0.6
+  (formerly cllw-ore) and ore-rs 0.10, and both order schemes now derive
+  different terms for the same value, so a query term no longer compares
+  with an order term stored before. Ciphertexts and equality terms are
+  unchanged.
 - **An `int8`, `int16`, `uint8` or `uint16` sealed field seals at its own
   width; run stashgen again.** It used to seal as a 32-bit integer. Values
   stored before do not decrypt under the regenerated declaration: the

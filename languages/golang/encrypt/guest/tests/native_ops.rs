@@ -19,12 +19,14 @@ use std::future::IntoFuture;
 
 mod support;
 
+use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext};
 use stack_encrypt::dynamic::Scope;
 use stack_encrypt::sem::DefaultMatch;
 use stack_encrypt::{
     nonempty, CipherText, Label, Node, PassthroughFrame, PendingStackCipherText, SealedValue,
     StackCipher,
 };
+use stack_encrypt::{Controlled, Protected};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
 use stack_encrypt_guest::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_TERM,
@@ -35,8 +37,6 @@ use stack_kms::{
 };
 use support::Tree;
 use uuid::Uuid;
-use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext};
-use vitaminc_protected::{Controlled, Protected};
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
 /// `futures::executor::block_on` over anything awaitable: the term API
@@ -330,7 +330,7 @@ fn guest_terms_match_the_native_sem_derivations() {
     .expect("native");
     assert_eq!(eq_bytes, native_bytes.as_bytes());
 
-    // Variable-width CLLW output for strings: the text behind cllw-ore's
+    // Variable-width CLLW output for strings: the text behind clww-ore's
     // one marker byte, eight bytes a plaintext byte.
     let ore_s = block_on(ops::term(
         &cipher.default_keyset(),

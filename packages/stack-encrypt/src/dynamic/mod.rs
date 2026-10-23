@@ -111,6 +111,19 @@ pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
 pub use term::{term, TermBytes};
 pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
 
+/// vitaminc's value model, the sinks and scalar types a value describes
+/// itself through. A binding implements [`Encrypt`](crate::Encrypt) for its
+/// own values with it, as [`read`] takes them. Re-exported so a binding
+/// builds against the vitaminc this crate does. Two versions of vitaminc in
+/// one build do not fail loudly: a [`ValueFrame`] stops meeting the other
+/// version's `Decrypt` bound.
+pub use vitaminc_aead::plaintext;
+/// vitaminc's transport frame and ciphertext codec (`vitaminc-aead-frame`,
+/// with its `serde` module): the bytes a binding hands this module, and the
+/// codec its ciphertexts cross in. Re-exported for the same reason as
+/// [`plaintext`].
+pub use vitaminc_aead_frame as frame;
+
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
 
@@ -530,10 +543,9 @@ reasons! {
         /// equality or an order index on a boolean, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
         /// The field declares an ORE or OPE index on a decimal, date or
-        /// timestamp. Their order terms wait for cllw-ore and ore-rs
-        /// releases that encode them the ADR-0002 way (#1236); equality on
-        /// them works today.
-        OrderTermPending => "order_term_pending", "an order index on a decimal, date or timestamp waits for new cllw-ore and ore-rs releases (#1236)";
+        /// timestamp. Their order terms are not supported yet (#1236);
+        /// equality on them works today.
+        OrderTermPending => "order_term_pending", "an order index on a decimal, date or timestamp is not supported yet (#1236)";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";
         /// The plan has no field of the name asked for.
