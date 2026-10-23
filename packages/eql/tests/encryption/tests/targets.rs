@@ -264,12 +264,28 @@ mod given_text_eq {
             &common::index_of("TextEq"),
             &keyset,
             &email(),
-            frame(None::<i32>),
+            frame(vec![34u64]),
         ));
         assert!(
-            matches!(error, TargetError::Plaintext { found: None, .. }),
+            matches!(
+                error,
+                TargetError::Plaintext {
+                    found: Some(ValueKind::Array),
+                    ..
+                }
+            ),
             "{error}"
         );
+        // A null is a query of its own: the stored nulls' equality term
+        // (#1298).
+        assert!(targets::query(
+            "TextEq",
+            &common::index_of("TextEq"),
+            &keyset,
+            &email(),
+            frame(None::<String>),
+        )
+        .is_ok());
         assert!(
             calls.lock().unwrap().generate.is_empty(),
             "nothing was minted"

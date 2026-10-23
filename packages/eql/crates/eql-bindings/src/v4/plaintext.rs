@@ -67,7 +67,7 @@ use std::fmt;
 use stack_encrypt::Encrypt;
 use vitaminc_aead::plaintext::depth;
 use vitaminc_aead::plaintext::kinds::{timestamp_nanos, MAX_DECIMAL_SCALE};
-use vitaminc_aead::{FromScalar, Int, Logical, Physical, Sink, TimeUnit};
+use vitaminc_aead::{FixedType, FromScalar, Int, Logical, Physical, Sink, TimeUnit, Width};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const NANOS_PER_SECOND: u32 = 1_000_000_000;
@@ -310,10 +310,16 @@ wiped!(
 /// it is, the same scalar the chrono and rust_decimal types describe, so a
 /// value converted from one of those seals the same leaf. The owned form
 /// visits through the borrowed one and is then dropped, and wiped.
+///
+/// Each is fixed width, so `None` of one seals as a typed null as long as a
+/// value (vitaminc 0.8), and an `Option` of one reads it back: the type's
+/// own zero (the epoch, a zero decimal) is a value it reads, which is what
+/// `Decrypt::reads_null` asks of it.
 macro_rules! source {
-    ($($ty:ident => |$value:ident| $scalar:expr),+ $(,)?) => {$(
+    ($($ty:ident ($fixed:expr) => |$value:ident| $scalar:expr),+ $(,)?) => {$(
         impl Encrypt for &$ty {
             const DEPTH: Option<usize> = depth::SCALAR;
+            const FIXED: Option<FixedType> = $fixed;
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let $value = self;
                 let (logical, int) = $scalar;
@@ -323,6 +329,7 @@ macro_rules! source {
 
         impl Encrypt for $ty {
             const DEPTH: Option<usize> = depth::SCALAR;
+            const FIXED: Option<FixedType> = $fixed;
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 (&self).visit(sink)
             }
@@ -330,9 +337,12 @@ macro_rules! source {
     )+};
 }
 source!(
-    Date => |date| (Logical::Date, Int::I32(date.days)),
-    Timestamp => |instant| (Logical::Timestamp(TimeUnit::Nanos), Int::I128(instant.count())),
-    Decimal => |decimal| (Logical::Decimal { scale: decimal.scale }, Int::I128(decimal.mantissa)),
+    Date (FixedType::new(Some(Logical::Date), Width::I32))
+        => |date| (Logical::Date, Int::I32(date.days)),
+    Timestamp (FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128))
+        => |instant| (Logical::Timestamp(TimeUnit::Nanos), Int::I128(instant.count())),
+    Decimal (FixedType::new(Some(Logical::Decimal { scale: 0 }), Width::I128))
+        => |decimal| (Logical::Decimal { scale: decimal.scale }, Int::I128(decimal.mantissa)),
 );
 
 /// A date reads exactly a date scalar, at any integer width, in range.

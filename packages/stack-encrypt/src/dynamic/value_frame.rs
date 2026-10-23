@@ -103,7 +103,10 @@ impl ValueFrame {
     ///
     /// A typed null in the bytes reads as a plain null: the value this
     /// returns does not remember the type, so sealing it does not pad it to
-    /// the type's length.
+    /// the type's length. To store a field's absent values padded, give the
+    /// field `"null": "sealed"` in its plan ([`FieldPlan::with_null`]).
+    ///
+    /// [`FieldPlan::with_null`]: crate::dynamic::FieldPlan::with_null
     ///
     /// # Errors
     ///
@@ -141,6 +144,33 @@ impl ValueFrame {
     pub(super) fn from_written(buffer: Protected<Vec<u8>>) -> Result<Self, crate::Error> {
         let _ = Frame::parse(buffer.risky_ref()).map_err(|_| crate::Error::ResponseShape)?;
         Ok(Self(buffer))
+    }
+
+    /// The null, as a frame: what an absent value opens to.
+    pub(super) fn null() -> Self {
+        Self(Protected::new(vec![vitaminc_aead::tags::NULL]))
+    }
+
+    /// A typed null of `ty`, as a frame: the leaf alone. Walked into the
+    /// encrypting sink it seals as a typed null, as long as a value of `ty`
+    /// (vitaminc 0.8); any other sink sees a null. The value model holds a
+    /// typed null of its own types only ([`model_null`]), so `ty` is one of
+    /// those a [`ValueKind`] names.
+    pub(super) fn typed_null(ty: FixedType) -> Self {
+        let mut leaf = Protected::new(Vec::new());
+        vitaminc_aead::leaf::write_typed_null(ty, leaf.risky_inner_mut());
+        Self(leaf)
+    }
+
+    /// Whether the value is a null, plain or typed.
+    pub(super) fn is_null(&self) -> bool {
+        self.visit(super::term::OneScalar::new(
+            |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                (None, Physical::Null) => Ok(()),
+                _ => Err(None),
+            },
+        ))
+        .is_ok()
     }
 
     /// The frame bytes. Same chain-of-custody caveats as

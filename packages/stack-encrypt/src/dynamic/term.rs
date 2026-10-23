@@ -41,7 +41,7 @@ use vitaminc_aead::plaintext::{
     Error as SinkError, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
     SourceError,
 };
-use vitaminc_normalize::{domain, domain_of, normalize, NormalizeError};
+use vitaminc_normalize::{domain_of, normalize, NormalizeError};
 
 use serde::{Deserialize, Serialize, Serializer};
 
@@ -111,8 +111,8 @@ impl IndexSpec {
 
     /// Whether the scheme defines this index's term for `value`: whether it
     /// is one scalar the index takes. Equality takes every scalar vitaminc
-    /// gives an equality domain (an integer, a float, text, bytes, and a
-    /// date, timestamp, decimal or uuid), not a boolean or a null. Match
+    /// gives an equality domain (an integer, a float, text, bytes, a date,
+    /// timestamp, decimal or uuid, and a null), not a boolean. Match
     /// takes text. ORE, OPE and block ORE take an integer of any width, a
     /// float, text or bytes; not a boolean, and not yet a decimal, date or
     /// timestamp (#1236). A match index's options do not change what it
@@ -150,10 +150,9 @@ impl IndexSpec {
     /// The table [`defines`](Self::defines) reads, over one scalar.
     pub(super) fn takes(&self, ty: Option<Logical>, value: &Physical<'_>) -> bool {
         match self {
-            // vitaminc's table: a kind with an equality domain. A null has
-            // one from `vitaminc-normalize` 0.8, and no term here, as before:
-            // see `sem::normalized`.
-            IndexSpec::Equality => domain_of(ty, value).is_some_and(|d| d != domain::NULL),
+            // vitaminc's table: a kind with an equality domain, a null's
+            // among them (`vitaminc-normalize` 0.8).
+            IndexSpec::Equality => domain_of(ty, value).is_some(),
             IndexSpec::Match(_) => ty.is_none() && matches!(value, Physical::Text(_)),
             IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => ty.is_none() && ordered(value),
         }
@@ -1026,6 +1025,9 @@ mod tests {
                     );
                 };
             }
+            // A null: the one term every null shares (#1298), typed or not.
+            equal!(None::<u32>, Tree::Null, "null");
+            equal!(None::<String>, Tree::Null, "null as text");
             equal!(-3i32, Tree::Int32(-3), "i32");
             equal!(-4i64, Tree::Int64(-4), "i64");
             equal!(34u32, Tree::UInt32(34), "u32");
@@ -1400,7 +1402,6 @@ mod tests {
             let keyset = cipher.default_keyset();
             let ctx = ctx("users/x");
             let not_scalars = [
-                ("null", Tree::Null),
                 ("undefined", Tree::Undefined),
                 ("an array", Tree::Array(vec![Tree::UInt32(1)])),
                 (
@@ -1426,6 +1427,38 @@ mod tests {
                         "{label} has no {kind} term: {result:?}"
                     );
                 }
+            }
+        }
+    }
+
+    mod given_a_null {
+        use super::*;
+
+        /// A null has an equality term (`vitaminc-normalize` 0.8, #1298) and
+        /// no other: nothing orders or tokenizes an absent value.
+        #[tokio::test]
+        async fn it_has_an_equality_term_and_no_other() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let ctx = ctx("users/x");
+            assert!(IndexSpec::Equality.defines(&Tree::Null));
+            assert!(
+                term(&keyset, &Tree::Null, &IndexSpec::Equality, ctx.clone())
+                    .await
+                    .is_ok()
+            );
+            for kind in [
+                default_match(),
+                IndexSpec::Ore,
+                IndexSpec::Ope,
+                IndexSpec::OreBlock,
+            ] {
+                assert!(!kind.defines(&Tree::Null), "a null has no {kind} term");
+                let result = term(&keyset, &Tree::Null, &kind, ctx.clone()).await;
+                assert!(
+                    matches!(&result, Err(Error::Term { kind: k, .. }) if *k == kind),
+                    "{kind}: {result:?}"
+                );
             }
         }
     }

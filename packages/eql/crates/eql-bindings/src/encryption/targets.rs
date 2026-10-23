@@ -449,6 +449,7 @@ mod sealed {
     impl Sealed for crate::v4::plaintext::Date {}
     impl Sealed for crate::v4::plaintext::Timestamp {}
     impl Sealed for crate::v4::plaintext::Decimal {}
+    impl<S: super::Plaintext> Sealed for Option<S> {}
 }
 
 /// A Rust plaintext an EQL type is produced from, read out of and written
@@ -542,6 +543,44 @@ mod logical {
         Timestamp => Timestamp,
         Decimal => Decimal,
     );
+}
+
+/// The plaintext of a type whose terms a null has (a storage-only type, or
+/// one whose only term is equality's), which may be absent: what the
+/// generated dispatch reads such a type's value as, opens it into and
+/// queries it with. A null seals as `None`, a typed null of the plaintext's
+/// type, as long as a value when the type is fixed width (vitaminc 0.8), and
+/// opens as a null; a value seals and opens exactly as the plaintext does,
+/// since `Some(v)` walks `v` itself. A null's equality term is the one every
+/// null shares (vitaminc-normalize 0.8), which a query of a `None` derives
+/// too. Whether a field may hold a null is the plan's to decide (its
+/// `"null"`), not the type's.
+impl<S: Plaintext> Plaintext for Option<S> {
+    const KIND: ValueKind = S::KIND;
+
+    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+        if value.kind().is_some() {
+            return S::from_frame(target, value).map(Some);
+        }
+        // No kind: a null, which reads as `None`, or something no plaintext
+        // is (an `undefined`, a passthrough), refused as `S` refuses it.
+        match value.visit(Self::sink()) {
+            Ok(None) => Ok(None),
+            _ => Err(TargetError::Plaintext {
+                target,
+                expected: Self::KIND,
+                found: None,
+            }),
+        }
+    }
+
+    fn into_frame(self) -> Result<ValueFrame, Error> {
+        match self {
+            Some(value) => value.into_frame(),
+            None => ValueFrame::from_bytes(&[vitaminc_aead::tags::NULL])
+                .map_err(|error| Error::Other(Box::new(error))),
+        }
+    }
 }
 
 /// Run a target's own plan over one runtime value and resolve to the EQL

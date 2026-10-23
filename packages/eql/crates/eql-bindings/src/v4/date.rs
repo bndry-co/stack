@@ -15,11 +15,12 @@ use ts_rs::TS;
     doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptFrom<Date>` and `DecryptInto<Date>`.
+/// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptFrom<Date>` and `DecryptInto<Date>`, and both for `Option<Date>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = crate::v4::plaintext::Date)]
+#[stash(plaintext = Option<crate::v4::plaintext::Date>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Date {
@@ -64,11 +65,12 @@ impl DomainType for Date {
     doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptFrom<Date>` and `DecryptInto<Date>`.
+/// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptFrom<Date>` and `DecryptInto<Date>`, and both for `Option<Date>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = crate::v4::plaintext::Date)]
+#[stash(plaintext = Option<crate::v4::plaintext::Date>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DateEq {
@@ -240,11 +242,12 @@ impl DomainType for DateOrdOpe {
     doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`Date`](crate::v4::plaintext::Date). Implements `EncryptFrom<Date>` to build equality query terms. Query operands do not decrypt.
+/// Plaintext input: [`Date`](crate::v4::plaintext::Date). Implements `EncryptFrom<Date>` to build equality query terms, and `EncryptFrom<Option<Date>>`, whose `None` is the query of a stored null. Query operands do not decrypt.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom)]
 #[stash(plaintext = crate::v4::plaintext::Date)]
+#[stash(plaintext = Option<crate::v4::plaintext::Date>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DateEqQuery {

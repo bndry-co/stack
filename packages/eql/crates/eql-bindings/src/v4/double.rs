@@ -15,11 +15,12 @@ use ts_rs::TS;
     doc = " See the [EQL double reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`f64`](f64). Implements `EncryptFrom<f64>` and `DecryptInto<f64>`.
+/// Plaintext input and decrypted output: [`f64`](f64). Implements `EncryptFrom<f64>` and `DecryptInto<f64>`, and both for `Option<f64>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = f64)]
+#[stash(plaintext = Option<f64>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Double {
@@ -64,11 +65,12 @@ impl DomainType for Double {
     doc = " See the [EQL double reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`f64`](f64). Implements `EncryptFrom<f64>` and `DecryptInto<f64>`.
+/// Plaintext input and decrypted output: [`f64`](f64). Implements `EncryptFrom<f64>` and `DecryptInto<f64>`, and both for `Option<f64>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
 #[stash(plaintext = f64)]
+#[stash(plaintext = Option<f64>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DoubleEq {
@@ -264,11 +266,12 @@ impl DomainType for DoubleOrdOpe {
     doc = " See the [EQL double reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`f64`](f64). Implements `EncryptFrom<f64>` to build equality query terms. Query operands do not decrypt.
+/// Plaintext input: [`f64`](f64). Implements `EncryptFrom<f64>` to build equality query terms, and `EncryptFrom<Option<f64>>`, whose `None` is the query of a stored null. Query operands do not decrypt.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptFrom)]
 #[stash(plaintext = f64)]
+#[stash(plaintext = Option<f64>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DoubleEqQuery {

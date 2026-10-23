@@ -140,7 +140,7 @@ use clww_ore::{ClwwOpe, ClwwOre};
 pub use clww_ore::{OpeClww8VariableV1, OreClww8VariableV1};
 use vitaminc_aead::Encrypt;
 use vitaminc_hmac::HmacSha256Prf;
-use vitaminc_normalize::{domain, terms, NormalizeError, Normalized};
+use vitaminc_normalize::{terms, NormalizeError, Normalized};
 use vitaminc_ore::{OrderEncrypt, OrderError, OrderKeyInit, OrderScheme, OrderTarget};
 use vitaminc_prf::{
     BlockVisitor, Context, IntoPrfContext, MapAccess, PrfError, PrfValue, PrfVisitor,
@@ -255,16 +255,16 @@ pub enum TermError {
     )]
     EmptyTermText,
     /// The value is not one scalar an equality term is defined for: a
-    /// null, a boolean, a container, or a value of a logical type vitaminc
-    /// gives no equality domain. Equality derives over one scalar, in the
-    /// domain `vitaminc-normalize` gives its kind (every integer width one
-    /// domain, both float widths one, text, bytes, and the dates,
-    /// timestamps, decimals and uuids that opt in); there is no term for
-    /// anything else.
+    /// boolean, a container, or a value of a logical type vitaminc gives no
+    /// equality domain. Equality derives over one scalar, in the domain
+    /// `vitaminc-normalize` gives its kind (every integer width one domain,
+    /// both float widths one, text, bytes, the dates, timestamps, decimals
+    /// and uuids that opt in, and a null); there is no term for anything
+    /// else.
     #[error("no equality term is defined for this value")]
     #[diagnostic(
         code(stack_encrypt::no_equality_term),
-        help("An equality term is defined for one integer, float, text, bytes, date, timestamp, decimal or uuid value, not for a boolean, a null or a container.")
+        help("An equality term is defined for one integer, float, text, bytes, date, timestamp, decimal, uuid or null value, not for a boolean or a container.")
     )]
     NoEqualityTerm,
     /// The value cannot be normalized for its term: text with a code point
@@ -506,15 +506,11 @@ pub(crate) fn normalized<T: Encrypt>(value: T) -> Result<Normalized, TermError> 
     match (terms.pop(), terms.is_empty()) {
         // One term, and at the root: the value is that scalar. A container
         // with one indexable scalar inside is not a scalar, and a boolean
-        // produces no term at all. A null has one under `vitaminc-normalize`
-        // 0.8, and it is dropped here: an absent value keeps a SQL `NULL`
-        // in its equality column until a null's index terms are decided
-        // (#1298).
-        (Some(term), true)
-            if term.path.steps().is_empty() && term.normalized.domain != domain::NULL =>
-        {
-            Ok(term.normalized)
-        }
+        // produces no term at all. A null, typed or plain, has one
+        // (`vitaminc-normalize` 0.8): every null of a context is one term,
+        // so an absent value sealed as a null can be stored beside its term
+        // and found by it (#1298).
+        (Some(term), true) if term.path.steps().is_empty() => Ok(term.normalized),
         _ => Err(TermError::NoEqualityTerm),
     }
 }
@@ -1843,10 +1839,10 @@ impl<K> KeysetCipher<'_, K> {
     /// PRF sees it: every integer width of one number is one term
     /// (`34u32` and `34i64` match), both float widths of one number are one
     /// term, text is compared in Unicode 16 NFC, and a date, timestamp,
-    /// decimal or uuid derives in a domain of its own. A boolean, a null or
-    /// a container has no term ([`TermError::NoEqualityTerm`]), and text with
-    /// a code point unassigned in Unicode 16 is refused
-    /// ([`TermError::Normalize`]).
+    /// decimal or uuid derives in a domain of its own, and every null shares
+    /// one term. A boolean or a container has no term
+    /// ([`TermError::NoEqualityTerm`]), and text with a code point
+    /// unassigned in Unicode 16 is refused ([`TermError::Normalize`]).
     pub fn equality_term<'c, T>(
         &self,
         value: T,
@@ -2003,9 +1999,25 @@ mod tests {
         let prf = HmacSha256Prf::new(Protected::new([7; 32]));
         let derive = |value| equality(&prf, value, Context::empty());
         assert!(equality(&prf, 34u32, Context::empty()).is_ok());
+        // A null has one term, whatever type it stands in for and whether
+        // it is typed (a fixed-width type's) or plain (text's), and no value
+        // has it (#1298).
+        let null = equality(&prf, None::<u32>, Context::empty()).expect("a null has a term");
+        for other in [
+            equality(&prf, None::<i64>, Context::empty()),
+            equality(&prf, None::<String>, Context::empty()),
+            equality(&prf, None::<f64>, Context::empty()),
+        ] {
+            assert_eq!(other.expect("a null has a term"), null);
+        }
+        for value in [
+            equality(&prf, 0u32, Context::empty()),
+            equality(&prf, String::new(), Context::empty()),
+        ] {
+            assert_ne!(value.expect("a value has a term"), null);
+        }
         for (what, refused) in [
             ("a boolean", equality(&prf, true, Context::empty())),
-            ("a null", equality(&prf, None::<u32>, Context::empty())),
             (
                 "a sequence of one",
                 equality(&prf, vec![34u32], Context::empty()),

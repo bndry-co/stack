@@ -38,7 +38,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw, TimeUnit};
+use vitaminc_aead::plaintext::{FixedType, Float, Int, Logical, Physical, Raw, TimeUnit, Width};
 use vitaminc_aead::Encrypt;
 
 use super::term::OneScalar;
@@ -460,6 +460,40 @@ impl ValueKind {
             ValueKind::Array => "array",
             ValueKind::Object => "object",
         }
+    }
+
+    /// How an absent value of this kind is sealed so that it is as long as
+    /// a present one (a plan's `"null": "sealed"`, #1298): `Some(Some(ty))`
+    /// for a kind of fixed width, sealed as a typed null of `ty` (vitaminc
+    /// 0.8); `Some(None)` for a boolean, whose leaf is one byte, as the
+    /// plain null is; `None` for a kind of no fixed width (text, bytes, a
+    /// container), whose absence no padding can hide.
+    pub(crate) const fn sealed_null(self) -> Option<Option<FixedType>> {
+        let plain = FixedType::plain;
+        Some(match self {
+            ValueKind::Bool => None,
+            ValueKind::Int8 => plain(Width::I8),
+            ValueKind::Int16 => plain(Width::I16),
+            ValueKind::Int32 => plain(Width::I32),
+            ValueKind::Int64 => plain(Width::I64),
+            ValueKind::Int128 => plain(Width::I128),
+            ValueKind::UInt8 => plain(Width::U8),
+            ValueKind::UInt16 => plain(Width::U16),
+            ValueKind::UInt32 => plain(Width::U32),
+            ValueKind::UInt64 => plain(Width::U64),
+            ValueKind::UInt128 => plain(Width::U128),
+            ValueKind::Float32 => plain(Width::F32),
+            ValueKind::Float64 => plain(Width::F64),
+            // The widths the value model holds each logical type at.
+            ValueKind::Decimal => FixedType::new(Some(Logical::Decimal { scale: 0 }), Width::I128),
+            ValueKind::Date => FixedType::new(Some(Logical::Date), Width::I32),
+            ValueKind::Timestamp => {
+                FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128)
+            }
+            ValueKind::String | ValueKind::Bytes | ValueKind::Array | ValueKind::Object => {
+                return None
+            }
+        })
     }
 }
 
