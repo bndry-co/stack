@@ -40,7 +40,10 @@
 --! projection, `{"sv": [{s, vs}, …], "el": [group, …]}`: its `{s, vs}`
 --! pairs nested by array element, written by the client beside `sv` so the
 --! server compares it with a needle by native `jsonb @>` and never
---! rebuilds it from the entries.
+--! rebuilds it from the entries. The CHECK validates its shape, not that it
+--! is `sv`'s: containment answers from `q` as written, so a row written by
+--! anything but Stack Encrypt's JSON index can answer `@>` differently
+--! from `->`, the walks and decryption, which answer from `sv`.
 
 --! @brief Validate one JSON tree entry.
 --! @internal
