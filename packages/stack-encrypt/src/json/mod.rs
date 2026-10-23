@@ -16,7 +16,9 @@
 //!   `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`, which lets the server walk the subtree under a node from one client-derived
 //!   token and nothing else: the ordinals `o` under a node are dense from
 //!   zero, so a walk probes them in turn until the first miss, and derives
-//!   each hit's own token as `H("t" ‖ t(parent) ‖ LE32(o))`;
+//!   each hit's own token as `H("t" ‖ t(parent) ‖ s ‖ LE32(o))` from the
+//!   hit's own selector `s`, which keeps an array element's token apart
+//!   from an object member's at the same ordinal;
 //! - a leaf ordering term `op` on the number and string leaves at the
 //!   paths the index declares ordered ([`JsonOptions::ordered`]), the
 //!   same OPE term the scalar [`Ope`](crate::target::Ope) index derives,
@@ -67,8 +69,9 @@
 //! - **Tokens chain by ordinal, not by label, and nothing stores a token.**
 //!   The design wraps each child's label-derived token under its parent's
 //!   (`w`) and stores the ordinal (`o`) so the server can find and unmask
-//!   it. Here a child's token is a hash of its parent's token and its
-//!   ordinal, so the server derives it as it walks and both fields go. The
+//!   it. Here a child's token is a hash of its parent's token, its own
+//!   selector and its ordinal, so the server derives it as it walks and
+//!   both fields go. The
 //!   ordinals under a node are dense from zero, so the walk needs no
 //!   fan-out bound either: it probes until the first miss. The price is
 //!   that the client cannot derive an object member's token (its ordinal
@@ -103,6 +106,7 @@ use crate::target::{DecryptField, DecryptInto, Decryptable, Decryption};
 
 mod derive;
 mod path;
+mod plain;
 mod query;
 
 pub use derive::JsonTerms;
@@ -142,9 +146,13 @@ pub struct JsonOptions {
     /// None by default: an ordering term reveals the order of the leaf
     /// across every row that holds one, and costs about eighty bytes a
     /// leaf, so a path pays for it only when asked. A wildcard step covers
-    /// every element of the array (`$.orders[*].total`); a position covers
-    /// that element alone (`$.scores[0]`). An ordering asked at a path no
-    /// entry here covers is refused
+    /// every element of the array (`$.orders[*].total`). A position
+    /// (`$.scores[2]`) is refused, here and in an ordering query
+    /// ([`TermError::JsonOrderingAtPosition`](crate::sem::TermError::JsonOrderingAtPosition)):
+    /// an ordering compares the leaf `->` extracts by the path's selector,
+    /// which reads every position as the wildcard, so it reaches the first
+    /// element at the path and never the one a position names. An ordering
+    /// asked at a path no entry here covers is refused
     /// ([`TermError::JsonPathNotOrdered`](crate::sem::TermError::JsonPathNotOrdered)).
     pub ordered: BTreeSet<JsonPath>,
 }
@@ -163,16 +171,35 @@ impl JsonOptions {
     ///
     /// # Errors
     ///
-    /// [`JsonPathError`] for a path that is not one.
-    pub fn ordering<I>(mut self, paths: I) -> Result<Self, JsonPathError>
+    /// [`TermError::JsonPath`](crate::sem::TermError::JsonPath) for a path
+    /// that is not one, and
+    /// [`TermError::JsonOrderingAtPosition`](crate::sem::TermError::JsonOrderingAtPosition)
+    /// for a path that names an array position, which no ordering can
+    /// reach (see [`ordered`](Self::ordered)).
+    pub fn ordering<I>(mut self, paths: I) -> Result<Self, crate::sem::TermError>
     where
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
         for path in paths {
-            let _ = self.ordered.insert(JsonPath::parse(path.as_ref())?);
+            let path = JsonPath::parse(path.as_ref())?;
+            if path.names_a_position() {
+                return Err(crate::sem::TermError::JsonOrderingAtPosition);
+            }
+            let _ = self.ordered.insert(path);
         }
         Ok(self)
+    }
+
+    /// Refuse options whose ordered paths name a position, which the
+    /// field admits but [`ordering`](Self::ordering) does not: sealing
+    /// under them would put a term no ordering can reach on the leaf.
+    pub(crate) fn check(&self) -> Result<(), crate::sem::TermError> {
+        if self.ordered.iter().any(JsonPath::names_a_position) {
+            Err(crate::sem::TermError::JsonOrderingAtPosition)
+        } else {
+            Ok(())
+        }
     }
 
     /// Whether the leaf at `path` carries an ordering term: some ordered
@@ -422,7 +449,7 @@ impl JsonDocument {
             else {
                 break;
             };
-            out.push((j, entry, derive::child_token(token, o)));
+            out.push((j, entry, derive::child_token(token, &entry.s, o)));
         }
         out
     }
@@ -548,71 +575,39 @@ where
     }
 }
 
-/// The entries the server's walk returned for one token: what
-/// `json_tree_subtree(doc, token)` yields, collected, and what
+/// The entries the server's walk returned for one key, ready to open:
+/// what `json_tree_subtree(doc, token)` or `json_tree_subtree_at(doc,
+/// token, gates)` yields, collected, and what
 /// [`DecryptInto<Value>`](crate::DecryptInto) reassembles into the value
-/// under that node.
+/// under the walked path. Built only by the key that keyed the walk
+/// ([`JsonSubtreeKey::open`]), so it always carries the walked path.
 ///
 /// The ungated walk returns the node's descendants and not the node
 /// itself, so the node's kind is read from its children's labels: elements
 /// make an array, members an object. A node with no descendants, an empty
 /// container or a scalar, yields no rows and so no value; `->` on its
-/// selector returns the node itself. A gated walk,
-/// `json_tree_subtree_at(doc, token, gates)`, also returns each node its
-/// gates reach, at depth `0`, with that node's descendants beneath it.
+/// selector returns the node itself. A gated walk also returns each node
+/// its gates reach, at depth `0`, with that node's descendants beneath it.
 ///
 /// Past its budget, a walk over a document with a sealed root returns the
 /// root entry alone, at depth `0`, instead of a subtree it would be
 /// cheaper to open whole: the client opens the document and takes the
-/// walked path over it. Opening such rows needs that path and which walk
-/// it keyed, attached with [`below`](Self::below) for `json_tree_subtree`
-/// or [`at`](Self::at) for `json_tree_subtree_at`, so that the rows open
-/// to the same value whichever form the server returned; without a path
-/// the opening fails with [`Error::OpenedType`](crate::Error::OpenedType).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
+/// walked path over it, to the same value the walked rows open to. Whether
+/// the path names the node walked below (`json_tree_subtree`) or the nodes
+/// reached (`json_tree_subtree_at`) is the key's to say, by whether it has
+/// gates, so no caller attaches it.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonSubtree {
     nodes: Vec<JsonNode>,
-    #[serde(skip)]
-    path: Option<JsonPath>,
-    #[serde(skip)]
+    path: JsonPath,
     below: bool,
 }
 
 impl JsonSubtree {
-    /// The rows, as returned.
-    pub fn new(nodes: Vec<JsonNode>) -> Self {
-        Self {
-            nodes,
-            path: None,
-            below: false,
-        }
-    }
-
-    /// The rows of `json_tree_subtree_at`, with the whole path its key was
-    /// derived from: what the opening takes over the whole document when
-    /// the rows are the sealed root the server fell back to. They open as
-    /// the walked rows do, to one value per node the path reaches.
-    pub fn at(self, path: JsonPath) -> Self {
-        Self {
-            path: Some(path),
-            below: false,
-            ..self
-        }
-    }
-
-    /// The rows of `json_tree_subtree`, with the path of the node whose
-    /// token keyed the walk. They open as the walked rows do, which are
-    /// that node's descendants: to the node's value, or, as a
-    /// [`Vec`], to its children's values. Attach the path this way and not
-    /// with [`at`](Self::at), which would open the fallback to the node
-    /// itself where the walk opens to its children.
-    pub fn below(self, path: JsonPath) -> Self {
-        Self {
-            path: Some(path),
-            below: true,
-            ..self
-        }
+    /// The rows of a walk keyed from `path`: below the path's node when
+    /// `below` (`json_tree_subtree`), at the nodes it reaches otherwise.
+    pub(crate) fn keyed(nodes: Vec<JsonNode>, path: JsonPath, below: bool) -> Self {
+        Self { nodes, path, below }
     }
 
     /// The rows.
@@ -620,10 +615,9 @@ impl JsonSubtree {
         &self.nodes
     }
 
-    /// The path attached with [`at`](Self::at) or [`below`](Self::below),
-    /// if any.
-    pub fn path(&self) -> Option<&JsonPath> {
-        self.path.as_ref()
+    /// The path the walk was keyed from.
+    pub fn path(&self) -> &JsonPath {
+        &self.path
     }
 
     /// Whether the rows are the sealed root the server returned in place
@@ -912,7 +906,7 @@ mod tests {
         let mut parent = token;
         for _ in 0..1000 {
             entries.push(chained(&iv, &parent, 0));
-            parent = derive::child_token(&parent, 0);
+            parent = derive::child_token(&parent, &[0; 16], 0);
         }
         let chain = JsonDocument::new(
             JsonHeader::new(Uuid::from_u128(7), iv, vec![], true),

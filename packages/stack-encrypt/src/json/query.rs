@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use super::derive::{JsonTerms, TermNode};
 use super::path::JsonPath;
-use super::{base64, JsonDocument, JsonOptions, Tag};
+use super::{base64, JsonDocument, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::op::{
     Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
     LabelledTarget, Lt, Lte, One, Pair, Pathed, QueryTerm, QueryToken, Supports,
@@ -331,28 +331,35 @@ pub(crate) enum Gate {
     /// The selector of the path down to that depth: a key step, or a
     /// wildcard, whose selector every element carries.
     Selector(Tag),
-    /// An array position: the one ordinal probed at that depth.
-    Slot(u32),
+    /// An array position: the one ordinal probed at that depth, and the
+    /// selector of an element there (the wildcard's), which the entry at
+    /// that ordinal must carry. The ordinal alone would admit an object
+    /// member that ranks there in a row whose node at the path is an
+    /// object.
+    Slot(u32, Tag),
 }
 
 impl Gate {
     /// The gate as `json_tree_subtree_at` takes it: the selector's base64, or
-    /// `#n` for a position.
+    /// `#n:` and the element selector's base64 for a position.
     fn text(&self) -> String {
         match self {
             Gate::Selector(s) => base64(s),
-            Gate::Slot(n) => format!("#{n}"),
+            Gate::Slot(n, s) => format!("#{n}:{}", base64(s)),
         }
     }
 }
 
 /// The key of a subtree walk: the token of the deepest node on the path
-/// the client can derive, and one gate per step below it. Serializes as
-/// `{"t": "…", "g": ["…", "#0", …]}`, `g` omitted when empty.
+/// the client can derive, one gate per step below it, and the path it was
+/// derived from, which [`open`](Self::open) attaches to the rows the walk
+/// returns. Serializes as `{"t": "…", "g": ["…", "#0:…", …]}`, `g` omitted
+/// when empty; the path is not part of the wire.
 #[derive(Clone, PartialEq, Eq)]
 pub struct JsonSubtreeKey {
     pub(crate) token: Tag,
     pub(crate) gates: Vec<Gate>,
+    pub(crate) path: JsonPath,
 }
 
 impl JsonSubtreeKey {
@@ -369,11 +376,29 @@ impl JsonSubtreeKey {
     }
 
     /// The gates the walk descends through below the token, one per step,
-    /// as `json_tree_subtree_at` takes them: a selector's base64, or `#n` for
-    /// an array position. Empty when the token names the walked node
-    /// itself, which `json_tree_subtree` takes.
+    /// as `json_tree_subtree_at` takes them: a selector's base64, or
+    /// `#n:<selector>` for an array position, the selector being the array
+    /// elements' own. Empty when the token names the walked node itself,
+    /// which `json_tree_subtree` takes.
     pub fn gates(&self) -> Vec<String> {
         self.gates.iter().map(Gate::text).collect()
+    }
+
+    /// The path the key was derived from.
+    pub fn path(&self) -> &JsonPath {
+        &self.path
+    }
+
+    /// The rows the walk this key keyed returned, ready to open: the only
+    /// way to build a [`JsonSubtree`], so the rows always carry the path
+    /// a sealed-root fallback is opened at. With no gates the rows came
+    /// from `json_tree_subtree(doc, token)` and are the descendants of the
+    /// path's node; with gates they came from `json_tree_subtree_at(doc,
+    /// token, gates)` and are the nodes the path reaches, with theirs. The
+    /// key knows which, so the fallback opens to what the walked rows
+    /// open to either way.
+    pub fn open(&self, rows: Vec<JsonNode>) -> JsonSubtree {
+        JsonSubtree::keyed(rows, self.path.clone(), self.gates.is_empty())
     }
 }
 
@@ -608,9 +633,14 @@ fn ordered(value: &Value) -> Result<(), Error> {
 }
 
 /// Whether the index orders the leaves at `path`: some path in its
-/// `ordered` option covers it.
+/// `ordered` option covers it. A path that names a position is refused
+/// first: the comparison extracts by selector, which reads the position as
+/// the wildcard, so it would compare the first element at the path rather
+/// than the one named.
 fn orders(index: &Json, path: &JsonPath) -> Result<(), Error> {
-    if index.options.orders(path) {
+    if path.names_a_position() {
+        Err(TermError::JsonOrderingAtPosition.into())
+    } else if index.options.orders(path) {
         Ok(())
     } else {
         Err(TermError::JsonPathNotOrdered.into())
@@ -750,14 +780,18 @@ mod tests {
         );
         let key = JsonSubtreeKey {
             token: [0xcd; 16],
-            gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3)],
+            gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3, [0xab; 16])],
+            path: JsonPath::parse("$.a.b[3]").unwrap(),
         };
         assert_eq!(key.token(), "zc3Nzc3Nzc3Nzc3Nzc3NzQ==");
         assert_eq!(key.token_bytes(), &[0xcd; 16]);
-        assert_eq!(key.gates(), ["q6urq6urq6urq6urq6urqw==", "#3"]);
+        assert_eq!(
+            key.gates(),
+            ["q6urq6urq6urq6urq6urqw==", "#3:q6urq6urq6urq6urq6urqw=="]
+        );
         assert_eq!(
             serde_json::to_value(&key).unwrap(),
-            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ==", "g": ["q6urq6urq6urq6urq6urqw==", "#3"]})
+            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ==", "g": ["q6urq6urq6urq6urq6urqw==", "#3:q6urq6urq6urq6urq6urqw=="]})
         );
         assert_eq!(
             format!("{key:?}"),
@@ -767,6 +801,7 @@ mod tests {
         let bare = JsonSubtreeKey {
             token: [0xcd; 16],
             gates: Vec::new(),
+            path: JsonPath::parse("$.a").unwrap(),
         };
         assert_eq!(
             serde_json::to_value(&bare).unwrap(),

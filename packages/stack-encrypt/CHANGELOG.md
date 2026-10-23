@@ -26,15 +26,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on by default, makes the root entry the whole document so no token for
   the root exists. A document is at most 127 levels deep. New `TermError`
   variants: `JsonPath`, `JsonTooDeep`, `JsonTooWide`, `JsonSealedRoot`,
-  `JsonLeafNotOrdered`, `JsonPathNotOrdered` and `JsonValueNotScalar`. A
-  data plan reads and writes the index (`"json"`, or `{"json":
-  {"sealed_root": bool, "ordered": [path, …]}}`) and refuses to run it
-  with `Reason::JsonIndexPending`. A walk past its budget returns the
-  sealed root in place of the subtree: `JsonSubtree::below(path)` (for
-  `json_tree_subtree`) or `JsonSubtree::at(path)` (for
-  `json_tree_subtree_at`) attaches the walked path, and the rows then open
-  to the same value either way, over `JsonPath::select`, which evaluates a
-  path over a value.
+  `JsonLeafNotOrdered`, `JsonPathNotOrdered`, `JsonOrderingAtPosition`
+  and `JsonValueNotScalar`. `JsonOptions::ordering([..])` names the
+  ordered paths, `JsonPath::covers` is the rule that matches them, and a
+  path naming an array position is refused there and in an ordering
+  query, since the comparison extracts by selector and reads a position as
+  the wildcard. A data plan reads and writes the index (`"json"`, or
+  `{"json": {"sealed_root": bool, "ordered": [path, …]}}`) and refuses to
+  run it with `Reason::JsonIndexPending`. A subtree key is a token and
+  `JsonSubtreeKey::gates()`, one gate per path step below it, a selector
+  or `#n:<selector>` for an array position. A walk past its budget returns
+  the sealed root in place of the subtree. The key carries the path it
+  was derived from (`JsonSubtreeKey::path`) and builds the rows' wrapper,
+  `key.open(rows) -> JsonSubtree`, the wrapper's only constructor; from
+  its gates it knows whether the rows are below the path's node
+  (`json_tree_subtree`) or at the nodes it reaches (`json_tree_subtree_at`),
+  so the rows open to the same value either way, over `JsonPath::select`,
+  which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
+  of `q`, `p`, `op`, `h`, tokens and gates) is padded standard base64, and
+  the ciphertext `c` is RFC 1924 base85 (`base85-simd`). The document's
+  plaintext is held under `Protected` throughout, as the scalar paths hold
+  theirs: each node's plaintext is encoded straight from the caller's value
+  into a `Protected<Vec<u8>>` for the cipher, and what an entry opens to
+  (a key, a scalar, a sealed root's document) stays wrapped until it is
+  handed to the caller, so the sealed-root fallback's whole document is
+  wiped once the walked path is selected from it.
+
+- **A layout chosen by value, `target::Layout`, and
+  `Plan::value().encrypt_as(layout)`.** `EncryptFrom` is a type's own
+  layout, fixed where the type is written; a `Layout<S>` is a value with
+  options that seals the same target under them and names the index a
+  query answers through. `Json::new(options)` is one. `encrypt_as` builds
+  a `ValuePlan<S, plan::Laid<X, T>>` that seals under the layout and
+  resolves every query through its index, so a query does not name the
+  options again; `ValuePlan::specs` and `ValuePlan::layout` report them.
+  `Error` gains `From<json::JsonPathError>`.
 
 - **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended
   2026-10-19). It derives ore-rs 0.9.0's 6-bit block ORE under its own key

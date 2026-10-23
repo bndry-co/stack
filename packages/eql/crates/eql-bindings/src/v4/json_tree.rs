@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stack_encrypt::json::{
     JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSubtree,
+    JsonSubtreeKey,
 };
 use stack_encrypt::target::{AeadContext, ExpectedContext, IndexSpec, Json, Layout};
 use stack_encrypt::{
@@ -156,58 +157,40 @@ pub struct JsonTreeLeafQuery {
 }
 
 /// The rows a subtree walk returned (`eql_v4.json_tree_subtree` or
-/// `json_tree_subtree_at`), collected: opens to the value under the
-/// walked node, or to the list of complete subtrees the rows hold.
+/// `json_tree_subtree_at`), collected with the key that keyed the walk:
+/// opens to the value under the walked path, or to the list of complete
+/// subtrees the rows hold.
 ///
 /// Past its budget a walk returns the sealed root alone, at depth `0`;
-/// those rows open to the whole document, and the path the walk was keyed
-/// from selects the same value(s) the walked rows open to. Attach it with
-/// [`below`](Self::below) for `json_tree_subtree` rows and
-/// [`at`](Self::at) for `json_tree_subtree_at` rows. The path is not part
-/// of the wire.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
+/// those rows open to the whole document, and the key's path selects the
+/// same value(s) the walked rows open to. The key also says which walk the
+/// rows came from (no gates: `json_tree_subtree`, the rows below the path's
+/// node; gates: `json_tree_subtree_at`, the nodes the path reaches), so the
+/// only constructor, [`from_key`](Self::from_key), takes it, and rows
+/// cannot be opened without it.
+#[derive(Clone, Debug, PartialEq)]
 pub struct JsonTreeSubtree {
-    pub rows: Vec<JsonTreeEntry>,
-    #[serde(skip)]
-    pub path: Option<JsonPath>,
-    /// Whether `path` names the node `json_tree_subtree` walked below
-    /// ([`below`](Self::below)), rather than the nodes a
-    /// `json_tree_subtree_at` path reaches ([`at`](Self::at)).
-    #[serde(skip)]
-    pub below: bool,
+    rows: Vec<JsonTreeEntry>,
+    key: JsonSubtreeKey,
 }
 
 impl JsonTreeSubtree {
-    /// The rows, as returned.
-    pub fn new(rows: Vec<JsonTreeEntry>) -> Self {
+    /// The rows the walk `key` keyed returned, as the server sent them.
+    pub fn from_key(key: &JsonSubtreeKey, rows: Vec<JsonTreeEntry>) -> Self {
         Self {
             rows,
-            path: None,
-            below: false,
+            key: key.clone(),
         }
     }
 
-    /// The rows of `json_tree_subtree_at`, with the whole path its key was
-    /// derived from: past the budget they open to one value per node the
-    /// path reaches, as the walked rows do.
-    pub fn at(self, path: JsonPath) -> Self {
-        Self {
-            path: Some(path),
-            below: false,
-            ..self
-        }
+    /// The rows.
+    pub fn rows(&self) -> &[JsonTreeEntry] {
+        &self.rows
     }
 
-    /// The rows of `json_tree_subtree`, with the path of the node whose
-    /// token keyed the walk: past the budget they open to that node, or as
-    /// a list to its children, as the walked rows do.
-    pub fn below(self, path: JsonPath) -> Self {
-        Self {
-            path: Some(path),
-            below: true,
-            ..self
-        }
+    /// The path the walk was keyed from.
+    pub fn path(&self) -> &JsonPath {
+        self.key.path()
     }
 }
 
@@ -443,17 +426,12 @@ impl DecryptInto<Vec<Value>> for JsonTreeSubtree {
 
 impl JsonTreeSubtree {
     fn subtree(&self) -> Result<JsonSubtree, Error> {
-        let rows = JsonSubtree::new(
+        Ok(self.key.open(
             self.rows
                 .iter()
                 .map(JsonTreeEntry::node)
                 .collect::<Result<_, _>>()?,
-        );
-        Ok(match &self.path {
-            Some(path) if self.below => rows.below(path.clone()),
-            Some(path) => rows.at(path.clone()),
-            None => rows,
-        })
+        ))
     }
 }
 
@@ -511,27 +489,6 @@ mod tests {
             serde_json::from_value::<JsonTreeDocument>(without).is_err(),
             "a document without `q` is not a stored document"
         );
-    }
-
-    #[test]
-    fn a_subtree_carries_its_path_beside_the_wire() {
-        let rows: JsonTreeSubtree = serde_json::from_value(serde_json::json!([])).unwrap();
-        assert!(rows.path.is_none());
-        let at = rows.at(JsonPath::parse("$.a").unwrap());
-        assert_eq!(
-            at.path.as_ref().map(ToString::to_string).as_deref(),
-            Some("$.a")
-        );
-        assert_eq!(serde_json::to_value(&at).unwrap(), serde_json::json!([]));
-        assert!(at.subtree().unwrap().path().is_some());
-        assert!(!at.below);
-        let below = at.below(JsonPath::parse("$.b").unwrap());
-        assert!(below.below);
-        assert_eq!(
-            below.subtree().unwrap(),
-            JsonSubtree::new(Vec::new()).below(JsonPath::parse("$.b").unwrap())
-        );
-        assert_eq!(serde_json::to_value(&below).unwrap(), serde_json::json!([]));
     }
 
     #[test]
