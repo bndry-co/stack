@@ -485,6 +485,27 @@ async fn subtree_rows_the_server_repeats_or_lines_up_are_refused() {
             .await,
         Err(Error::OpenedType { .. })
     ));
+
+    // The same through arrays: one outer array, then every key's inner
+    // one-element array, each taken as the element of the one before it.
+    let wide = Value::Object(
+        (0..200)
+            .map(|i| (format!("k{i:03}"), json!([[0]])))
+            .collect(),
+    );
+    let doc = seal(&cipher, &wide).await;
+    let last = doc.entries().len() - 1;
+    let arrays: Vec<JsonNode> = (1..doc.entries().len())
+        .filter(|j| *j == 1 || j % 3 == 2 || *j == last)
+        .map(|j| doc.node(j).unwrap())
+        .collect();
+    assert_eq!(arrays.len(), 202);
+    assert!(matches!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(JsonSubtree::new(arrays), aead())
+            .await,
+        Err(Error::OpenedType { .. })
+    ));
 }
 
 // =============================================================================
