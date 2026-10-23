@@ -35,9 +35,18 @@ const TOKEN_DOMAIN: &[u8] = b"stack-encrypt/json/token/v1";
 /// PAE domain of an entry's AAD.
 const ENTRY_AAD_DOMAIN: &[u8] = b"stack-encrypt/json/entry/v1";
 
-/// Deeper than this is refused rather than walked: the walk recurses, and a
+/// Deeper than this is refused rather than sealed: the walk recurses, and a
 /// document built in memory can nest deeper than any parser admits.
-const MAX_DEPTH: usize = 512;
+///
+/// The bound is what reading the document back needs, not what the walk
+/// could manage. A sealed root's plaintext is the document as JSON, which
+/// `serde_json` parses with a nesting limit of 128 containers, so a
+/// document whose innermost value sits 128 levels down seals and then never
+/// opens. Refusing it here moves that failure from the read, where the
+/// value is lost, to the write, where the caller still holds it. The bound
+/// is the same under either root option, so the option never changes which
+/// documents the index accepts.
+pub(crate) const MAX_DEPTH: usize = 127;
 
 /// The byte that leads a sealed root's plaintext: the whole document, not a
 /// node.

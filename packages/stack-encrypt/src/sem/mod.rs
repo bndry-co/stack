@@ -288,7 +288,7 @@ pub enum TermError {
     #[error("the JSON document nests too deep for the JSON index")]
     #[diagnostic(
         code(stack_encrypt::json_too_deep),
-        help("The JSON index walks a document 512 levels deep. Flatten the document, or store it as a ciphertext without the index.")
+        help("The JSON index takes a document at most 127 levels deep, the depth its sealed root parses back. Flatten the document, or store it as a ciphertext without the index.")
     )]
     JsonTooDeep,
     /// A JSON array has more elements than the JSON index numbers.

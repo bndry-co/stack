@@ -105,6 +105,42 @@ async fn a_document_seals_one_entry_per_node_and_opens_again() {
     }
 }
 
+/// The deepest document the index takes opens again under either root
+/// option, and one level deeper is refused when it is sealed, not when it is
+/// read. A sealed root's plaintext is the document as JSON, which
+/// `serde_json` reads back only to 128 levels of nesting.
+#[tokio::test]
+async fn the_deepest_document_the_index_takes_opens_again() {
+    let cipher = stack_cipher().await;
+    let arrays = |n: usize| (0..n).fold(json!(1), |inner, _| json!([inner]));
+    let objects = |n: usize| (0..n).fold(json!("leaf"), |inner, _| json!({"k": inner}));
+    for nested in [arrays, objects] {
+        for options in [JsonOptions::default(), JsonOptions { sealed_root: false }] {
+            let deepest = nested(127);
+            let doc = seal_with(&cipher, &deepest, options).await;
+            assert_eq!(
+                open(&cipher, doc).await.unwrap(),
+                deepest,
+                "127 levels under {options:?}"
+            );
+            let refused = cipher
+                .default_keyset()
+                .run(
+                    stack_encrypt::target::json_document::<_, stack_encrypt::target::Borrowed>(
+                        options,
+                    ),
+                    &nested(128),
+                    context(),
+                )
+                .await;
+            assert!(
+                matches!(refused, Err(Error::Term(TermError::JsonTooDeep))),
+                "128 levels under {options:?} is refused when sealed"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn the_wire_form_is_what_the_sql_domain_stores() {
     let cipher = stack_cipher().await;
