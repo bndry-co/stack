@@ -252,7 +252,8 @@ EQL versions installed** in the database.
   rather than listing it, so a task added there tomorrow is covered.
 
   `typecheck` is the deliberate exception: it *should* run under `turbo run
-  typecheck`, and does, from `tests.yml`, on every PR. It needs no credentials
+  typecheck`, and does, from `tests.yml`, on every PR that can reach the JS
+  side (see "`tests.yml` gates its live jobs" below). It needs no credentials
   and no database, and its tsconfig sets `checkJs` so the suite's two `.cjs`
   fixtures are compiled too — one of them is a real `AccessKeyStrategy` call
   site, and a `tests/**/*.ts` scope would leave it checked by nothing but the
@@ -939,6 +940,16 @@ pnpm changeset:publish
   `languages/typescript/packages/cli/tests/e2e/**` run via `pnpm --filter stash
   test:e2e` (requires a build). See `languages/typescript/packages/cli/AGENTS.md` for when to
   add or update them.
+- **`tests.yml` gates its live jobs on what a pull request changes.** Its
+  `changes` job skips `run-tests`, `e2e-tests`, `wasm-e2e-tests` and
+  `run-tests-bun` when every changed file sits in a tree they cannot read
+  (the Go module, the Stack Encrypt crates, EQL's SQL and Rust outside the
+  compiled `eql-bindings` files, docs, other workflows). A test that reads a
+  path in one of those trees would be skipped on the change that breaks it:
+  `scripts/__tests__/tests-workflow-gate.test.mjs` scans for that and fails.
+  Checks that read the whole tree (the lint scripts, `test:scripts`, the
+  release gate, the suites that read workflow files) run in the ungated
+  `repo-checks` job instead.
 
 ## Bundling and Deployment Notes
 
