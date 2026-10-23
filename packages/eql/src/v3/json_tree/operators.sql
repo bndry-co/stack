@@ -63,7 +63,7 @@ CREATE OPERATOR ->> (
 
 --! @brief @> contains operator with a query_json_tree needle.
 --!
---! Inlines to native `jsonb @>` over `{{prefix}}.json_tree_query(a)::jsonb`, so
+--! Inlines to native `jsonb @>` over `{{prefix}}.json_tree_query(a)`, so
 --! a functional GIN index on that expression engages. Not STRICT, for the
 --! reason `{{prefix}}.json_tree_contains` gives: a STRICT wrapper around a
 --! non-STRICT body is not inlined.
