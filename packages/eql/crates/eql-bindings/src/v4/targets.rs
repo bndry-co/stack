@@ -761,12 +761,10 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
             column,
             plaintext,
         ),
-        "Text" => {
-            run_target::<super::text::Text, Option<String>, K>("Text", keyset, column, plaintext)
+        "Text" => run_target::<super::text::Text, String, K>("Text", keyset, column, plaintext),
+        "TextEq" => {
+            run_target::<super::text::TextEq, String, K>("TextEq", keyset, column, plaintext)
         }
-        "TextEq" => run_target::<super::text::TextEq, Option<String>, K>(
-            "TextEq", keyset, column, plaintext,
-        ),
         "TextMatch" => {
             run_target::<super::text::TextMatch, String, K>("TextMatch", keyset, column, plaintext)
         }
@@ -945,12 +943,8 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
             column,
             stored,
         ),
-        "Text" => {
-            open_target::<super::text::Text, Option<String>, K>("Text", opener, column, stored)
-        }
-        "TextEq" => {
-            open_target::<super::text::TextEq, Option<String>, K>("TextEq", opener, column, stored)
-        }
+        "Text" => open_target::<super::text::Text, String, K>("Text", opener, column, stored),
+        "TextEq" => open_target::<super::text::TextEq, String, K>("TextEq", opener, column, stored),
         "TextMatch" => {
             open_target::<super::text::TextMatch, String, K>("TextMatch", opener, column, stored)
         }
@@ -1107,9 +1101,9 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
-        "TextEq" => run_target::<super::text::TextEqQuery, Option<String>, K>(
-            "TextEq", keyset, column, plaintext,
-        ),
+        "TextEq" => {
+            run_target::<super::text::TextEqQuery, String, K>("TextEq", keyset, column, plaintext)
+        }
         "TextMatch" => run_target::<super::text::TextMatchQuery, String, K>(
             "TextMatch",
             keyset,
