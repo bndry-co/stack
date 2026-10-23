@@ -184,7 +184,7 @@ func TestRunAsksTheEmbeddedEngine(t *testing.T) {
 		t.Fatalf("the generated file does not name the EQL type:\n%s", written)
 	}
 	// A type the engine cannot produce yet: refused by name, nothing written.
-	unproducible := strings.Replace(userSource, "encrypt_into=TextEq", "encrypt_into=DateOrdOre", 1)
+	unproducible := strings.Replace(userSource, "encrypt_into=TextEq", "encrypt_into=Json", 1)
 	dir = writeModule(t, map[string]string{"model.go": unproducible})
 	stderr.Reset()
 	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 1 {
@@ -192,7 +192,7 @@ func TestRunAsksTheEmbeddedEngine(t *testing.T) {
 	}
 	// Refused by the generator with the engine's reason, before the engine
 	// is asked: se_targets lists the type as not producible.
-	if !strings.Contains(stderr.String(), "cannot produce the EQL type DateOrdOre yet") {
+	if !strings.Contains(stderr.String(), "cannot produce the EQL type Json yet") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(dir, "user_stash.go")); !os.IsNotExist(err) {

@@ -601,10 +601,19 @@ pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("bigint", "ord_ope"),
     ("date", ""),
     ("date", "eq"),
+    ("date", "ord_ore"),
+    ("date", "ord"),
+    ("date", "ord_ope"),
     ("timestamp", ""),
     ("timestamp", "eq"),
+    ("timestamp", "ord_ore"),
+    ("timestamp", "ord"),
+    ("timestamp", "ord_ope"),
     ("numeric", ""),
     ("numeric", "eq"),
+    ("numeric", "ord_ore"),
+    ("numeric", "ord"),
+    ("numeric", "ord_ope"),
     ("text", ""),
     ("text", "eq"),
     ("text", "match"),
@@ -626,11 +635,6 @@ pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("double", "ord_ope"),
 ];
 
-/// The families whose plaintext is a vitaminc logical type (a date, a
-/// timestamp, a decimal) rather than a physical one. Their equality terms
-/// are derived; their order terms are not (`encryption_gap`).
-const ORDER_PENDING_FAMILIES: &[&str] = &["date", "timestamp", "numeric"];
-
 /// Why no `eql_v3` struct derives Stack Encrypt's traits.
 pub const V3_ENCRYPTION_GAP: &str =
     "Stack Encrypt produces EQL v4 only: its output is not byte-for-byte compatible with \
@@ -640,8 +644,9 @@ pub const V3_ENCRYPTION_GAP: &str =
 /// `ValueKind` name a plan field's `"type"` key spells, and the Rust type the
 /// derive and the by-name dispatch name. `None` for a family eql-bindings
 /// names no Rust plaintext type for yet. A date, a timestamp and a decimal
-/// are eql-bindings' own types (`v4::plaintext`), which can be wiped where
-/// chrono's and rust_decimal's cannot.
+/// are Stack Encrypt's own types (`stack_encrypt::value`, re-exported as
+/// `v4::plaintext`), which can be wiped where chrono's and rust_decimal's
+/// cannot.
 pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
     Some(match family {
         "text" => ("string", "String"),
@@ -681,12 +686,6 @@ pub fn encryption_gap(
     } else if plaintext_of(family.name).is_none() {
         "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK \
          carry the kind"
-    } else if ORDER_PENDING_FAMILIES.contains(&family.name)
-        && (domain.terms.contains(&Term::Ope) || domain.terms.contains(&Term::Ore))
-    {
-        // The engine derives no order term of either scheme for these kinds.
-        "the engine derives no order term for a date, timestamp or decimal yet: how they are \
-         ordered is not decided (#1236)"
     } else {
         // Reached by any unlisted domain of a family whose plaintext is
         // specified (a domain added to such a family, say): nothing in the
@@ -2123,8 +2122,6 @@ mod tests {
                         "tree of leaves"
                     } else if plaintext_of(family.name).is_none() {
                         "no Rust plaintext type for this family"
-                    } else if ORDER_PENDING_FAMILIES.contains(&family.name) {
-                        "no order term for a date, timestamp or decimal"
                     } else {
                         panic!("{full}: every domain of a specified family is derived: {reason}")
                     };

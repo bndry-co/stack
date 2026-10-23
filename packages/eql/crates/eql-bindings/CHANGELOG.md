@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The date, timestamp and numeric ordered types are producible**
+  (`stack-encrypt` feature, #1236): `DateOrd`, `DateOrdOpe`, `DateOrdOre`,
+  `TimestampOrd`, `TimestampOrdOpe`, `TimestampOrdOre`, `NumericOrd`,
+  `NumericOrdOpe` and `NumericOrdOre`. A date orders by its day, a
+  timestamp by the microsecond (truncated, as its equality term is) and a
+  decimal by value, so `1.5` and `1.50` order as equal. Block ORE puts a
+  date through ore-rs's fixed-width engine and a timestamp or decimal
+  through its chained one.
+
+### Changed
+
+- **`v4::plaintext::Date`, `Timestamp`, `Decimal` and `RangeError` are
+  Stack Encrypt's** (`stack_encrypt::value`), re-exported at the same
+  path: the engine orders them, which it can only do for types of its own.
+  Nothing a caller writes changes. The `chrono` and `rust_decimal`
+  features now turn on Stack Encrypt's features of those names, and the
+  crate no longer depends on `vitaminc-aead` directly.
+
 - **Range query operands for `eql_v4.between`** (`stack-encrypt` feature).
   Every ordered v4 family has two: `IntegerRangeOreQuery` and
   `IntegerRangeOpeQuery`, `TextRangeOreQuery` and `TextRangeOpeQuery`, and so
@@ -86,9 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and from `NaiveDate`, `DateTime<Utc>` and rust_decimal's `Decimal`; a
   leap second is refused. `NumericEq`'s `=` normalises the scale and
   `TimestampEq`'s compares to the microsecond, truncating (never
-  rounding) the nanoseconds below it. The ordered types of these
-  families stay unproducible, with a reason: the engine derives no order
-  term for these kinds yet (#1236).
+  rounding) the nanoseconds below it. Their ordered types follow (see
+  "The date, timestamp and numeric ordered types are producible").
 - **The OPE-ordered types are producible** (`stack-encrypt` feature):
   `IntegerOrd`, `IntegerOrdOpe`, `SmallintOrd`, `SmallintOrdOpe`,
   `BigintOrd`, `BigintOrdOpe`, `RealOrd`, `RealOrdOpe`, `DoubleOrd`,
