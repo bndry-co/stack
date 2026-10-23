@@ -1,7 +1,7 @@
 //! The JSON index: a document stored as one searchable value, with
 //! node-local ciphertexts, a token chain and exact containment.
 //!
-//! `docs/plans/2026-10-17-json-index-stack-encrypt-spike.md` is the design
+//! `docs/plans/2026-10-17-json-tree-index.md` is the design
 //! this module implements, and the authority on why. In short, a document
 //! is flattened into one entry per node. Each entry carries:
 //!
