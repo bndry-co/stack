@@ -483,6 +483,19 @@ mod tests {
         );
     }
 
+    /// `covers` is public and matches positions though an ordered path may
+    /// not name one: a position covers that position alone.
+    #[test]
+    fn a_position_covers_its_own_position_only() {
+        let path = |text: &str| JsonPath::parse(text).unwrap();
+        let third = path("$.orders[3].total");
+        assert!(third.covers(&path("$.orders[3].total")));
+        assert!(!third.covers(&path("$.orders[2].total")));
+        assert!(!third.covers(&path("$.orders[*].total")));
+        assert!(path("$.orders[*].total").covers(&third));
+        assert!(!path("$.orders[3]").covers(&third), "the same steps only");
+    }
+
     #[test]
     fn a_needle_holds_the_value_at_the_path() {
         let needle = JsonPath::parse("$.a[*].x")
