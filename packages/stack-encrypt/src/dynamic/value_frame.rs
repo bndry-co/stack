@@ -103,7 +103,10 @@ impl ValueFrame {
     ///
     /// A typed null in the bytes reads as a plain null: the value this
     /// returns does not remember the type, so sealing it does not pad it to
-    /// the type's length.
+    /// the type's length. To store a field's absent values padded, give the
+    /// field `"null": "sealed"` in its plan ([`FieldPlan::with_null`]).
+    ///
+    /// [`FieldPlan::with_null`]: crate::dynamic::FieldPlan::with_null
     ///
     /// # Errors
     ///
