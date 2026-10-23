@@ -15,7 +15,7 @@ use eql_bindings::v4::json_tree::{
 };
 use eql_bindings::Identifier;
 use serde_json::{json, Map, Value};
-use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPath};
+use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPath, JsonSubtreeKey};
 use stack_encrypt::plan::{Laid, ValuePlan};
 use stack_encrypt::target::{Json, Layout};
 use stack_encrypt::{op, NonEmpty, Plan};
@@ -560,7 +560,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
             .all(|e| e.d.is_some() && e.j.is_some() && e.h.is_some()));
         let value: Value = wait(
             &runtime,
-            cipher.decrypt_as(JsonTreeSubtree::new(walked), column()),
+            cipher.decrypt_as(JsonTreeSubtree::from_key(&nested, walked), column()),
         )
         .unwrap();
         assert_eq!(value, expected, "row {id}");
@@ -593,17 +593,11 @@ fn postgres_extracts_walks_and_orders_by_path() {
     let root = walked(&mut db, 5);
     assert_eq!(root.len(), 1, "past the budget, the root alone");
     assert_eq!((root[0].j, root[0].d), (Some(0), Some(0)));
-    let refused = wait(
-        &runtime,
-        cipher.decrypt_as::<Value, _>(JsonTreeSubtree::new(root.clone()), column()),
-    );
-    assert!(refused.is_err(), "the fallback needs the walked path");
+    // The key that keyed the walk builds the rows, so the path the
+    // fallback is opened at is always there.
     let value: Value = wait(
         &runtime,
-        cipher.decrypt_as(
-            JsonTreeSubtree::new(root).below(JsonPath::parse("$.nested").unwrap()),
-            column(),
-        ),
+        cipher.decrypt_as(JsonTreeSubtree::from_key(&nested, root), column()),
     )
     .unwrap();
     assert_eq!(value, fixture()["nested"]);
@@ -618,30 +612,27 @@ fn postgres_extracts_walks_and_orders_by_path() {
     // The fallback opens to what the walk opens to, as a list too, so a
     // caller's result does not change shape when a document grows past the
     // budget: `$.nested`'s member values from `json_tree_subtree`, whose
-    // rows are the head's descendants (attached with `below`), and the list
+    // rows are the head's descendants (its key has no gates), and the list
     // itself from the gated walk to `$.nested.list`, whose rows are the
-    // node the gates reach (attached with `at`).
+    // node the gates reach. The key says which.
     let sorted = |mut values: Vec<Value>| {
         values.sort_by_key(ToString::to_string);
         values
     };
-    let open_list = |rows: Vec<JsonTreeEntry>,
-                     attach: &dyn Fn(JsonTreeSubtree) -> JsonTreeSubtree|
-     -> Vec<Value> {
+    let open_list = |rows: Vec<JsonTreeEntry>, key: &JsonSubtreeKey| -> Vec<Value> {
         wait(
             &runtime,
-            cipher.decrypt_as(attach(JsonTreeSubtree::new(rows)), column()),
+            cipher.decrypt_as(JsonTreeSubtree::from_key(key, rows), column()),
         )
         .unwrap()
     };
-    let below_nested = |rows: JsonTreeSubtree| rows.below(JsonPath::parse("$.nested").unwrap());
     let walked_members = walked(&mut db, 0);
     assert_eq!(walked_members.len(), 6);
     let fallen_back = walked(&mut db, 5);
     assert_eq!(fallen_back.len(), 1);
     let members = sorted(vec![json!("constant"), json!([{"x": 1}, {"x": 2}])]);
-    assert_eq!(sorted(open_list(walked_members, &below_nested)), members);
-    assert_eq!(sorted(open_list(fallen_back, &below_nested)), members);
+    assert_eq!(sorted(open_list(walked_members, &nested)), members);
+    assert_eq!(sorted(open_list(fallen_back, &nested)), members);
     let list = subtree_key("$.nested.list");
     let list_rows = |db: &mut postgres::Client, budget: i32| -> Vec<JsonTreeEntry> {
         db.query(
@@ -653,7 +644,6 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .map(entry)
         .collect()
     };
-    let at_list = |rows: JsonTreeSubtree| rows.at(JsonPath::parse("$.nested.list").unwrap());
     let walked_list = list_rows(&mut db, 0);
     assert_eq!(
         walked_list.len(),
@@ -663,11 +653,11 @@ fn postgres_extracts_walks_and_orders_by_path() {
     let fallen_back = list_rows(&mut db, 3);
     assert_eq!(fallen_back.len(), 1);
     assert_eq!(
-        open_list(walked_list, &at_list),
+        open_list(walked_list, &list),
         vec![fixture()["nested"]["list"].clone()]
     );
     assert_eq!(
-        open_list(fallen_back, &at_list),
+        open_list(fallen_back, &list),
         vec![fixture()["nested"]["list"].clone()]
     );
     // The budget is gated on the header's sealed-root flag, the bit
@@ -704,7 +694,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .collect();
     let values: Vec<Value> = wait(
         &runtime,
-        cipher.decrypt_as(JsonTreeSubtree::new(walked), column()),
+        cipher.decrypt_as(JsonTreeSubtree::from_key(&xs, walked), column()),
     )
     .unwrap();
     assert_eq!(values, vec![json!(1), json!(2)]);
@@ -723,10 +713,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
     assert_eq!(root[0].d, Some(0));
     let values: Vec<Value> = wait(
         &runtime,
-        cipher.decrypt_as(
-            JsonTreeSubtree::new(root).at(JsonPath::parse("$.nested.list[*].x").unwrap()),
-            column(),
-        ),
+        cipher.decrypt_as(JsonTreeSubtree::from_key(&xs, root), column()),
     )
     .unwrap();
     assert_eq!(values, vec![json!(1), json!(2)]);
@@ -750,7 +737,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .collect();
     let value: Value = wait(
         &runtime,
-        cipher.decrypt_as(JsonTreeSubtree::new(walked), column()),
+        cipher.decrypt_as(JsonTreeSubtree::from_key(&second, walked), column()),
     )
     .unwrap();
     assert_eq!(value, json!({"x": 2}));
@@ -958,10 +945,7 @@ fn postgres_a_position_reaches_array_elements_only() {
                 Some(expected) => {
                     let value: Value = wait(
                         &runtime,
-                        cipher.decrypt_as(
-                            JsonTreeSubtree::new(walked).at(JsonPath::parse(path).unwrap()),
-                            column(),
-                        ),
+                        cipher.decrypt_as(JsonTreeSubtree::from_key(&key, walked), column()),
                     )
                     .unwrap();
                     assert_eq!(

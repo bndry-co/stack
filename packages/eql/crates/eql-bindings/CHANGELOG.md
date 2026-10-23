@@ -16,9 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `JsonTreeEntry` is one entry as `->` and the walks return it,
   `JsonTreeQuery` the containment needle and `JsonTreeLeafQuery` the
   ordering operand at a path. `JsonTreeSubtree` collects a walk's rows; past
-  the walk's budget the server returns the sealed root instead, and
-  `JsonTreeSubtree::below(path)` (for `json_tree_subtree`) or `at(path)`
-  (for `json_tree_subtree_at`) attaches the path the rows then open at.
+  the walk's budget the server returns the sealed root instead, which
+  opens at the path the walk's key was derived from: the rows are built
+  with `JsonTreeSubtree::from_key(&key, rows)`, and there is no
+  constructor without the key.
   The document is an `EncryptFrom<Value>` and `DecryptInto<Value>` target,
   the entry and the subtree open through `DecryptInto`, and the needle and
   the ordering operand convert from Stack Encrypt's `JsonQuery` and

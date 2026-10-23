@@ -36,11 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run it with `Reason::JsonIndexPending`. A subtree key is a token and
   `JsonSubtreeKey::gates()`, one gate per path step below it, a selector
   or `#n:<selector>` for an array position. A walk past its budget returns
-  the sealed root in place of the subtree: `JsonSubtree::below(path)` (for
-  `json_tree_subtree`) or `JsonSubtree::at(path)` (for
-  `json_tree_subtree_at`) attaches the walked path, and the rows then open
-  to the same value either way, over `JsonPath::select`, which evaluates a
-  path over a value. On the wire every field the SQL reads (`s`, the pairs
+  the sealed root in place of the subtree. The key carries the path it
+  was derived from (`JsonSubtreeKey::path`) and builds the rows' wrapper,
+  `key.open(rows) -> JsonSubtree`, the wrapper's only constructor; from
+  its gates it knows whether the rows are below the path's node
+  (`json_tree_subtree`) or at the nodes it reaches (`json_tree_subtree_at`),
+  so the rows open to the same value either way, over `JsonPath::select`,
+  which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
   of `q`, `p`, `op`, `h`, tokens and gates) is padded standard base64, and
   the ciphertext `c` is RFC 1924 base85 (`base85-simd`).
 

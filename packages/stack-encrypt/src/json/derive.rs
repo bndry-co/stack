@@ -989,10 +989,10 @@ impl DecryptInto<Value> for JsonNode {
 /// `json_tree_subtree` returns is the children of one node, which
 /// [`DecryptInto<Value>`] assembles into that node's value, or this opens
 /// into its children's values. The sealed root a walk fell back to opens
-/// whole, and the attached path selects over it to the same values the
-/// walked rows open to: one per node the path reaches, for a path attached
-/// with [`JsonSubtree::at`]; the children of the one node at the path, for
-/// [`JsonSubtree::below`]. An object's members come in an order neither
+/// whole, and the key's path selects over it to the same values the walked
+/// rows open to: one per node the path reaches, for a key with gates
+/// (`json_tree_subtree_at`); the children of the one node at the path, for
+/// a key without (`json_tree_subtree`). An object's members come in an order neither
 /// form fixes, and without their keys; open it as a [`Value`] to keep them.
 impl DecryptInto<Vec<Value>> for JsonSubtree {
     type Context = AeadContext;
@@ -1027,9 +1027,8 @@ impl DecryptInto<Vec<Value>> for JsonSubtree {
 /// through [`DecryptInto<Vec<Value>>`] instead. No rows is no value
 /// ([`Error::OpenedType`]): an empty container and a scalar both have no
 /// descendants, and `->` on the node's selector returns the node itself.
-/// The sealed root a walk fell back to opens whole, and the path attached
-/// with [`JsonSubtree::below`] (or [`JsonSubtree::at`]) selects the one
-/// value under it; a path that reaches no node, or more than one, is
+/// The sealed root a walk fell back to opens whole, and the key's path
+/// ([`JsonSubtreeKey::open`]) selects the one value under it; a path that reaches no node, or more than one, is
 /// [`Error::OpenedType`].
 impl DecryptInto<Value> for JsonSubtree {
     type Context = AeadContext;
@@ -1134,19 +1133,14 @@ fn children(node: &Value) -> Vec<Value> {
 }
 
 /// Open the sealed root a walk fell back to: the whole document, with the
-/// path the rows were keyed from, which the caller selects over. Refused
-/// without the path, since nothing in the rows records it.
+/// path the rows were keyed from, which the caller selects over. The key
+/// that built the rows attached the path, so it is always there.
 fn open_fallback<'a, K>(
     subtree: JsonSubtree,
     cipher: &'a StackCipher<K>,
     context: AeadContext,
 ) -> Pending<'a, (JsonPath, Value), K> {
-    let Some(path) = subtree.path().cloned() else {
-        return Pending::failed(
-            cipher,
-            shape("the walked path, attached with JsonSubtree::below or JsonSubtree::at, to select over the sealed root the walk returned"),
-        );
-    };
+    let path = subtree.path().clone();
     let Some(root) = subtree.nodes().first().cloned() else {
         return Pending::failed(cipher, shape("the sealed root"));
     };
@@ -1236,7 +1230,11 @@ fn subtree_key_for(
             )?),
         });
     }
-    Ok(JsonSubtreeKey { token, gates })
+    Ok(JsonSubtreeKey {
+        token,
+        gates,
+        path: path.clone(),
+    })
 }
 
 impl<K> KeysetCipher<'_, K> {

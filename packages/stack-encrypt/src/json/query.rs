@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use super::derive::{JsonTerms, TermNode};
 use super::path::JsonPath;
-use super::{base64, JsonDocument, JsonOptions, Tag};
+use super::{base64, JsonDocument, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::op::{
     Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
     LabelledTarget, Lt, Lte, One, Pair, Pathed, QueryTerm, QueryToken, Supports,
@@ -351,12 +351,15 @@ impl Gate {
 }
 
 /// The key of a subtree walk: the token of the deepest node on the path
-/// the client can derive, and one gate per step below it. Serializes as
-/// `{"t": "…", "g": ["…", "#0:…", …]}`, `g` omitted when empty.
+/// the client can derive, one gate per step below it, and the path it was
+/// derived from, which [`open`](Self::open) attaches to the rows the walk
+/// returns. Serializes as `{"t": "…", "g": ["…", "#0:…", …]}`, `g` omitted
+/// when empty; the path is not part of the wire.
 #[derive(Clone, PartialEq, Eq)]
 pub struct JsonSubtreeKey {
     pub(crate) token: Tag,
     pub(crate) gates: Vec<Gate>,
+    pub(crate) path: JsonPath,
 }
 
 impl JsonSubtreeKey {
@@ -379,6 +382,23 @@ impl JsonSubtreeKey {
     /// which `json_tree_subtree` takes.
     pub fn gates(&self) -> Vec<String> {
         self.gates.iter().map(Gate::text).collect()
+    }
+
+    /// The path the key was derived from.
+    pub fn path(&self) -> &JsonPath {
+        &self.path
+    }
+
+    /// The rows the walk this key keyed returned, ready to open: the only
+    /// way to build a [`JsonSubtree`], so the rows always carry the path
+    /// a sealed-root fallback is opened at. With no gates the rows came
+    /// from `json_tree_subtree(doc, token)` and are the descendants of the
+    /// path's node; with gates they came from `json_tree_subtree_at(doc,
+    /// token, gates)` and are the nodes the path reaches, with theirs. The
+    /// key knows which, so the fallback opens to what the walked rows
+    /// open to either way.
+    pub fn open(&self, rows: Vec<JsonNode>) -> JsonSubtree {
+        JsonSubtree::keyed(rows, self.path.clone(), self.gates.is_empty())
     }
 }
 
@@ -761,6 +781,7 @@ mod tests {
         let key = JsonSubtreeKey {
             token: [0xcd; 16],
             gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3, [0xab; 16])],
+            path: JsonPath::parse("$.a.b[3]").unwrap(),
         };
         assert_eq!(key.token(), "zc3Nzc3Nzc3Nzc3Nzc3NzQ==");
         assert_eq!(key.token_bytes(), &[0xcd; 16]);
@@ -780,6 +801,7 @@ mod tests {
         let bare = JsonSubtreeKey {
             token: [0xcd; 16],
             gates: Vec::new(),
+            path: JsonPath::parse("$.a").unwrap(),
         };
         assert_eq!(
             serde_json::to_value(&bare).unwrap(),
