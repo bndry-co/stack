@@ -123,9 +123,10 @@
 // or [Int128] and [Uint128]), a float32 or float64, a [Decimal], a [Date] or a
 // time.Time (a timestamp), or a type defined over one of the built-in types.
 // Each integer seals at its own width. Equality applies to every one but a
-// bool; ORE and OPE to the integers, text, bytes and floats, and not yet to a
-// decimal, date or timestamp, whose order terms are not supported yet
-// (#1236).
+// bool. ORE and OPE apply to integers of 16 bits or more, floats, text and
+// bytes. A bool or an 8-bit integer takes no order index, since over so few
+// values its order terms would show which rows hold which value. Decimals,
+// dates and timestamps cannot take an order index yet.
 //
 // Passthrough fields never cross the binding: the engine does nothing to a
 // passthrough value that a program could observe, and the FFI codec cannot
