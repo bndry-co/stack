@@ -288,7 +288,7 @@ pub enum TermError {
     #[error("the JSON document nests too deep for the JSON index")]
     #[diagnostic(
         code(stack_encrypt::json_too_deep),
-        help("The JSON index walks a document 512 levels deep. Flatten the document, or store it as a ciphertext without the index.")
+        help("The JSON index takes a document at most 127 levels deep, the depth its sealed root parses back. Flatten the document, or store it as a ciphertext without the index.")
     )]
     JsonTooDeep,
     /// A JSON array has more elements than the JSON index numbers.
@@ -321,6 +321,12 @@ pub enum TermError {
         help("A leaf carries an ordering term only at a path the index's `ordered` option covers (`$.age`, or `$.orders[*].total` for every element). Declare the path on the index, and re-encrypt the documents stored before it was, then order at it.")
     )]
     JsonPathNotOrdered,
+    #[error("equality at a JSON path takes a scalar")]
+    #[diagnostic(
+        code(stack_encrypt::json_value_not_scalar),
+        help("`op::AtPath(op::Eq)` compares one value at a path: a string, a number, a boolean or a null. To ask whether the value at a path holds an object or an array, query `op::Contains` with the document that holds it there.")
+    )]
+    JsonValueNotScalar,
 }
 
 impl crate::ErrorPayload for TermError {
@@ -341,7 +347,8 @@ impl crate::ErrorPayload for TermError {
             | Self::JsonTooWide
             | Self::JsonSealedRoot
             | Self::JsonLeafNotOrdered
-            | Self::JsonPathNotOrdered => serde_json::Map::new(),
+            | Self::JsonPathNotOrdered
+            | Self::JsonValueNotScalar => serde_json::Map::new(),
         }
     }
 }

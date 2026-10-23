@@ -604,6 +604,11 @@ $$;
 --! for an entry with no term (a container, a boolean, a null), which btree's
 --! NULL handling drops from range queries.
 --!
+--! Order rows by this, `ORDER BY {{prefix}}.ord_term(col -> 'sel')`, never by
+--! the entry itself: `ORDER BY col -> 'sel'` uses jsonb's default ordering of
+--! the entry object, which sorts by ciphertext, and an operator class that
+--! would redirect it needs a superuser to install.
+--!
 --! @param entry public.{{prefix}}_json_tree_entry The entry.
 --! @return {{prefix}}_internal.ope_cllw The term, or NULL.
 CREATE FUNCTION {{prefix}}.ord_term(entry public.{{prefix}}_json_tree_entry)
