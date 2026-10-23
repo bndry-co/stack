@@ -911,7 +911,10 @@ fn nested_document(i: i64) -> Value {
 /// The oracle test above shows the GIN index with sequential scans turned
 /// off; this one shows it with them on, which is what a customer's
 /// database runs. The ordering path is held the same way: a functional
-/// btree on `ord_term(doc -> selector)` serves a range at a path.
+/// btree on `ord_term(doc -> selector)` serves a range at a path. Both
+/// are asked twice: as one-shot statements, planned with their operands
+/// in view, and as a prepared statement executed past its fifth run,
+/// where `plan_cache_mode = auto` may plan once for any operand.
 ///
 /// The last block is a control: with the function's cost set to the
 /// minimum for one transaction, the planner prefers the sequential scan
@@ -1016,19 +1019,35 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
         db.batch_execute(&format!("ANALYZE {table}")).unwrap();
 
         // The two storage regimes the shapes stand for, pinned, so the test
-        // keeps meaning when a document's size changes.
+        // keeps meaning when a document's size changes. Read from the TOAST
+        // relation itself: a value stored out of line is one `chunk_id`
+        // there, so the count of distinct chunk ids is the count of
+        // TOASTed rows, on every supported version (`pg_column_toast_chunk_id`
+        // is PostgreSQL 17 only, and `pg_column_size` reports the stored
+        // size, which says nothing about where it is stored).
         let (column, toasted): (i32, i64) = {
-            let row = db
+            let column: i32 = db
                 .query_one(
-                    &format!(
-                        "SELECT avg(pg_column_size(doc))::int,
-                                (SELECT count(*) FROM {table} WHERE pg_column_size(doc) > 2000)
-                         FROM {table}"
-                    ),
+                    &format!("SELECT avg(pg_column_size(doc))::int FROM {table}"),
                     &[],
                 )
-                .unwrap();
-            (row.get(0), row.get(1))
+                .unwrap()
+                .get(0);
+            let toast: String = db
+                .query_one(
+                    "SELECT reltoastrelid::regclass::text FROM pg_class WHERE oid = $1::text::regclass",
+                    &[&table],
+                )
+                .unwrap()
+                .get(0);
+            let toasted: i64 = db
+                .query_one(
+                    &format!("SELECT count(DISTINCT chunk_id) FROM {toast}"),
+                    &[],
+                )
+                .unwrap()
+                .get(0);
+            (column, toasted)
         };
         if shape.inline {
             assert_eq!(
@@ -1090,6 +1109,50 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
             .unwrap()
             .get(0);
         assert_eq!(matched, 5, "{}: the top five numbers", shape.name);
+
+        // The same two queries as a pooled driver runs them: one prepared
+        // statement, executed past the five custom plans after which
+        // `plan_cache_mode = auto` may switch to a generic plan, whose
+        // operand is a parameter the planner cannot see. The selector stays
+        // a literal, as it has to for the functional index to match.
+        // `EXPLAIN EXECUTE` shows the plan the cache would run next.
+        let containment = needle(shape.needle.clone());
+        let range = leaf(shape.rows - 5);
+        for literal in [&containment, &range] {
+            assert!(!literal.contains('\''), "an operand embeds as a literal");
+        }
+        db.batch_execute(&format!(
+            "PREPARE {table}_contains(text) AS
+               SELECT id FROM {table} WHERE doc @> $1::jsonb::eql_v4.query_json_tree;
+             PREPARE {table}_range(text) AS
+               SELECT id FROM {table} WHERE (doc -> '{number}'::text) >= $1::jsonb::eql_v4.query_json_tree_leaf;"
+        ))
+        .unwrap();
+        for (statement, operand, index, what) in [
+            ("contains", &containment, "_gin", "containment"),
+            ("range", &range, "_ord", "a range at an ordered path"),
+        ] {
+            for _ in 0..6 {
+                db.batch_execute(&format!("EXECUTE {table}_{statement}('{operand}')"))
+                    .unwrap();
+            }
+            let text = db
+                .simple_query(&format!("EXPLAIN EXECUTE {table}_{statement}('{operand}')"))
+                .unwrap()
+                .into_iter()
+                .filter_map(|message| match message {
+                    postgres::SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                text.contains(&format!("Index Scan using {table}{index}"))
+                    || text.contains(&format!("Bitmap Index Scan on {table}{index}")),
+                "{} on PostgreSQL {version}: {what} from a prepared statement past its fifth execution should use the index:\n{text}",
+                shape.name
+            );
+        }
     }
 
     // The control: with `json_tree_query` priced as if it were free, the
