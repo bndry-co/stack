@@ -858,12 +858,23 @@ fn open_entry(
 /// Rebuild the value of `node`, taking its descendants from `rest`, the
 /// pre-order sequence after it. Every child is taken with `next`, so each
 /// step consumes an entry and the rebuild ends on any sequence.
+///
+/// `depth` is `node`'s depth below the rebuild's start. Each entry is
+/// authentic, but which entries the server returned, and so how deep the
+/// containers it lines up nest, is not: rows that repeat one container, or
+/// list only the containers of a wide document, would otherwise recurse as
+/// deep as there are rows. Nothing the index seals nests deeper than
+/// [`MAX_DEPTH`], so deeper is refused as a shape mismatch.
 fn rebuild<'a>(
     node: &'a Opened,
     rest: &mut impl Iterator<Item = &'a Opened>,
+    depth: usize,
 ) -> Result<Value, Error> {
     if let Some(whole) = &node.whole {
         return Ok(whole.clone());
+    }
+    if depth > MAX_DEPTH {
+        return Err(shape("a JSON document no deeper than the index seals"));
     }
     match node.kind {
         Kind::Object => {
@@ -873,7 +884,7 @@ fn rebuild<'a>(
                 let Label::Key(key) = &member.label else {
                     return Err(shape("an object member"));
                 };
-                let value = rebuild(member, rest)?;
+                let value = rebuild(member, rest, depth + 1)?;
                 let _ = map.insert(key.clone(), value);
             }
             Ok(Value::Object(map))
@@ -885,7 +896,7 @@ fn rebuild<'a>(
                 if element.label != Label::Index(u64::from(i)) {
                     return Err(shape("an array element in order"));
                 }
-                items.push(rebuild(element, rest)?);
+                items.push(rebuild(element, rest, depth + 1)?);
             }
             Ok(Value::Array(items))
         }
@@ -945,7 +956,7 @@ fn open_document<'a, K>(
         let root = rest
             .next()
             .ok_or_else(|| shape("a document with a root entry"))?;
-        let value = rebuild(root, &mut rest)?;
+        let value = rebuild(root, &mut rest, 0)?;
         if rest.next().is_some() {
             return Err(shape("a document with no entries past its root"));
         }
@@ -1043,6 +1054,12 @@ fn open_subtree<'a, K>(
 ) -> Pending<'a, Vec<(Label, Value)>, K> {
     let mut nodes = subtree.nodes;
     nodes.sort_by_key(|n| n.j);
+    // A walk returns each entry once. Two rows at one ordinal are the
+    // server repeating an entry, which would let it line up one container
+    // as many times as it likes.
+    if nodes.windows(2).any(|pair| pair[0].j == pair[1].j) {
+        return Pending::failed(cipher, shape("rows of distinct entries"));
+    }
     let Some(first) = nodes.first() else {
         return Pending::ready(cipher, Ok(Vec::new()));
     };
@@ -1064,7 +1081,7 @@ fn open_subtree<'a, K>(
         let mut forest = Vec::new();
         let mut rest = opened.iter();
         while let Some(top) = rest.next() {
-            let value = rebuild(top, &mut rest)?;
+            let value = rebuild(top, &mut rest, 0)?;
             forest.push((top.label.clone(), value));
         }
         Ok(forest)

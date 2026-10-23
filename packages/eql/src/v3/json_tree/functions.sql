@@ -383,6 +383,8 @@ $$;
 --! node itself is not returned: the walk addresses nodes by their parent,
 --! and the client reads the node's kind from its children's labels, or
 --! fetches the node by its selector.
+--! The walk descends at most 127 levels, the deepest a sealed document
+--! nests, so a stored document whose tags do not form a tree still ends it.
 --!
 --! @param e public.{{prefix}}_json_tree The stored document.
 --! @param token text The subtree's token, hex.
@@ -417,6 +419,10 @@ AS $$
             WHERE elem ->> 'p' = {{prefix}}_internal.json_tree_parent_tag(doc.iv, w.t, o)
           ) AS hit ON true
         ) AS c ON true
+        -- No sealed document nests deeper than 127 levels. A stored one
+        -- whose tags form a cycle or a longer chain, which whoever holds a
+        -- token can write, stops here instead of recursing without end.
+        WHERE w.depth < 127
     )
   SELECT ({{prefix}}_internal.json_tree_graft(doc.val, w.entry, w.j)::jsonb || jsonb_build_object('d', w.depth))::public.{{prefix}}_json_tree_entry
   FROM walk AS w CROSS JOIN doc
@@ -468,6 +474,10 @@ AS $$
             WHERE elem ->> 'p' = {{prefix}}_internal.json_tree_parent_tag(doc.iv, w.t, o)
           ) AS hit ON true
         ) AS c ON true
+        -- No sealed document nests deeper than 127 levels. A stored one
+        -- whose tags form a cycle or a longer chain, which whoever holds a
+        -- token can write, stops here instead of recursing without end.
+        WHERE w.depth < 127
     )
   SELECT ({{prefix}}_internal.json_tree_graft(doc.val, w.entry, w.j)::jsonb || jsonb_build_object('d', w.depth))::public.{{prefix}}_json_tree_entry
   FROM walk AS w CROSS JOIN doc

@@ -446,6 +446,47 @@ async fn an_extracted_node_opens_to_its_scalar_and_a_subtree_to_its_value() {
     );
 }
 
+/// The rows of a walk come from the server, which can repeat an entry or
+/// pick which entries to return. Every entry is authentic, but the rebuild
+/// nests the containers it is handed: a repeated row is refused, and so is
+/// a line of containers deeper than any document the index seals, as a
+/// shape mismatch rather than a recursion as deep as the rows.
+#[tokio::test]
+async fn subtree_rows_the_server_repeats_or_lines_up_are_refused() {
+    let cipher = stack_cipher().await;
+    let doc = seal(&cipher, &fixture()).await;
+    let node = |j: usize| doc.node(j).unwrap();
+    let repeated = JsonSubtree::new(vec![node(1), node(1)]);
+    assert!(matches!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(repeated, aead())
+            .await,
+        Err(Error::OpenedType { .. })
+    ));
+
+    // A wide document of one-member objects: its objects, returned as rows
+    // with the last leaf after them, each take the next as their member,
+    // and would nest 200 deep.
+    let wide = Value::Object(
+        (0..200)
+            .map(|i| (format!("k{i:03}"), json!({"x": 1})))
+            .collect(),
+    );
+    let doc = seal(&cipher, &wide).await;
+    let last = doc.entries().len() - 1;
+    let containers: Vec<JsonNode> = (1..doc.entries().len())
+        .filter(|j| j % 2 == 1 || *j == last)
+        .map(|j| doc.node(j).unwrap())
+        .collect();
+    assert_eq!(containers.len(), 201);
+    assert!(matches!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(JsonSubtree::new(containers), aead())
+            .await,
+        Err(Error::OpenedType { .. })
+    ));
+}
+
 // =============================================================================
 // Tamper evidence
 // =============================================================================
