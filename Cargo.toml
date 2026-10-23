@@ -86,12 +86,10 @@ recipher = "=0.3.1"
 # `clww-ore` (cllw-ore renamed) for CLWW ORE and OPE, and ore-rs for block
 # ORE, `Bit6BlockOre` (fixed width up to ten bytes) and `ChainedBlockOre`
 # (variable length), the 6-bit schemes EQL v4's `_ord_ore` domains store.
-# vitaminc is a plain dependency of both from here, not a feature.
-# UNRELEASED: both come from cipherstash/ore.rs#132 (stacked on #131 and
-# #130) until clww-ore 0.6.0 and ore-rs 0.10.0 reach crates.io; then these
-# become exact version pins.
-clww-ore = { git = "https://github.com/cipherstash/ore.rs", rev = "6e2a7e1c2b09ad0e43cbeccaf5b313a943aa9ba4", default-features = false }
-ore-rs = { git = "https://github.com/cipherstash/ore.rs", rev = "6e2a7e1c2b09ad0e43cbeccaf5b313a943aa9ba4", default-features = false }
+# vitaminc is a plain dependency of both from here, not a feature. Both are
+# pinned exactly: a new release can change every stored order term.
+clww-ore = { version = "=0.6.0", default-features = false }
+ore-rs = { version = "=0.10.0", default-features = false }
 
 # External dependencies, with the suite's feature lists.
 base64 = "0.22.0"

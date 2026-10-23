@@ -660,13 +660,13 @@ dependencies = [
 [[package]]
 name = "clww-ore"
 version = "0.6.0"
-source = "git+https://github.com/cipherstash/ore.rs?rev=6e2a7e1c2b09ad0e43cbeccaf5b313a943aa9ba4#6e2a7e1c2b09ad0e43cbeccaf5b313a943aa9ba4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b95747f5724666cb973b2ca0659e10b6083c11f99877c4727b4c9f534a591c74"
 dependencies = [
  "blake3",
  "hex",
  "subtle",
  "thiserror 1.0.69",
- "unicode-normalization",
  "vitaminc-ore",
  "vitaminc-protected 0.8.0",
  "zeroize",
@@ -2690,8 +2690,9 @@ dependencies = [
 
 [[package]]
 name = "ore-rs"
-version = "0.9.0"
-source = "git+https://github.com/cipherstash/ore.rs?rev=6e2a7e1c2b09ad0e43cbeccaf5b313a943aa9ba4#6e2a7e1c2b09ad0e43cbeccaf5b313a943aa9ba4"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bd65962ec1409c09d20e1e016f4fe1b4ae2e2e58dba38c155538b2c0801a185"
 dependencies = [
  "aes",
  "block-modes",
@@ -4260,7 +4261,7 @@ dependencies = [
  "base64ct",
  "clww-ore",
  "miette",
- "ore-rs 0.9.0",
+ "ore-rs 0.10.0",
  "serde",
  "serde_json",
  "stack-encrypt-derive",
