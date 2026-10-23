@@ -1342,14 +1342,31 @@ async fn the_fallback_opens_to_what_the_walk_opens_to() {
             .unwrap(),
         vec![fixture()["nested"]["list"].clone()]
     );
-    let attached = fallback.below(path("$.nested"));
+    // The last attachment decides, both the path and the walk.
+    let reattached = fallback
+        .clone()
+        .below(path("$.nested"))
+        .at(path("$.nested.list"));
     assert_eq!(
-        attached.path().map(ToString::to_string).as_deref(),
-        Some("$.nested")
+        reattached.path().map(ToString::to_string).as_deref(),
+        Some("$.nested.list")
     );
     assert_eq!(
-        attached.clone().at(path("$.nested")).path(),
-        attached.path()
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(reattached, aead())
+            .await
+            .unwrap(),
+        vec![fixture()["nested"]["list"].clone()]
+    );
+    assert_eq!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(
+                fallback.at(path("$.nested")).below(path("$.nested.list")),
+                aead()
+            )
+            .await
+            .unwrap(),
+        list
     );
 }
 
