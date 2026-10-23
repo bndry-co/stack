@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A JSON index, `target::Json`** (`docs/plans/2026-10-17-json-tree-index.md`,
+  ADR-0009). An `Index<serde_json::Value>` whose stored form,
+  `json::JsonDocument`, is one entry per node under one data key per
+  document: a path selector and a value selector, the node's own
+  ciphertext, a token chain the server walks from one client-derived
+  token, group tags that make containment agree with `jsonb @>` across
+  array elements, and an ordering term on number and string leaves. It is
+  what EQL v4's `json_tree` family stores. `target::json_document` seals
+  one, `JsonDocument` is an `EncryptFrom<Value>` / `DecryptInto<Value>`
+  target, and it answers `op::Contains`, `op::ContainedBy`,
+  `op::AtPath(op::Eq)` (a scalar at a path) and the orderings at a path;
+  `KeysetCipher::json_selector` and `json_subtree_key` derive the
+  extraction keys, and `JsonNode` and `JsonSubtree` open what the server
+  returns. `JsonOptions::sealed_root`, on by default, makes the root entry
+  the whole document so no token for the root exists. A document is at
+  most 127 levels deep. New `TermError` variants: `JsonPath`,
+  `JsonTooDeep`, `JsonTooWide`, `JsonSealedRoot`, `JsonLeafNotOrdered` and
+  `JsonValueNotScalar`. A data plan reads and writes the index (`"json"`,
+  or `{"json": {"sealed_root": bool}}`) and refuses to run it with
+  `Reason::JsonIndexPending`.
+
 - **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended
   2026-10-19). It derives ore-rs 0.9.0's 6-bit block ORE under its own key
   domain, over the same order keys as the CLLW indexes:
@@ -157,14 +178,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The JSON operators are declared.** `op::Contains` and `op::ContainedBy`
   (`@>` and `<@`) and the accessor `op::AtPath<Op>`, `op::AtPath(op::Eq)`,
   which applies another operator at a JSON path and inherits its fidelity
-  (`op::TermFor`): `AtPath<Eq>` and `AtPath<Lt>` are exact. No index
-  answers them yet, since this crate has no JSON index, so a query with
-  them does not compile until one exists. `AtPath<Op>` takes a leaf
+  (`op::TermFor`): `AtPath<Eq>` and `AtPath<Lt>` are exact. The JSON index
+  above answers them. `AtPath<Op>` takes a leaf
   operator (`op::Leaf`: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between`,
   `Matches`), so `AtPath<Contains>` and a nested `AtPath<AtPath<_>>` do not
   compile, and its arity, `op::Pathed<A>`, carries the leaf's (`Pathed<One>`
-  for `AtPath<Eq>`, `Pathed<Pair>` for `AtPath<Between>`); it has no
-  `op::Input` until the JSON index exists (ADR-0009, decision 1).
+  for `AtPath<Eq>`, `Pathed<Pair>` for `AtPath<Between>`), and its
+  `op::Input` is the JSON index's `(path, value)` and `(path, (lo, hi))`
+  (ADR-0009, decision 1).
 - **`target_limit` says how many rows a match query should fetch.**
   `query.target_limit(want, &stats)` is `want` plus the false positives
   expected at the confidence `stats` names (99% by default), as an
@@ -218,6 +239,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`IndexSpec` has a sixth variant, `Json(JsonOptions)`** (the JSON index
+  above), so a `match` over it needs an arm for it.
 - **`IndexSpec` has a fifth variant, `OreBlock`** (the block ORE index
   above). The enum is exhaustive on purpose, since a binding has to be
   taught each index, so a `match` over it needs an arm for `OreBlock`. The
