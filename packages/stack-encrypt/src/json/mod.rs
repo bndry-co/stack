@@ -431,6 +431,13 @@ impl JsonDocument {
     /// below that node, as the server's recursive walk finds them: the node
     /// itself is not included, since the walk addresses nodes by their
     /// parent. In depth-first order, siblings by ordinal.
+    ///
+    /// A stored document is untrusted, and its tags need not form a tree:
+    /// whoever holds a token can write a chain deeper than any document the
+    /// index seals, or a cycle. The walk stops descending below the deepest
+    /// level a sealed document has, and stops once it has returned as many
+    /// entries as the document holds, which a tree never exceeds, so it
+    /// ends, and in bounded stack, on any document.
     pub fn subtree(&self, token: &Tag) -> Vec<(usize, &JsonEntry, u32)> {
         let mut out = Vec::new();
         self.walk(token, 1, &mut out);
@@ -441,11 +448,15 @@ impl JsonDocument {
         // A walk finds each entry at most once, so a document whose tags do
         // not form a tree (which no sealing produces) ends the walk once it
         // has returned as many entries as the document holds, instead of
-        // looping.
-        if out.len() >= self.entries.len() {
+        // looping; and no sealed document nests deeper than MAX_DEPTH, so a
+        // chain of tags longer than that stops there, in bounded stack.
+        if out.len() >= self.entries.len() || depth as usize > derive::MAX_DEPTH {
             return;
         }
         for (j, entry, child) in self.children(token) {
+            if out.len() >= self.entries.len() {
+                return;
+            }
             out.push((j, entry, depth));
             self.walk(&child, depth + 1, out);
         }
@@ -849,6 +860,47 @@ mod tests {
                 "stack_encrypt::json::JsonHeader {{ keyset_id: {:?}, iv: \"***\", tag: \"***\", sealed_root: true, epoch: 0 }}",
                 Uuid::from_u128(7)
             )
+        );
+    }
+
+    /// An entry at ordinal `o` under `parent`, as whoever holds `parent` can
+    /// write one: its parent tag is public given the token.
+    fn chained(iv: &[u8], parent: &Tag, o: u32) -> JsonEntry {
+        JsonEntry {
+            s: [0; 16],
+            c: o.to_le_bytes().to_vec(),
+            p: Some(derive::parent_tag(iv, parent, o)),
+            op: None,
+        }
+    }
+
+    #[test]
+    fn a_walk_ends_on_a_chain_deeper_than_any_sealed_document() {
+        let iv = [9; 16];
+        let token = [1; 16];
+        // A chain longer than any document the index seals: the first child
+        // of each link's token, a thousand times.
+        let mut entries = vec![JsonEntry {
+            s: [0; 16],
+            c: vec![0],
+            p: None,
+            op: None,
+        }];
+        let mut parent = token;
+        for _ in 0..1000 {
+            entries.push(chained(&iv, &parent, 0));
+            parent = derive::child_token(&parent, 0);
+        }
+        let chain = JsonDocument::new(
+            JsonHeader::new(Uuid::from_u128(7), iv, vec![], true),
+            entries,
+            JsonProjection::default(),
+        );
+        let walked = chain.subtree(&token);
+        assert_eq!(walked.len(), derive::MAX_DEPTH, "cut at the deepest level");
+        assert_eq!(
+            walked.last().map(|(_, _, depth)| *depth as usize),
+            Some(derive::MAX_DEPTH)
         );
     }
 

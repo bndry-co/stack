@@ -121,6 +121,42 @@ async fn a_document_seals_one_entry_per_node_and_opens_again() {
     }
 }
 
+/// The deepest document the index takes opens again under either root
+/// option, and one level deeper is refused when it is sealed, not when it is
+/// read. A sealed root's plaintext is the document as JSON, which
+/// `serde_json` reads back only to 128 levels of nesting.
+#[tokio::test]
+async fn the_deepest_document_the_index_takes_opens_again() {
+    let cipher = stack_cipher().await;
+    let arrays = |n: usize| (0..n).fold(json!(1), |inner, _| json!([inner]));
+    let objects = |n: usize| (0..n).fold(json!("leaf"), |inner, _| json!({"k": inner}));
+    for nested in [arrays, objects] {
+        for options in [JsonOptions::default(), open_root()] {
+            let deepest = nested(127);
+            let doc = seal_with(&cipher, &deepest, &options).await;
+            assert_eq!(
+                open(&cipher, doc).await.unwrap(),
+                deepest,
+                "127 levels under {options:?}"
+            );
+            let refused = cipher
+                .default_keyset()
+                .run(
+                    stack_encrypt::target::json_document::<_, stack_encrypt::target::Borrowed>(
+                        options.clone(),
+                    ),
+                    &nested(128),
+                    context(),
+                )
+                .await;
+            assert!(
+                matches!(refused, Err(Error::Term(TermError::JsonTooDeep))),
+                "128 levels under {options:?} is refused when sealed"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn the_wire_form_is_what_the_sql_domain_stores() {
     let cipher = stack_cipher().await;
@@ -535,6 +571,47 @@ async fn an_extracted_node_opens_to_its_scalar_and_a_subtree_to_its_value() {
             .unwrap(),
         json!(1)
     );
+}
+
+/// The rows of a walk come from the server, which can repeat an entry or
+/// pick which entries to return. Every entry is authentic, but the rebuild
+/// nests the containers it is handed: a repeated row is refused, and so is
+/// a line of containers deeper than any document the index seals, as a
+/// shape mismatch rather than a recursion as deep as the rows.
+#[tokio::test]
+async fn subtree_rows_the_server_repeats_or_lines_up_are_refused() {
+    let cipher = stack_cipher().await;
+    let doc = seal(&cipher, &fixture()).await;
+    let node = |j: usize| doc.node(j).unwrap();
+    let repeated = JsonSubtree::new(vec![node(1), node(1)]);
+    assert!(matches!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(repeated, aead())
+            .await,
+        Err(Error::OpenedType { .. })
+    ));
+
+    // A wide document of one-member objects: its objects, returned as rows
+    // with the last leaf after them, each take the next as their member,
+    // and would nest 200 deep.
+    let wide = Value::Object(
+        (0..200)
+            .map(|i| (format!("k{i:03}"), json!({"x": 1})))
+            .collect(),
+    );
+    let doc = seal(&cipher, &wide).await;
+    let last = doc.entries().len() - 1;
+    let containers: Vec<JsonNode> = (1..doc.entries().len())
+        .filter(|j| j % 2 == 1 || *j == last)
+        .map(|j| doc.node(j).unwrap())
+        .collect();
+    assert_eq!(containers.len(), 201);
+    assert!(matches!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(JsonSubtree::new(containers), aead())
+            .await,
+        Err(Error::OpenedType { .. })
+    ));
 }
 
 // =============================================================================
@@ -1046,6 +1123,18 @@ async fn an_accessor_asks_at_a_path() {
             "{path}: {refused:?}"
         );
     }
+    // Equality at a path compares one value: an object or an array would be
+    // containment, which `op::Contains` asks for.
+    for container in [json!({"deep": "constant"}), json!([]), json!([{"x": 1}])] {
+        let refused = cipher
+            .query(op::AtPath(op::Eq), &("$.nested", container.clone()))
+            .on(&plan)
+            .await;
+        assert!(
+            matches!(refused, Err(Error::Term(TermError::JsonValueNotScalar))),
+            "{container}"
+        );
+    }
 }
 
 /// A plan laid out by the index opens what it wrote, one document or a
@@ -1108,6 +1197,30 @@ async fn a_laid_out_plan_opens_what_it_wrote() {
         .await
         .unwrap();
     assert_eq!(through_default.selector(), chosen.selector());
+}
+
+/// At the root, equality is of the root value: `("$", 1)` matches a stored
+/// `1` and not a stored `[1]`, which containment of the scalar `1` would.
+#[tokio::test]
+async fn equality_at_the_root_is_not_containment() {
+    let cipher = stack_cipher().await;
+    let plan = plan();
+    let at_root: JsonQuery = cipher
+        .query(op::AtPath(op::Eq), &("$", 1))
+        .on(&plan)
+        .await
+        .unwrap();
+    let contains: JsonQuery = cipher
+        .query(op::Contains, &json!(1))
+        .on(&plan)
+        .await
+        .unwrap();
+    let scalar = cipher.encrypt(&json!(1)).using(&plan).await.unwrap();
+    let array = cipher.encrypt(&json!([1])).using(&plan).await.unwrap();
+    assert!(at_root.matches(scalar.projection()));
+    assert!(!at_root.matches(array.projection()));
+    assert!(contains.matches(array.projection()), "jsonb: [1] @> 1");
+    assert!(serde_json::to_value(&at_root).unwrap().get("alt").is_none());
 }
 
 #[tokio::test]
