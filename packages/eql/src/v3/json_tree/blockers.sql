@@ -10,8 +10,13 @@
 --! public.{{prefix}}_json_tree_entry the ordered comparisons < <= > >= against an
 --! ordering operand or another entry. Entry equality = <> is blocked: an
 --! entry's ordering term is not an exact equality representation, and exact
---! equality at a path is containment on a value selector. Root-document
---! comparisons are blocked too. Every OTHER native jsonb operator reachable
+--! equality at a path is containment on a value selector. An entry against
+--! plain jsonb is blocked for every comparison, in both directions, so an
+--! ordering operand that lost its `{{prefix}}.query_json_tree_leaf` cast
+--! raises instead of comparing ciphertext. Root-document comparisons are
+--! blocked too. `ORDER BY col -> 'sel'` cannot be blocked without an operator
+--! class, which needs a superuser: it sorts by jsonb's ordering of the entry,
+--! so order by `{{prefix}}.ord_term(col -> 'sel')` instead. Every OTHER native jsonb operator reachable
 --! via domain fallback against the base type jsonb is BLOCKED here, so an
 --! encrypted column can never silently route to plaintext-jsonb semantics.
 --!
@@ -719,6 +724,276 @@ $$ LANGUAGE plpgsql;
 CREATE OPERATOR <> (
   FUNCTION = {{prefix}}_internal.json_tree_blocked_entry_neq,
   LEFTARG = public.{{prefix}}_json_tree_entry,
+  RIGHTARG = public.{{prefix}}_json_tree_entry
+);
+
+--! @brief Blocker: < (entry, jsonb): an ordering operand is typed.
+--!
+--! An entry compares with `{{prefix}}.query_json_tree_leaf` or another
+--! entry. Against plain jsonb, the native operator would compare the entry's
+--! ciphertext object, which is what a query that forgets the operand's cast
+--! would silently get.
+--! @param a public.{{prefix}}_json_tree_entry Left operand (entry).
+--! @param b jsonb Native RHS operand.
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_entry_lt_jsonb(a public.{{prefix}}_json_tree_entry, b jsonb)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '<');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_entry_lt_jsonb,
+  LEFTARG = public.{{prefix}}_json_tree_entry,
+  RIGHTARG = jsonb
+);
+
+--! @brief Blocker: < (jsonb, entry).
+--! @param a jsonb Native LHS operand.
+--! @param b public.{{prefix}}_json_tree_entry Right operand (entry).
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_jsonb_lt_entry(a jsonb, b public.{{prefix}}_json_tree_entry)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '<');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR < (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_jsonb_lt_entry,
+  LEFTARG = jsonb,
+  RIGHTARG = public.{{prefix}}_json_tree_entry
+);
+
+--! @brief Blocker: <= (entry, jsonb): an ordering operand is typed.
+--!
+--! An entry compares with `{{prefix}}.query_json_tree_leaf` or another
+--! entry. Against plain jsonb, the native operator would compare the entry's
+--! ciphertext object, which is what a query that forgets the operand's cast
+--! would silently get.
+--! @param a public.{{prefix}}_json_tree_entry Left operand (entry).
+--! @param b jsonb Native RHS operand.
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_entry_lte_jsonb(a public.{{prefix}}_json_tree_entry, b jsonb)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '<=');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_entry_lte_jsonb,
+  LEFTARG = public.{{prefix}}_json_tree_entry,
+  RIGHTARG = jsonb
+);
+
+--! @brief Blocker: <= (jsonb, entry).
+--! @param a jsonb Native LHS operand.
+--! @param b public.{{prefix}}_json_tree_entry Right operand (entry).
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_jsonb_lte_entry(a jsonb, b public.{{prefix}}_json_tree_entry)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '<=');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR <= (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_jsonb_lte_entry,
+  LEFTARG = jsonb,
+  RIGHTARG = public.{{prefix}}_json_tree_entry
+);
+
+--! @brief Blocker: > (entry, jsonb): an ordering operand is typed.
+--!
+--! An entry compares with `{{prefix}}.query_json_tree_leaf` or another
+--! entry. Against plain jsonb, the native operator would compare the entry's
+--! ciphertext object, which is what a query that forgets the operand's cast
+--! would silently get.
+--! @param a public.{{prefix}}_json_tree_entry Left operand (entry).
+--! @param b jsonb Native RHS operand.
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_entry_gt_jsonb(a public.{{prefix}}_json_tree_entry, b jsonb)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '>');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_entry_gt_jsonb,
+  LEFTARG = public.{{prefix}}_json_tree_entry,
+  RIGHTARG = jsonb
+);
+
+--! @brief Blocker: > (jsonb, entry).
+--! @param a jsonb Native LHS operand.
+--! @param b public.{{prefix}}_json_tree_entry Right operand (entry).
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_jsonb_gt_entry(a jsonb, b public.{{prefix}}_json_tree_entry)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '>');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR > (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_jsonb_gt_entry,
+  LEFTARG = jsonb,
+  RIGHTARG = public.{{prefix}}_json_tree_entry
+);
+
+--! @brief Blocker: >= (entry, jsonb): an ordering operand is typed.
+--!
+--! An entry compares with `{{prefix}}.query_json_tree_leaf` or another
+--! entry. Against plain jsonb, the native operator would compare the entry's
+--! ciphertext object, which is what a query that forgets the operand's cast
+--! would silently get.
+--! @param a public.{{prefix}}_json_tree_entry Left operand (entry).
+--! @param b jsonb Native RHS operand.
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_entry_gte_jsonb(a public.{{prefix}}_json_tree_entry, b jsonb)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '>=');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_entry_gte_jsonb,
+  LEFTARG = public.{{prefix}}_json_tree_entry,
+  RIGHTARG = jsonb
+);
+
+--! @brief Blocker: >= (jsonb, entry).
+--! @param a jsonb Native LHS operand.
+--! @param b public.{{prefix}}_json_tree_entry Right operand (entry).
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_jsonb_gte_entry(a jsonb, b public.{{prefix}}_json_tree_entry)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '>=');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR >= (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_jsonb_gte_entry,
+  LEFTARG = jsonb,
+  RIGHTARG = public.{{prefix}}_json_tree_entry
+);
+
+--! @brief Blocker: = (entry, jsonb): an ordering operand is typed.
+--!
+--! An entry compares with `{{prefix}}.query_json_tree_leaf` or another
+--! entry. Against plain jsonb, the native operator would compare the entry's
+--! ciphertext object, which is what a query that forgets the operand's cast
+--! would silently get.
+--! @param a public.{{prefix}}_json_tree_entry Left operand (entry).
+--! @param b jsonb Native RHS operand.
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_entry_eq_jsonb(a public.{{prefix}}_json_tree_entry, b jsonb)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '=');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_entry_eq_jsonb,
+  LEFTARG = public.{{prefix}}_json_tree_entry,
+  RIGHTARG = jsonb
+);
+
+--! @brief Blocker: = (jsonb, entry).
+--! @param a jsonb Native LHS operand.
+--! @param b public.{{prefix}}_json_tree_entry Right operand (entry).
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_jsonb_eq_entry(a jsonb, b public.{{prefix}}_json_tree_entry)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '=');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_jsonb_eq_entry,
+  LEFTARG = jsonb,
+  RIGHTARG = public.{{prefix}}_json_tree_entry
+);
+
+--! @brief Blocker: <> (entry, jsonb): an ordering operand is typed.
+--!
+--! An entry compares with `{{prefix}}.query_json_tree_leaf` or another
+--! entry. Against plain jsonb, the native operator would compare the entry's
+--! ciphertext object, which is what a query that forgets the operand's cast
+--! would silently get.
+--! @param a public.{{prefix}}_json_tree_entry Left operand (entry).
+--! @param b jsonb Native RHS operand.
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_entry_neq_jsonb(a public.{{prefix}}_json_tree_entry, b jsonb)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '<>');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_entry_neq_jsonb,
+  LEFTARG = public.{{prefix}}_json_tree_entry,
+  RIGHTARG = jsonb
+);
+
+--! @brief Blocker: <> (jsonb, entry).
+--! @param a jsonb Native LHS operand.
+--! @param b public.{{prefix}}_json_tree_entry Right operand (entry).
+--! @return boolean Never returns; always raises 'operator not supported'.
+CREATE FUNCTION {{prefix}}_internal.json_tree_blocked_jsonb_neq_entry(a jsonb, b public.{{prefix}}_json_tree_entry)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_tree_entry', '<>');
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OPERATOR <> (
+  FUNCTION = {{prefix}}_internal.json_tree_blocked_jsonb_neq_entry,
+  LEFTARG = jsonb,
   RIGHTARG = public.{{prefix}}_json_tree_entry
 );
 
