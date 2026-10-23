@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A v4 order term is Stack Encrypt's own, typed by its plaintext**
+  (`stack-encrypt` feature). An `ob` field is
+  `stack_encrypt::sem::OreBlockTerm<T>` and an `op` field
+  `stack_encrypt::sem::OpeTerm<T>`, over the type's plaintext:
+  `DateOrdOre::ob` is an `OreBlockTerm<Date>`, `IntegerOrd::op` an
+  `OpeTerm<i32>`. Each is one lowercase hex string on the wire (`ob` was a
+  one-element array) and is decoded through `from_bytes` when a payload is
+  read, so an EQL v3 term, a term of the other scheme or a malformed one is
+  refused there. `v4::terms` no longer re-exports v3's `OreBlock256` and
+  `OpeCllw`; the generated `v4::terms::OreBlockHex` and `OpeHex` describe
+  the JSON to TypeScript and JSON Schema, with the pattern the domain CHECKs
+  require.
+
 - **`v4::plaintext::Date`, `Timestamp`, `Decimal` and `RangeError` are
   Stack Encrypt's** (`stack_encrypt::value`), re-exported at the same
   path: the engine orders them, which it can only do for types of its own.
@@ -33,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on for `smallint`, `bigint`, `date`, `timestamp`, `numeric`, `real` and
   `double`, listed by `v4::all_range_query()`. Each holds both bounds of one
   `BETWEEN`: each bound is the single-bound domain's `ob` (ORE,
-  `OreBlock256`) or `op` (OPE, `OpeCllw`) value, in a `{v, i, lo, hi}`
+  `OreBlockTerm`) or `op` (OPE, `OpeTerm`) value, in a `{v, i, lo, hi}`
   envelope, so a range binds as one parameter. The parameter must be cast to
   its exact range domain (`$1::eql_v4.query_integer_range_ore`); anything else
   fails with SQLSTATE 42725. They bind the
