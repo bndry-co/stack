@@ -49,9 +49,9 @@ const (
 	eqlOrderDefaultSeed = 1343
 	// Random values stored per type, beside the edges and the duplicates.
 	eqlOrderRandom = 300
-	// Query values per type: random draws, stored values (so `<=` and `>=`
-	// meet ties) and edges.
-	eqlOrderQueryDraws, eqlOrderQueryStored, eqlOrderQueryEdges = 8, 8, 4
+	// Query values per type, beside every edge: random draws, and stored
+	// values (so `<=` and `>=` meet ties).
+	eqlOrderQueryDraws, eqlOrderQueryStored = 8, 8
 	// Rows per INSERT statement.
 	eqlOrderBatch = 100
 )
@@ -262,16 +262,17 @@ func runEQLOrder[T any](h eqlHarness, o eqlOrder, g eqlOrderGen[T]) {
 	}
 
 	// Each query value through each operator, against plaintext comparison
-	// of every stored value.
-	queries := make([]T, 0, eqlOrderQueryDraws+eqlOrderQueryStored+eqlOrderQueryEdges)
+	// of every stored value. Every edge is a query value, not a sample of
+	// them: the edges hold the ties the order rules make (-0.0 and 0.0, 1.5
+	// and 1.50, instants in one microsecond), and an engine that splits a tie
+	// shows only in a query on one of the tied values. ORDER BY cannot show
+	// it, since plaintext order accepts tied rows in either order.
+	queries := slices.Clone(g.edges)
 	for range eqlOrderQueryDraws {
 		queries = append(queries, g.draw(r))
 	}
 	for range eqlOrderQueryStored {
 		queries = append(queries, values[r.IntN(len(values))])
-	}
-	for range eqlOrderQueryEdges {
-		queries = append(queries, g.edges[r.IntN(len(g.edges))])
 	}
 	field := gensupport.NewField[T](decl, "v")
 	for _, q := range queries {
