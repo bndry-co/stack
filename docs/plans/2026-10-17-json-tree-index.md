@@ -88,23 +88,23 @@ w(child)       = t(child) XOR H("w" ‖ iv ‖ t(parent) ‖ c(child))[..16] sto
 
 `H` is SHA-256. Only `t(root)` needs the index key; everything below it is hashing, so the server can do its half with core functions. The tokens are a function of the column and the **positional** path, so the client derives a start token for any path it can name without a wildcard: `$.nested`, `$.a[2].b`. Labels are bound with a kind byte and as the final variable-length field, so `("ab", "c")` and `("a", "bc")` cannot collide.
 
-Server side, the subtree under a start token is one recursive query. From `token-chain.sql`, which runs as written on PostgreSQL 16:
+Server side, the subtree under a start token is one recursive query. From `token-chain.sql`, which implements the derivations above (`chain.parent_tag(iv, t)` is `h16("p" ‖ iv ‖ t)` and `chain.mask(iv, t, c)` is `h16("w" ‖ iv ‖ t ‖ c)`) and runs as written on a stock PostgreSQL:
 
 ```sql
 WITH RECURSIVE walk(depth, t, entry) AS (
-    SELECT 0, $start_token, NULL::jsonb
+    SELECT 0, t_start, NULL::jsonb
   UNION ALL
     SELECT w.depth + 1,
-           xor16(decode(e->>'w', 'hex'), h16(w.t || 'w' || iv || decode(e->>'c', 'hex'))),
+           chain.xor16(decode(e->>'w', 'hex'), chain.mask(decode(stored->>'iv', 'hex'), w.t, decode(e->>'c', 'hex'))),
            e
     FROM walk w
-    JOIN LATERAL jsonb_array_elements(doc->'sv') e
-      ON e->>'p' = encode(h16(w.t || 'p' || iv), 'hex')
+    JOIN LATERAL jsonb_array_elements(stored->'sv') e
+      ON e->>'p' = encode(chain.parent_tag(decode(stored->>'iv', 'hex'), w.t), 'hex')
 )
-SELECT depth, entry FROM walk WHERE entry IS NOT NULL;
+SELECT depth, entry FROM walk WHERE entry IS NOT NULL
 ```
 
-Run against the fixture document with the token for `$.nested`, derived on the client from the labels alone, it returned the six entries under `$.nested` (`deep`, `list`, both elements, both `x` leaves) with their depths, nothing else; a garbage token returned zero rows; the root token returned all nine non-root entries. The mask for `w` includes the child's own ciphertext so that two siblings with the same `p` get different masks without the server needing to know anything about them.
+Run against the fixture document with the token for `$.nested`, derived on the client from the labels alone, it returned the six entries under `$.nested` (`deep`, `list`, both elements, both `x` leaves) with their depths, nothing else; a garbage token returned zero rows; the root token returned all nine non-root entries; and the same document stored under a second IV shares no parent tag with the first. The mask for `w` includes the child's own ciphertext so that two siblings with the same `p` get different masks without the server needing to know anything about them.
 
 **Why plain SHA-256 is enough here, and HMAC stays an option.** Three of the derivations hash a secret token with public bytes beside it, which is the shape that invites a length-extension question. It does not apply, for two independent reasons. Every output is truncated to 16 bytes (12 for the nonce), and a length extension needs the full 32-byte digest, because the digest is the chaining state the attacker resumes from; with half of it unknown the attacker is guessing 128 bits. And an extension can only produce the hash of a message that has the original as a prefix: each derivation starts with its own domain byte, so an extended `"p"` hash is never a `"w"`, `"g"` or `"t"` value, and within a domain the extended message names nothing that exists. For `t(child)` it is the token of a sibling whose label is `key ‖ SHA-256 padding ‖ x`, and the padding begins with a lone `0x80` byte, which is not valid UTF-8 and so is not a possible JSON object key. For the mask it is the mask of a sibling whose ciphertext is `c ‖ padding ‖ x`, and a real sibling's ciphertext is independent AES-GCM output. For `p` and `g` it is a tag no entry carries. Nothing in the system accepts one of these hashes as a proof of anything: the only authenticity check is the AES-GCM tag under the ZeroKMS data key. Keying the derivations with HMAC-SHA256 (`HMAC(t(parent), "t" ‖ 0x01 ‖ key)` and so on) would make "a token is a key" literally true and remove the need for this paragraph, at the cost of one extra compression per parent for `p` and one per matched child for the mask in the recursive walk, and a 64-byte XOR in plpgsql, since core PostgreSQL has no `hmac()`. Decision (2026-10-18): SHA-256 as written; HMAC is recorded as decision 7 below and is to be re-evaluated once Phase 3 has benchmark numbers over large documents and tables, not before.
 
