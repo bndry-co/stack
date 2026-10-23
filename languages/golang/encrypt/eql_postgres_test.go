@@ -293,12 +293,19 @@ func runEQLType[T comparable](h eqlHarness, kind gensupport.Kind, values [4]T, m
 		}
 		stored = append(stored, gensupport.Record{"id": {Value: int32(len(stored) + 1)}, "v": {EQL: []byte(text)}})
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
 	if err := rows.Close(); err != nil {
 		t.Fatal(err)
 	}
 	opened, err := eqlCodec(decl).Decrypt(ctx, h.cipher, stored)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A short read or a short decrypt would otherwise check fewer rows.
+	if len(opened) != len(values) {
+		t.Fatalf("read back and opened %d rows, want %d", len(opened), len(values))
 	}
 	for i, vals := range opened {
 		got, err := gensupport.Get[T](vals, "v")
