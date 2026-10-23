@@ -533,7 +533,7 @@ reasons! {
         /// timestamp. Their order terms wait for clww-ore and ore-rs
         /// releases that encode them the ADR-0002 way (#1236); equality on
         /// them works today.
-        OrderTermPending => "order_term_pending", "an order index on a decimal, date or timestamp waits for new clww-ore and ore-rs releases (#1236)";
+        OrderTermPending => "order_term_pending", "an order index on a decimal, date or timestamp is not supported yet (#1236)";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";
         /// The plan has no field of the name asked for.

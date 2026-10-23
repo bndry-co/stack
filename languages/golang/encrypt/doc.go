@@ -124,8 +124,8 @@
 // time.Time (a timestamp), or a type defined over one of the built-in types.
 // Each integer seals at its own width. Equality applies to every one but a
 // bool; ORE and OPE to the integers, text, bytes and floats, and not yet to a
-// decimal, date or timestamp, whose order terms wait for new cllw-ore and
-// ore-rs releases (#1236).
+// decimal, date or timestamp, whose order terms are not supported yet
+// (#1236).
 //
 // Passthrough fields never cross the binding: the engine does nothing to a
 // passthrough value that a program could observe, and the FFI codec cannot

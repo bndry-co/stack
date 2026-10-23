@@ -22,8 +22,8 @@
 //!   no order term: over a domain that small (two values, or 256) it would
 //!   tell anyone holding the column which rows are `true`, or rank every
 //!   row among 256. A decimal, a date and a timestamp
-//!   have none yet: clww-ore 0.5 does not encode them the ADR-0002 way, and
-//!   their order terms wait for new clww-ore and ore-rs releases (#1236).
+//!   have none yet: their order terms are tracked in #1236, and
+//!   vitaminc-ore 0.8 and ore-rs's `BlockOre` now support those targets.
 //!
 //! # These are the query-probe path
 //!
@@ -166,7 +166,7 @@ impl IndexSpec {
 /// reveals too much, which rows hold `true`, or each row's rank among 256
 /// values, which a few known rows resolve to the values. Not a null. The
 /// caller has already refused a scalar under a logical type: a decimal,
-/// date or timestamp's order term waits for a later release.
+/// date or timestamp's order term is not built yet (#1236).
 fn ordered(value: &Physical<'_>) -> bool {
     match value {
         Physical::Int(Int::I8(_) | Int::U8(_)) | Physical::Null | Physical::Bool(_) => false,
@@ -1345,9 +1345,8 @@ mod tests {
         }
 
         /// A decimal, a date and a timestamp have an equality term, from
-        /// vitaminc, and no order term yet: their order encodings wait for
-        /// new clww-ore and ore-rs releases (#1236), and the engine does not
-        /// shim around clww-ore 0.5.
+        /// vitaminc, and no order term yet: their order terms are tracked in
+        /// #1236.
         #[tokio::test]
         async fn a_decimal_date_or_timestamp_has_no_order_term_yet() {
             let cipher = cipher().await;

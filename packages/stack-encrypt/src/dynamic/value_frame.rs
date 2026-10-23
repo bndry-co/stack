@@ -101,6 +101,14 @@ impl ValueFrame {
 
     /// Read one value from frame bytes a host handed over.
     ///
+    /// A typed null in the bytes reads as a null. vitaminc-aead 0.8 lets a
+    /// frame carry one so that a frame sealed as it is pads the host's
+    /// absent values, but a [`ValueFrame`] is rewritten through the value
+    /// model first, and a frame writer keeps no padding. Whether an absent
+    /// value is padded is for the field's plan to declare (#1298), so the
+    /// host never decides what an absent value shows; a typed null from a
+    /// host pads nothing on its own.
+    ///
     /// # Errors
     ///
     /// [`FromFrameError::Frame`] when the
@@ -1282,7 +1290,9 @@ mod tests {
 
     /// A typed null of a type in the model is a null in a frame: written,
     /// read from a host's bytes, or opened. Its padding belongs to a sealed
-    /// leaf, not to a frame (vitaminc-aead 0.8), and a null has no kind.
+    /// leaf, not to a frame (vitaminc-aead 0.8), and a null has no kind. So
+    /// a host's typed null is not padded by this path: padding is the
+    /// plan's decision (#1298).
     #[test]
     fn a_typed_null_in_the_model_is_a_null_in_its_frame() {
         let null = frame_of(&Tree::Null);

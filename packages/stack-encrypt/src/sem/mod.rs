@@ -207,8 +207,8 @@ pub enum TermError {
     Ore(#[from] clww_ore::Error),
     /// Block ORE ([`OreBlockTerm`]) orders text and bytes of at most 1023
     /// bytes, counted after the order encoding (text folded): the chained
-    /// scheme's 1024-byte ceiling, less the one marker byte it puts in
-    /// front of a variable-width value. The ceiling bounds what one value
+    /// engine's 1024-byte ceiling, less the one marker byte `vitaminc-ore`
+    /// puts in front of a variable-width value. The ceiling bounds what one value
     /// costs: a term of 1023 bytes is already about 34 KB.
     #[error(
         "the value is too long for a block ORE term: its order encoding is longer than 1023 bytes"
@@ -1391,13 +1391,14 @@ term_wrapper!(OpeTerm, OpeClww8VariableV1);
 /// `T`'s [`Orderable`] target, the scheme EQL v4's `_ord_ore` domains
 /// store (`ob`). Comparisons order like the plaintexts, within one index.
 ///
-/// Which of ore-rs's two 6-bit schemes encrypts it is fixed by the target:
+/// ore-rs's one scheme, `BlockOre`, routes the target to one of its two
+/// 6-bit engines when the space is opened:
 ///
-/// - **`Bit6BlockOre`** for a target of at most ten bytes: the integers to
+/// - **`OreAes128Bit6`** for a target of at most ten bytes: the integers to
 ///   64 bits and floats (as the `f64` they widen to). Wire header
 ///   `02 02`, then the block count; one block per six bits of the
 ///   encoding, so an `i32` is six blocks and an `i64` eleven.
-/// - **`ChainedBlockOre`** for text, bytes and the 128-bit integers. Wire
+/// - **`OreAes128Bit6Chained`** for text, bytes and the 128-bit integers. Wire
 ///   header `02 03`, the block count, then the padding policy. Text is
 ///   padded with NUL bytes to a power of two of at least 16 bytes, so a
 ///   term reveals its text's length bucket rather than its length; bytes
@@ -1428,9 +1429,9 @@ pub struct OreBlockTerm<T: Orderable>(Vec<u8>, PhantomData<fn() -> T>);
 /// that scheme, if they name different schemes, or (chained) if they were
 /// padded under different policies.
 ///
-/// These are the comparators `Bit6BlockOre` and `ChainedBlockOre` compare
-/// with. ore-rs's `bit2_w6` module is its 6-bit scheme; the legacy 8-bit
-/// scheme (`BlockOre`, module `bit2`) is not used here.
+/// `BlockOre::compare` reads the header and compares with that engine's
+/// comparator, `OreAes128Bit6` or `OreAes128Bit6Chained`. ore-rs's legacy
+/// 8-bit engine (module `bit2`) is not used here.
 fn ore_block_compare(a: &[u8], b: &[u8]) -> Option<std::cmp::Ordering> {
     use ore_rs::{BlockOre, Term};
     BlockOre::compare(&Term::from_bytes(a.to_vec()), &Term::from_bytes(b.to_vec()))

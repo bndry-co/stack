@@ -241,7 +241,7 @@ func eightBit(t stashgen.GoType) bool {
 // floats, text and bytes. Not over a boolean or an 8-bit integer, whose
 // order term would reveal which rows are true, or each row's rank among 256
 // values; and not yet over a decimal, date or timestamp, whose order terms
-// wait for new clww-ore and ore-rs releases (#1236). The JSON index is not
+// are not built yet (#1236). The JSON index is not
 // in the engine yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
@@ -263,7 +263,7 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat:
 			return nil
 		case stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
-			return fmt.Errorf("an order index on a decimal, date or timestamp waits for new clww-ore and ore-rs releases (#1236)")
+			return fmt.Errorf("an order index on a decimal, date or timestamp is not supported yet (#1236)")
 		}
 		if integer(t) && !eightBit(t) {
 			return nil

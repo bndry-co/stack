@@ -83,9 +83,10 @@ zerokms-protocol = "0.12.31"
 recipher = "=0.3.1"
 # The two order-preserving schemes Stack Encrypt's order terms encrypt
 # through. Both implement vitaminc-ore's `OrderScheme` against vitaminc 0.8:
-# `clww-ore` (cllw-ore renamed) for CLWW ORE and OPE, and ore-rs for block
-# ORE, `Bit6BlockOre` (fixed width up to ten bytes) and `ChainedBlockOre`
-# (variable length), the 6-bit schemes EQL v4's `_ord_ore` domains store.
+# `clww-ore` (cllw-ore renamed) for CLWW ORE and OPE, and ore-rs's
+# `BlockOre` for block ORE, which routes a value to its 6-bit fixed-width
+# engine (up to ten bytes) or its chained one (wider, or variable length),
+# the terms EQL v4's `_ord_ore` domains store.
 # vitaminc is a plain dependency of both from here, not a feature. Both are
 # pinned exactly: a new release can change every stored order term.
 clww-ore = { version = "=0.6.0", default-features = false }
