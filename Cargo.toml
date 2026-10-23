@@ -109,6 +109,14 @@ reqwest = { version = "0.13", default-features = false, features = [
   "form",
   "query",
 ] }
+# The TLS stack under reqwest's `rustls` feature, named directly by
+# stack-auth's `tls` module (the SPKI blocklist around the platform
+# verifier) and by stack-kms. They must stay the versions reqwest resolves:
+# `tls_backend_preconfigured` recognises a `ClientConfig` only from the
+# rustls reqwest itself links.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws_lc_rs"] }
+rustls-platform-verifier = "0.6"
+rustls-webpki = { version = "0.103", default-features = false, features = ["alloc"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0.132" }
 thiserror = "1.0.56"

@@ -28,8 +28,11 @@ rust = { version = "1.94.1", components = "rustc,cargo,rustfmt,rust-std,clippy,r
 # The cargo tools (nextest, llvm-cov, crap, mutants, fuzz, udeps) live in
 # mise.test.toml, pinned, and load only with `--env test` / MISE_ENV=test.
 # The Go module (languages/golang) — the wazero host of the WASI guests.
-# CGO_ENABLED=0 throughout; see `go:test`.
-go = "1.26"
+# CGO_ENABLED=0 throughout; see `go:test`. Pinned to the patch, not the minor:
+# 1.26.10 is the first 1.26 release whose crypto/x509 blocks the compromised
+# eMudhra intermediates (CVE-2026-111943, #1300), and a floating "1.26" could
+# resolve an older patch from a cache. Keep it at or above go.mod's `go` line.
+go = "1.26.10"
 golangci-lint = "2.14.0"
 # wasm-pack for the auth binding's `build:wasm`, which builds
 # languages/typescript/packages/stack-auth-wasm into the auth package's wasm/.

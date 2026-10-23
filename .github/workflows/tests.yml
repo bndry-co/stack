@@ -373,10 +373,21 @@ jobs:
       # races destructively under the other suites in parallel forks).
       # (`supabase-push.live.test.ts` gates on different env vars and still
       # skips here — it needs the Supabase CLI binary.)
+      #
+      # PG_TEST_URL runs `@cipherstash/migrate`'s integration suites (forward
+      # and reverse backfill: resume, force obligation, concurrent dual-writes).
+      # They self-skip without it. They need no credentials, but each opens
+      # with DROP SCHEMA cipherstash CASCADE, so they get a database of their
+      # own: turbo runs packages in parallel, and in the shared one that drop
+      # would race the CLI's live suites.
+      - name: Create the migrate integration database
+        run: psql "postgres://cipherstash:password@localhost:5432/cipherstash" -c 'CREATE DATABASE migrate_test'
+
       - name: Run tests
         run: pnpm run test
         env:
           STASH_TEST_DATABASE_URL: postgres://cipherstash:password@localhost:5432/cipherstash
+          PG_TEST_URL: postgres://cipherstash:password@localhost:5432/migrate_test
 
       # CLI E2E tests drive the built `dist/bin/stash.js` through a real
       # pseudo-terminal via node-pty. Run via turbo so the `^build` + `build`
