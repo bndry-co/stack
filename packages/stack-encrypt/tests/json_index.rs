@@ -1239,6 +1239,120 @@ async fn the_sealed_root_a_walk_fell_back_to_opens_at_the_path() {
     assert!(!JsonSubtree::new(vec![root.clone(), root]).is_sealed_root());
 }
 
+/// The sealed root a walk fell back to opens to exactly what the walked
+/// rows open to, so a caller's result does not change shape when a
+/// document grows past the budget. `json_tree_subtree`'s rows are the
+/// descendants of the token's node, so the path is attached with `below`
+/// and a `Vec` opens to that node's children; `at` is for
+/// `json_tree_subtree_at`, whose rows are the nodes the path reaches.
+#[tokio::test]
+async fn the_fallback_opens_to_what_the_walk_opens_to() {
+    let cipher = stack_cipher().await;
+    let doc = seal(&cipher, &fixture()).await;
+    let mut root = serde_json::to_value(doc.node(0).unwrap()).unwrap();
+    root["d"] = json!(0);
+    let fallback = JsonSubtree::new(vec![serde_json::from_value(root).unwrap()]);
+    assert!(fallback.is_sealed_root());
+    let path = |text: &str| JsonPath::parse(text).unwrap();
+    let walked = |text: &'static str| {
+        let cipher = &cipher;
+        let doc = &doc;
+        async move {
+            let key = subtree_key(cipher, text, JsonOptions::default())
+                .await
+                .unwrap();
+            let rows = doc
+                .subtree(key.token_bytes())
+                .iter()
+                .map(|(j, _, _)| doc.node(*j).unwrap())
+                .collect();
+            JsonSubtree::new(rows)
+        }
+    };
+    let sorted = |mut values: Vec<Value>| {
+        values.sort_by_key(ToString::to_string);
+        values
+    };
+
+    // An array: its elements, in order, either way.
+    let list = cipher
+        .decrypt_as::<Vec<Value>, JsonSubtree>(walked("$.nested.list").await, aead())
+        .await
+        .unwrap();
+    assert_eq!(list, vec![json!({"x": 1}), json!({"x": 2})]);
+    let below = |text: &str| fallback.clone().below(path(text));
+    assert_eq!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(below("$.nested.list"), aead())
+            .await
+            .unwrap(),
+        list
+    );
+    // An object: its member values, in an order neither form fixes.
+    let members = cipher
+        .decrypt_as::<Vec<Value>, JsonSubtree>(walked("$.nested").await, aead())
+        .await
+        .unwrap();
+    assert_eq!(members.len(), 2);
+    assert_eq!(
+        sorted(
+            cipher
+                .decrypt_as::<Vec<Value>, JsonSubtree>(below("$.nested"), aead())
+                .await
+                .unwrap()
+        ),
+        sorted(members)
+    );
+    // As one value, the node itself, either way.
+    assert_eq!(
+        cipher
+            .decrypt_as::<Value, JsonSubtree>(below("$.nested"), aead())
+            .await
+            .unwrap(),
+        fixture()["nested"]
+    );
+    // A scalar has no children, as its walk has no rows.
+    assert!(cipher
+        .decrypt_as::<Vec<Value>, JsonSubtree>(below("$.hello"), aead())
+        .await
+        .unwrap()
+        .is_empty());
+    // `below` names one node: nothing at the path, or a wildcard reaching
+    // two, is refused.
+    for text in ["$.missing", "$.nested.list[*]"] {
+        match cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(below(text), aead())
+            .await
+        {
+            Err(Error::OpenedType { expected }) => {
+                assert_eq!(expected, "one node at the walked path", "{text}")
+            }
+            other => panic!("{text}: {other:?}"),
+        }
+    }
+    // `at` is the other walk's: the nodes the path reaches, so on this path
+    // the list itself. Attaching the wrong one is what changes the shape.
+    assert_eq!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(
+                fallback.clone().at(path("$.nested.list")),
+                aead()
+            )
+            .await
+            .unwrap(),
+        vec![fixture()["nested"]["list"].clone()]
+    );
+    let attached = fallback.below(path("$.nested"));
+    assert_eq!(
+        attached.path().map(ToString::to_string).as_deref(),
+        Some("$.nested")
+    );
+    assert_eq!(
+        attached.clone().at(path("$.nested")).path(),
+        attached.path()
+    );
+}
+
 /// The walk reports each row's depth below where it started, in `d`; an
 /// extracted node carries none.
 #[tokio::test]

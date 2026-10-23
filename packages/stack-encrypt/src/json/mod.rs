@@ -500,31 +500,53 @@ where
 /// Past its budget, a walk over a document with a sealed root returns the
 /// root entry alone, at depth `0`, instead of a subtree it would be
 /// cheaper to open whole: the client opens the document and takes the
-/// walked path over it. Opening such rows needs that path, attached with
-/// [`at`](Self::at); without it the opening fails with
-/// [`Error::OpenedType`](crate::Error::OpenedType).
+/// walked path over it. Opening such rows needs that path and which walk
+/// it keyed, attached with [`below`](Self::below) for `json_tree_subtree`
+/// or [`at`](Self::at) for `json_tree_subtree_at`, so that the rows open
+/// to the same value whichever form the server returned; without a path
+/// the opening fails with [`Error::OpenedType`](crate::Error::OpenedType).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct JsonSubtree {
     nodes: Vec<JsonNode>,
     #[serde(skip)]
     path: Option<JsonPath>,
+    #[serde(skip)]
+    below: bool,
 }
 
 impl JsonSubtree {
     /// The rows, as returned.
     pub fn new(nodes: Vec<JsonNode>) -> Self {
-        Self { nodes, path: None }
+        Self {
+            nodes,
+            path: None,
+            below: false,
+        }
     }
 
-    /// The rows with the path the walk was keyed from: what the opening
-    /// takes over the whole document when the rows are the sealed root
-    /// the server fell back to. A positional path opens to one value; a
-    /// path with a wildcard, as `json_tree_subtree_at` walks, to one value
-    /// per node it reaches.
+    /// The rows of `json_tree_subtree_at`, with the whole path its key was
+    /// derived from: what the opening takes over the whole document when
+    /// the rows are the sealed root the server fell back to. They open as
+    /// the walked rows do, to one value per node the path reaches.
     pub fn at(self, path: JsonPath) -> Self {
         Self {
             path: Some(path),
+            below: false,
+            ..self
+        }
+    }
+
+    /// The rows of `json_tree_subtree`, with the path of the node whose
+    /// token keyed the walk. They open as the walked rows do, which are
+    /// that node's descendants: to the node's value, or, as a
+    /// [`Vec`], to its children's values. Attach the path this way and not
+    /// with [`at`](Self::at), which would open the fallback to the node
+    /// itself where the walk opens to its children.
+    pub fn below(self, path: JsonPath) -> Self {
+        Self {
+            path: Some(path),
+            below: true,
             ..self
         }
     }
@@ -534,7 +556,8 @@ impl JsonSubtree {
         &self.nodes
     }
 
-    /// The path attached with [`at`](Self::at), if any.
+    /// The path attached with [`at`](Self::at) or [`below`](Self::below),
+    /// if any.
     pub fn path(&self) -> Option<&JsonPath> {
         self.path.as_ref()
     }

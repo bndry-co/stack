@@ -152,28 +152,52 @@ pub struct JsonTreeLeafQuery {
 /// walked node, or to the list of complete subtrees the rows hold.
 ///
 /// Past its budget a walk returns the sealed root alone, at depth `0`;
-/// those rows open to the whole document and the path the walk was keyed
-/// from, attached with [`at`](Self::at), selects the value under it. The
-/// path is not part of the wire.
+/// those rows open to the whole document, and the path the walk was keyed
+/// from selects the same value(s) the walked rows open to. Attach it with
+/// [`below`](Self::below) for `json_tree_subtree` rows and
+/// [`at`](Self::at) for `json_tree_subtree_at` rows. The path is not part
+/// of the wire.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct JsonTreeSubtree {
     pub rows: Vec<JsonTreeEntry>,
     #[serde(skip)]
     pub path: Option<JsonPath>,
+    /// Whether `path` names the node `json_tree_subtree` walked below
+    /// ([`below`](Self::below)), rather than the nodes a
+    /// `json_tree_subtree_at` path reaches ([`at`](Self::at)).
+    #[serde(skip)]
+    pub below: bool,
 }
 
 impl JsonTreeSubtree {
     /// The rows, as returned.
     pub fn new(rows: Vec<JsonTreeEntry>) -> Self {
-        Self { rows, path: None }
+        Self {
+            rows,
+            path: None,
+            below: false,
+        }
     }
 
-    /// The rows with the walked path, for the sealed root a walk may fall
-    /// back to.
+    /// The rows of `json_tree_subtree_at`, with the whole path its key was
+    /// derived from: past the budget they open to one value per node the
+    /// path reaches, as the walked rows do.
     pub fn at(self, path: JsonPath) -> Self {
         Self {
             path: Some(path),
+            below: false,
+            ..self
+        }
+    }
+
+    /// The rows of `json_tree_subtree`, with the path of the node whose
+    /// token keyed the walk: past the budget they open to that node, or as
+    /// a list to its children, as the walked rows do.
+    pub fn below(self, path: JsonPath) -> Self {
+        Self {
+            path: Some(path),
+            below: true,
             ..self
         }
     }
@@ -373,6 +397,7 @@ impl JsonTreeSubtree {
                 .collect::<Result<_, _>>()?,
         );
         Ok(match &self.path {
+            Some(path) if self.below => rows.below(path.clone()),
             Some(path) => rows.at(path.clone()),
             None => rows,
         })
@@ -446,6 +471,14 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(&at).unwrap(), serde_json::json!([]));
         assert!(at.subtree().unwrap().path().is_some());
+        assert!(!at.below);
+        let below = at.below(JsonPath::parse("$.b").unwrap());
+        assert!(below.below);
+        assert_eq!(
+            below.subtree().unwrap(),
+            JsonSubtree::new(Vec::new()).below(JsonPath::parse("$.b").unwrap())
+        );
+        assert_eq!(serde_json::to_value(&below).unwrap(), serde_json::json!([]));
     }
 
     #[test]
