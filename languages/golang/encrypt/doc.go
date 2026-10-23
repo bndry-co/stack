@@ -123,10 +123,10 @@
 // or [Int128] and [Uint128]), a float32 or float64, a [Decimal], a [Date] or a
 // time.Time (a timestamp), or a type defined over one of the built-in types.
 // Each integer seals at its own width. Equality applies to every one but a
-// bool. ORE and OPE apply to integers of 16 bits or more, floats, text and
-// bytes. A bool or an 8-bit integer takes no order index, since over so few
-// values its order terms would show which rows hold which value. Decimals,
-// dates and timestamps cannot take an order index yet.
+// bool. ORE and OPE apply to integers of 16 bits or more, floats, text,
+// bytes, decimals, dates and timestamps. A bool or an 8-bit integer takes no
+// order index, since over so few values its order terms would show which
+// rows hold which value.
 //
 // Passthrough fields never cross the binding: the engine does nothing to a
 // passthrough value that a program could observe, and the FFI codec cannot
@@ -164,9 +164,10 @@
 // type's query value), an ordering an [OreTerm] or [OpeTerm], and Between a
 // [Range] of two. Their answers are exact. The orderings are answered on
 // integers, on floats, which order as PostgreSQL's float8 does (-0.0 ties
-// 0.0, NaN sorts last), and on text, which orders by its folded form (case
-// and accents folded, under Unicode 16), so Café and cafe tie and alice
-// orders before Zoe. Matches returns a [MatchQuery],
+// 0.0, NaN sorts last), on text, which orders by its folded form (case and
+// accents folded, under Unicode 16), so Café and cafe tie and alice orders
+// before Zoe, and on a [Decimal], which orders by value (1.5 ties 1.50), a
+// [Date], and a time.Time, which orders by the microsecond. Matches returns a [MatchQuery],
 // whose answer can hold rows that do not match: size the fetch with
 // [MatchQuery.TargetLimit], then decrypt the rows and keep those
 // [MatchQuery.Verify] reports true, one call into the engine for the page.

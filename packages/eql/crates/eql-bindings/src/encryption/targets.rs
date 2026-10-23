@@ -577,7 +577,7 @@ impl<S: Plaintext> Plaintext for Option<S> {
     fn into_frame(self) -> Result<ValueFrame, Error> {
         match self {
             Some(value) => value.into_frame(),
-            None => ValueFrame::from_bytes(&[vitaminc_aead::tags::NULL])
+            None => ValueFrame::from_bytes(&[stack_encrypt::dynamic::frame::tags::NULL])
                 .map_err(|error| Error::Other(Box::new(error))),
         }
     }
@@ -770,11 +770,12 @@ mod tests {
     fn refusals_name_the_type_and_its_reason() {
         assert!(matches!(refuse("Nope"), TargetError::Unknown { name } if name == "Nope"));
         assert!(matches!(
-            refuse("DateOrdOre"),
-            TargetError::Unproducible { name: "DateOrdOre", reason } if reason.contains("no order term for a date, timestamp or decimal")
+            refuse("Json"),
+            TargetError::Unproducible { name: "Json", reason } if reason.contains("a JSON value seals as a tree of leaves")
         ));
         assert!(producible("TextEq").is_ok());
         assert!(producible("TextOrdOre").is_ok());
+        assert!(producible("DateOrdOre").is_ok());
     }
 
     fn frame<T: Encrypt>(value: T) -> ValueFrame {

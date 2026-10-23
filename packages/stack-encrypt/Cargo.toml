@@ -61,6 +61,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
+# `value::{Date, Timestamp}` to and from chrono's types (the `chrono`
+# feature), and `value::Decimal` to and from rust_decimal's (`rust_decimal`).
+chrono = { version = "0.4.44", optional = true, default-features = false }
+rust_decimal = { version = "1", optional = true, default-features = false }
 
 [features]
 default = ["http"]
@@ -74,6 +78,11 @@ http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # only at runtime, as an FFI binding's are. Off by default — it is only of
 # use to a binding author. Its transport frames are vitaminc-aead's own.
 dynamic = ["dep:vitaminc-aead-frame"]
+# Conversions between chrono's `NaiveDate` / `DateTime<Utc>` and
+# `value::Date` / `value::Timestamp`.
+chrono = ["dep:chrono", "vitaminc-aead/chrono"]
+# Conversions between rust_decimal's `Decimal` and `value::Decimal`.
+rust_decimal = ["dep:rust_decimal", "vitaminc-aead/rust_decimal"]
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.

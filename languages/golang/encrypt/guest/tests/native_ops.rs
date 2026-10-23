@@ -1381,10 +1381,19 @@ fn targets_lists_what_the_build_holds() {
             "BigintOrdOpe",
             "Date",
             "DateEq",
+            "DateOrdOre",
+            "DateOrd",
+            "DateOrdOpe",
             "Timestamp",
             "TimestampEq",
+            "TimestampOrdOre",
+            "TimestampOrd",
+            "TimestampOrdOpe",
             "Numeric",
             "NumericEq",
+            "NumericOrdOre",
+            "NumericOrd",
+            "NumericOrdOpe",
             "Text",
             "TextEq",
             "TextMatch",
@@ -1807,7 +1816,9 @@ fn the_catalog_lists_each_types_operators() {
         match name.as_str() {
             "IntegerOrd" | "IntegerOrdOpe" | "IntegerOrdOre" | "SmallintOrd" | "SmallintOrdOpe"
             | "SmallintOrdOre" | "BigintOrd" | "BigintOrdOpe" | "BigintOrdOre" | "RealOrd"
-            | "RealOrdOpe" | "RealOrdOre" | "DoubleOrd" | "DoubleOrdOpe" | "DoubleOrdOre" => {
+            | "RealOrdOpe" | "RealOrdOre" | "DoubleOrd" | "DoubleOrdOpe" | "DoubleOrdOre"
+            | "DateOrd" | "DateOrdOpe" | "DateOrdOre" | "TimestampOrd" | "TimestampOrdOpe"
+            | "TimestampOrdOre" | "NumericOrd" | "NumericOrdOpe" | "NumericOrdOre" => {
                 assert_eq!(listed, orderings().to_vec(), "{name}");
             }
             "TextOrd" | "TextOrdOpe" | "TextOrdOre" => {

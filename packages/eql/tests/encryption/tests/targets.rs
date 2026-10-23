@@ -391,15 +391,15 @@ mod given_a_name_the_engine_cannot_produce {
                 name,
             );
         }
-        let error = refused(targets::encrypt("DateOrdOre", &keyset, &email(), text("x")));
+        let error = refused(targets::encrypt("Json", &keyset, &email(), text("x")));
         assert_eq!(
             error.to_string(),
-            "the engine cannot produce DateOrdOre yet: the engine derives no order term for a date, \
-             timestamp or decimal yet: how they are ordered is not decided (#1236)"
+            "the engine cannot produce Json yet: a JSON value seals as a tree of leaves and EQL's \
+             `c` holds one; how a document becomes one sealed leaf is not decided"
         );
         // Refused by name before the label or the value is looked at.
         let error = refused(targets::encrypt(
-            "DateOrdOre",
+            "Json",
             &keyset,
             &Label::new(["one"]).unwrap(),
             frame(None::<i32>),
@@ -629,10 +629,19 @@ mod the_table {
                 "BigintOrdOpe",
                 "Date",
                 "DateEq",
+                "DateOrdOre",
+                "DateOrd",
+                "DateOrdOpe",
                 "Timestamp",
                 "TimestampEq",
+                "TimestampOrdOre",
+                "TimestampOrd",
+                "TimestampOrdOpe",
                 "Numeric",
                 "NumericEq",
+                "NumericOrdOre",
+                "NumericOrd",
+                "NumericOrdOpe",
                 "Text",
                 "TextEq",
                 "TextMatch",
@@ -659,9 +668,6 @@ mod the_table {
             let expected = match (row.family, row.suffix) {
                 ("json", "Search") => "JSON index",
                 ("json", "") => "tree of leaves",
-                ("date" | "timestamp" | "numeric", "Ord" | "OrdOpe" | "OrdOre") => {
-                    "no order term for a date, timestamp or decimal yet"
-                }
                 (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };
             assert!(reason.contains(expected), "{}: {reason}", row.name);

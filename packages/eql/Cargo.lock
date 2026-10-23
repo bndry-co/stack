@@ -1198,17 +1198,14 @@ name = "eql-bindings"
 version = "3.0.6"
 dependencies = [
  "base64",
- "chrono",
  "eql-domains",
  "hex",
- "rust_decimal",
  "schemars",
  "serde",
  "serde_json",
  "stack-encrypt",
  "thiserror 2.0.20",
  "ts-rs",
- "vitaminc-aead 0.8.0",
  "zeroize",
 ]
 
@@ -4259,9 +4256,11 @@ name = "stack-encrypt"
 version = "0.3.0"
 dependencies = [
  "base64ct",
+ "chrono",
  "clww-ore",
  "miette",
  "ore-rs 0.10.0",
+ "rust_decimal",
  "serde",
  "serde_json",
  "stack-encrypt-derive",

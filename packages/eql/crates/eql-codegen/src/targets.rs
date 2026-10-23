@@ -30,8 +30,7 @@
 //! terms at once.
 //!
 //! The reasons a type is not producible: eql-bindings names no Rust
-//! plaintext type for the family; the engine derives no order term for a
-//! date, timestamp or decimal; and the JSON index is a new engine
+//! plaintext type for the family, and the JSON index is a new engine
 //! operation. Each reason string names the issue that tracks it.
 //!
 //! The query dispatch takes the index that answers the query's operator. A
@@ -750,29 +749,22 @@ mod tests {
                 .find(|f| f.name == name)
                 .expect("family")
         };
-        for family_name in ["integer", "smallint", "bigint", "real", "double"] {
+        for family_name in [
+            "integer",
+            "smallint",
+            "bigint",
+            "real",
+            "double",
+            "date",
+            "timestamp",
+            "numeric",
+        ] {
             let family = family(family_name);
             assert!(gap(family, "").is_none(), "{family_name}");
             for producible in ["eq", "ord", "ord_ope", "ord_ore"] {
                 assert!(
                     gap(family, producible).is_none(),
                     "{family_name} {producible}"
-                );
-            }
-        }
-        // A date, a timestamp and a decimal are stored and compared for
-        // equality; every ordered domain of theirs, block ORE included,
-        // waits for an order term.
-        for family_name in ["date", "timestamp", "numeric"] {
-            let family = family(family_name);
-            assert!(gap(family, "").is_none(), "{family_name}");
-            assert!(gap(family, "eq").is_none(), "{family_name}Eq is producible");
-            for ordered in ["ord", "ord_ope", "ord_ore"] {
-                assert!(
-                    gap(family, ordered)
-                        .unwrap()
-                        .contains("no order term for a date, timestamp or decimal"),
-                    "{family_name} {ordered}"
                 );
             }
         }

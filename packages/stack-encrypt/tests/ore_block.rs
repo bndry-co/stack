@@ -4,7 +4,8 @@
 //! Every kind the index takes orders as its ADR-0002 order key: integers by
 //! value at their own width, floats as PostgreSQL's `float8` (`-0.0` ties
 //! `0.0`, every NaN one value after `+Infinity`), text by its fold, bytes
-//! as bytes. A term carries a random nonce, so the pins hold the left half
+//! as bytes, dates by day, timestamps by the microsecond and decimals by
+//! value. A term carries a random nonce, so the pins hold the left half
 //! only (the header, the permuted symbols and the per-block tags), which is
 //! deterministic in the key, the context and the value.
 //!
@@ -14,6 +15,7 @@
 use std::cmp::Ordering;
 
 use stack_encrypt::sem::{Orderable, OreBlockTerm, TermBytesError, TermError};
+use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::{nonempty, Error, KeysetCipher, StackCipher};
 use stack_kms::FakeDataKeySource;
 
@@ -116,6 +118,78 @@ async fn wide_integers_are_the_chained_scheme_unpadded() {
         unsigned.push(term(&keyset, value).await);
     }
     assert_sorted(&unsigned, "u128");
+}
+
+/// A date is four bytes, so the 6-bit fixed-width scheme's six blocks; a
+/// timestamp (twelve bytes) and a decimal (fourteen) are the chained
+/// scheme, unpadded. Each orders by value: a timestamp by the microsecond,
+/// floored, so a nanosecond before the epoch is a microsecond before it,
+/// and a decimal whatever its scale.
+#[tokio::test]
+async fn dates_timestamps_and_decimals_order_by_value() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let mut dates = Vec::new();
+    for days in [-719_162, -1, 0, 1, 19_782] {
+        let term = term(
+            &keyset,
+            Date::from_days_since_epoch(days).expect("in range"),
+        )
+        .await;
+        assert_eq!(
+            &term.as_bytes()[..2],
+            &[0x02, 0x02],
+            "a date is the 6-bit scheme"
+        );
+        assert_eq!(blocks(term.as_bytes()), 6);
+        dates.push(term);
+    }
+    assert_sorted(&dates, "date");
+
+    let instant = |seconds, nanos| Timestamp::new(seconds, nanos).expect("in range");
+    let mut instants = Vec::new();
+    for (seconds, nanos) in [(-1, 999_999_000), (0, 0), (0, 1_000), (1_700_000_000, 0)] {
+        let term = term(&keyset, instant(seconds, nanos)).await;
+        assert_eq!(
+            &term.as_bytes()[..2],
+            &[0x02, 0x03],
+            "a timestamp is chained"
+        );
+        assert_eq!(&term.as_bytes()[4..7], &[0, 0, 0], "no padding");
+        assert_eq!(blocks(term.as_bytes()), 16);
+        instants.push(term);
+    }
+    assert_sorted(&instants, "timestamp");
+    let tie = |a: &OreBlockTerm<Timestamp>, b: &OreBlockTerm<Timestamp>| a.compare(b);
+    assert_eq!(
+        tie(
+            &term(&keyset, instant(0, 1_000)).await,
+            &term(&keyset, instant(0, 1_999)).await
+        ),
+        Some(Ordering::Equal),
+        "one microsecond"
+    );
+    assert_eq!(
+        tie(&term(&keyset, instant(-1, 999_999_999)).await, &instants[0]),
+        Some(Ordering::Equal),
+        "a nanosecond before the epoch floors to the microsecond before it"
+    );
+
+    let decimal = |mantissa, scale| Decimal::new(mantissa, scale).expect("in range");
+    let mut decimals = Vec::new();
+    for (mantissa, scale) in [(-1, 0), (15, 1), (2, 0), (100, 0)] {
+        let term = term(&keyset, decimal(mantissa, scale)).await;
+        assert_eq!(&term.as_bytes()[..2], &[0x02, 0x03], "a decimal is chained");
+        assert_eq!(&term.as_bytes()[4..7], &[0, 0, 0], "no padding");
+        assert_eq!(blocks(term.as_bytes()), 19);
+        decimals.push(term);
+    }
+    assert_sorted(&decimals, "decimal");
+    assert_eq!(
+        term(&keyset, decimal(150, 2)).await.compare(&decimals[1]),
+        Some(Ordering::Equal),
+        "1.50 ties 1.5"
+    );
 }
 
 /// Floats order as PostgreSQL's `float8`: `-0.0` ties `0.0`, every NaN is

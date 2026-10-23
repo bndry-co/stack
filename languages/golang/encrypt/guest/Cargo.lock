@@ -723,7 +723,6 @@ dependencies = [
  "stack-encrypt",
  "thiserror 2.0.20",
  "ts-rs",
- "vitaminc-aead 0.8.0",
  "zeroize",
 ]
 

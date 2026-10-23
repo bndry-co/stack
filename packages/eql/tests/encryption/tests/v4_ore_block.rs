@@ -1,11 +1,12 @@
 //! The block ORE EQL v4 types Stack Encrypt produces: `IntegerOrdOre`,
 //! `SmallintOrdOre`, `BigintOrdOre`, `RealOrdOre`, `DoubleOrdOre`,
-//! `TextOrdOre` and `TextSearchOre`, and EQL v4's comparator for their `ob` term.
+//! `DateOrdOre`, `TimestampOrdOre`, `NumericOrdOre`, `TextOrdOre` and
+//! `TextSearchOre`, and EQL v4's comparator for their `ob` term.
 //!
 //! The term is ore-rs's 6-bit block ORE: the fixed-width scheme (wire
-//! header `02 02`) for the integers and floats, the chained scheme (`02 03`,
-//! text padded to a power-of-two length bucket of at least 16 bytes) for
-//! text. Every term carries a random nonce, so the stored bytes differ on
+//! header `02 02`) for the integers, floats and dates, the chained scheme
+//! (`02 03`) for timestamps, decimals and text, text padded to a
+//! power-of-two length bucket of at least 16 bytes. Every term carries a random nonce, so the stored bytes differ on
 //! each write and only the comparator orders them.
 //!
 //! Against an EQL v4 database these tests compare pairs of real ore-rs
@@ -25,6 +26,7 @@ use std::cmp::Ordering;
 use eql_bindings::encryption::targets;
 use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::sem::{Orderable, OreBlockTerm};
+use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::{Encrypt, Label};
 
 type Keyset<'a> = stack_encrypt::KeysetCipher<'a, common::Observed>;
@@ -115,6 +117,24 @@ async fn each_type_stores_one_block_ore_term_of_its_scheme() {
             "DoubleOrdOre",
             frame(7.0f64),
             [2, 2],
+            &["c", "i", "ob", "v"],
+        ),
+        (
+            "DateOrdOre",
+            frame(Date::from_days_since_epoch(7).unwrap()),
+            [2, 2],
+            &["c", "i", "ob", "v"],
+        ),
+        (
+            "TimestampOrdOre",
+            frame(Timestamp::new(7, 8).unwrap()),
+            [2, 3],
+            &["c", "i", "ob", "v"],
+        ),
+        (
+            "NumericOrdOre",
+            frame(Decimal::new(750, 2).unwrap()),
+            [2, 3],
             &["c", "i", "ob", "v"],
         ),
         (
@@ -318,6 +338,78 @@ fn postgres_compares_fixed_width_terms_as_ore_rs_and_the_plaintexts_do() {
     ];
     let real_terms = runtime.block_on(terms(&keyset, "RealOrdOre", &reals));
     assert_agree::<f32, _>(&mut db, "RealOrdOre", &reals, &real_terms);
+}
+
+/// Each value's terms, two writes each, as `terms` makes them for a `Copy`
+/// plaintext: the plaintexts here are wiped on drop, so are not `Copy`.
+async fn terms_of<T: Encrypt + Clone>(
+    keyset: &Keyset<'_>,
+    name: &str,
+    values: impl IntoIterator<Item = T>,
+) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for value in values {
+        out.push(ob(keyset, name, frame(value.clone())).await);
+        out.push(ob(keyset, name, frame(value)).await);
+    }
+    out
+}
+
+/// Needs an EQL v4 installation. A date orders by day, a timestamp by the
+/// microsecond (floored), and a decimal by value whatever its scale; the
+/// plaintext each is compared as here says so.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_compares_date_timestamp_and_decimal_terms_as_ore_rs_and_the_plaintexts_do() {
+    let runtime = runtime();
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = connect();
+
+    let days = [-719_162, -1, 0, 1, 63, 64, 19_782];
+    let date_terms = runtime.block_on(terms_of(
+        &keyset,
+        "DateOrdOre",
+        days.map(|d| Date::from_days_since_epoch(d).unwrap()),
+    ));
+    assert_agree::<Date, _>(&mut db, "DateOrdOre", &days, &date_terms);
+
+    // (seconds, nanoseconds), compared as whole microseconds, floored.
+    let instants = [
+        (-1, 999_999_000),
+        (-1, 999_999_999),
+        (0, 0),
+        (0, 999),
+        (0, 1_000),
+        (1_700_000_000, 0),
+    ];
+    let micros = instants.map(|(s, n): (i64, u32)| {
+        (i128::from(s) * 1_000_000_000 + i128::from(n)).div_euclid(1_000)
+    });
+    let instant_terms = runtime.block_on(terms_of(
+        &keyset,
+        "TimestampOrdOre",
+        instants.map(|(s, n)| Timestamp::new(s, n).unwrap()),
+    ));
+    assert_agree::<Timestamp, _>(&mut db, "TimestampOrdOre", &micros, &instant_terms);
+
+    // (mantissa, scale), compared as ten-thousandths.
+    let numbers = [
+        (-1_000, 0),
+        (-15, 1),
+        (0, 0),
+        (0, 3),
+        (15, 1),
+        (150, 2),
+        (2, 0),
+    ];
+    let scaled = numbers.map(|(m, s): (i128, u32)| m * 10i128.pow(4 - s));
+    let number_terms = runtime.block_on(terms_of(
+        &keyset,
+        "NumericOrdOre",
+        numbers.map(|(m, s)| Decimal::new(m, s as u8).unwrap()),
+    ));
+    assert_agree::<Decimal, _>(&mut db, "NumericOrdOre", &scaled, &number_terms);
 }
 
 /// Needs an EQL v4 installation.

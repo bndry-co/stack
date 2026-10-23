@@ -229,10 +229,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ore_block"],
         query: Some("DateOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_date_ord_ore"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "DateOrd",
@@ -243,10 +241,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("DateOrdQuery"),
         query_sql_domain: Some("eql_v4.query_date_ord"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "DateOrdOpe",
@@ -257,10 +253,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("DateOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_date_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Timestamp",
@@ -295,10 +289,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ore_block"],
         query: Some("TimestampOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ore"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TimestampOrd",
@@ -309,10 +301,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("TimestampOrdQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_ord"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TimestampOrdOpe",
@@ -323,10 +313,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("TimestampOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Numeric",
@@ -361,10 +349,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ore_block"],
         query: Some("NumericOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_ord_ore"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "NumericOrd",
@@ -375,10 +361,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("NumericOrdQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_ord"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "NumericOrdOpe",
@@ -389,10 +373,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("NumericOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Text",
@@ -740,6 +722,15 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "DateEq" => {
             run_target::<super::date::DateEq, Option<Date>, K>("DateEq", keyset, column, plaintext)
         }
+        "DateOrdOre" => {
+            run_target::<super::date::DateOrdOre, Date, K>("DateOrdOre", keyset, column, plaintext)
+        }
+        "DateOrd" => {
+            run_target::<super::date::DateOrd, Date, K>("DateOrd", keyset, column, plaintext)
+        }
+        "DateOrdOpe" => {
+            run_target::<super::date::DateOrdOpe, Date, K>("DateOrdOpe", keyset, column, plaintext)
+        }
         "Timestamp" => run_target::<super::timestamp::Timestamp, Option<Timestamp>, K>(
             "Timestamp",
             keyset,
@@ -752,11 +743,47 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
             column,
             plaintext,
         ),
+        "TimestampOrdOre" => run_target::<super::timestamp::TimestampOrdOre, Timestamp, K>(
+            "TimestampOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TimestampOrd" => run_target::<super::timestamp::TimestampOrd, Timestamp, K>(
+            "TimestampOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TimestampOrdOpe" => run_target::<super::timestamp::TimestampOrdOpe, Timestamp, K>(
+            "TimestampOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "Numeric" => run_target::<super::numeric::Numeric, Option<Decimal>, K>(
             "Numeric", keyset, column, plaintext,
         ),
         "NumericEq" => run_target::<super::numeric::NumericEq, Option<Decimal>, K>(
             "NumericEq",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericOrdOre" => run_target::<super::numeric::NumericOrdOre, Decimal, K>(
+            "NumericOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericOrd" => run_target::<super::numeric::NumericOrd, Decimal, K>(
+            "NumericOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericOrdOpe" => run_target::<super::numeric::NumericOrdOpe, Decimal, K>(
+            "NumericOrdOpe",
             keyset,
             column,
             plaintext,
@@ -924,6 +951,15 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "DateEq" => {
             open_target::<super::date::DateEq, Option<Date>, K>("DateEq", opener, column, stored)
         }
+        "DateOrdOre" => {
+            open_target::<super::date::DateOrdOre, Date, K>("DateOrdOre", opener, column, stored)
+        }
+        "DateOrd" => {
+            open_target::<super::date::DateOrd, Date, K>("DateOrd", opener, column, stored)
+        }
+        "DateOrdOpe" => {
+            open_target::<super::date::DateOrdOpe, Date, K>("DateOrdOpe", opener, column, stored)
+        }
         "Timestamp" => open_target::<super::timestamp::Timestamp, Option<Timestamp>, K>(
             "Timestamp",
             opener,
@@ -936,11 +972,47 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
             column,
             stored,
         ),
+        "TimestampOrdOre" => open_target::<super::timestamp::TimestampOrdOre, Timestamp, K>(
+            "TimestampOrdOre",
+            opener,
+            column,
+            stored,
+        ),
+        "TimestampOrd" => open_target::<super::timestamp::TimestampOrd, Timestamp, K>(
+            "TimestampOrd",
+            opener,
+            column,
+            stored,
+        ),
+        "TimestampOrdOpe" => open_target::<super::timestamp::TimestampOrdOpe, Timestamp, K>(
+            "TimestampOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
         "Numeric" => open_target::<super::numeric::Numeric, Option<Decimal>, K>(
             "Numeric", opener, column, stored,
         ),
         "NumericEq" => open_target::<super::numeric::NumericEq, Option<Decimal>, K>(
             "NumericEq",
+            opener,
+            column,
+            stored,
+        ),
+        "NumericOrdOre" => open_target::<super::numeric::NumericOrdOre, Decimal, K>(
+            "NumericOrdOre",
+            opener,
+            column,
+            stored,
+        ),
+        "NumericOrd" => open_target::<super::numeric::NumericOrd, Decimal, K>(
+            "NumericOrd",
+            opener,
+            column,
+            stored,
+        ),
+        "NumericOrdOpe" => open_target::<super::numeric::NumericOrdOpe, Decimal, K>(
+            "NumericOrdOpe",
             opener,
             column,
             stored,
@@ -1095,14 +1167,65 @@ pub(crate) fn query_named<'a, K: 'static>(
         "DateEq" => run_target::<super::date::DateEqQuery, Option<Date>, K>(
             "DateEq", keyset, column, plaintext,
         ),
+        "DateOrdOre" => run_target::<super::date::DateOrdOreQuery, Date, K>(
+            "DateOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "DateOrd" => {
+            run_target::<super::date::DateOrdQuery, Date, K>("DateOrd", keyset, column, plaintext)
+        }
+        "DateOrdOpe" => run_target::<super::date::DateOrdOpeQuery, Date, K>(
+            "DateOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "TimestampEq" => run_target::<super::timestamp::TimestampEqQuery, Option<Timestamp>, K>(
             "TimestampEq",
             keyset,
             column,
             plaintext,
         ),
+        "TimestampOrdOre" => run_target::<super::timestamp::TimestampOrdOreQuery, Timestamp, K>(
+            "TimestampOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TimestampOrd" => run_target::<super::timestamp::TimestampOrdQuery, Timestamp, K>(
+            "TimestampOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TimestampOrdOpe" => run_target::<super::timestamp::TimestampOrdOpeQuery, Timestamp, K>(
+            "TimestampOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
         "NumericEq" => run_target::<super::numeric::NumericEqQuery, Option<Decimal>, K>(
             "NumericEq",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericOrdOre" => run_target::<super::numeric::NumericOrdOreQuery, Decimal, K>(
+            "NumericOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericOrd" => run_target::<super::numeric::NumericOrdQuery, Decimal, K>(
+            "NumericOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericOrdOpe" => run_target::<super::numeric::NumericOrdOpeQuery, Decimal, K>(
+            "NumericOrdOpe",
             keyset,
             column,
             plaintext,

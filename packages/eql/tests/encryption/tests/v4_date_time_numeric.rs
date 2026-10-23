@@ -1,8 +1,9 @@
 //! The EQL v4 date, timestamp and numeric types Stack Encrypt produces:
 //! each family's storage-only type (`Date`, `Timestamp`, `Numeric`) and its
-//! equality type (`DateEq`, `TimestampEq`, `NumericEq`), from eql-bindings'
-//! own plaintexts (`v4::plaintext`). Their ordered types wait for the
-//! engine's order terms and are refused.
+//! equality type (`DateEq`, `TimestampEq`, `NumericEq`), from the
+//! plaintexts eql-bindings re-exports (`v4::plaintext`). Their ordered
+//! types are covered with the other families' in `v4_order.rs` (OPE) and
+//! `v4_ore_block.rs` (block ORE).
 //!
 //! Each type must round-trip through both entry points, seal the leaf a
 //! chrono or rust_decimal value of the same instant, day or number seals
@@ -346,27 +347,6 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     };
     let opened: Result<Timestamp, _> = cipher.decrypt_as(moved, column().into()).await;
     assert!(opened.is_err(), "a date is not a timestamp");
-}
-
-/// The ordered types wait for the engine's order terms over these kinds,
-/// and say so; block ORE waits for that first.
-#[tokio::test]
-async fn the_ordered_types_are_refused_with_their_reason() {
-    let (cipher, _) = common::cipher().await;
-    let keyset = cipher.default_keyset();
-    for family in ["Date", "Timestamp", "Numeric"] {
-        for suffix in ["Ord", "OrdOpe", "OrdOre"] {
-            let name = format!("{family}{suffix}");
-            let value = frame(Decimal::new(1, 0).unwrap());
-            match refused(targets::encrypt(&name, &keyset, &label(), value)) {
-                TargetError::Unproducible { reason, .. } => assert!(
-                    reason.contains("no order term for a date, timestamp or decimal"),
-                    "{name}: {reason}"
-                ),
-                other => panic!("{name}: {other}"),
-            }
-        }
-    }
 }
 
 /// `fixtures/v4_ledger_queries.json`: the `DateEq`, `TimestampEq` and

@@ -12,6 +12,14 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **Decimals, dates and timestamps take an order index (#1236).** An
+  `encrypt.Decimal`, `encrypt.Date` or `time.Time` field takes `ore` and
+  `ope`, and the generated code gives it `Lt`, `Lte`, `Gt`, `Gte` and
+  `Between`. A decimal orders by value (`1.5` ties `1.50`), a date by its
+  day, and a timestamp by the microsecond, truncated as its equality term
+  is. The EQL types `DateOrd`, `DateOrdOpe`, `DateOrdOre`, `TimestampOrd`,
+  `TimestampOrdOpe`, `TimestampOrdOre`, `NumericOrd`, `NumericOrdOpe` and
+  `NumericOrdOre` are producible with `encrypt_into=`.
 - **An optional field: a sealed field declared over a pointer (#1298).**
   `DOB *encrypt.Date` with `stash:"dob,encrypt_into=Date"` generates (it
   was refused as a composite, #1293), and `Decrypt` gives `nil` back for a
@@ -87,8 +95,7 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `NumericEq` normalises the scale (`1.5 = 1.50`) and `TimestampEq` compares
   to the microsecond (truncated, never rounded), while each value opens as it was sealed. A
   `time.Time` seals its instant and opens in UTC. Their `Ord`, `OrdOpe` and
-  `OrdOre` types stay unproducible until the engine derives order terms
-  for these kinds (#1236).
+  `OrdOre` types follow (see above).
 - **Every integer width, 128-bit integers, dates, timestamps and decimals
   as sealed fields** (#1144). Each integer type seals at its own width
   (`int8` as an int8, `uint16` as a uint16), so `record.Kind` and
@@ -98,8 +105,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `Decimal` are vitaminc's `vcvalue` types, with `encrypt.DateOf`,
   `ParseInt128`, `ParseUint128` and `ParseDecimal` (which refuses NaN and
   the infinities with `ErrNonFiniteDecimal`). Equality applies to all of
-  them, ORE and OPE to every integer width but 8 bits. stashgen refuses an
-  order index on a decimal, date or timestamp, naming #1236. The value-kinds fixture
+  them, ORE and OPE to every integer width but 8 bits, and to decimals,
+  dates and timestamps (see above). The value-kinds fixture
   test opens a record the Rust lowering sealed and derives the same terms.
 - **Any built-in Go integer field takes an integer EQL type** (ADR-0002):
   an `int16` or a `uint16` into `Integer`, an `int` into `Bigint`. The

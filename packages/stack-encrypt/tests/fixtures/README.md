@@ -188,12 +188,13 @@ runs; the frames and the terms must not. Do not edit the file by hand.
   word and 96-bit mantissa, so the scale is kept.
 - **`record`.** The stored record: `"c"` is the frozen `SealedValue` leaf,
   and each term its frozen bytes, as in the record fixture. Every field has
-  an equality term; the integer fields have an ORE or OPE term too. A date,
-  timestamp and decimal have no order term until #1236.
-- **`queries`.** Equality queries vitaminc-normalize folds onto a stored
-  term: `-1234.56` finds the stored `-1234.5600` (the scale is normalised),
-  and `…03.123456Z` finds the stored `…03.123456789Z` (a timestamp's term is
-  truncated to the microsecond; the ciphertext keeps every nanosecond).
+  an equality term; the 16-bit and wider integers, the date, the timestamp
+  and the decimal have an ORE or OPE term too.
+- **`queries`.** Queries vitaminc folds onto a stored term, for equality
+  and for order alike: `-1234.56` finds the stored `-1234.5600` (the scale
+  is normalised), and `…03.123456Z` finds the stored `…03.123456789Z` (a
+  timestamp's terms are truncated to the microsecond; the ciphertext keeps
+  every nanosecond).
   Each `term` equals the stored field's `eq`.
 
 # Stored-rows fixture: `stored_rows_v1.json` (FROZEN)

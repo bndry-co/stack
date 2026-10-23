@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dates, timestamps and decimals are ordered** (#1236). The new
+  `value` module holds `Date`, `Timestamp` and `Decimal` (and their
+  `RangeError`), moved here from eql-bindings, which re-exports them at
+  `v4::plaintext`: wipeable, `Clone` plaintexts with no Rust standard type,
+  with conversions to chrono's and rust_decimal's types behind the new
+  `chrono` and `rust_decimal` features. Each is `sem::Orderable` and
+  `op::Ordered`, so ORE, OPE and block ORE terms derive over it and `Lt`,
+  `Lte`, `Gt`, `Gte` and `Between` answer it, at vitaminc-ore's `Date`,
+  `Timestamp` and `Decimal` targets: a date by its day, a timestamp by the
+  microsecond (floored, as its equality term is), a decimal by value
+  whatever its scale, so `1.5` ties `1.50`. On the data-plan path a
+  `decimal`, `date` or `timestamp` field admits `ore`, `ope` and
+  `ore_block`, and its order terms are the typed path's. Block ORE puts a
+  date through the 6-bit fixed-width engine and a timestamp or decimal
+  through the chained one.
+
 - **The vitaminc a binding speaks through is re-exported.** `dynamic::frame`
   is `vitaminc-aead-frame` (the transport frame and ciphertext codec, with
   its `serde` module), `dynamic::plaintext` is vitaminc-aead's value model,
@@ -75,10 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them, through vitaminc-normalize: one term per integer value at every
   width, decimals at any scale, timestamps to the microsecond. ORE and OPE
   apply to every integer width, each passed to cllw-ore as its own type.
-  An ORE or OPE index on a decimal, date or timestamp is refused with the
-  new `Reason::OrderTermPending`, which names #1236: those order terms wait
-  for new cllw-ore and ore-rs releases. `dynamic::not_admitted` says why a
-  kind does not admit an index. `dynamic::read` converts between the new
+  A decimal, a date and a timestamp take an order index too (see
+  "Dates, timestamps and decimals are ordered"). `dynamic::not_admitted`
+  says why a kind does not admit an index. `dynamic::read` converts between the new
   kinds where a value fits (an integer into any width that holds it, a
   whole integer into a decimal at scale 0). `tests/value_kinds.rs` and its
   fixture hold the record path, the data query path and the typed path to

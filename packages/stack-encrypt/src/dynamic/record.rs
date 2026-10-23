@@ -377,9 +377,8 @@ impl FieldPlan {
     /// [`Error::Plan`] if the field asks for an index the kind is not
     /// defined for ([`admits`](super::admits)), with the reason [`not_admitted`] gives:
     /// [`Reason::IndexNotAdmitted`] for match on an integer, equality or an
-    /// order index on a boolean, any index on a composite;
-    /// [`Reason::OrderTermPending`] for an order index on a decimal, date or
-    /// timestamp, which waits for #1236.
+    /// order index on a boolean, an order index on an 8-bit integer, any
+    /// index on a composite.
     pub fn with_type(mut self, field_type: ValueKind) -> Result<Self, Error> {
         for output in &self.outputs {
             if let Output::Term(index) = output {
@@ -7708,14 +7707,14 @@ mod tests {
                     "Plan",
                 ),
                 (
-                    "an order index on a date",
+                    "an order index on a boolean",
                     age(vec![
                         ("context", label("age")),
-                        ("outputs", strings(&["c", "eq", "ore"])),
-                        ("type", s("date")),
+                        ("outputs", strings(&["c", "ore"])),
+                        ("type", s("bool")),
                     ]),
                     Some("age"),
-                    OrderTermPending,
+                    IndexNotAdmitted,
                     "Plan",
                 ),
                 (
