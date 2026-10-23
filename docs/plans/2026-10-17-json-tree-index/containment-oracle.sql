@@ -47,9 +47,10 @@ CREATE FUNCTION sim.to_query(stored jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE 
   SELECT jsonb_build_object('sv', jsonb_agg(jsonb_build_object('s', e->'s', 'vs', e->'vs')))
   FROM jsonb_array_elements(stored->'sv') e $$;
 
--- Flat containment = today's semantics.
+-- Flat containment = today's semantics. Both arguments are plaintext documents;
+-- the stored side is flattened here, as the producer would have flattened it.
 CREATE FUNCTION sim.flat_contains(stored jsonb, needle jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
-  SELECT sim.to_query(stored) @> sim.flat_query(needle) $$;
+  SELECT sim.to_query(sim.store(stored)) @> sim.flat_query(needle) $$;
 
 -- Group structure of a needle: one group per array ELEMENT that is a container,
 -- {at: wildcard path of the element, need: [vs...] (constraints inside the element
@@ -102,7 +103,7 @@ BEGIN
 END $$;
 
 CREATE FUNCTION sim.exact_contains(stored jsonb, needle jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
-  SELECT sim.flat_contains(stored, needle) AND sim.groups_ok(stored->'sv', sim.groups(needle)) $$;
+  SELECT sim.flat_contains(stored, needle) AND sim.groups_ok(sim.store(stored)->'sv', sim.groups(needle)) $$;
 
 -- Oracle: random-ish corpus; report every disagreement with jsonb @>.
 CREATE TABLE sim.cases(stored jsonb, needle jsonb);
@@ -144,6 +145,14 @@ SELECT stored::text AS stored, needle::text AS needle,
        sim.flat_contains(stored, needle) AS flat_today,
        sim.exact_contains(stored, needle) AS exact_new,
        CASE WHEN (stored @> needle) <> sim.exact_contains(stored, needle) THEN '<<< DISAGREES' ELSE '' END AS verdict
+FROM sim.cases;
+
+-- The file checks itself: how many cases each form gets wrong against jsonb @>.
+-- Expected: flat_today 8 (the six cross-element false positives, the root-scalar
+-- false negative, and the 2 / 2.0 artefact), exact_new 2 (the two artefacts below).
+SELECT count(*) AS cases,
+       count(*) FILTER (WHERE (stored @> needle) <> sim.flat_contains(stored, needle)) AS flat_today_disagrees,
+       count(*) FILTER (WHERE (stored @> needle) <> sim.exact_contains(stored, needle)) AS exact_new_disagrees
 FROM sim.cases;
 
 -- Known simulation artefacts (not design defects):
