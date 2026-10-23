@@ -199,8 +199,9 @@ fn render_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) -> Tok
     fields.extend(quote! { pub c: Ciphertext, });
     for term in Term::payload_terms(domain.terms) {
         let fid = format_ident!("{}", term.json_key());
-        let tid = format_ident!("{}", stored_term_newtype(eql, domain, term));
-        fields.extend(quote! { pub #fid: #tid, });
+        let ty = term_type(eql, family, term, stored_term_newtype(eql, domain, term));
+        let attrs = term_field_attrs(eql, term, false);
+        fields.extend(quote! { #attrs pub #fid: #ty, });
     }
 
     // The domain's required term keys, threaded through the trait so
@@ -309,14 +310,16 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
     fields.extend(quote! { #context pub i: Identifier, });
     for term in Term::payload_terms(domain.terms) {
         let fid = format_ident!("{}", term.json_key());
-        let tid = format_ident!("{}", term.binding_newtype());
+        let ty = term_type(eql, family, term, term.binding_newtype());
+        let attrs = term_field_attrs(eql, term, optional);
         fields.extend(if optional {
             quote! {
                 #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub #fid: Option<#tid>,
+                #attrs
+                pub #fid: Option<#ty>,
             }
         } else {
-            quote! { pub #fid: #tid, }
+            quote! { #attrs pub #fid: #ty, }
         });
     }
     let term_keys = Term::term_json_keys(domain.terms);
@@ -367,8 +370,9 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
 /// carries a range, so [`render_family_bindings`] emits these for v4 alone.
 ///
 /// The fields are the envelope's `v` and `i`, then the bounds under
-/// [`RANGE_BOUND_KEYS`], each the term newtype the family's single-bound query
-/// struct for the same term holds (`OreBlock256` for `ob`, `OpeCllw` for `op`):
+/// [`RANGE_BOUND_KEYS`], each the term type the family's single-bound query
+/// struct for the same term holds (`OreBlockTerm<i32>` for an integer's `ob`,
+/// `OpeTerm<i32>` for its `op`, [`term_type`]):
 /// the single-bound domain's `ob` or `op` value, in a `{v, i, lo, hi}`
 /// envelope. No struct derives Stack Encrypt's traits yet: the ordered types
 /// it ranges over are not producible, and the engine does not build the
@@ -397,7 +401,8 @@ fn render_range_query_struct(family: &DomainFamily, term: Term) -> TokenStream {
          {columns}. Required keys: {keys_str}.",
         prefix = eql.prefix()
     );
-    let tid = format_ident!("{}", term.binding_newtype());
+    let ty = term_type(eql, family, term, term.binding_newtype());
+    let attrs = term_field_attrs(eql, term, false);
     let [lo, hi] = RANGE_BOUND_KEYS.map(|k| format_ident!("{k}"));
     let bound_keys = RANGE_BOUND_KEYS;
 
@@ -411,8 +416,10 @@ fn render_range_query_struct(family: &DomainFamily, term: Term) -> TokenStream {
         pub struct #ident {
             pub v: SchemaVersion,
             pub i: Identifier,
-            pub #lo: #tid,
-            pub #hi: #tid,
+            #attrs
+            pub #lo: #ty,
+            #attrs
+            pub #hi: #ty,
         }
 
         impl DomainType for #ident {
@@ -455,19 +462,85 @@ pub fn stored_term_newtype(eql: EqlVersion, domain: &Domain, term: Term) -> &'st
     }
 }
 
-/// The term newtypes a family module names: each stored struct's
-/// ([`stored_term_newtype`]) and each query struct's
-/// ([`Term::binding_newtype`]), after `Ciphertext`, in first-use order.
-fn family_terms<'d>(
+/// The Rust type of a struct field carrying `term`, in a struct of
+/// `family`. An EQL v4 order term is Stack Encrypt's own term over the
+/// family's plaintext, as [`Term::v4_format`] names it (`OreBlockTerm<Date>`,
+/// `OpeTerm<i32>`): typed by its scheme and by what it orders, and checked
+/// for its structure when it is read. Any other term is `newtype`, the
+/// shared binding newtype the caller picked.
+pub fn term_type(
     eql: EqlVersion,
-    domains: impl Iterator<Item = &'d Domain>,
-) -> Vec<&'static str> {
-    let mut used: Vec<&'static str> = vec!["Ciphertext"];
+    family: &DomainFamily,
+    term: Term,
+    newtype: &'static str,
+) -> TokenStream {
+    match (eql, term.v4_format()) {
+        (EqlVersion::V4, Some(format)) => {
+            let ty = format_ident!("{}", format.rust_type);
+            let (_, rust) = plaintext_of(family.name)
+                .expect("a family with an order term names its Rust plaintext");
+            let plaintext: syn::Type =
+                syn::parse_str(rust).expect("a family's Rust plaintext is a type path");
+            quote!(#ty<#plaintext>)
+        }
+        _ => {
+            let ty = format_ident!("{newtype}");
+            quote!(#ty)
+        }
+    }
+}
+
+/// The attributes a field of [`term_type`] needs: none for a binding
+/// newtype, and for a Stack Encrypt term, its JSON shape for TypeScript and
+/// JSON Schema (`OreBlockHex`, `OpeHex`), which describe the hex string the
+/// term serializes as. `optional` for a field that holds an `Option`.
+fn term_field_attrs(eql: EqlVersion, term: Term, optional: bool) -> TokenStream {
+    match (eql, term.v4_format()) {
+        (EqlVersion::V4, Some(format)) => {
+            let shape = if optional {
+                format!("Option<{}>", format.json_shape)
+            } else {
+                format.json_shape.to_string()
+            };
+            quote! {
+                #[ts(as = #shape)]
+                #[schemars(with = #shape)]
+            }
+        }
+        _ => TokenStream::new(),
+    }
+}
+
+/// What a family module imports for its terms, in first-use order: the
+/// names it takes from its version's `terms` module, `Ciphertext` first
+/// (each stored struct's newtype, [`stored_term_newtype`], each query
+/// struct's, [`Term::binding_newtype`], and a v4 order term's JSON shape),
+/// and the Stack Encrypt term types it names (`OreBlockTerm`, `OpeTerm`).
+struct FamilyTerms {
+    terms: Vec<&'static str>,
+    sem: Vec<&'static str>,
+}
+
+fn family_terms<'d>(eql: EqlVersion, domains: impl Iterator<Item = &'d Domain>) -> FamilyTerms {
+    fn add(list: &mut Vec<&'static str>, name: &'static str) {
+        if !list.contains(&name) {
+            list.push(name);
+        }
+    }
+    let mut used = FamilyTerms {
+        terms: vec!["Ciphertext"],
+        sem: Vec::new(),
+    };
     for d in domains {
         for term in Term::payload_terms(d.terms) {
-            for t in [stored_term_newtype(eql, d, term), term.binding_newtype()] {
-                if !used.contains(&t) {
-                    used.push(t);
+            match (eql, term.v4_format()) {
+                (EqlVersion::V4, Some(format)) => {
+                    add(&mut used.terms, format.json_shape);
+                    add(&mut used.sem, format.rust_type);
+                }
+                _ => {
+                    add(&mut used.terms, stored_term_newtype(eql, d, term));
+                    add(&mut used.terms, term.binding_newtype());
                 }
             }
         }
@@ -518,7 +591,7 @@ fn render_query_projections(
         .map(|&term| {
             let ident = format_ident!("{}", query_projection_ident(family, domain, term));
             let fid = format_ident!("{}", term.json_key());
-            let tid = format_ident!("{}", term.binding_newtype());
+            let tid = term_type(eql, family, term, term.binding_newtype());
             let ops = Term::operators_for_terms(domain.terms)
                 .into_iter()
                 .filter(|op| Term::extractor_for_operator(domain.terms, op) == Some(term.extractor()))
@@ -836,13 +909,18 @@ fn ts_export(version: EqlVersion) -> TokenStream {
     }
 }
 
-/// The `use` header every family module shares: the term newtypes the
-/// family names, the trait, and the version's own `SchemaVersion`.
-fn family_imports(version: EqlVersion, used: &[&'static str]) -> TokenStream {
-    let used_idents: Vec<_> = used.iter().map(|t| format_ident!("{t}")).collect();
+/// The `use` header every family module shares: the term types the family
+/// names, the trait, and the version's own `SchemaVersion`.
+fn family_imports(version: EqlVersion, used: &FamilyTerms) -> TokenStream {
+    let used_idents: Vec<_> = used.terms.iter().map(|t| format_ident!("{t}")).collect();
+    let sem = (!used.sem.is_empty()).then(|| {
+        let idents = used.sem.iter().map(|t| format_ident!("{t}"));
+        quote!(use stack_encrypt::sem::{ #(#idents),* };)
+    });
     let module = format_ident!("{}", module_name(version));
     quote! {
         use schemars::{schema_for, JsonSchema, Schema};
+        #sem
 
         use crate::#module::terms::{ #(#used_idents),* };
         use crate::#module::{DomainType, SchemaVersion};
@@ -1425,7 +1503,69 @@ fn render_v4_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
     rendered.push((dir.join("targets.rs"), crate::targets::render_targets_rs()));
     rendered.push((dir.join("answers.rs"), crate::targets::render_answers_rs()));
     rendered.push((dir.join("inventory.rs"), render_v4_inventory_rs()));
+    rendered.push((dir.join("term_formats.rs"), render_v4_term_formats_rs()));
     rendered
+}
+
+/// Render the generated `crates/eql-bindings/src/v4/term_formats.rs`: for
+/// each term EQL v4 stores in its own format ([`Term::v4_format`]), the type
+/// that names that term's JSON for TypeScript and JSON Schema (`OreBlockHex`,
+/// `OpeHex`). A field holds Stack Encrypt's term; these say what its JSON
+/// is, with the catalog's pattern, the one the domain CHECKs are made from.
+pub fn render_v4_term_formats_rs() -> String {
+    let every = [Term::Hm, Term::Ore, Term::Bloom, Term::Ope];
+    let shapes: TokenStream = every
+        .into_iter()
+        .filter_map(|term| term.v4_format().map(|format| (term, format)))
+        .map(|(term, format)| {
+            let ident = format_ident!("{}", format.json_shape);
+            let name = format.json_shape;
+            let pattern = format.pattern();
+            let description = format.description;
+            let summary = format!(
+                " The JSON of an EQL v4 `{}` term. {description}",
+                term.json_key()
+            );
+            let detail = format!(
+                " Names the JSON of a [`stack_encrypt::sem::{}`] field for TypeScript and JSON \
+                 Schema, and holds no term itself. Its pattern, `{pattern}`, takes the prefixes \
+                 the domain CHECKs require.",
+                format.rust_type
+            );
+            quote! {
+                #[doc = #summary]
+                #[doc = ""]
+                #[doc = #detail]
+                #[derive(Clone, Debug, TS)]
+                pub struct #ident(pub String);
+
+                impl JsonSchema for #ident {
+                    fn schema_name() -> Cow<'static, str> {
+                        #name.into()
+                    }
+
+                    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+                        json_schema!({
+                            "type": "string",
+                            "pattern": #pattern,
+                            "description": #description,
+                        })
+                    }
+                }
+            }
+        })
+        .collect();
+    format_rs(quote! {
+        //! Generated: the JSON of the terms EQL v4 stores in its own format,
+        //! for TypeScript and JSON Schema. See `eql_domains::V4TermFormat`.
+
+        use std::borrow::Cow;
+
+        use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
+        use ts_rs::TS;
+
+        #shapes
+    })
 }
 
 /// Regenerate every committed Rust binding file under `out_root`: one
@@ -1754,10 +1894,14 @@ mod tests {
         let v4 = tmp.path().join("crates/eql-bindings/src/v4");
         // v3: scalar families + json_storage + payload + query_payload +
         // inventory. v4: every family with a scalar domain + targets +
-        // inventory.
+        // answers + inventory + term_formats.
         let families = eql_domains::scalar_families().count();
         let v4_families = eql_domains::families_with_scalar_domains().count();
-        assert_eq!(written.len(), (families + 4) + (v4_families + 3));
+        assert_eq!(written.len(), (families + 4) + (v4_families + 4));
+        assert!(tmp
+            .path()
+            .join("crates/eql-bindings/src/v4/term_formats.rs")
+            .is_file());
         assert!(dir.join("integer.rs").is_file());
         assert!(dir.join("text.rs").is_file());
         assert!(dir.join("json_storage.rs").is_file());

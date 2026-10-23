@@ -472,18 +472,13 @@ async fn every_producible_type_dispatches_by_name() {
                     let term = term_of(key);
                     assert!(json[term].is_string() || json[term].is_array(), "{name}");
                     if term == "ob" {
-                        let one_hex = |value: &serde_json::Value| {
-                            value
-                                .as_array()
-                                .is_some_and(|a| a.len() == 1 && a[0].is_string())
-                        };
                         assert!(
-                            one_hex(&json[term]) && one_hex(&query[term]),
-                            "{name} via {key}: one block ORE term each"
+                            json[term].is_string() && query[term].is_string(),
+                            "{name} via {key}: one block ORE term each, as hex"
                         );
                         assert_eq!(
-                            query[term][0].as_str().unwrap().len(),
-                            json[term][0].as_str().unwrap().len(),
+                            query[term].as_str().unwrap().len(),
+                            json[term].as_str().unwrap().len(),
                             "{name} via {key}: the query's term is the stored one's length"
                         );
                     } else {
