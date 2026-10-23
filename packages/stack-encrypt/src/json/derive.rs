@@ -164,14 +164,29 @@ struct NodePlain {
 /// The one-way terms of a document: one term node per node, in the
 /// walk's order, with the root first. The term of the
 /// [`Json`](struct@crate::target::Json) index, and what every query term is built
-/// from; it holds no plaintext and no key.
-#[derive(Clone, Debug)]
+/// from. It holds no scalar value and no key, but it does hold the
+/// document's shape: each node's positional path, whose key names are
+/// plaintext, and each node's chain token, which is a capability over its
+/// subtree in every row. `Debug` prints neither, only how many nodes there
+/// are, and the terms should not be logged or sent anywhere but into a
+/// query.
+#[derive(Clone)]
 pub struct JsonTerms {
     nodes: Vec<TermNode>,
     /// For a document whose root is a scalar: the selector pair the same
     /// scalar has as an element of a root array, so a containment needle
     /// can match a stored `["a"]` as `jsonb @>` does.
     alt: Option<(Tag, Tag)>,
+}
+
+/// The key names and the tokens are what the terms must not leak, so the
+/// output is the node count alone.
+impl std::fmt::Debug for JsonTerms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsonTerms")
+            .field("nodes", &self.nodes.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl JsonTerms {
@@ -1238,6 +1253,19 @@ mod tests {
         assert_eq!(at("$.a[0]"), at("$.a[1]"), "every element shares one");
         assert_eq!(at("$.c"), None, "no node there");
         assert_eq!(at("$.a[2]"), None, "no third element");
+    }
+
+    #[test]
+    fn the_terms_print_neither_key_names_nor_tokens() {
+        let t = terms(
+            &json!({"alice@example.com": {"ssn": "123"}}),
+            JsonOptions::default(),
+        );
+        let printed = format!("{t:?}");
+        assert_eq!(printed, "JsonTerms { nodes: 3, .. }");
+        let token = t.nodes()[1].token.unwrap();
+        assert!(!printed.contains("alice"));
+        assert!(!printed.contains(&super::super::hex(&token)));
     }
 
     #[test]
