@@ -34,6 +34,12 @@ const VALUE_DOMAIN: &[u8] = b"stack-encrypt/json/value/v1";
 const TOKEN_DOMAIN: &[u8] = b"stack-encrypt/json/token/v1";
 /// PAE domain of an entry's AAD.
 const ENTRY_AAD_DOMAIN: &[u8] = b"stack-encrypt/json/entry/v1";
+/// PAE domain of a token step: a child's token, from its parent's token and
+/// its label. Keyed, so a token does not let its holder test key names.
+const STEP_DOMAIN: &[u8] = b"stack-encrypt/json/token-step/v1";
+/// PAE domain of an object member's rank under its parent's token, which
+/// orders the members' ordinals. Keyed for the same reason.
+const RANK_DOMAIN: &[u8] = b"stack-encrypt/json/rank/v1";
 
 /// Deeper than this is refused rather than sealed: the walk recurses, and a
 /// document built in memory can nest deeper than any parser admits.
@@ -244,13 +250,28 @@ fn h16(parts: &[&[u8]]) -> Tag {
     truncate(&hasher.finalize())
 }
 
-/// `H("t" ‖ t(parent) ‖ 0x01 ‖ key)` or `H("t" ‖ t(parent) ‖ 0x02 ‖ LE64(index))`.
-fn child_token(parent: &Tag, label: &Label) -> Tag {
-    match label {
-        Label::Key(key) => h16(&[b"t", parent, &[0x01], key.as_bytes()]),
-        Label::Index(index) => h16(&[b"t", parent, &[0x02], &index.to_le_bytes()]),
-        Label::Root => *parent,
-    }
+/// A child's token: `PRF(json/token-step ‖ column, PAE(t(parent), 0x01,
+/// key))` for an object member, `PAE(t(parent), 0x02, LE64(index))` for an
+/// array element, the first sixteen bytes.
+///
+/// Keyed with the index key (the design's decision 11). An unkeyed hash of
+/// the parent's token and the label would let anyone holding a token test a
+/// guessed key name against every child token the walk unwraps below it, in
+/// every row of the column. The server never derives a child token from a
+/// label (it unwraps `w`), so only the client computes this step, and the
+/// client holds the key.
+fn child_token(
+    prf: &HmacSha256Prf,
+    context: &Context<'_>,
+    parent: &Tag,
+    label: &Label,
+) -> Result<Tag, TermError> {
+    let framed = match label {
+        Label::Key(key) => Context::pae(&[parent, &[0x01], key.as_bytes()]),
+        Label::Index(index) => Context::pae(&[parent, &[0x02], &index.to_le_bytes()]),
+        Label::Root => return Ok(*parent),
+    };
+    prf16(prf, STEP_DOMAIN, context, framed.as_bytes())
 }
 
 /// `H("p" ‖ iv ‖ t(parent) ‖ LE32(ordinal))`: position-keyed, so siblings
@@ -269,14 +290,18 @@ fn group_tag(iv: &[u8], token: &Tag) -> Tag {
     h16(&[b"g", iv, token])
 }
 
-/// `H("o" ‖ t(parent) ‖ key)`: what an object's members are ranked by for
-/// their ordinals, so an ordinal does not rank key names.
-fn rank(parent: &Tag, key: &str) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(b"o");
-    hasher.update(parent);
-    hasher.update(key.as_bytes());
-    hasher.finalize().into()
+/// `PRF(json/rank ‖ column, PAE(t(parent), key))`: what an object's members
+/// are ranked by for their ordinals, so an ordinal does not rank key names.
+/// Keyed, as [`child_token`] is, so a token's holder cannot rank guessed
+/// key names and compare the order with the ordinals it sees.
+fn rank(
+    prf: &HmacSha256Prf,
+    context: &Context<'_>,
+    parent: &Tag,
+    key: &str,
+) -> Result<Tag, TermError> {
+    let framed = Context::pae(&[parent, key.as_bytes()]);
+    prf16(prf, RANK_DOMAIN, context, framed.as_bytes())
 }
 
 pub(super) fn xor(a: &Tag, b: &Tag) -> Tag {
@@ -455,7 +480,9 @@ impl Walker<'_> {
                 self.context,
                 &positional.token_bytes().unwrap_or_default(),
             )?),
-            _ => parent_token.map(|p| child_token(&p, &label)),
+            _ => parent_token
+                .map(|p| child_token(self.prf, self.context, &p, &label))
+                .transpose()?,
         };
         let op = leaf_op(self.prf, self.context, value)?;
         let container_element = matches!(label, Label::Index(_)) && kind.is_container();
@@ -486,7 +513,9 @@ impl Walker<'_> {
         match value {
             Value::Object(map) => {
                 let ordinals: Option<BTreeMap<String, u32>> =
-                    token.map(|t| shuffled_ordinals(&t, map));
+                    token
+                        .map(|t| shuffled_ordinals(self.prf, self.context, &t, map))
+                        .transpose()?;
                 for (key, child) in map {
                     let ordinal = ordinals.as_ref().and_then(|o| o.get(key).copied());
                     let _ = self.visit(
@@ -534,14 +563,22 @@ impl Walker<'_> {
 /// An object's members' ordinals: their positions in the order of their
 /// ranks under the parent's token, so the ordinals rank nothing a reader
 /// without the token can see.
-fn shuffled_ordinals(parent: &Tag, map: &Map<String, Value>) -> BTreeMap<String, u32> {
-    let mut ranked: Vec<([u8; 32], &String)> = map.keys().map(|k| (rank(parent, k), k)).collect();
+fn shuffled_ordinals(
+    prf: &HmacSha256Prf,
+    context: &Context<'_>,
+    parent: &Tag,
+    map: &Map<String, Value>,
+) -> Result<BTreeMap<String, u32>, TermError> {
+    let mut ranked: Vec<(Tag, &String)> = map
+        .keys()
+        .map(|k| Ok((rank(prf, context, parent, k)?, k)))
+        .collect::<Result<_, TermError>>()?;
     ranked.sort();
-    ranked
+    Ok(ranked
         .into_iter()
         .enumerate()
         .map(|(o, (_, key))| (key.clone(), o as u32))
-        .collect()
+        .collect())
 }
 
 // =============================================================================
@@ -1069,7 +1106,7 @@ fn token_for(
             // `anchor` cut the path before any wildcard.
             Segment::Wildcard => return Err(TermError::JsonSealedRoot),
         };
-        token = child_token(&token, &label);
+        token = child_token(prf, context, &token, &label)?;
     }
     Ok(token)
 }
@@ -1271,14 +1308,47 @@ mod tests {
             .iter()
             .map(|k| (k.to_string(), json!(1)))
             .collect();
-        let ordinals = shuffled_ordinals(&[1; 16], &map);
+        let context = Context::from_encoded(b"users/profile");
+        let ordinals = shuffled_ordinals(&prf(), &context, &[1; 16], &map).unwrap();
         let mut seen: Vec<u32> = ordinals.values().copied().collect();
         seen.sort_unstable();
         assert_eq!(seen, [0, 1, 2, 3]);
-        let other = shuffled_ordinals(&[2; 16], &map);
+        let other = shuffled_ordinals(&prf(), &context, &[2; 16], &map).unwrap();
         assert_ne!(
             ordinals, other,
             "a different token shuffles differently (with overwhelming probability)"
+        );
+    }
+
+    /// A token's holder cannot test key names: the step from a parent's
+    /// token to a child's, and an object member's rank, are keyed with the
+    /// index key, so the same parent token and label give unrelated bytes
+    /// under another key, and nothing public reproduces them.
+    #[test]
+    fn the_token_step_and_the_rank_are_keyed() {
+        let context = Context::from_encoded(b"users/profile");
+        let other = HmacSha256Prf::new(Protected::new([8; 32]));
+        let parent = [5; 16];
+        let key = Label::Key("email@example.com".into());
+        let step = |prf: &HmacSha256Prf, label: &Label| {
+            child_token(prf, &context, &parent, label).unwrap()
+        };
+        assert_eq!(step(&prf(), &key), step(&prf(), &key), "deterministic");
+        assert_ne!(step(&prf(), &key), step(&other, &key), "keyed");
+        assert_ne!(
+            step(&prf(), &key),
+            h16(&[b"t", &parent, &[0x01], b"email@example.com"]),
+            "not the unkeyed hash"
+        );
+        assert_ne!(
+            step(&prf(), &Label::Index(0)),
+            step(&prf(), &Label::Key("0".into())),
+            "an element is not a member"
+        );
+        assert_ne!(
+            rank(&prf(), &context, &parent, "a").unwrap(),
+            rank(&other, &context, &parent, "a").unwrap(),
+            "the rank is keyed"
         );
     }
 
