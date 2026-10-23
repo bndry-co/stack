@@ -792,3 +792,238 @@ fn postgres_extracts_walks_and_orders_by_path() {
         }
     }
 }
+
+/// A document of the flat shape: four nodes, under PostgreSQL's TOAST
+/// threshold, so the row sits inline in the heap.
+fn flat_document(i: i64) -> Value {
+    json!({"number": i, "hello": format!("h{}", i % 17), "flag": i % 2 == 0})
+}
+
+/// A document of the nested shape: about 220 nodes, well over the TOAST
+/// threshold, so the heap holds a pointer and the document sits in the
+/// TOAST relation.
+fn nested_document(i: i64) -> Value {
+    let orders: Vec<Value> = (0..12)
+        .map(|k| {
+            let items: Vec<Value> = (0..5)
+                .map(|m| json!({"sku": format!("s{}", (i + k + m) % 23), "qty": m + 1, "gift": m == 0}))
+                .collect();
+            json!({"id": i * 100 + k, "total": (i + k) % 997, "items": items})
+        })
+        .collect();
+    json!({"number": i, "hello": format!("h{}", i % 17), "orders": orders})
+}
+
+/// Needs an EQL v4 installation. The planner chooses the indexes on its
+/// own, with every setting at its default, on both shapes a stored
+/// document takes: inline (a small document, under the TOAST threshold)
+/// and TOASTed (a large one, where the heap holds a pointer and a
+/// sequential scan looks cheap by page count). `json_tree_query` is
+/// plpgsql with `COST 1000` for exactly that reason: the planner cannot
+/// see that evaluating it detoasts the row, so its cost has to say so.
+/// The oracle test above shows the GIN index with sequential scans turned
+/// off; this one shows it with them on, which is what a customer's
+/// database runs. The ordering path is held the same way: a functional
+/// btree on `ord_term(doc -> selector)` serves a range at a path.
+///
+/// The last block is a control: with the function's cost set to the
+/// minimum for one transaction, the planner prefers the sequential scan
+/// on the TOASTed table, which is what the assertion above guards
+/// against. Read it as "the assertion can fail", not as a target.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_the_planner_picks_the_indexes_without_help() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = wait(&runtime, common::cipher());
+    let plan = plan();
+    let mut db = connect();
+
+    let version: i32 = db
+        .query_one("SHOW server_version_num", &[])
+        .unwrap()
+        .get::<_, String>(0)
+        .parse()
+        .unwrap();
+
+    // The operands: a containment needle per shape, and one range bound at
+    // `$.number`, whose selector the functional index is built on.
+    let bound = wait(
+        &runtime,
+        cipher
+            .query(op::AtPath(op::Gte), &("$.number", 1))
+            .on(&plan),
+    )
+    .unwrap();
+    let number = bound.selector().to_string();
+    let leaf = |value: i64| {
+        let query = wait(
+            &runtime,
+            cipher
+                .query(op::AtPath(op::Gte), &("$.number", value))
+                .on(&plan),
+        )
+        .unwrap();
+        serde_json::to_string(&JsonTreeLeafQuery::try_from(&query).unwrap()).unwrap()
+    };
+    let needle = |value: Value| {
+        let query = wait(&runtime, cipher.query(op::Contains, &value).on(&plan)).unwrap();
+        serde_json::to_string(&JsonTreeQuery::try_from(&query).unwrap()).unwrap()
+    };
+
+    let explain =
+        |db: &mut postgres::Client, sql: &str, params: &[&(dyn postgres::types::ToSql + Sync)]| {
+            db.query(&format!("EXPLAIN {sql}"), params)
+                .unwrap_or_else(|e| panic!("{sql}: {e}"))
+                .iter()
+                .map(|r| r.get::<_, String>(0))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+    struct Shape {
+        name: &'static str,
+        rows: i64,
+        document: fn(i64) -> Value,
+        needle: Value,
+        inline: bool,
+    }
+    let shapes = [
+        Shape {
+            name: "flat",
+            rows: 1000,
+            document: flat_document,
+            needle: json!({"hello": "h3"}),
+            inline: true,
+        },
+        Shape {
+            name: "nested",
+            rows: 300,
+            document: nested_document,
+            needle: json!({"orders": [{"items": [{"sku": "s7", "gift": true}]}]}),
+            inline: false,
+        },
+    ];
+
+    for shape in &shapes {
+        let table = format!("json_tree_plan_{}", shape.name);
+        db.batch_execute(&format!(
+            "CREATE TEMP TABLE {table} (id int PRIMARY KEY, doc public.eql_v4_json_tree NOT NULL);
+             CREATE INDEX {table}_gin ON {table} USING gin ((eql_v4.json_tree_query(doc)) jsonb_path_ops);
+             CREATE INDEX {table}_ord ON {table} (eql_v4.ord_term(doc -> '{number}'::text));"
+        ))
+        .unwrap();
+        for i in 0..shape.rows {
+            let stored = wait(&runtime, seal(&cipher, &(shape.document)(i)));
+            let stored = serde_json::to_string(&stored).unwrap();
+            db.execute(
+                &format!(
+                    "INSERT INTO {table} VALUES ($1, $2::text::jsonb::public.eql_v4_json_tree)"
+                ),
+                &[&(i as i32), &stored],
+            )
+            .unwrap();
+        }
+        db.batch_execute(&format!("ANALYZE {table}")).unwrap();
+
+        // The two storage regimes the shapes stand for, pinned, so the test
+        // keeps meaning when a document's size changes.
+        let (column, toasted): (i32, i64) = {
+            let row = db
+                .query_one(
+                    &format!(
+                        "SELECT avg(pg_column_size(doc))::int,
+                                (SELECT count(*) FROM {table} WHERE pg_column_size(doc) > 2000)
+                         FROM {table}"
+                    ),
+                    &[],
+                )
+                .unwrap();
+            (row.get(0), row.get(1))
+        };
+        if shape.inline {
+            assert_eq!(
+                toasted, 0,
+                "{}: every row inline, {column} bytes on average",
+                shape.name
+            );
+        } else {
+            assert_eq!(
+                toasted, shape.rows,
+                "{}: every row TOASTed, {column} bytes on average",
+                shape.name
+            );
+        }
+
+        // Containment: a bitmap scan over the GIN index, on its own.
+        let operand = needle(shape.needle.clone());
+        let text = explain(
+            &mut db,
+            &format!("SELECT id FROM {table} WHERE doc @> $1::text::jsonb::eql_v4.query_json_tree"),
+            &[&operand],
+        );
+        assert!(
+            text.contains(&format!("Bitmap Index Scan on {table}_gin")),
+            "{} on PostgreSQL {version}: containment should use the GIN index without help:\n{text}",
+            shape.name
+        );
+        let matched: i64 = db
+            .query_one(
+                &format!("SELECT count(*) FROM {table} WHERE doc @> $1::text::jsonb::eql_v4.query_json_tree"),
+                &[&operand],
+            )
+            .unwrap()
+            .get(0);
+        assert!(
+            matched > 0,
+            "{}: the needle should match some rows",
+            shape.name
+        );
+
+        // A range at the ordered path: the functional btree.
+        let operand = leaf(shape.rows - 5);
+        let text = explain(
+            &mut db,
+            &format!("SELECT id FROM {table} WHERE (doc -> $1::text) >= $2::text::jsonb::eql_v4.query_json_tree_leaf"),
+            &[&number, &operand],
+        );
+        assert!(
+            text.contains(&format!("Index Scan using {table}_ord"))
+                || text.contains(&format!("Bitmap Index Scan on {table}_ord")),
+            "{} on PostgreSQL {version}: a range at an ordered path should use the btree without help:\n{text}",
+            shape.name
+        );
+        let matched: i64 = db
+            .query_one(
+                &format!("SELECT count(*) FROM {table} WHERE (doc -> $1::text) >= $2::text::jsonb::eql_v4.query_json_tree_leaf"),
+                &[&number, &operand],
+            )
+            .unwrap()
+            .get(0);
+        assert_eq!(matched, 5, "{}: the top five numbers", shape.name);
+    }
+
+    // The control: with `json_tree_query` priced as if it were free, the
+    // planner takes the sequential scan over the TOASTed table.
+    let mut tx = db.transaction().unwrap();
+    tx.batch_execute("ALTER FUNCTION eql_v4.json_tree_query(public.eql_v4_json_tree) COST 1")
+        .unwrap();
+    let operand = needle(shapes[1].needle.clone());
+    let text = tx
+        .query(
+            "EXPLAIN SELECT id FROM json_tree_plan_nested WHERE doc @> $1::text::jsonb::eql_v4.query_json_tree",
+            &[&operand],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| r.get::<_, String>(0))
+        .collect::<Vec<_>>()
+        .join("\n");
+    tx.rollback().unwrap();
+    assert!(
+        text.contains("Seq Scan on json_tree_plan_nested"),
+        "on PostgreSQL {version}, with the function priced as free the planner should take the sequential scan, which is what the cost guards against:\n{text}"
+    );
+}
