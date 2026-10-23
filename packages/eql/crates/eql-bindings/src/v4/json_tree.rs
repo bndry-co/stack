@@ -16,7 +16,7 @@
 //! .context("users/profile").encrypt_into::<JsonDocument>()`, and converts
 //! into the operand types here; the identifier and the two-segment label
 //! are one context, so the selectors agree (see [`crate::encryption`]). The
-//! design is `docs/plans/2026-10-17-json-index-stack-encrypt-spike.md` at
+//! design is `docs/plans/2026-10-17-json-tree-index.md` at
 //! the repository root.
 
 use schemars::{schema_for, JsonSchema, Schema};

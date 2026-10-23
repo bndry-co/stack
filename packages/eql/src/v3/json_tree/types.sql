@@ -18,7 +18,7 @@
 --!   - {{prefix}}.query_json_tree_leaf    — an ordering operand at a path: a
 --!                                        selector and a leaf ordering term.
 --!
---! The design is `docs/plans/2026-10-17-json-index-stack-encrypt-spike.md`
+--! The design is `docs/plans/2026-10-17-json-tree-index.md`
 --! at the repository root. The document's per-entry fields:
 --!   `s`  path selector (16 bytes, hex): every element of an array shares its
 --!        parent's, so a path reads `$.a[*].x`.
