@@ -390,7 +390,7 @@ pub unsafe extern "C" fn se_keyset(sel_ptr: *const u8, sel_len: u32) -> u64 {
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
 /// — or an array of parts, which may nest as deep as the transport codec
-/// allows (`vitaminc_aead_frame::MAX_DEPTH` levels, counted from
+/// allows (`stack_encrypt::dynamic::frame::MAX_DEPTH` levels, counted from
 /// the root of the encoded value; deeper is refused as `STATUS_ENCODING`
 /// before the context is parsed). [`stack_encrypt::dynamic::context`] is the one home of
 /// that grammar and of which Rust context each shape spells.

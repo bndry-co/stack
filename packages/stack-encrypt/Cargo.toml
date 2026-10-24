@@ -37,8 +37,8 @@ vitaminc-hmac = { workspace = true }
 # number whatever its width, text in Unicode 16 NFC. Match text is
 # normalized by the same crate before it is tokenized.
 vitaminc-normalize = { workspace = true }
-# The order targets (`OrderTarget`) and the scheme traits cllw-ore's
-# `vitaminc` feature implements, which order terms encrypt through.
+# The order targets (`OrderTarget`) and the scheme traits clww-ore and
+# ore-rs implement, which order terms encrypt through.
 vitaminc-ore = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
@@ -46,6 +46,9 @@ vitaminc-protected = { workspace = true }
 # control data (statistics, options, a plan) into typed messages.
 vitaminc-aead-frame = { workspace = true, optional = true, features = ["serde"] }
 serde = { workspace = true }
+# The order terms' serde: lowercase hex in JSON, raw bytes in a binary
+# format, through serdect's constant-time hex.
+serdect = { workspace = true }
 # `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS,
 # and the JSON index's chain fields, header and ordering term on the wire:
 # padded standard base64, the one form PostgreSQL's `decode(x, 'base64')`
@@ -61,9 +64,9 @@ base85-simd = "0.1.0"
 # already builds, so nothing new is compiled.
 sha2 = "0.11"
 
-cllw-ore = { workspace = true }
-# Block ORE (`OreBlock`): ore-rs's 6-bit schemes through the same
-# vitaminc-ore traits cllw-ore implements.
+clww-ore = { workspace = true }
+# Block ORE (`OreBlock`): ore-rs's `BlockOre`, its 6-bit schemes behind
+# the same vitaminc-ore traits clww-ore implements.
 ore-rs = { workspace = true }
 # Every error derives `miette::Diagnostic` (a code, and help where a caller
 # can act) and gives its structured fields as a `serde_json` map through
@@ -73,6 +76,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
+# `value::{Date, Timestamp}` to and from chrono's types (the `chrono`
+# feature), and `value::Decimal` to and from rust_decimal's (`rust_decimal`).
+chrono = { version = "0.4.44", optional = true, default-features = false }
+rust_decimal = { version = "1", optional = true, default-features = false }
 
 [features]
 default = ["http"]
@@ -86,6 +93,11 @@ http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # only at runtime, as an FFI binding's are. Off by default — it is only of
 # use to a binding author. Its transport frames are vitaminc-aead's own.
 dynamic = ["dep:vitaminc-aead-frame"]
+# Conversions between chrono's `NaiveDate` / `DateTime<Utc>` and
+# `value::Date` / `value::Timestamp`.
+chrono = ["dep:chrono", "vitaminc-aead/chrono"]
+# Conversions between rust_decimal's `Decimal` and `value::Decimal`.
+rust_decimal = ["dep:rust_decimal", "vitaminc-aead/rust_decimal"]
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.

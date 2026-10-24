@@ -2574,7 +2574,8 @@ mod tests {
             search4.contains("AND VALUE ? 'v'") && search4.contains("NOT (VALUE ? 'c')"),
             "{search4}"
         );
-        // The ORE twin: a present `ob` is still a non-empty array.
+        // The ORE twin: a present `ob` is a non-empty array in v3, and in v4
+        // a string with a block ORE prefix.
         let ore3 = domain_check(&v3, "eql_v3", "query_text_search_ore");
         assert!(ore3.contains("AND VALUE ? 'ob'"), "{ore3}");
         assert!(
@@ -2584,12 +2585,26 @@ mod tests {
         let ore4 = domain_check(&v4, "eql_v4", "query_text_search_ore");
         assert!(
             ore4.contains("AND (VALUE ? 'hm' OR VALUE ? 'ob' OR VALUE ? 'bf')")
-                && ore4
-                    .contains("AND (NOT (VALUE ? 'ob') OR (jsonb_typeof(VALUE -> 'ob') = 'array'"),
+                && ore4.contains(
+                    "AND (NOT (VALUE ? 'ob') OR (jsonb_typeof(VALUE -> 'ob') = 'string'\n          \
+                     AND left(VALUE ->> 'ob', 4) IN ('0202', '0203')))"
+                ),
             "{ore4}"
         );
-        // Every other query operand is the same in both versions.
-        for other in ["query_text_eq", "query_text_match", "query_text_ord"] {
+        assert!(!ore4.contains("'array'"), "{ore4}");
+        // An order term is a string with its scheme's prefix in v4 only.
+        let ord3 = domain_check(&v3, "eql_v3", "query_text_ord");
+        let ord4 = domain_check(&v4, "eql_v4", "query_text_ord");
+        assert!(!ord3.contains("left(VALUE"), "{ord3}");
+        assert!(
+            ord4.contains(
+                "AND jsonb_typeof(VALUE -> 'op') = 'string'\n        \
+                 AND left(VALUE ->> 'op', 2) IN ('00', '01')"
+            ),
+            "{ord4}"
+        );
+        // Every query operand without an order term is the same in both versions.
+        for other in ["query_text_eq", "query_text_match"] {
             assert_eq!(
                 domain_check(&v3, "eql_v3", other)
                     .replace("eql_v3", "eql_vN")
