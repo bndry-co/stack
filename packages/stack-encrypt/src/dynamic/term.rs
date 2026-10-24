@@ -32,6 +32,7 @@
 //! going to be **stored** should come from the record path, where it shares
 //! one context with the ciphertext beside it (ADR-0004).
 
+use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
@@ -45,7 +46,7 @@ use vitaminc_normalize::{domain_of, normalize, NormalizeError};
 use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Error, Reason};
-use crate::json::JsonOptions;
+use crate::json::{JsonOptions, JsonPath};
 use crate::sem::{DefaultMatch, MatchOptions, Orderable, QueryTokens, TermError, Tokenizer};
 use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
@@ -198,7 +199,7 @@ impl Serialize for IndexSpec {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         #[derive(Serialize)]
         #[serde(rename_all = "lowercase")]
-        enum Out {
+        enum Out<'a> {
             Eq,
             #[serde(rename = "match")]
             DefaultMatch,
@@ -209,12 +210,12 @@ impl Serialize for IndexSpec {
             OreBlock,
             #[serde(rename = "json")]
             DefaultJson,
-            Json(JsonOut),
+            Json(JsonOut<'a>),
         }
         #[derive(Serialize)]
-        struct JsonOut {
+        struct JsonOut<'a> {
             sealed_root: bool,
-            ordered: Vec<String>,
+            ordered: &'a BTreeSet<JsonPath>,
         }
         #[derive(Serialize)]
         struct MatchOut {
@@ -247,7 +248,7 @@ impl Serialize for IndexSpec {
             IndexSpec::Json(options) if *options == JsonOptions::default() => Out::DefaultJson,
             IndexSpec::Json(options) => Out::Json(JsonOut {
                 sealed_root: options.sealed_root,
-                ordered: options.ordered.iter().map(ToString::to_string).collect(),
+                ordered: &options.ordered,
             }),
         }
         .serialize(s)
@@ -294,26 +295,29 @@ pub(super) struct JsonWire(pub(super) JsonOptions);
 #[serde(deny_unknown_fields, default)]
 struct JsonOptionsWire {
     sealed_root: bool,
-    ordered: Vec<String>,
+    ordered: BTreeSet<JsonPath>,
 }
 
 impl Default for JsonOptionsWire {
     fn default() -> Self {
         Self {
             sealed_root: JsonOptions::default().sealed_root,
-            ordered: Vec::new(),
+            ordered: BTreeSet::new(),
         }
     }
 }
 
+/// Each ordered path was parsed as it was read ([`JsonPath`]'s
+/// `Deserialize`); what is left to refuse is a path naming a position,
+/// which no ordering reaches.
 impl TryFrom<JsonOptionsWire> for JsonWire {
     type Error = crate::sem::TermError;
     fn try_from(wire: JsonOptionsWire) -> Result<Self, Self::Error> {
         let options = JsonOptions {
             sealed_root: wire.sealed_root,
-            ..JsonOptions::new()
-        }
-        .ordering(wire.ordered)?;
+            ordered: wire.ordered,
+        };
+        options.check()?;
         Ok(JsonWire(options))
     }
 }
@@ -825,6 +829,30 @@ mod tests {
             .init()
             .await
             .expect("build cipher")
+    }
+
+    /// A JSON index's ordered paths are `JsonPath`s on both sides of the
+    /// wire: written as their text, read back parsed, and a text that is
+    /// not a path, or a path naming a position, refuses the index.
+    #[test]
+    fn json_ordered_paths_round_trip_typed() {
+        let options = JsonOptions::default()
+            .ordering(["$.orders[*].total", r#"$["a.b"]"#])
+            .unwrap();
+        let spec = IndexSpec::Json(options);
+        let wire = serde_json::to_value(&spec).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({"json": {"sealed_root": true, "ordered": [r#"$["a.b"]"#, "$.orders[*].total"]}})
+        );
+        let back = IndexSpec::from(serde_json::from_value::<IndexWire>(wire).unwrap());
+        assert_eq!(back, spec);
+        for refused in [
+            serde_json::json!({"json": {"ordered": ["orders"]}}),
+            serde_json::json!({"json": {"ordered": ["$.scores[2]"]}}),
+        ] {
+            assert!(serde_json::from_value::<IndexWire>(refused).is_err());
+        }
     }
 
     /// A pair the scheme refuses fails the run of `IndexSpec`'s public

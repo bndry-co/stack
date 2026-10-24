@@ -27,9 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index options other than the defaults (a `Layout<Value>`, so a program
   seals with `keyset.run(JsonTree::new(options).encryption(), ..)`), such
   as the paths that carry an ordering term. The wire fields are typed apart
-  from the v3 hex terms: `JsonTreeSelector` (`s`, and the pairs of `q`),
-  `JsonTreeTag` (`p`) and `JsonTreeOrderingTerm` (`op`), padded base64, and
-  `JsonTreeCiphertext` (`c`), base85.
+  from the v3 hex terms, and each names its text encoding:
+  `JsonTreeSelector` (`s`, and the pairs of `q`), `JsonTreeTag` (`p`),
+  `JsonTreeOrderingTerm` (`op`) and `JsonTreeKeyHeader` (`h`) hold an
+  `encoding::Base64Text`, padded standard base64, and `JsonTreeCiphertext`
+  (`c`) an `encoding::Base85Text`, RFC 1924 base85. Both encoding newtypes
+  serialize as the bare string and render as `string` in TypeScript and
+  JSON Schema.
 - **Range query operands for `eql_v4.between`** (`stack-encrypt` feature).
   Every ordered v4 family has two: `IntegerRangeOreQuery` and
   `IntegerRangeOpeQuery`, `TextRangeOreQuery` and `TextRangeOpeQuery`, and so

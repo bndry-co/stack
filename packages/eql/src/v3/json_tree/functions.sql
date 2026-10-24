@@ -369,6 +369,19 @@ $$;
 --! hashes whatever the document's width. The map and the header fields
 --! are computed once per call, so the document is read once.
 --!
+--! **The bound.** A stored document is untrusted: its parent tags are not
+--! authenticated, so whoever holds a token can write entries of any shape
+--! under it. The walk still ends after at most one row per entry. A probe
+--! `(t(parent), o)` finds at most one entry, since the map keeps one entry
+--! per tag and entries sharing a `p` collapse into it; a hit's token is a
+--! hash of that probe, so no two rows share a token and no probe is made
+--! twice; and a miss adds no row. Each walk also reads its recursion
+--! through `LIMIT` the entry count plus one, the seed row, so the bound
+--! holds without relying on either fact: PostgreSQL computes a recursive
+--! query only as far as its reader pulls rows, so the limit stops the
+--! recursion and not only the output, and a walk of a sealed document
+--! never reaches it.
+--!
 --! **Gates.** An object member's ordinal is a function of its siblings'
 --! keys, which the client does not know, so the client derives a token
 --! only for a chain head and the array positions that directly follow it,
@@ -405,6 +418,7 @@ AS $$
       SELECT {{prefix}}_internal.json_tree_iv(e::jsonb ->> 'h') AS iv,
              {{prefix}}_internal.json_tree_by_parent(e::jsonb) AS map,
              {{prefix}}.json_tree_meta(e::jsonb) AS meta,
+             jsonb_array_length(e::jsonb -> 'sv') AS entries,
              COALESCE(array_length(gates, 1), 0) AS gated
     ),
     -- The walk of `json_tree_subtree_at`, cut one level below the gates.
@@ -437,9 +451,13 @@ AS $$
           SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, probe.pt, probe.o) AS entry
         ) AS hit
         WHERE hit.entry IS NOT NULL
+    ),
+    -- At most one row per entry and the seed (see "The bound" above).
+    visited AS MATERIALIZED (
+      SELECT w.* FROM walk AS w LIMIT (SELECT doc.entries + 1 FROM doc)
     )
   SELECT (doc.meta || w.entry || '{"d": 1}'::jsonb)::public.{{prefix}}_json_tree_entry
-  FROM walk AS w, doc
+  FROM visited AS w, doc
   WHERE w.entry IS NOT NULL AND w.pass AND w.depth = doc.gated + 1
   ORDER BY (w.entry ->> 'j')::integer
 $$;
@@ -507,6 +525,7 @@ AS $$
              {{prefix}}_internal.json_tree_by_parent(e::jsonb) AS map,
              {{prefix}}.json_tree_meta(e::jsonb) AS meta,
              e::jsonb -> 'sv' -> 0 AS root,
+             jsonb_array_length(e::jsonb -> 'sv') AS entries,
              budget > 0 AND {{prefix}}_internal.json_tree_sealed_root(e::jsonb ->> 'h') AS capped,
              COALESCE(array_length(gates, 1), 0) AS gated
     ),
@@ -549,11 +568,18 @@ AS $$
         ) AS hit
         WHERE hit.entry IS NOT NULL
     ),
+    -- At most one row per entry and the seed (see "The bound" above),
+    -- whatever the budget: a budget of 0, or an open root, leaves `found`
+    -- uncapped, and this is then the walk's only limit.
+    visited AS MATERIALIZED (
+      SELECT w.* FROM walk AS w LIMIT (SELECT doc.entries + 1 FROM doc)
+    ),
     -- One row past the budget is enough to know the walk went over; a walk
-    -- under it is the subtree complete. Uncapped, the limit is NULL: all.
+    -- under it is the subtree complete. Uncapped, the limit is NULL: all
+    -- that `visited` holds.
     found AS MATERIALIZED (
       SELECT w.depth, w.entry
-      FROM walk AS w, doc
+      FROM visited AS w, doc
       WHERE w.entry IS NOT NULL AND w.pass AND w.depth >= doc.gated
       LIMIT (SELECT CASE WHEN doc.capped THEN budget + 1 END FROM doc)
     ),

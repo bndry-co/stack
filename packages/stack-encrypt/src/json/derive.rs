@@ -20,7 +20,8 @@ use vitaminc_protected::{Controlled, Protected};
 
 use super::path::{JsonPath, Segment};
 use super::plain::{
-    insert_member, protected_array, protected_object, push_element, read_protected, PlainJson,
+    insert_member, protected_array, protected_object, push_element, read_protected, take_protected,
+    PlainJson,
 };
 use super::query::{Gate, JsonSelector, JsonSubtreeKey};
 use super::{JsonDocument, JsonEntry, JsonHeader, JsonNode, JsonOptions, JsonSubtree, Tag};
@@ -54,6 +55,26 @@ const RANK_DOMAIN: &[u8] = b"stack-encrypt/json/rank/v1";
 /// is the same under either root option, so the option never changes which
 /// documents the index accepts.
 pub(crate) const MAX_DEPTH: usize = 127;
+
+/// The largest number the index gives an array element's position, a
+/// node's ordinal or a node's child count: PostgreSQL's `integer`, which is
+/// what the SQL walk casts a position gate's ordinal to and what
+/// `json_tree_child_count` returns.
+///
+/// A document with a wider array or object is refused when it is sealed,
+/// and a path naming a position past this is refused when its subtree key
+/// is derived. No stored document has a node there, so the refusal loses no
+/// answer, and without it the position would reach the server as a gate
+/// that PostgreSQL refuses to cast (error 22003) instead of finding nothing.
+const MAX_ORDINAL: u32 = i32::MAX.unsigned_abs();
+
+/// `n` as an ordinal, or [`TermError::JsonTooWide`] past [`MAX_ORDINAL`].
+fn fit_ordinal(n: impl TryInto<u32>) -> Result<u32, TermError> {
+    n.try_into()
+        .ok()
+        .filter(|n| *n <= MAX_ORDINAL)
+        .ok_or(TermError::JsonTooWide)
+}
 
 /// The byte that leads a sealed root's plaintext: the whole document, not a
 /// node.
@@ -505,7 +526,7 @@ impl Walker<'_> {
             Value::Array(items) => items.len(),
             _ => 0,
         };
-        let children = u32::try_from(children).map_err(|_| TermError::JsonTooWide)?;
+        let children = fit_ordinal(children)?;
         let index = self.nodes.len();
         self.nodes.push(TermNode {
             positional: positional.clone(),
@@ -547,10 +568,7 @@ impl Walker<'_> {
             Value::Array(items) => {
                 for (i, child) in items.iter().enumerate() {
                     let i = u64::try_from(i).map_err(|_| TermError::JsonTooWide)?;
-                    let ordinal = token
-                        .map(|_| u32::try_from(i))
-                        .transpose()
-                        .map_err(|_| TermError::JsonTooWide)?;
+                    let ordinal = token.map(|_| fit_ordinal(i)).transpose()?;
                     let _ = self.visit(
                         child,
                         &positional.then(Segment::Index(i)),
@@ -1102,19 +1120,21 @@ impl DecryptInto<Vec<Value>> for JsonSubtree {
         Decryption::from_open(move |cipher| {
             if self.is_sealed_root() {
                 let below = self.below;
-                return open_fallback(self, cipher, context).try_map(move |(path, whole)| {
-                    // The selection is made inside the document's
-                    // `Protected` and comes out wrapped; the document is
-                    // wiped when it drops at the end of this closure.
-                    let selected = read_protected(&whole, |doc: &PlainJson| {
-                        let found = path.select(doc.value());
+                return open_fallback(self, cipher, context).try_map(move |(path, mut whole)| {
+                    // The selected nodes move out of the document's
+                    // `Protected` into one of their own, leaving `null`
+                    // behind, so their plaintext is never copied; what is
+                    // left of the document is wiped when it drops at the
+                    // end of this closure.
+                    let selected = take_protected(&mut whole, |doc: &mut PlainJson| {
+                        let mut found = path.select_mut(doc.value_mut());
                         let selected = if below {
-                            match found.as_slice() {
-                                [node] => children(node),
+                            match found.as_mut_slice() {
+                                [node] => take_children(node),
                                 _ => return None,
                             }
                         } else {
-                            found.into_iter().cloned().collect()
+                            found.into_iter().map(std::mem::take).collect()
                         };
                         Some(PlainJson::from_value(Value::Array(selected)))
                     })
@@ -1149,13 +1169,18 @@ impl DecryptInto<Value> for JsonSubtree {
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
         Decryption::from_open(move |cipher| {
             if self.is_sealed_root() {
-                return open_fallback(self, cipher, context).try_map(|(path, whole)| {
+                return open_fallback(self, cipher, context).try_map(|(path, mut whole)| {
+                    // The one node at the path moves out of the document's
+                    // `Protected` into one of its own, leaving `null`
+                    // behind, so its plaintext is never copied; what is
+                    // left of the document is wiped when it drops at the
+                    // end of this closure.
                     let mut reached = 0;
-                    let selected = read_protected(&whole, |doc: &PlainJson| {
-                        let found = path.select(doc.value());
+                    let selected = take_protected(&mut whole, |doc: &mut PlainJson| {
+                        let mut found = path.select_mut(doc.value_mut());
                         reached = found.len();
-                        match found.as_slice() {
-                            [node] => Some(PlainJson::from_value((*node).clone())),
+                        match found.as_mut_slice() {
+                            [node] => Some(PlainJson::from_value(std::mem::take(&mut **node))),
                             _ => None,
                         }
                     });
@@ -1249,14 +1274,16 @@ fn open_subtree<'a, K>(
     })
 }
 
-/// The values of a node's children, in the node's order: an array's
-/// elements, an object's member values, and none for a scalar. What a
-/// `json_tree_subtree` walk's rows open to as a [`Vec`], taken over the
-/// whole document when the walk fell back to the sealed root.
-fn children(node: &Value) -> Vec<Value> {
+/// The values of a node's children, in the node's order, moved out of it:
+/// an array's elements, an object's member values (each leaving `null`
+/// under its key, which stays in the document to be wiped with it), and
+/// none for a scalar. What a `json_tree_subtree` walk's rows open to as a
+/// [`Vec`], taken out of the whole document when the walk fell back to the
+/// sealed root.
+fn take_children(node: &mut Value) -> Vec<Value> {
     match node {
-        Value::Array(items) => items.clone(),
-        Value::Object(members) => members.values().cloned().collect(),
+        Value::Array(items) => std::mem::take(items),
+        Value::Object(members) => members.values_mut().map(std::mem::take).collect(),
         _ => Vec::new(),
     }
 }
@@ -1330,7 +1357,7 @@ fn subtree_key_for(
         prefix = prefix.then(segment.clone());
         match segment {
             Segment::Index(index) => {
-                let o = u32::try_from(*index).map_err(|_| TermError::JsonTooWide)?;
+                let o = fit_ordinal(*index)?;
                 let element = prf16(prf, SELECTOR_DOMAIN, context, &prefix.selector_bytes())?;
                 token = child_token(&token, &element, o);
             }
@@ -1349,7 +1376,7 @@ fn subtree_key_for(
         prefix = prefix.then(segment.clone());
         gates.push(match segment {
             Segment::Index(index) => Gate::Slot(
-                u32::try_from(*index).map_err(|_| TermError::JsonTooWide)?,
+                fit_ordinal(*index)?,
                 prf16(prf, SELECTOR_DOMAIN, context, &prefix.selector_bytes())?,
             ),
             Segment::Key(_) | Segment::Wildcard => Gate::Selector(prf16(
@@ -1400,6 +1427,9 @@ impl<K> KeysetCipher<'_, K> {
     /// [`TermError::JsonSealedRoot`] for the root, or for a path whose
     /// first step is a wildcard, under the sealed root: no token exists for
     /// the root, and the document opens whole instead.
+    /// [`TermError::JsonTooWide`] for a path naming an array position past
+    /// 2³¹ − 1, PostgreSQL's `integer`: no stored document has an element
+    /// there.
     pub fn json_subtree_key<'c>(
         &self,
         path: &JsonPath,
@@ -1583,6 +1613,33 @@ mod tests {
         let a = key(&open, "$.a").unwrap();
         assert_eq!(a.token_bytes(), root.token_bytes());
         assert_eq!(a.gates().len(), 1);
+    }
+
+    #[test]
+    fn a_position_past_postgres_integer_is_refused_not_sent() {
+        let context = Context::from_encoded(b"users/profile");
+        let key = |path: &str| {
+            subtree_key_for(
+                &prf(),
+                &context,
+                &JsonOptions::default(),
+                &JsonPath::parse(path).unwrap(),
+            )
+        };
+        // The last position PostgreSQL's integer holds reaches the server
+        // as a gate it can cast, and finds nothing there.
+        let last = key("$.a.b[2147483647]").unwrap();
+        assert!(last.gates()[1].starts_with("#2147483647:"));
+        // One past it fits u32 but not integer: refused here, as a gate and
+        // as a position the client chains itself.
+        for path in ["$.a.b[2147483648]", "$.a[2147483648]", "$.a[4294967296]"] {
+            assert!(matches!(key(path), Err(TermError::JsonTooWide)), "{path}");
+        }
+        assert_eq!(fit_ordinal(i32::MAX.unsigned_abs()).unwrap(), 2_147_483_647);
+        assert!(matches!(
+            fit_ordinal(2_147_483_648_u64),
+            Err(TermError::JsonTooWide)
+        ));
     }
 
     #[test]

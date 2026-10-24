@@ -291,9 +291,14 @@ pub enum TermError {
         help("The JSON index takes a document at most 127 levels deep, the depth its sealed root parses back. Flatten the document, or store it as a ciphertext without the index.")
     )]
     JsonTooDeep,
-    /// A JSON array has more elements than the JSON index numbers.
+    /// A JSON array or object has more children than the JSON index
+    /// numbers, or a path names an array position past the last one it
+    /// numbers: 2³¹ − 1, PostgreSQL's `integer`.
     #[error("a JSON array is too wide for the JSON index")]
-    #[diagnostic(code(stack_encrypt::json_too_wide))]
+    #[diagnostic(
+        code(stack_encrypt::json_too_wide),
+        help("The JSON index numbers at most 2147483647 children under one node, so no stored document has an element past position 2147483647. Split the array, or ask for a position below that.")
+    )]
     JsonTooWide,
     /// A subtree key was asked for the root, or a path whose first step is
     /// a wildcard, of a JSON index whose root is sealed: no token exists

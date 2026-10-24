@@ -107,6 +107,30 @@ where
         .transpose()
 }
 
+/// Move a `T` out of `source` without `source` leaving its `Protected`:
+/// `take` borrows the inner value mutably through vitaminc (`update`) and
+/// moves out what it returns, which is wrapped as it leaves. What stays
+/// behind is wiped with `source`. `None` when `take` refuses. The moving
+/// counterpart of [`read_protected`]: one copy of the plaintext, not two.
+pub(crate) fn take_protected<S, T>(
+    source: &mut Protected<S>,
+    take: impl FnOnce(&mut S) -> Option<T>,
+) -> Option<Protected<T>>
+where
+    S: Zeroize,
+    T: Zeroize,
+{
+    let mut take = Some(take);
+    let mut taken = Protected::new(None::<T>);
+    source.update(|inner| {
+        if let Some(take) = take.take() {
+            let mut moved = take(inner);
+            taken.update(|slot| *slot = moved.take());
+        }
+    });
+    taken.transpose()
+}
+
 /// An object under construction inside a `Protected`, so a member already
 /// moved in is wiped if the build fails before the object is handed over.
 pub(crate) fn protected_object() -> Protected<PlainJson> {
@@ -198,6 +222,28 @@ mod tests {
         assert!(read_protected(&bytes, |_: &Vec<u8>| None::<PlainJson>).is_none());
         // The source is only borrowed: it is still whole.
         assert_eq!(bytes.risky_ref(), b"\"hello\"");
+    }
+
+    #[test]
+    fn take_protected_moves_the_node_out_and_leaves_null() {
+        let mut doc = PlainJson::protect(json!({"a": {"secret": "s3cret"}, "b": 1}));
+        let taken = take_protected(&mut doc, |d: &mut PlainJson| {
+            d.value_mut()
+                .get_mut("a")
+                .map(|a| PlainJson::from_value(std::mem::take(a)))
+        })
+        .unwrap();
+        assert_eq!(
+            taken.risky_unwrap().into_value(),
+            json!({"secret": "s3cret"})
+        );
+        assert_eq!(
+            doc.risky_unwrap().into_value(),
+            json!({"a": null, "b": 1}),
+            "the document keeps no copy of what was taken"
+        );
+        let mut doc = PlainJson::protect(json!([]));
+        assert!(take_protected(&mut doc, |_: &mut PlainJson| None::<PlainJson>).is_none());
     }
 
     #[test]
