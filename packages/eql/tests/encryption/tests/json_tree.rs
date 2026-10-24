@@ -156,7 +156,7 @@ async fn the_query_operands_are_the_engines_terms_in_the_sql_contract() {
         serde_json::to_value(&leaf).unwrap(),
         serde_json::to_value(&bound).unwrap()
     );
-    assert_eq!(leaf.s.0, bound.selector().to_string());
+    assert_eq!(leaf.s.0.as_str(), bound.selector().to_string());
 
     // The engine's document under the label and the EQL document under the
     // identifier carry the same selectors: one context, two spellings.
@@ -164,7 +164,7 @@ async fn the_query_operands_are_the_engines_terms_in_the_sql_contract() {
     let typed = seal(&cipher, &fixture()).await;
     assert_eq!(engine.entries().len(), typed.sv.len());
     for (a, b) in engine.entries().iter().zip(&typed.sv) {
-        assert_eq!(base64(a.selector()), b.s.0);
+        assert_eq!(base64(a.selector()), b.s.0.as_str());
     }
     assert_eq!(
         serde_json::to_value(engine.projection()).unwrap(),

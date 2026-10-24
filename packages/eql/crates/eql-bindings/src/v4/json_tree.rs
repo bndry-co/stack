@@ -32,35 +32,44 @@ use stack_encrypt::{
 };
 use ts_rs::TS;
 
-use crate::v3::terms::KeyHeader;
+use crate::encoding::{Base64Text, Base85Text};
 use crate::v4::{DomainType, SchemaVersion};
 use crate::Identifier;
 
 /// A path selector `s` (and the value selector `vs` of a projection pair):
-/// sixteen bytes, padded standard base64, as PostgreSQL's `encode(x,
-/// 'base64')` writes it. Column-wide: the same path has the same selector
-/// in every row, which is what `->` and containment match on.
+/// sixteen bytes in [`Base64Text`]. Column-wide: the same path has the
+/// same selector in every row, which is what `->` and containment match on.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
-pub struct JsonTreeSelector(pub String);
+pub struct JsonTreeSelector(pub Base64Text);
 
-/// A node's ciphertext `c`: RFC 1924 base85 (`base85-simd`), which no SQL
-/// function decodes. The AES-GCM envelope of the node's label, kind, child
-/// count and scalar value under the document's data key.
+/// A node's ciphertext `c`, in [`Base85Text`], which no SQL function
+/// decodes. The AES-GCM envelope of the node's label, kind, child count and
+/// scalar value under the document's data key.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
-pub struct JsonTreeCiphertext(pub String);
+pub struct JsonTreeCiphertext(pub Base85Text);
 
-/// An eight-byte parent tag `p`, padded base64: the first eight bytes of
-/// the parent-tag hash, per document, salted by the document's `iv`, so
+/// An eight-byte parent tag `p`, in [`Base64Text`]: the first eight bytes
+/// of the parent-tag hash, per document, salted by the document's `iv`, so
 /// unlinkable across rows at rest. `eql_v4.json_tree_subtree_at` derives
 /// the same text with `encode(substr(…, 1, 8), 'base64')` to find a child.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
-pub struct JsonTreeTag(pub String);
+pub struct JsonTreeTag(pub Base64Text);
 
-/// A leaf ordering term `op`, padded base64: the CLLW OPE term of a number
-/// or string leaf at a path the index orders. `eql_v4.ord_term` decodes it
-/// to the bytea-backed `eql_v4_internal.ope_cllw` domain.
+/// A leaf ordering term `op`, in [`Base64Text`]: the CLLW OPE term of a
+/// number or string leaf at a path the index orders. `eql_v4.ord_term`
+/// decodes it to the bytea-backed `eql_v4_internal.ope_cllw` domain.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
-pub struct JsonTreeOrderingTerm(pub String);
+pub struct JsonTreeOrderingTerm(pub Base64Text);
+
+/// The document's key header `h`, in [`Base64Text`]: what retrieving the
+/// document's data key needs, and the root's layout
+/// ([`stack_encrypt::json::JsonHeader`]'s bytes). Stored once per document,
+/// and grafted onto every entry an extractor returns. The SQL decodes it to
+/// read the `iv` the parent tags are salted by and the sealed-root flag.
+/// Not the v3 SteVec [`KeyHeader`](crate::v3::terms::KeyHeader), which is
+/// base85 and which SQL never parses.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
+pub struct JsonTreeKeyHeader(pub Base64Text);
 
 /// `public.eql_v4_json_tree`: a JSON tree document, `{v, i, h, sv:
 /// [entry], q: group}`. Strict. `h` is the document's key header, stored
@@ -76,7 +85,7 @@ pub struct JsonTreeOrderingTerm(pub String);
 pub struct JsonTreeDocument {
     pub v: SchemaVersion,
     pub i: Identifier,
-    pub h: KeyHeader,
+    pub h: JsonTreeKeyHeader,
     pub sv: Vec<JsonTreeEntry>,
     pub q: JsonTreeQueryGroup,
 }
@@ -99,7 +108,7 @@ pub struct JsonTreeEntry {
     pub op: Option<JsonTreeOrderingTerm>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub h: Option<KeyHeader>,
+    pub h: Option<JsonTreeKeyHeader>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub j: Option<u64>,
