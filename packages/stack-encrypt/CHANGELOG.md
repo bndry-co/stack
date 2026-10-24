@@ -27,7 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the root exists. A document is at most 127 levels deep. New `TermError`
   variants: `JsonPath`, `JsonTooDeep`, `JsonTooWide`, `JsonSealedRoot`,
   `JsonLeafNotOrdered`, `JsonPathNotOrdered`, `JsonOrderingAtPosition`
-  and `JsonValueNotScalar`. `JsonOptions::ordering([..])` names the
+  and `JsonValueNotScalar`. `JsonTooWide` also refuses a subtree key for a
+  path naming an array position past 2^31 - 1, PostgreSQL's `integer`,
+  which the SQL walk casts a position gate to. `JsonOptions::ordering([..])` names the
   ordered paths, `JsonPath::covers` is the rule that matches them, and a
   path naming an array position is refused there and in an ordering
   query, since the comparison extracts by selector and reads a position as
