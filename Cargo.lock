@@ -3368,6 +3368,7 @@ dependencies = [
  "cllw-ore",
  "miette",
  "ore-rs",
+ "proptest",
  "serde",
  "serde_json",
  "sha2 0.11.0",
