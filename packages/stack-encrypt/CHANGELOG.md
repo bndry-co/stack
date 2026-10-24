@@ -33,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query, since the comparison extracts by selector and reads a position as
   the wildcard. A data plan reads and writes the index (`"json"`, or
   `{"json": {"sealed_root": bool, "ordered": [path, …]}}`) and refuses to
-  run it with `Reason::JsonIndexPending`. A subtree key is a token and
+  run it with `Reason::JsonIndexPending`. `JsonPath` implements `Serialize`
+  and `Deserialize` as its text, read back through `JsonPath::parse`. A subtree key is a token and
   `JsonSubtreeKey::gates()`, one gate per path step below it, a selector
   or `#n:<selector>` for an array position. A walk past its budget returns
   the sealed root in place of the subtree. The key carries the path it

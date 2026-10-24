@@ -335,6 +335,24 @@ impl fmt::Display for JsonPath {
     }
 }
 
+/// A path serializes as its text, as [`Display`](fmt::Display) renders it,
+/// so a plan's ordered paths read as `["$.age"]` on the wire.
+impl serde::Serialize for JsonPath {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+/// A path deserializes from its text through [`JsonPath::parse`], so a
+/// string that is not a path is refused where it is read, with the
+/// [`JsonPathError`]'s message.
+impl<'de> serde::Deserialize<'de> for JsonPath {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(d)?;
+        Self::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,5 +522,21 @@ mod tests {
         assert_eq!(needle, serde_json::json!({"a": [{"x": 1}]}));
         let needle = JsonPath::root().needle(serde_json::json!("v"));
         assert_eq!(needle, serde_json::json!("v"));
+    }
+
+    #[test]
+    fn a_path_round_trips_through_serde_as_its_text() {
+        for text in ["$", "$.a[*].b", r#"$["a.b"][2]"#, r#"$["say \"hi\""]"#] {
+            let path = JsonPath::parse(text).unwrap();
+            let wire = serde_json::to_value(&path).unwrap();
+            assert_eq!(wire, serde_json::Value::String(path.to_string()));
+            assert_eq!(serde_json::from_value::<JsonPath>(wire).unwrap(), path);
+        }
+        let refused = serde_json::from_value::<JsonPath>(serde_json::json!("a.b")).unwrap_err();
+        assert_eq!(
+            refused.to_string(),
+            "not a JSON path: expected `$` at byte 0"
+        );
+        assert!(serde_json::from_value::<JsonPath>(serde_json::json!(1)).is_err());
     }
 }
