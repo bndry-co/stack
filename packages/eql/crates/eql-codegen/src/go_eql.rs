@@ -241,12 +241,12 @@ mod tests {
         // so no type is declared twice.
         assert_eq!(out.matches("\ntype JSON []byte\n").count(), 1);
         assert_eq!(out.matches("\ntype SteVecQuery []byte\n").count(), 1);
-        // TextEq is producible and says so; DateOrdOre is not and says why.
+        // TextEq is producible and says so; Json is not and says why.
         assert!(out.contains("// TextEq is the EQL type stored in public.eql_v4_text_eq"));
         assert!(out.contains("Producible: true, Reason: \"\""));
         assert!(
-            out.contains("Name: \"DateOrdOre\"")
-                && out.contains("no order term for a date, timestamp or decimal")
+            out.contains("Name: \"Json\"")
+                && out.contains("a JSON value seals as a tree of leaves")
         );
         // Every table row is one line: the shape gofmt leaves alone.
         for line in out.lines().filter(|l| l.starts_with("\t{Name: ")) {

@@ -10,8 +10,44 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+### Added
+
+- **Decimals, dates and timestamps take an order index (#1236).** An
+  `encrypt.Decimal`, `encrypt.Date` or `time.Time` field takes `ore` and
+  `ope`, and the generated code gives it `Lt`, `Lte`, `Gt`, `Gte` and
+  `Between`. A decimal orders by value (`1.5` ties `1.50`), a date by its
+  day, and a timestamp by the microsecond, truncated as its equality term
+  is. The EQL types `DateOrd`, `DateOrdOpe`, `DateOrdOre`, `TimestampOrd`,
+  `TimestampOrdOpe`, `TimestampOrdOre`, `NumericOrd`, `NumericOrdOpe` and
+  `NumericOrdOre` are producible with `encrypt_into=`.
+- **An optional field: a sealed field declared over a pointer (#1298).**
+  `DOB *encrypt.Date` with `stash:"dob,encrypt_into=Date"` generates (it
+  was refused as a composite, #1293), and `Decrypt` gives `nil` back for a
+  `nil`. The new `null=` tag part says how `nil` is stored:
+  `null=sealed` seals it as a null as long as a value of the field's type,
+  so the column does not show which rows have no value; `null=sql` stores
+  nothing, so the field's columns are SQL `NULL` and its member in the
+  generated type is a pointer. `stashgen` picks `null=sealed` for a field
+  whose type has a fixed width (a bool, a number, `encrypt.Date`,
+  `time.Time`, `encrypt.Decimal`, the 128-bit integers) and whose only
+  index, if any, is equality, and asks for `null=sql` to be written on any
+  other: a null has an equality term and no other, and text shows its
+  length. Beside equality a sealed null stores the term every nil of the
+  field shares, and a generated `EqNull` method derives its `eq` query,
+  which finds the rows whose value is absent. A generated `EncryptNull`
+  method seals `nil` for an update of one such column, which writing SQL
+  `NULL` would not store. A stored null read into a
+  field that is not a pointer is an error from `Decrypt`. `-model` does not
+  map a `null=sql` field yet.
+
 ### Breaking
 
+- **Every order term changes: re-derive stored `ore`, `ope` and
+  `ore_block` index terms.** The engine moved to vitaminc 0.8, clww-ore 0.6
+  (formerly cllw-ore) and ore-rs 0.10, and both order schemes now derive
+  different terms for the same value, so a query term no longer compares
+  with an order term stored before. Ciphertexts and equality terms are
+  unchanged.
 - **An `int8`, `int16`, `uint8` or `uint16` sealed field seals at its own
   width; run stashgen again.** It used to seal as a 32-bit integer. Values
   stored before do not decrypt under the regenerated declaration: the
@@ -59,8 +95,7 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `NumericEq` normalises the scale (`1.5 = 1.50`) and `TimestampEq` compares
   to the microsecond (truncated, never rounded), while each value opens as it was sealed. A
   `time.Time` seals its instant and opens in UTC. Their `Ord`, `OrdOpe` and
-  `OrdOre` types stay unproducible until the engine derives order terms
-  for these kinds (#1236).
+  `OrdOre` types follow (see above).
 - **Every integer width, 128-bit integers, dates, timestamps and decimals
   as sealed fields** (#1144). Each integer type seals at its own width
   (`int8` as an int8, `uint16` as a uint16), so `record.Kind` and
@@ -70,8 +105,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `Decimal` are vitaminc's `vcvalue` types, with `encrypt.DateOf`,
   `ParseInt128`, `ParseUint128` and `ParseDecimal` (which refuses NaN and
   the infinities with `ErrNonFiniteDecimal`). Equality applies to all of
-  them, ORE and OPE to every integer width but 8 bits. stashgen refuses an
-  order index on a decimal, date or timestamp, naming #1236. The value-kinds fixture
+  them, ORE and OPE to every integer width but 8 bits, and to decimals,
+  dates and timestamps (see above). The value-kinds fixture
   test opens a record the Rust lowering sealed and derives the same terms.
 - **Any built-in Go integer field takes an integer EQL type** (ADR-0002):
   an `int16` or a `uint16` into `Integer`, an `int` into `Bigint`. The
@@ -152,6 +187,13 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Changed
 
+- **An EQL v4 block ORE term is one hex string.** The `ob` of a value
+  encrypted into an `_ord_ore` or `text_search_ore` EQL type is
+  `"ob": "0202…"`, where it was a one-element array, and the EQL v4 bundle
+  checks the shape of every `ob` and `op` it stores. A database that
+  installed the EQL v4 bundle attached to `v0.1.0-alpha.1` must drop its
+  stored order domains before installing the new one (EQL's upgrade note
+  U-003).
 - **A call whose context ends fails on its own and leaves the client
   open.** A cancelled or timed-out call used to close the `encrypt.Client`,
   or the `auth` profile behind its strategy, for every later caller, and a

@@ -38,6 +38,14 @@ Shared wire fields are reusable newtypes in
 | `OreBlock256` | `ob` | `Vec<String>` | `_ord_ore` domains, `text_search_ore` |
 | `BloomFilter` | `bf` | `Vec<i16>` (signed!) | `_match` domains |
 
+EQL v4 shares these except its order terms. A v4 `ob` field is Stack
+Encrypt's `stack_encrypt::sem::OreBlockTerm<T>` and an `op` field its
+`OpeTerm<T>`, over the type's plaintext (`v4::date::DateOrdOre::ob` is an
+`OreBlockTerm<Date>`). Each is one lowercase hex string on the wire, and
+reading a payload checks the term's structure, so an EQL v3 term or a term
+of the other scheme is refused. `v4::terms::OreBlockHex` and `OpeHex`
+describe that JSON to TypeScript and JSON Schema.
+
 Note "v3" names the SQL schema generation (`eql_v3.*`); the JSON envelope
 version is `v: 3` — the generated domain CHECKs assert `VALUE->>'v' = '3'`, and
 the wire field names are unchanged from v2 (the purpose-named rename in
@@ -133,8 +141,8 @@ and `rust_decimal` features convert to and from `NaiveDate`,
 caller's, and is not wiped. Only a leap second, which a `DateTime<Utc>` can
 hold and a `Timestamp` cannot, is refused in a conversion. On `NumericEq`,
 `1.5 = 1.50` (the scale is normalised); on `TimestampEq`, an instant is truncated to the microsecond (the nanoseconds below it are dropped, not rounded), so two instants in the same microsecond are equal. Each opens as
-it was stored. The ordered date, timestamp and numeric types are refused
-until the engine derives their order terms.
+it was stored. Their ordered types order a date by its day, a timestamp by
+the microsecond (truncated, as on `TimestampEq`) and a decimal by value.
 
 Each seals the same leaf the Go SDK seals for the same value, so values
 written here and by the Go SDK open each other. On the equality
