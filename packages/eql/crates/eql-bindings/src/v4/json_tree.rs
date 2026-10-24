@@ -448,6 +448,16 @@ impl JsonTreeSubtree {
 mod tests {
     use super::*;
 
+    /// Sixteen bytes of `byte` as a selector's wire text.
+    fn b64(byte: u8) -> String {
+        Base64Text::encode([byte; 16]).as_str().to_owned()
+    }
+
+    /// A ciphertext's wire text.
+    fn b85(byte: u8) -> String {
+        Base85Text::encode([byte; 28]).as_str().to_owned()
+    }
+
     #[test]
     fn the_domains_are_the_v4_json_tree_family() {
         assert_eq!(
@@ -468,9 +478,9 @@ mod tests {
     #[test]
     fn a_query_needs_sv_and_el_and_takes_an_alt() {
         let query: JsonTreeQuery = serde_json::from_value(serde_json::json!({
-            "sv": [{"s": "aa", "vs": "bb"}],
+            "sv": [{"s": b64(0xaa), "vs": b64(0xbb)}],
             "el": [{"sv": [], "el": []}],
-            "alt": {"sv": [{"s": "cc", "vs": "dd"}], "el": []},
+            "alt": {"sv": [{"s": b64(0xcc), "vs": b64(0xdd)}], "el": []},
         }))
         .unwrap();
         assert_eq!(query.el.len(), 1);
@@ -486,8 +496,8 @@ mod tests {
     fn a_document_carries_its_projection() {
         let document = serde_json::json!({
             "v": 4, "i": {"t": "users", "c": "profile"}, "h": "AA==",
-            "sv": [{"s": "aa", "c": "AA=="}],
-            "q": {"sv": [{"s": "aa", "vs": "bb"}], "el": []},
+            "sv": [{"s": b64(0xaa), "c": b85(0)}],
+            "q": {"sv": [{"s": b64(0xaa), "vs": b64(0xbb)}], "el": []},
         });
         let stored: JsonTreeDocument = serde_json::from_value(document.clone()).unwrap();
         assert_eq!(stored.q.sv.len(), 1);
@@ -501,9 +511,23 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_with_a_field_in_the_wrong_encoding_is_refused() {
+        for entry in [
+            serde_json::json!({"s": "aa", "c": b85(0)}),
+            serde_json::json!({"s": b64(0), "c": "z"}),
+            serde_json::json!({"s": b64(0), "c": b85(0), "p": "not base64"}),
+        ] {
+            assert!(
+                serde_json::from_value::<JsonTreeEntry>(entry.clone()).is_err(),
+                "{entry} should not deserialize"
+            );
+        }
+    }
+
+    #[test]
     fn an_entry_without_the_grafted_fields_does_not_open() {
         let entry: JsonTreeEntry = serde_json::from_value(serde_json::json!({
-            "s": "00", "c": "AA=="
+            "s": b64(0), "c": b85(0)
         }))
         .unwrap();
         assert!(entry.node().is_err());
