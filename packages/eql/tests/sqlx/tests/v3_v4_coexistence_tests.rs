@@ -1,12 +1,14 @@
 //! EQL v3 and v4 installed side by side in one database (ADR-0002).
 //!
 //! The two bundles are the same SQL under two names: `eql_v3` for terms written
-//! by cipherstash-client, `eql_v4` for terms written by Stack Encrypt. These
-//! tests pin what the separate names do and do not enforce when both are
+//! by cipherstash-client, `eql_v4` for terms written by Stack Encrypt, plus the
+//! files confined to v4 with `-- ONLY EQL VERSION: 4` (the JSON tree family).
+//! These tests pin what the separate names do and do not enforce when both are
 //! installed:
 //!
-//! - both install without clashing, each owns its own domains, and each
-//!   version's `lints()` stays clean with the other installed;
+//! - both install without clashing, each owns its own domains (v4 every one
+//!   of v3's and the v4-only ones besides), and each version's `lints()`
+//!   stays clean with the other installed;
 //! - a payload of the wrong version fails the domain CHECK on insert;
 //! - the function form across versions (`eql_v3.eq(v3col, v4term)`) is
 //!   ambiguous, so it errors, and so is `OPERATOR(public.=)` between a v3 and
@@ -24,6 +26,8 @@
 //! `eql_v3_integer` fixture. A v4 payload is the same row with its envelope
 //! version set to 4: the two bundles share their SQL, so only the version
 //! decides which domain admits it.
+
+use std::collections::BTreeSet;
 
 use anyhow::Result;
 use sqlx::PgPool;
@@ -122,6 +126,22 @@ fn sqlstate(err: &sqlx::Error) -> Option<String> {
     }
 }
 
+/// The public domains each version owns, by name: `eql_v3_*` and `eql_v4_*`.
+async fn public_domains(pool: &PgPool) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
+    let names: Vec<String> = sqlx::query_scalar(
+        "SELECT typname::text FROM pg_type
+          WHERE typnamespace = 'public'::regnamespace AND typtype = 'd'
+            AND (typname LIKE 'eql\\_v3\\_%' OR typname LIKE 'eql\\_v4\\_%')
+          ORDER BY 1",
+    )
+    .fetch_all(pool)
+    .await?;
+    let (v3, v4): (BTreeSet<String>, BTreeSet<String>) = names
+        .into_iter()
+        .partition(|name| name.starts_with("eql_v3_"));
+    Ok((v3, v4))
+}
+
 #[sqlx::test(fixtures(path = "../fixtures", scripts("eql_v3_integer")))]
 async fn v3_and_v4_install_side_by_side(pool: PgPool) -> Result<()> {
     install_v4(&pool).await?;
@@ -136,15 +156,33 @@ async fn v3_and_v4_install_side_by_side(pool: PgPool) -> Result<()> {
         ["eql_v3", "eql_v3_internal", "eql_v4", "eql_v4_internal"]
     );
 
-    let (v3, v4): (i64, i64) = sqlx::query_as(
-        "SELECT count(*) FILTER (WHERE typname LIKE 'eql\\_v3\\_%'),
-                count(*) FILTER (WHERE typname LIKE 'eql\\_v4\\_%')
-         FROM pg_type WHERE typnamespace = 'public'::regnamespace AND typtype = 'd'",
-    )
-    .fetch_one(&pool)
-    .await?;
-    assert!(v3 > 0, "v3 installed no public domains");
-    assert_eq!(v3, v4, "each version owns the same set of public domains");
+    // Every public domain v3 owns, v4 owns under its own prefix. v4 also
+    // owns the domains of the files confined to it with `-- ONLY EQL
+    // VERSION: 4` (`tasks/build.sh`): today the JSON tree family, which Stack
+    // Encrypt writes and cipherstash-client does not. Those are the only
+    // domains v4 may have that v3 lacks, and v3 may own nothing v4 lacks.
+    let (v3, v4) = public_domains(&pool).await?;
+    assert!(!v3.is_empty(), "v3 installed no public domains");
+    let to_v3 = |name: &String| name.replacen("eql_v4_", "eql_v3_", 1);
+    let missing_from_v4: Vec<&str> = v3
+        .iter()
+        .filter(|name| !v4.iter().any(|v4_name| to_v3(v4_name) == **name))
+        .map(String::as_str)
+        .collect();
+    assert!(
+        missing_from_v4.is_empty(),
+        "v3 owns public domains v4 does not: {missing_from_v4:?}"
+    );
+    let v4_only: Vec<&str> = v4
+        .iter()
+        .filter(|name| !v3.contains(&to_v3(name)))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        v4_only,
+        ["eql_v4_json_tree", "eql_v4_json_tree_entry"],
+        "the only public domains v4 owns and v3 does not are the JSON tree family"
+    );
 
     let (a, b): (String, String) = sqlx::query_as("SELECT eql_v3.version(), eql_v4.version()")
         .fetch_one(&pool)

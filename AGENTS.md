@@ -682,6 +682,18 @@ monorepo, which is where the silent failures are.
 - **Changesets for `@cipherstash/eql` go in the repo-root `.changeset/`.** The
   subtree's own `.changeset/` was deleted with the import; there is no second
   one to put them in by mistake.
+- **The JSON tree family is EQL v4 only and spans two crates.** The engine
+  half is `packages/stack-encrypt/src/json/` (the `Json` index, `JsonDocument`,
+  the query terms); the SQL is `packages/eql/src/v3/json_tree/` under
+  `-- ONLY EQL VERSION: 4`; the EQL types are hand-written in
+  `packages/eql/crates/eql-bindings/src/v4/json_tree.rs`; and the live
+  oracle, containment over the encrypted column against PostgreSQL's own
+  `jsonb @>` over the plaintexts, is `packages/eql/tests/encryption/tests/json_tree.rs`,
+  run by `mise run test:encryption:postgres`. The design and its
+  implementation notes are `docs/plans/2026-10-17-json-tree-index.md`.
+  A change to the derivations on one side (a PAE domain, the header layout,
+  the projection shape) is a change to the other: the Postgres suite is
+  what holds them together.
 
 ## Working on the Rust crates
 

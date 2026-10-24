@@ -542,6 +542,11 @@ reasons! {
         /// The field's declared type has no such index: match on an integer,
         /// equality or an order index on a boolean, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
+        /// The field declares the JSON index, which a data plan names but
+        /// cannot run yet: the engine's typed path produces a JSON
+        /// document, and the binding's half, a document plaintext and its
+        /// EQL target, is not written.
+        JsonIndexPending => "json_index_pending", "the JSON index has no data-plan form yet";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";
         /// The plan has no field of the name asked for.

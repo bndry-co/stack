@@ -2,11 +2,12 @@
 //! engine instead of once per caller.
 //!
 //! An *index* is an operation that derives a search term beside a
-//! ciphertext: [`Equality`], [`Match`], [`Ore`], [`Ope`] or [`OreBlock`].
-//! Each is a type
-//! implementing [`Index<S>`] for exactly the plaintexts its scheme is defined
-//! over, so an index that does not apply does not compile: `Match` is text
-//! only, so a match index on an integer is a type error, not a runtime one.
+//! ciphertext: [`Equality`], [`Match`], [`Ore`], [`Ope`], [`OreBlock`] or
+//! [`Json`]. Each is a type implementing [`Index<S>`] for exactly the
+//! plaintexts its scheme is defined over, so an index that does not apply
+//! does not compile: `Match` is text only, so a match index on an integer is
+//! a type error, not a runtime one; `Json` is defined over a JSON document
+//! alone.
 //!
 //! A field's indexes are one value: a single index, or a tuple of them
 //! ([`Indexes<S>`]). `()` is deliberately not a set of indexes, so asking for
@@ -55,9 +56,10 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use super::context::{AeadContext, CallerContext};
-use super::operations::{ciphertext, equality, matching, ope, open, ore, ore_block};
+use super::operations::{ciphertext, equality, json_terms, matching, ope, open, ore, ore_block};
 use super::source::{ConsumeSource, ShareSource};
 use super::{DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption};
+use crate::json::{JsonOptions, JsonTerms};
 use crate::sem::{
     DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreBlockTerm,
     OreTerm,
@@ -71,13 +73,13 @@ use crate::StackCipherText;
 /// spell an index as an `IndexSpec`, options included.
 ///
 /// The [`key`](Self::key) strings are the output keys of the `dynamic` record
-/// format (`"eq"`, `"match"`, `"ore"`, `"ope"`, `"ore_block"`), so they are
-/// wire format;
-/// that is why this enum is exhaustive: a new index is something every
-/// binding has to be taught. With the `dynamic` feature, a plan spells an
-/// index as its key, or, for a match index with non-default options, as an
-/// object carrying them; `dynamic::record::plan` documents that shape, and
-/// `IndexSpec::from_value` / `IndexSpec::to_value` read and write it.
+/// format (`"eq"`, `"match"`, `"ore"`, `"ope"`, `"ore_block"`, `"json"`), so
+/// they are wire format; that is why this enum is exhaustive: a new index is
+/// something every binding has to be taught. With the `dynamic` feature, a
+/// plan spells an index as its key, or, for a match or JSON index with
+/// non-default options, as an object carrying them; `dynamic::record::plan`
+/// documents that shape, and `IndexSpec::from_value` / `IndexSpec::to_value`
+/// read and write it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum IndexSpec {
     /// Equality (exact match).
@@ -91,6 +93,10 @@ pub enum IndexSpec {
     /// Order-revealing comparison, 6-bit block ORE: the term EQL v4's
     /// `_ord_ore` domains store as `ob`.
     OreBlock,
+    /// The JSON index: a searchable document, with the layout options it
+    /// is written under. A data plan names it but cannot run it yet
+    /// (`Reason::JsonIndexPending`); the typed path can.
+    Json(JsonOptions),
 }
 
 impl IndexSpec {
@@ -108,6 +114,7 @@ impl IndexSpec {
             IndexSpec::Ore => "ore",
             IndexSpec::Ope => "ope",
             IndexSpec::OreBlock => "ore_block",
+            IndexSpec::Json(_) => "json",
         }
     }
 }
@@ -181,6 +188,38 @@ pub struct Ope;
 /// that is not byte order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct OreBlock;
+
+/// The JSON index, over a [`serde_json::Value`] alone: one searchable
+/// document per value, with a selector and a value selector per node, a
+/// token chain and group tags (the [`json`](crate::json) module).
+///
+/// Its term is a [`JsonTerms`], the document's one-way terms, which every
+/// query term is built from; the stored document is the output of the
+/// separate sealing operation, [`json_document`](super::json_document),
+/// and a [`JsonDocument`](crate::json::JsonDocument) target names it by
+/// type. The index answers `op::Contains`, `op::ContainedBy`, `op::AtPath(op::Eq)`
+/// and the orderings at a path, `op::AtPath(op::Gte)` and the rest.
+///
+/// The value [`Json`](constant@Json) is the index under the default
+/// options ([`JsonOptions::default`], the root sealed); `Json::new(options)`
+/// is another. The options are part of the index's identity, as a match
+/// index's are: a stored document and the query probing it agree on them
+/// through the plan that declares the index.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Json {
+    pub(crate) options: JsonOptions,
+}
+
+/// The JSON index under the default options, as a value: `.with(Json)`.
+#[allow(non_upper_case_globals)]
+pub const Json: Json = Json::new(JsonOptions { sealed_root: true });
+
+impl Json {
+    /// The index under `options`.
+    pub const fn new(options: JsonOptions) -> Self {
+        Self { options }
+    }
+}
 
 /// The full-text match index, over text only, with the tokenizer and filter
 /// parameters its [`MatchConfig`] `O` fixes.
@@ -305,6 +344,21 @@ where
     }
 }
 
+/// The JSON index's operation derives the document's terms and seals
+/// nothing: it only reads the value, so it runs in either source mode
+/// without a copy. Sealing is [`json_document`](super::json_document).
+impl Index<serde_json::Value> for Json {
+    type Term = JsonTerms;
+    fn spec(&self) -> IndexSpec {
+        IndexSpec::Json(self.options)
+    }
+    fn operation<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
+        &self,
+    ) -> Encryption<'s, serde_json::Value, Self::Term, K, CallerContext, M> {
+        json_terms::<K, M>(self.options)
+    }
+}
+
 /// A non-empty set of indexes over `S`: one [`Index`], or a tuple of two to
 /// four of them.
 ///
@@ -423,7 +477,7 @@ macro_rules! single_index {
         }
     )+};
 }
-single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope, [] OreBlock, [] IndexSpec);
+single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope, [] OreBlock, [] Json, [] IndexSpec);
 
 /// A tuple of indexes: each index's operation, zipped left to right, and the
 /// nested pairs `zip` builds flattened back into one tuple of terms.

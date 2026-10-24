@@ -3403,6 +3403,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serdect",
+ "sha2 0.11.0",
  "stack-auth",
  "stack-encrypt-derive",
  "stack-kms",

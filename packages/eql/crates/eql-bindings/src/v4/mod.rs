@@ -20,7 +20,10 @@
 //! operand of `eql_v4.between(column, range)`. EQL v3 has no range domains.
 //!
 //! v4 has no SteVec bindings, payload enums, TypeScript export or
-//! published JSON Schema yet; those follow in `@cipherstash/eql` 4.0.
+//! published JSON Schema yet; those follow in `@cipherstash/eql` 4.0. It
+//! does have the hand-written [`json_tree`] family, the JSON tree document
+//! Stack Encrypt's JSON index writes, which is a new domain beside the
+//! SteVec surface and not a port of it.
 //!
 //! The order terms are Stack Encrypt's own: an `ob` field is a
 //! [`stack_encrypt::sem::OreBlockTerm`] and an `op` field a
@@ -54,6 +57,10 @@ pub mod inventory;
 /// Generated bindings for the `json` family's bare scalar storage domain
 /// (`public.eql_v4_json`, the `Json` struct).
 pub mod json;
+/// The hand-written `json_tree` family: the JSON tree document Stack
+/// Encrypt's JSON index writes, its entry, and its two query operands.
+/// EQL v4 only, and not in the catalog yet, so not in [`all`].
+pub mod json_tree;
 pub mod numeric;
 // The Rust plaintexts of the `date`, `timestamp` and `numeric` families. A
 // plain comment: an outer doc comment here would resolve the module's own

@@ -296,9 +296,10 @@ impl crate::ErrorPayload for PlanError {
 
 /// An index as a plan writes it: its key, or for a match index the object of
 /// all four options (`{"match": {"tokenizer": "standard", "downcase": true,
-/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`). A caller in
-/// another language can read it, and it does not move when a field is added
-/// to the Rust type, as `Debug` text would.
+/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`), and for a
+/// JSON index the object of its options (`{"json": {"sealed_root":
+/// true}}`). A caller in another language can read it, and it does not move
+/// when a field is added to the Rust type, as `Debug` text would.
 fn index_value(index: &IndexSpec) -> serde_json::Value {
     use crate::sem::Tokenizer;
     match index {
@@ -316,6 +317,9 @@ fn index_value(index: &IndexSpec) -> serde_json::Value {
                 }
             })
         }
+        IndexSpec::Json(options) => serde_json::json!({
+            "json": { "sealed_root": options.sealed_root }
+        }),
         IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => {
             index.key().into()
         }

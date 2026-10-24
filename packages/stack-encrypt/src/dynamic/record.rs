@@ -146,7 +146,7 @@ use std::fmt;
 use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 
-use super::term::{IndexWire, MatchWire};
+use super::term::{IndexWire, JsonWire, MatchWire};
 use super::{ValueFrame, ValueKind};
 use vitaminc_aead::frame::{Frame, FrameWriter};
 use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SeqSink, Sink};
@@ -1347,6 +1347,7 @@ enum OutputWire {
     Ope,
     #[serde(rename = "ore_block")]
     OreBlock,
+    Json(Option<JsonWire>),
 }
 
 impl From<OutputWire> for Output {
@@ -1359,6 +1360,7 @@ impl From<OutputWire> for Output {
             OutputWire::Ore => IndexWire::Ore,
             OutputWire::Ope => IndexWire::Ope,
             OutputWire::OreBlock => IndexWire::OreBlock,
+            OutputWire::Json(options) => IndexWire::Json(options),
         };
         Output::Term(index.into())
     }

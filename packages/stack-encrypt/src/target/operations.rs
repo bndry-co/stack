@@ -13,6 +13,7 @@ use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
 use super::core::{encrypt_native, open_native, Term};
 use super::source::{Borrowed, ConsumeSource, ShareSource, SourceMode};
 use super::{CipherScope, Pending};
+use crate::json::{JsonDocument, JsonOptions, JsonTerms};
 use crate::{Error, IntoContext, KeysetCipher, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::MaybeSend;
 use std::fmt;
@@ -563,6 +564,60 @@ term_operation!(
     [S: crate::sem::Orderable]
 );
 
+/// The JSON index's terms of a document under the context the tree hands
+/// it: every node's selectors, the chain tokens and the grouping
+/// ([`JsonTerms`]), derived locally. No key is requested, and the document
+/// is only read, so this runs in any source mode without a copy. What
+/// [`Json`](struct@super::Json)'s [`Index::operation`](super::Index::operation)
+/// is, and what a query derives.
+pub fn json_terms<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
+    options: JsonOptions,
+) -> Encryption<'s, serde_json::Value, JsonTerms, K, CallerContext, M> {
+    Encryption {
+        build: Box::new(
+            move |source, cipher, cx: CallerContext| match cx.validated() {
+                Ok(ctx) => crate::json::terms_pending(M::view(&source), options, cipher, ctx),
+                Err(e) => Pending::failed(cipher, e),
+            },
+        ),
+    }
+}
+
+/// The JSON index's one sealing operation: flatten the document, derive
+/// its terms, request one data key under the context's descriptor and seal
+/// every node under it, into a [`JsonDocument`]. The stored form of a JSON
+/// field; what [`JsonDocument`]'s own [`EncryptFrom<Value>`] runs. The
+/// document is consumed, so in the default [`Borrowed`] mode it is cloned
+/// once, as [`ciphertext`] clones its plaintext.
+pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
+    options: JsonOptions,
+) -> Encryption<'s, serde_json::Value, JsonDocument, K, CallerContext, M> {
+    Encryption {
+        build: Box::new(
+            move |source, cipher, cx: CallerContext| match cx.validated() {
+                Ok(ctx) => crate::json::seal_pending(M::take(source), options, cipher, ctx),
+                Err(e) => Pending::failed(cipher, e),
+            },
+        ),
+    }
+}
+
+/// A JSON document seals as the JSON index lays it out under the default
+/// options, and declares that index: a plan typed with it answers
+/// containment and the accessors through [`Json`](struct@super::Json).
+impl EncryptFrom<serde_json::Value> for JsonDocument {
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, serde_json::Value, Self, K, Self::Context>
+    where
+        serde_json::Value: 's,
+    {
+        json_document(JsonOptions::default())
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Json(JsonOptions::default())]
+    }
+}
+
 impl<T: 'static, K: 'static> Decryption<T, K> {
     /// Reject the opening: execution yields `error` without I/O, any
     /// description this is zipped into fails with it, and a collection
@@ -577,6 +632,15 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
         Self {
             inner: Opening::Open(open),
         }
+    }
+    /// A description whose opening is `open`: a crate-internal target
+    /// that builds its own key requests (the JSON index's documents) runs
+    /// through here, as [`open`] does for a native tree.
+    pub(crate) fn from_open<F>(open: F) -> Self
+    where
+        F: for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K> + MaybeSend + 'static,
+    {
+        Self::open(Box::new(open))
     }
     /// A description whose output is already known: a defaulted field, or
     /// an absent optional.

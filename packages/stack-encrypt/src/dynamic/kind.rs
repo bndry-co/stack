@@ -92,7 +92,14 @@ pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
 /// assert_eq!(not_admitted(ValueKind::Timestamp, &IndexSpec::Ope), None);
 /// ```
 pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
-    (!admits(kind, index)).then_some(Reason::IndexNotAdmitted)
+    if admits(kind, index) {
+        return None;
+    }
+    Some(if matches!(index, IndexSpec::Json(_)) {
+        Reason::JsonIndexPending
+    } else {
+        Reason::IndexNotAdmitted
+    })
 }
 
 /// A scalar of `kind`, with its logical type, for asking the table about

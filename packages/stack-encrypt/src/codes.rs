@@ -89,6 +89,15 @@ mod tests {
                 TermError::Normalize(vitaminc_normalize::NormalizeError::UnassignedCodePoint)
             },
             TermError::Bytes(_) => TermError::Bytes(TermBytesError::OddMatchTermsLength(3)),
+            TermError::JsonPath(_) => TermError::JsonPath(crate::json::JsonPathError {
+                reason: "expected `$`",
+                at: 0,
+            }),
+            TermError::JsonTooDeep => TermError::JsonTooDeep,
+            TermError::JsonTooWide => TermError::JsonTooWide,
+            TermError::JsonSealedRoot => TermError::JsonSealedRoot,
+            TermError::JsonLeafNotOrdered => TermError::JsonLeafNotOrdered,
+            TermError::JsonValueNotScalar => TermError::JsonValueNotScalar,
         ]));
         errors.extend(boxed(variants![
             TermBytesError::WrongEqualityTermLength(_) => {
