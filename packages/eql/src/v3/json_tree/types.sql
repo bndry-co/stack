@@ -10,7 +10,7 @@
 --! Stack Encrypt's JSON index writes. It shares no wire shape and no SQL with
 --! the SteVec surface. Four jsonb-backed domains (none over another domain,
 --! so the native-jsonb firewall in blockers.sql attaches):
---!   - public.{{prefix}}_json_tree       — storage: an EQL envelope `{v, i, h, sv}`.
+--!   - public.{{prefix}}_json_tree       — storage: an EQL envelope `{v, i, h, sv, q}`.
 --!   - public.{{prefix}}_json_tree_entry — one `sv` element (returned by `->`
 --!                                        and the subtree walk).
 --!   - {{prefix}}.query_json_tree         — a containment needle: the element-nested
@@ -34,8 +34,16 @@
 --!        `g` the group tag of the nearest enclosing such element.
 --!   `op` the leaf ordering term (CLLW OPE, hex) on number and string leaves.
 --! The header `h` (base64) carries the document's data key material once; the
---! SQL reads only the ZeroKMS `iv` at byte offset 22 of it, the per-document
---! salt of the chain tags, and otherwise carries it opaquely.
+--! SQL reads only the sealed-root flag at byte offset 1 and the ZeroKMS `iv`
+--! at byte offset 22 of it, the per-document salt of the chain tags, and
+--! otherwise carries it opaquely. `q` is the document's containment
+--! projection, `{"sv": [{s, vs}, …], "el": [group, …]}`: its `{s, vs}`
+--! pairs nested by array element, written by the client beside `sv` so the
+--! server compares it with a needle by native `jsonb @>` and never
+--! rebuilds it from the entries. The CHECK validates its shape, not that it
+--! is `sv`'s: containment answers from `q` as written, so a row written by
+--! anything but Stack Encrypt's JSON index can answer `@>` differently
+--! from `->`, the walks and decryption, which answer from `sv`.
 
 --! @brief Validate one JSON tree entry.
 --! @internal
@@ -68,42 +76,15 @@ AS $$
   )
 $$;
 
---! @brief Validate a JSON tree document.
---! @internal
---! @param val jsonb Candidate document.
---! @return boolean True when `val` is an envelope with `v = {{eql_version}}`, `i`, a
---!         string header `h` and a non-empty `sv` array of valid entries, and
---!         no other key. A document always has a root, so `sv` is never empty.
-CREATE OR REPLACE FUNCTION public.{{prefix}}_is_valid_json_tree_document_payload(val jsonb)
-  RETURNS boolean
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$
-  SELECT COALESCE(
-    jsonb_typeof(val) = 'object'
-     AND val ? 'v'
-     AND val ->> 'v' = '{{eql_version}}'
-     AND val ? 'i'
-     AND jsonb_typeof(val -> 'h') = 'string'
-     AND jsonb_typeof(val -> 'sv') = 'array'
-     AND jsonb_array_length(val -> 'sv') >= 1
-     AND val - ARRAY['v', 'i', 'h', 'sv']::text[] = '{}'::jsonb
-     AND NOT EXISTS (
-       SELECT 1
-       FROM jsonb_array_elements(val -> 'sv') AS elem
-       WHERE NOT public.{{prefix}}_is_valid_json_tree_entry_payload(elem)
-     ),
-    false
-  )
-$$;
-
 --! @brief Validate one group of a containment needle, recursively.
 --! @internal
 --!
 --! A group is `{"sv": [{"s": "…", "vs": "…"}, …], "el": [group, …]}`: the
 --! selector pairs that sit directly in it, and one nested group per array
---! element that is a container. The same shape `{{prefix}}.json_tree_query`
---! projects a stored document into, so native `jsonb @>` over the two is
---! exact containment.
+--! element that is a container. The same shape a stored document carries
+--! in `q`, its own projection, so native `jsonb @>` over the two is exact
+--! containment. Validates both: a needle at its cast, a document's `q` at
+--! its write.
 --!
 --! @param val jsonb Candidate group.
 --! @return boolean True when `val` is a group.
@@ -138,6 +119,36 @@ BEGIN
 END;
 $$;
 
+--! @brief Validate a JSON tree document.
+--! @internal
+--! @param val jsonb Candidate document.
+--! @return boolean True when `val` is an envelope with `v = {{eql_version}}`, `i`, a
+--!         string header `h`, a non-empty `sv` array of valid entries and
+--!         the document's containment projection `q`, a group, and no
+--!         other key. A document always has a root, so `sv` is never empty.
+CREATE OR REPLACE FUNCTION public.{{prefix}}_is_valid_json_tree_document_payload(val jsonb)
+  RETURNS boolean
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND val ? 'v'
+     AND val ->> 'v' = '{{eql_version}}'
+     AND val ? 'i'
+     AND jsonb_typeof(val -> 'h') = 'string'
+     AND jsonb_typeof(val -> 'sv') = 'array'
+     AND jsonb_array_length(val -> 'sv') >= 1
+     AND val - ARRAY['v', 'i', 'h', 'sv', 'q']::text[] = '{}'::jsonb
+     AND NOT EXISTS (
+       SELECT 1
+       FROM jsonb_array_elements(val -> 'sv') AS elem
+       WHERE NOT public.{{prefix}}_is_valid_json_tree_entry_payload(elem)
+     )
+     AND {{prefix}}_internal.json_tree_is_valid_query_group(val -> 'q'),
+    false
+  )
+$$;
+
 --! @brief Validate a containment needle.
 --! @internal
 --! @param val jsonb Candidate needle.
@@ -162,11 +173,12 @@ $$;
 --! @brief Storage domain for an encrypted JSON tree column.
 --!
 --! CHECK: the EQL envelope (`v = {{eql_version}}`, `i`, `h`) around a non-empty `sv`
---! array of valid entries. The firewall in blockers.sql attaches to this
---! domain to stop native jsonb operators from reaching a column value.
+--! array of valid entries and the projection `q`. The firewall in
+--! blockers.sql attaches to this domain to stop native jsonb operators from
+--! reaching a column value.
 --!
 --! @note Constructing from inline JSON uses the standard DOMAIN cast:
---!       `'{"v":{{eql_version}},"i":{…},"h":"…","sv":[…]}'::public.{{prefix}}_json_tree`.
+--!       `'{"v":{{eql_version}},"i":{…},"h":"…","sv":[…],"q":{…}}'::public.{{prefix}}_json_tree`.
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -212,7 +224,8 @@ $$;
 --!
 --! The element-nested projection of the needle's selectors, as Stack
 --! Encrypt's `JsonQuery` serializes it: `{"sv": [{"s", "vs"}, …], "el":
---! [group, …], "alt": group?}`. Typing the needle this way stops raw jsonb
+--! [group, …], "alt": group?}`: the shape a stored document's `q` has, with
+--! the optional `alt` beside it. Typing the needle this way stops raw jsonb
 --! from casting and matching every row via bare `jsonb @>`.
 --!
 --! @note Construct from inline JSON via the DOMAIN cast:

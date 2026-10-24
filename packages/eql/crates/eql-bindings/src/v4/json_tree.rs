@@ -22,7 +22,9 @@
 use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use stack_encrypt::json::{JsonDocument, JsonLeafQuery, JsonNode, JsonQuery, JsonSubtree};
+use stack_encrypt::json::{
+    JsonDocument, JsonLeafQuery, JsonNode, JsonPath, JsonQuery, JsonSubtree,
+};
 use stack_encrypt::target::{AeadContext, ExpectedContext, IndexSpec};
 use stack_encrypt::{
     DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption, Error, NonEmpty,
@@ -40,9 +42,12 @@ use crate::Identifier;
 pub struct JsonTreeTag(pub String);
 
 /// `public.eql_v4_json_tree`: a JSON tree document, `{v, i, h, sv:
-/// [entry]}`. Strict. `h` is the document's key header, stored once (every
-/// entry is sealed under the document's one data key); `sv` holds one
-/// entry per node in depth-first order, the root first.
+/// [entry], q: group}`. Strict. `h` is the document's key header, stored
+/// once (every entry is sealed under the document's one data key); `sv`
+/// holds one entry per node in depth-first order, the root first; `q` is
+/// the document's containment projection, its `{s, vs}` pairs nested by
+/// array element, which the client writes beside the entries so the
+/// server's `eql_v4.json_tree_query` reads it rather than rebuilding it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JsonTreeDocument {
@@ -50,6 +55,7 @@ pub struct JsonTreeDocument {
     pub i: Identifier,
     pub h: KeyHeader,
     pub sv: Vec<JsonTreeEntry>,
+    pub q: JsonTreeQueryGroup,
 }
 
 /// `public.eql_v4_json_tree_entry`: one node. `s` and `vs` are the path
@@ -144,9 +150,58 @@ pub struct JsonTreeLeafQuery {
 /// The rows a subtree walk returned (`eql_v4.json_tree_subtree` or
 /// `json_tree_subtree_at`), collected: opens to the value under the
 /// walked node, or to the list of complete subtrees the rows hold.
+///
+/// Past its budget a walk returns the sealed root alone, at depth `0`;
+/// those rows open to the whole document, and the path the walk was keyed
+/// from selects the same value(s) the walked rows open to. Attach it with
+/// [`below`](Self::below) for `json_tree_subtree` rows and
+/// [`at`](Self::at) for `json_tree_subtree_at` rows. The path is not part
+/// of the wire.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct JsonTreeSubtree(pub Vec<JsonTreeEntry>);
+pub struct JsonTreeSubtree {
+    pub rows: Vec<JsonTreeEntry>,
+    #[serde(skip)]
+    pub path: Option<JsonPath>,
+    /// Whether `path` names the node `json_tree_subtree` walked below
+    /// ([`below`](Self::below)), rather than the nodes a
+    /// `json_tree_subtree_at` path reaches ([`at`](Self::at)).
+    #[serde(skip)]
+    pub below: bool,
+}
+
+impl JsonTreeSubtree {
+    /// The rows, as returned.
+    pub fn new(rows: Vec<JsonTreeEntry>) -> Self {
+        Self {
+            rows,
+            path: None,
+            below: false,
+        }
+    }
+
+    /// The rows of `json_tree_subtree_at`, with the whole path its key was
+    /// derived from: past the budget they open to one value per node the
+    /// path reaches, as the walked rows do.
+    pub fn at(self, path: JsonPath) -> Self {
+        Self {
+            path: Some(path),
+            below: false,
+            ..self
+        }
+    }
+
+    /// The rows of `json_tree_subtree`, with the path of the node whose
+    /// token keyed the walk: past the budget they open to that node, or as
+    /// a list to its children, as the walked rows do.
+    pub fn below(self, path: JsonPath) -> Self {
+        Self {
+            path: Some(path),
+            below: true,
+            ..self
+        }
+    }
+}
 
 macro_rules! json_tree_domain_type {
     ($ty:ident, $sql:literal) => {
@@ -335,12 +390,17 @@ impl DecryptInto<Vec<Value>> for JsonTreeSubtree {
 
 impl JsonTreeSubtree {
     fn subtree(&self) -> Result<JsonSubtree, Error> {
-        Ok(JsonSubtree::new(
-            self.0
+        let rows = JsonSubtree::new(
+            self.rows
                 .iter()
                 .map(JsonTreeEntry::node)
                 .collect::<Result<_, _>>()?,
-        ))
+        );
+        Ok(match &self.path {
+            Some(path) if self.below => rows.below(path.clone()),
+            Some(path) => rows.at(path.clone()),
+            None => rows,
+        })
     }
 }
 
@@ -380,6 +440,45 @@ mod tests {
             "sv": [], "el": [], "grp": []
         }))
         .is_err());
+    }
+
+    #[test]
+    fn a_document_carries_its_projection() {
+        let document = serde_json::json!({
+            "v": 4, "i": {"t": "users", "c": "profile"}, "h": "AA==",
+            "sv": [{"s": "aa", "vs": "bb", "c": "AA=="}],
+            "q": {"sv": [{"s": "aa", "vs": "bb"}], "el": []},
+        });
+        let stored: JsonTreeDocument = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(stored.q.sv.len(), 1);
+        assert_eq!(serde_json::to_value(&stored).unwrap(), document);
+        let mut without = document.clone();
+        let _ = without.as_object_mut().unwrap().remove("q");
+        assert!(
+            serde_json::from_value::<JsonTreeDocument>(without).is_err(),
+            "a document without `q` is not a stored document"
+        );
+    }
+
+    #[test]
+    fn a_subtree_carries_its_path_beside_the_wire() {
+        let rows: JsonTreeSubtree = serde_json::from_value(serde_json::json!([])).unwrap();
+        assert!(rows.path.is_none());
+        let at = rows.at(JsonPath::parse("$.a").unwrap());
+        assert_eq!(
+            at.path.as_ref().map(ToString::to_string).as_deref(),
+            Some("$.a")
+        );
+        assert_eq!(serde_json::to_value(&at).unwrap(), serde_json::json!([]));
+        assert!(at.subtree().unwrap().path().is_some());
+        assert!(!at.below);
+        let below = at.below(JsonPath::parse("$.b").unwrap());
+        assert!(below.below);
+        assert_eq!(
+            below.subtree().unwrap(),
+            JsonSubtree::new(Vec::new()).below(JsonPath::parse("$.b").unwrap())
+        );
+        assert_eq!(serde_json::to_value(&below).unwrap(), serde_json::json!([]));
     }
 
     #[test]

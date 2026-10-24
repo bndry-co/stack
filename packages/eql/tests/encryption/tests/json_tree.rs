@@ -76,7 +76,7 @@ async fn a_document_round_trips_through_the_typed_target() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(keys, ["h", "i", "sv", "v"]);
+    assert_eq!(keys, ["h", "i", "q", "sv", "v"]);
 
     let opened: Value = cipher
         .decrypt_as(stored.clone(), Default::default())
@@ -306,7 +306,7 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
     let mut db = connect();
     db.batch_execute(
         "CREATE TEMP TABLE json_tree_docs (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_tree NOT NULL);
-         CREATE INDEX json_tree_docs_doc ON json_tree_docs USING gin ((eql_v4.json_tree_query(doc)::jsonb) jsonb_path_ops);",
+         CREATE INDEX json_tree_docs_doc ON json_tree_docs USING gin ((eql_v4.json_tree_query(doc)) jsonb_path_ops);",
     )
     .unwrap();
 
@@ -541,7 +541,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
             .all(|e| e.d.is_some() && e.j.is_some() && e.h.is_some()));
         let value: Value = wait(
             &runtime,
-            cipher.decrypt_as(JsonTreeSubtree(walked), column()),
+            cipher.decrypt_as(JsonTreeSubtree::new(walked), column()),
         )
         .unwrap();
         assert_eq!(value, expected, "row {id}");
@@ -554,6 +554,100 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .unwrap()
         .get(0);
     assert_eq!(garbage, 0, "a wrong token unlocks nothing in any row");
+
+    // The budget: past it the walk returns the sealed root alone, at depth
+    // 0, and the rows open to the value at the walked path; at it, or
+    // with the budget off, the walk is complete; a wrong token still
+    // yields nothing under any budget.
+    let walked = |db: &mut postgres::Client, budget: i32| -> Vec<JsonTreeEntry> {
+        db.query(
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text, $2::int) e WHERE id = 1",
+            &[&nested.token(), &budget],
+        )
+        .unwrap()
+        .iter()
+        .map(entry)
+        .collect()
+    };
+    assert_eq!(walked(&mut db, 6).len(), 6, "at the budget, the subtree");
+    assert_eq!(walked(&mut db, 0).len(), 6, "budget 0 never falls back");
+    let root = walked(&mut db, 5);
+    assert_eq!(root.len(), 1, "past the budget, the root alone");
+    assert_eq!((root[0].j, root[0].d), (Some(0), Some(0)));
+    let refused = wait(
+        &runtime,
+        cipher.decrypt_as::<Value, _>(JsonTreeSubtree::new(root.clone()), column()),
+    );
+    assert!(refused.is_err(), "the fallback needs the walked path");
+    let value: Value = wait(
+        &runtime,
+        cipher.decrypt_as(
+            JsonTreeSubtree::new(root).below(JsonPath::parse("$.nested").unwrap()),
+            column(),
+        ),
+    )
+    .unwrap();
+    assert_eq!(value, fixture()["nested"]);
+    let garbage: i64 = db
+        .query_one(
+            "SELECT count(*) FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text, 1) e",
+            &[&"00".repeat(16)],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(garbage, 0);
+    // The fallback opens to what the walk opens to, as a list too: the
+    // list's elements, whether the server walked its four entries or
+    // returned the sealed root, so a caller's result does not change shape
+    // when a document grows past the budget.
+    let list = subtree_key("$.nested.list");
+    let list_rows = |db: &mut postgres::Client, budget: i32| -> Vec<JsonTreeEntry> {
+        db.query(
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text, $2::int) e WHERE id = 1",
+            &[&list.token(), &budget],
+        )
+        .unwrap()
+        .iter()
+        .map(entry)
+        .collect()
+    };
+    let elements = |rows: Vec<JsonTreeEntry>| -> Vec<Value> {
+        wait(
+            &runtime,
+            cipher.decrypt_as(
+                JsonTreeSubtree::new(rows).below(JsonPath::parse("$.nested.list").unwrap()),
+                column(),
+            ),
+        )
+        .unwrap()
+    };
+    let walked_list = list_rows(&mut db, 0);
+    assert_eq!(walked_list.len(), 4);
+    let fallen_back = list_rows(&mut db, 3);
+    assert_eq!(fallen_back.len(), 1);
+    assert_eq!(
+        elements(walked_list),
+        vec![json!({"x": 1}), json!({"x": 2})]
+    );
+    assert_eq!(
+        elements(fallen_back),
+        vec![json!({"x": 1}), json!({"x": 2})]
+    );
+    // The budget is gated on the header's sealed-root flag, the bit
+    // `JsonHeader` writes: with the flags byte cleared, the same document
+    // has no root to return and is walked out under any budget.
+    let unflagged: i64 = db
+        .query_one(
+            "SELECT count(*) FROM json_tree_rows,
+               eql_v4.json_tree_subtree(
+                 jsonb_set(doc::jsonb, '{h}', to_jsonb(encode(set_byte(decode(doc::jsonb ->> 'h', 'base64'), 1, 0), 'base64')))::public.eql_v4_json_tree,
+                 $1::text, 1) e
+             WHERE id = 1",
+            &[&nested.token()],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(unflagged, 6, "an unsealed root is walked out");
 
     // A wildcard below the anchor: every element's `x`, each a complete
     // subtree, from the list's token gated on the whole path's selector.
@@ -569,7 +663,29 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .collect();
     let values: Vec<Value> = wait(
         &runtime,
-        cipher.decrypt_as(JsonTreeSubtree(walked), column()),
+        cipher.decrypt_as(JsonTreeSubtree::new(walked), column()),
+    )
+    .unwrap();
+    assert_eq!(values, vec![json!(1), json!(2)]);
+    // Past the budget, the gated walk falls back the same way, and the
+    // wildcard path selects every subtree over the whole document.
+    let root: Vec<JsonTreeEntry> = db
+        .query(
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text, 1) e WHERE id = 1",
+            &[&xs.token(), &xs.selector().unwrap().to_string()],
+        )
+        .unwrap()
+        .iter()
+        .map(entry)
+        .collect();
+    assert_eq!(root.len(), 1);
+    assert_eq!(root[0].d, Some(0));
+    let values: Vec<Value> = wait(
+        &runtime,
+        cipher.decrypt_as(
+            JsonTreeSubtree::new(root).at(JsonPath::parse("$.nested.list[*].x").unwrap()),
+            column(),
+        ),
     )
     .unwrap();
     assert_eq!(values, vec![json!(1), json!(2)]);
@@ -700,4 +816,105 @@ fn postgres_extracts_walks_and_orders_by_path() {
             );
         }
     }
+}
+
+/// Needs an EQL v4 installation. A stored document is untrusted input: its
+/// chain fields are not authenticated, so whoever holds a token can write
+/// children whose tokens loop back to their parent's, or an ordinal far
+/// past the document's size. Every walk still ends, in time bounded by the
+/// document's size, under any budget; `statement_timeout` turns a walk
+/// that would not end into a failure instead of a hung suite.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_walks_end_on_hostile_documents() {
+    let mut db = connect();
+    db.batch_execute("SET statement_timeout = '10s'").unwrap();
+    // A root and two children at ordinals 0 and 1 under the all-zero
+    // token, each wrapping that same token as its own: unbounded, the walk
+    // doubles at every one of its 127 levels. `flags` is the header's flags
+    // byte, so the same document is built with its root sealed and not.
+    let looping = |flags: i32| {
+        format!(
+            "WITH k AS (
+               SELECT set_byte(set_byte(decode(repeat('00', 40), 'hex'), 0, 1), 1, {flags}) AS h,
+                      decode(repeat('00', 16), 'hex') AS iv,
+                      decode(repeat('00', 16), 'hex') AS t
+             ), e AS (
+               SELECT o, c,
+                 encode(eql_v4_internal.json_tree_h16('p'::bytea || k.iv || k.t || eql_v4_internal.json_tree_le32(o)), 'hex') AS p,
+                 encode(eql_v4_internal.json_tree_xor16(k.t, eql_v4_internal.json_tree_h16('w'::bytea || k.iv || k.t || decode(c, 'base64'))), 'hex') AS w
+               FROM k, (VALUES (0, 'AA=='), (1, 'AQ==')) AS v(o, c)
+             )
+             SELECT (jsonb_build_object(
+               'v', 4, 'i', jsonb_build_object('t', 'users', 'c', 'profile'),
+               'h', (SELECT encode(h, 'base64') FROM k),
+               'sv', jsonb_build_array(jsonb_build_object('s', 'aa', 'vs', 'bb', 'c', 'AA=='))
+                     || (SELECT jsonb_agg(jsonb_build_object('s', 'aa', 'vs', 'bb', 'c', c, 'o', o, 'p', p, 'w', w) ORDER BY o) FROM e),
+               'q', '{{\"sv\": [], \"el\": []}}'::jsonb))::public.eql_v4_json_tree"
+        )
+    };
+    let token = "00".repeat(16);
+    for flags in [0, 1] {
+        let doc = looping(flags);
+        let count = |db: &mut postgres::Client, walk: &str| -> i64 {
+            db.query_one(
+                &format!("SELECT count(*) FROM ({doc}) AS d(doc), {walk} e"),
+                &[&token],
+            )
+            .unwrap_or_else(|error| panic!("{walk} (flags {flags}): {error}"))
+            .get(0)
+        };
+        assert_eq!(
+            count(&mut db, "eql_v4.json_tree_children(d.doc, $1::text)"),
+            2
+        );
+        for budget in [0, 64] {
+            let walked = count(
+                &mut db,
+                &format!("eql_v4.json_tree_subtree(d.doc, $1::text, {budget})"),
+            );
+            assert!(
+                walked <= 3,
+                "a walk returns at most as many rows as the document has entries: {walked} (flags {flags}, budget {budget})"
+            );
+            // No entry carries the selector, so nothing is emitted and the
+            // budget never trips: only the walk's own bound ends it.
+            assert_eq!(
+                count(
+                    &mut db,
+                    &format!("eql_v4.json_tree_subtree_at(d.doc, $1::text, 'ff', {budget})"),
+                ),
+                0
+            );
+        }
+    }
+
+    // One entry claiming the largest ordinal an integer holds: the fan-out
+    // is capped at the document's entry count, so the probe is two tags,
+    // not two billion.
+    let wide = "SELECT (jsonb_build_object(
+          'v', 4, 'i', jsonb_build_object('t', 'users', 'c', 'profile'),
+          'h', encode(set_byte(decode(repeat('00', 40), 'hex'), 0, 1), 'base64'),
+          'sv', jsonb_build_array(
+            jsonb_build_object('s', 'aa', 'vs', 'bb', 'c', 'AA=='),
+            jsonb_build_object('s', 'aa', 'vs', 'bb', 'c', 'AA==', 'o', 2147483646, 'p', '00', 'w', '00')),
+          'q', '{\"sv\": [], \"el\": []}'::jsonb))::public.eql_v4_json_tree";
+    let children: i32 = db
+        .query_one(
+            &format!(
+                "SELECT eql_v4.json_tree_child_count(d.doc, $1::text) FROM ({wide}) AS d(doc)"
+            ),
+            &[&token],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(children, 0);
+    let walked: i64 = db
+        .query_one(
+            &format!("SELECT count(*) FROM ({wide}) AS d(doc), eql_v4.json_tree_subtree(d.doc, $1::text, 0) e"),
+            &[&token],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(walked, 0);
 }

@@ -152,6 +152,32 @@ impl JsonPath {
         !self.segments.iter().any(|s| matches!(s, Segment::Wildcard))
     }
 
+    /// The values at this path in `value`, in document order: at most one
+    /// for a positional path, one per element a wildcard reaches, none when
+    /// the path names nothing. A key step into an array, or a position
+    /// into an object, reaches nothing, as the token chain reaches nothing
+    /// there. What a client takes over a whole document when a walk
+    /// returned the sealed root in place of the subtree.
+    pub fn select<'a>(&self, value: &'a serde_json::Value) -> Vec<&'a serde_json::Value> {
+        let mut current = vec![value];
+        for segment in &self.segments {
+            let mut next = Vec::new();
+            for node in current {
+                match segment {
+                    Segment::Key(key) => next.extend(node.as_object().and_then(|o| o.get(key))),
+                    Segment::Index(index) => next.extend(
+                        usize::try_from(*index)
+                            .ok()
+                            .and_then(|i| node.as_array().and_then(|a| a.get(i))),
+                    ),
+                    Segment::Wildcard => next.extend(node.as_array().into_iter().flatten()),
+                }
+            }
+            current = next;
+        }
+        current
+    }
+
     /// This path with one more step.
     pub(crate) fn then(&self, segment: Segment) -> Self {
         let mut segments = Vec::with_capacity(self.segments.len() + 1);
@@ -309,6 +335,35 @@ mod tests {
         assert_eq!(JsonPath::parse("$").unwrap().to_string(), "$");
         assert!(!path.is_positional());
         assert!(JsonPath::parse("$.a[2]").unwrap().is_positional());
+    }
+
+    #[test]
+    fn selects_what_the_chain_would_reach() {
+        let doc = serde_json::json!({
+            "a": [{"x": 1}, {"x": 2, "y": [3, 4]}, 5],
+            "b": {"c": "d"},
+        });
+        let at = |text: &str| JsonPath::parse(text).unwrap().select(&doc);
+        assert_eq!(at("$"), vec![&doc]);
+        assert_eq!(at("$.b.c"), vec![&serde_json::json!("d")]);
+        assert_eq!(at("$.a[1].x"), vec![&serde_json::json!(2)]);
+        assert_eq!(
+            at("$.a[*].x"),
+            vec![&serde_json::json!(1), &serde_json::json!(2)]
+        );
+        assert_eq!(
+            at("$.a[*].y[*]"),
+            vec![&serde_json::json!(3), &serde_json::json!(4)]
+        );
+        assert!(at("$.a.x").is_empty(), "a key step into an array");
+        assert!(at("$.b[0]").is_empty(), "a position into an object");
+        assert!(at("$.a[3]").is_empty(), "past the end");
+        assert!(at("$.b[*]").is_empty(), "the wildcard over an object");
+        assert!(at("$.z").is_empty());
+        assert!(JsonPath::parse("$[18446744073709551615]")
+            .unwrap()
+            .select(&doc)
+            .is_empty());
     }
 
     #[test]

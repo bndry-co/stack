@@ -1014,11 +1014,30 @@ impl DecryptInto<Value> for JsonNode {
 /// value, in order. What `json_tree_subtree_at` returns is one subtree per
 /// node whose selector matched; what `json_tree_subtree` returns is the
 /// children of one node, which [`DecryptInto<Value>`] assembles into that
-/// node's value.
+/// node's value, or this opens into its children's values. The sealed root
+/// a walk fell back to opens whole, and the attached path selects over it
+/// to the same values the walked rows open to: one per node the path
+/// reaches, for a path attached with [`JsonSubtree::at`]; the children of
+/// the one node at the path, for [`JsonSubtree::below`]. An object's
+/// members come in an order neither form fixes, and without their keys;
+/// open it as a [`Value`] to keep them.
 impl DecryptInto<Vec<Value>> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {
         Decryption::from_open(move |cipher| {
+            if self.is_sealed_root() {
+                let below = self.below;
+                return open_fallback(self, cipher, context).try_map(move |(path, whole)| {
+                    let found = path.select(&whole);
+                    if !below {
+                        return Ok(found.into_iter().cloned().collect());
+                    }
+                    match found.as_slice() {
+                        [node] => Ok(children(node)),
+                        _ => Err(shape("one node at the walked path")),
+                    }
+                });
+            }
             open_subtree(self, cipher, context)
                 .map(|forest| forest.into_iter().map(|(_, v)| v).collect())
         })
@@ -1029,11 +1048,24 @@ impl DecryptInto<Vec<Value>> for JsonSubtree {
 /// that token: an array when the rows are elements, an object when they are
 /// members. No rows is no value ([`Error::OpenedType`]): an empty container
 /// and a scalar both have no descendants, and `->` on the node's selector
-/// returns the node itself.
+/// returns the node itself. The sealed root a walk fell back to opens
+/// whole, and the path attached with [`JsonSubtree::below`] (or
+/// [`JsonSubtree::at`]) selects the one value under it; a path that
+/// reaches no node, or more than one, is [`Error::OpenedType`].
 impl DecryptInto<Value> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
         Decryption::from_open(move |cipher| {
+            if self.is_sealed_root() {
+                return open_fallback(self, cipher, context).try_map(|(path, whole)| {
+                    let mut found = path.select(&whole);
+                    match found.len() {
+                        1 => Ok(found.remove(0).clone()),
+                        0 => Err(shape("a node at the walked path")),
+                        _ => Err(shape("one node at the walked path")),
+                    }
+                });
+            }
             open_subtree(self, cipher, context).try_map(|forest| {
                 let mut members = Map::new();
                 let mut elements: Vec<(u64, Value)> = Vec::new();
@@ -1099,6 +1131,48 @@ fn open_subtree<'a, K>(
             forest.push((top.label.clone(), value));
         }
         Ok(forest)
+    })
+}
+
+/// The values of a node's children, in the node's order: an array's
+/// elements, an object's member values, and none for a scalar. What a
+/// `json_tree_subtree` walk's rows open to as a [`Vec`], taken over the
+/// whole document when the walk fell back to the sealed root.
+fn children(node: &Value) -> Vec<Value> {
+    match node {
+        Value::Array(items) => items.clone(),
+        Value::Object(members) => members.values().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Open the sealed root a walk fell back to: the whole document, with the
+/// path the rows were keyed from, which the caller selects over. Refused
+/// without the path, since nothing in the rows records it.
+fn open_fallback<'a, K>(
+    subtree: JsonSubtree,
+    cipher: &'a StackCipher<K>,
+    context: AeadContext,
+) -> Pending<'a, (JsonPath, Value), K> {
+    let Some(path) = subtree.path().cloned() else {
+        return Pending::failed(
+            cipher,
+            shape("the walked path, attached with JsonSubtree::below or JsonSubtree::at, to select over the sealed root the walk returned"),
+        );
+    };
+    let Some(root) = subtree.nodes().first().cloned() else {
+        return Pending::failed(cipher, shape("the sealed root"));
+    };
+    let (request, aad) = match retrieval(&root.header, context) {
+        Ok(parts) => parts,
+        Err(error) => return Pending::failed(cipher, error),
+    };
+    Pending::request(cipher, vec![request], move |responses| {
+        let key = responses.next_retrieved_key()?;
+        let aes = leaf_cipher(&key)?;
+        let opened = open_entry(&aes, &root.header, &aad, &root.entry, root.j)?;
+        let whole = opened.whole.ok_or_else(|| shape("a sealed root"))?;
+        Ok((path, whole))
     })
 }
 

@@ -28,7 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `JsonTooDeep`, `JsonTooWide`, `JsonSealedRoot`, `JsonLeafNotOrdered` and
   `JsonValueNotScalar`. A data plan reads and writes the index (`"json"`,
   or `{"json": {"sealed_root": bool}}`) and refuses to run it with
-  `Reason::JsonIndexPending`.
+  `Reason::JsonIndexPending`. A `JsonDocument` writes its own containment
+  projection to the wire as `q`, beside `sv`, for the server to compare
+  with a needle, and ignores a stored one, deriving it from the entries
+  again. A walk past its budget returns the sealed root in place of the
+  subtree: `JsonSubtree::below(path)` (for `json_tree_subtree`) or
+  `JsonSubtree::at(path)` (for `json_tree_subtree_at`) attaches the walked
+  path, and the rows then open to the same value either way, over
+  `JsonPath::select`, which evaluates a path over a value.
 
 - **The order terms are serde types.** `OreTerm`, `OpeTerm` and
   `OreBlockTerm` serialize as the lowercase hex of their bytes in a

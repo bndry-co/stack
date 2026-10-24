@@ -152,7 +152,26 @@ async fn the_wire_form_is_what_the_sql_domain_stores() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(keys, ["h", "sv"]);
+    assert_eq!(keys, ["h", "q", "sv"]);
+    // `q` is the document's own projection, written once: the needle a
+    // `Contains` of the whole document derives has the same pairs in the
+    // same groups, and nothing else.
+    let needle = cipher
+        .query(op::Contains, &fixture())
+        .on(&plan())
+        .await
+        .unwrap();
+    assert_eq!(wire["q"], serde_json::to_value(&needle).unwrap());
+    assert!(
+        serde_json::from_value::<JsonDocument>(json!({"h": wire["h"], "sv": wire["sv"]})).is_ok(),
+        "a document without `q` still deserializes: the projection is derived from the entries"
+    );
+    let back: JsonDocument = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&back).unwrap(),
+        wire,
+        "`q` round-trips through the entries"
+    );
     for (j, entry) in wire["sv"].as_array().unwrap().iter().enumerate() {
         let entry = entry.as_object().unwrap();
         for key in entry.keys() {
@@ -1129,6 +1148,226 @@ async fn each_stored_form_opens_as_a_record_field() {
         .await
         .unwrap();
     assert_eq!(opened, json!([{"x": 1}, {"x": 2}]));
+}
+
+/// Past its budget the server returns the sealed root alone, at depth 0,
+/// in place of the subtree: the rows open to the whole document and the
+/// path attached with `at` selects over it. Without the path, or with one
+/// that reaches nothing, the opening is refused; a root at depth 0 under
+/// an unsealed document is not the fallback.
+#[tokio::test]
+async fn the_sealed_root_a_walk_fell_back_to_opens_at_the_path() {
+    let cipher = stack_cipher().await;
+    let doc = seal(&cipher, &fixture()).await;
+    let fallback = |doc: &JsonDocument| -> JsonNode {
+        let mut wire = serde_json::to_value(doc.node(0).unwrap()).unwrap();
+        wire["d"] = json!(0);
+        serde_json::from_value(wire).unwrap()
+    };
+    let root = fallback(&doc);
+    let rows = JsonSubtree::new(vec![root.clone()]);
+    assert!(rows.is_sealed_root());
+    assert!(rows.path().is_none());
+
+    let nested = cipher
+        .decrypt_as::<Value, JsonSubtree>(
+            rows.clone().at(JsonPath::parse("$.nested").unwrap()),
+            aead(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(nested, fixture()["nested"]);
+    let xs = cipher
+        .decrypt_as::<Vec<Value>, JsonSubtree>(
+            rows.clone()
+                .at(JsonPath::parse("$.nested.list[*].x").unwrap()),
+            aead(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(xs, vec![json!(1), json!(2)]);
+    let none = cipher
+        .decrypt_as::<Vec<Value>, JsonSubtree>(
+            rows.clone().at(JsonPath::parse("$.missing[*]").unwrap()),
+            aead(),
+        )
+        .await
+        .unwrap();
+    assert!(none.is_empty(), "a path that reaches nothing is no subtree");
+
+    // Each refusal names what it expected: nothing at the path, or one node
+    // where a wildcard reached two.
+    for (path, expected) in [
+        ("$.missing", "a node at the walked path"),
+        ("$.nested.list[*].x", "one node at the walked path"),
+    ] {
+        let refused = cipher
+            .decrypt_as::<Value, JsonSubtree>(
+                rows.clone().at(JsonPath::parse(path).unwrap()),
+                aead(),
+            )
+            .await;
+        match refused {
+            Err(Error::OpenedType { expected: got }) => assert_eq!(got, expected, "{path}"),
+            other => panic!("{path}: {other:?}"),
+        }
+    }
+    let unattached = cipher
+        .decrypt_as::<Value, JsonSubtree>(rows.clone(), aead())
+        .await;
+    assert!(
+        matches!(unattached, Err(Error::OpenedType { .. })),
+        "the fallback needs the path: {unattached:?}"
+    );
+
+    // The same root at depth 1, or at depth 0 under an unsealed document,
+    // is a walk's row and not the fallback; neither assembles.
+    let mut as_walked = serde_json::to_value(doc.node(0).unwrap()).unwrap();
+    as_walked["d"] = json!(1);
+    let as_walked: JsonNode = serde_json::from_value(as_walked).unwrap();
+    assert!(!JsonSubtree::new(vec![as_walked.clone()]).is_sealed_root());
+    let refused = cipher
+        .decrypt_as::<Value, JsonSubtree>(
+            JsonSubtree::new(vec![as_walked]).at(JsonPath::parse("$.nested").unwrap()),
+            aead(),
+        )
+        .await;
+    assert!(matches!(refused, Err(Error::OpenedType { .. })));
+    let open_doc = seal_with(&cipher, &fixture(), JsonOptions { sealed_root: false }).await;
+    assert!(!JsonSubtree::new(vec![fallback(&open_doc)]).is_sealed_root());
+    assert!(!JsonSubtree::new(vec![]).is_sealed_root());
+    assert!(!JsonSubtree::new(vec![root.clone(), root]).is_sealed_root());
+}
+
+/// The sealed root a walk fell back to opens to exactly what the walked
+/// rows open to, so a caller's result does not change shape when a
+/// document grows past the budget. `json_tree_subtree`'s rows are the
+/// descendants of the token's node, so the path is attached with `below`
+/// and a `Vec` opens to that node's children; `at` is for
+/// `json_tree_subtree_at`, whose rows are the nodes the path reaches.
+#[tokio::test]
+async fn the_fallback_opens_to_what_the_walk_opens_to() {
+    let cipher = stack_cipher().await;
+    let doc = seal(&cipher, &fixture()).await;
+    let mut root = serde_json::to_value(doc.node(0).unwrap()).unwrap();
+    root["d"] = json!(0);
+    let fallback = JsonSubtree::new(vec![serde_json::from_value(root).unwrap()]);
+    assert!(fallback.is_sealed_root());
+    let path = |text: &str| JsonPath::parse(text).unwrap();
+    let walked = |text: &'static str| {
+        let cipher = &cipher;
+        let doc = &doc;
+        async move {
+            let key = subtree_key(cipher, text, JsonOptions::default())
+                .await
+                .unwrap();
+            let rows = doc
+                .subtree(key.token_bytes())
+                .iter()
+                .map(|(j, _, _)| doc.node(*j).unwrap())
+                .collect();
+            JsonSubtree::new(rows)
+        }
+    };
+    let sorted = |mut values: Vec<Value>| {
+        values.sort_by_key(ToString::to_string);
+        values
+    };
+
+    // An array: its elements, in order, either way.
+    let list = cipher
+        .decrypt_as::<Vec<Value>, JsonSubtree>(walked("$.nested.list").await, aead())
+        .await
+        .unwrap();
+    assert_eq!(list, vec![json!({"x": 1}), json!({"x": 2})]);
+    let below = |text: &str| fallback.clone().below(path(text));
+    assert_eq!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(below("$.nested.list"), aead())
+            .await
+            .unwrap(),
+        list
+    );
+    // An object: its member values, in an order neither form fixes.
+    let members = cipher
+        .decrypt_as::<Vec<Value>, JsonSubtree>(walked("$.nested").await, aead())
+        .await
+        .unwrap();
+    assert_eq!(members.len(), 2);
+    assert_eq!(
+        sorted(
+            cipher
+                .decrypt_as::<Vec<Value>, JsonSubtree>(below("$.nested"), aead())
+                .await
+                .unwrap()
+        ),
+        sorted(members)
+    );
+    // As one value, the node itself, either way.
+    assert_eq!(
+        cipher
+            .decrypt_as::<Value, JsonSubtree>(below("$.nested"), aead())
+            .await
+            .unwrap(),
+        fixture()["nested"]
+    );
+    // A scalar has no children, as its walk has no rows.
+    assert!(cipher
+        .decrypt_as::<Vec<Value>, JsonSubtree>(below("$.hello"), aead())
+        .await
+        .unwrap()
+        .is_empty());
+    // `below` names one node: nothing at the path, or a wildcard reaching
+    // two, is refused.
+    for text in ["$.missing", "$.nested.list[*]"] {
+        match cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(below(text), aead())
+            .await
+        {
+            Err(Error::OpenedType { expected }) => {
+                assert_eq!(expected, "one node at the walked path", "{text}")
+            }
+            other => panic!("{text}: {other:?}"),
+        }
+    }
+    // `at` is the other walk's: the nodes the path reaches, so on this path
+    // the list itself. Attaching the wrong one is what changes the shape.
+    assert_eq!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(
+                fallback.clone().at(path("$.nested.list")),
+                aead()
+            )
+            .await
+            .unwrap(),
+        vec![fixture()["nested"]["list"].clone()]
+    );
+    // The last attachment decides, both the path and the walk.
+    let reattached = fallback
+        .clone()
+        .below(path("$.nested"))
+        .at(path("$.nested.list"));
+    assert_eq!(
+        reattached.path().map(ToString::to_string).as_deref(),
+        Some("$.nested.list")
+    );
+    assert_eq!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(reattached, aead())
+            .await
+            .unwrap(),
+        vec![fixture()["nested"]["list"].clone()]
+    );
+    assert_eq!(
+        cipher
+            .decrypt_as::<Vec<Value>, JsonSubtree>(
+                fallback.at(path("$.nested")).below(path("$.nested.list")),
+                aead()
+            )
+            .await
+            .unwrap(),
+        list
+    );
 }
 
 /// The walk reports each row's depth below where it started, in `d`; an

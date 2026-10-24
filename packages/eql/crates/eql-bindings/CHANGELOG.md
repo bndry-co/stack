@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The EQL v4 `json_tree` family's types, `v4::json_tree`** (`stack-encrypt`
+  feature). `JsonTreeDocument` is `public.eql_v4_json_tree`, `{v, i, h, sv,
+  q}`: the document's entries, one per JSON node, and `q`, its containment
+  projection, which the server compares with a needle by native `jsonb @>`.
+  `JsonTreeEntry` is one entry as `->` and the walks return it,
+  `JsonTreeQuery` the containment needle and `JsonTreeLeafQuery` the
+  ordering operand at a path. `JsonTreeSubtree` collects a walk's rows; past
+  the walk's budget the server returns the sealed root instead, and
+  `JsonTreeSubtree::below(path)` (for `json_tree_subtree`) or `at(path)`
+  (for `json_tree_subtree_at`) attaches the path the rows then open at.
+  The document is an `EncryptFrom<Value>` and `DecryptInto<Value>` target,
+  the entry and the subtree open through `DecryptInto`, and the needle and
+  the ordering operand convert from Stack Encrypt's `JsonQuery` and
+  `JsonLeafQuery`.
 - **The date, timestamp and numeric ordered types are producible**
   (`stack-encrypt` feature, #1236): `DateOrd`, `DateOrdOpe`, `DateOrdOre`,
   `TimestampOrd`, `TimestampOrdOpe`, `TimestampOrdOre`, `NumericOrd`,

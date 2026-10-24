@@ -327,8 +327,10 @@ impl JsonEntry {
 /// [`DecryptInto<Value>`](crate::DecryptInto) opens.
 ///
 /// Serializes to the wire form the EQL domain stores: `{"h": "…", "sv":
-/// [{"s": "…", "vs": "…", "c": "…", …}, …]}`; see the
-/// [module docs](self#byte-encodings).
+/// [{"s": "…", "vs": "…", "c": "…", …}, …], "q": {"sv": [{"s", "vs"}, …],
+/// "el": […]}}`, where `q` is the document's own containment
+/// [projection](Self::projection), written once so the server never
+/// rebuilds it; see the [module docs](self#byte-encodings).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "DocumentWire", into = "DocumentWire")]
 pub struct JsonDocument {
@@ -494,21 +496,79 @@ where
 /// members an object. A node with no descendants, an empty container or a
 /// scalar, yields no rows and so no value; `->` on its selector returns the
 /// node itself.
+///
+/// Past its budget, a walk over a document with a sealed root returns the
+/// root entry alone, at depth `0`, instead of a subtree it would be
+/// cheaper to open whole: the client opens the document and takes the
+/// walked path over it. Opening such rows needs that path and which walk
+/// it keyed, attached with [`below`](Self::below) for `json_tree_subtree`
+/// or [`at`](Self::at) for `json_tree_subtree_at`, so that the rows open
+/// to the same value whichever form the server returned; without a path
+/// the opening fails with [`Error::OpenedType`](crate::Error::OpenedType).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct JsonSubtree {
     nodes: Vec<JsonNode>,
+    #[serde(skip)]
+    path: Option<JsonPath>,
+    #[serde(skip)]
+    below: bool,
 }
 
 impl JsonSubtree {
     /// The rows, as returned.
     pub fn new(nodes: Vec<JsonNode>) -> Self {
-        Self { nodes }
+        Self {
+            nodes,
+            path: None,
+            below: false,
+        }
+    }
+
+    /// The rows of `json_tree_subtree_at`, with the whole path its key was
+    /// derived from: what the opening takes over the whole document when
+    /// the rows are the sealed root the server fell back to. They open as
+    /// the walked rows do, to one value per node the path reaches.
+    pub fn at(self, path: JsonPath) -> Self {
+        Self {
+            path: Some(path),
+            below: false,
+            ..self
+        }
+    }
+
+    /// The rows of `json_tree_subtree`, with the path of the node whose
+    /// token keyed the walk. They open as the walked rows do, which are
+    /// that node's descendants: to the node's value, or, as a
+    /// [`Vec`], to its children's values. Attach the path this way and not
+    /// with [`at`](Self::at), which would open the fallback to the node
+    /// itself where the walk opens to its children.
+    pub fn below(self, path: JsonPath) -> Self {
+        Self {
+            path: Some(path),
+            below: true,
+            ..self
+        }
     }
 
     /// The rows.
     pub fn nodes(&self) -> &[JsonNode] {
         &self.nodes
+    }
+
+    /// The path attached with [`at`](Self::at) or [`below`](Self::below),
+    /// if any.
+    pub fn path(&self) -> Option<&JsonPath> {
+        self.path.as_ref()
+    }
+
+    /// Whether the rows are the sealed root the server returned in place
+    /// of a subtree past its budget: one row, the root, at depth `0`.
+    pub fn is_sealed_root(&self) -> bool {
+        matches!(
+            self.nodes.as_slice(),
+            [node] if node.j == 0 && node.depth == Some(0) && node.header.sealed_root()
+        )
     }
 }
 
@@ -580,12 +640,16 @@ fn unbase64(text: &str) -> Result<Vec<u8>, WireError> {
 #[error("a JSON index wire field does not decode: {0}")]
 pub struct WireError(&'static str);
 
-/// `h` and `sv`, as stored.
+/// `h`, `sv` and `q`, as stored. `q` is written from the entries and not
+/// read back: a document deserialized from the wire derives its projection
+/// from `sv` again, so the field is accepted and ignored on the way in.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DocumentWire {
     h: String,
     sv: Vec<EntryWire>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    q: Option<query::GroupWire>,
 }
 
 /// One entry, as stored: tags in hex, the ciphertext in base64.
@@ -648,6 +712,7 @@ impl From<JsonDocument> for DocumentWire {
         Self {
             h: base64(&doc.header.to_bytes()),
             sv: doc.entries.iter().map(EntryWire::from).collect(),
+            q: Some(query::GroupWire::from(&doc.projection())),
         }
     }
 }
