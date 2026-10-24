@@ -106,10 +106,23 @@ pub use query::{
     check_query, field_operators, query_term, target_limit, verify, Fidelity, OpSpec, Operand,
     OperatorEntry, QueryTerm,
 };
-pub use record::{FieldPlan, Output, Plan};
+pub use record::{FieldPlan, NullMode, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
 pub use term::{term, TermBytes};
 pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
+
+/// vitaminc's value model, the sinks and scalar types a value describes
+/// itself through. A binding implements [`Encrypt`](crate::Encrypt) for its
+/// own values with it, as [`read`] takes them. Re-exported so a binding
+/// builds against the vitaminc this crate does. Two versions of vitaminc in
+/// one build do not fail loudly: a [`ValueFrame`] stops meeting the other
+/// version's `Decrypt` bound.
+pub use vitaminc_aead::plaintext;
+/// vitaminc's transport frame and ciphertext codec (`vitaminc-aead-frame`,
+/// with its `serde` module): the bytes a binding hands this module, and the
+/// codec its ciphertexts cross in. Re-exported for the same reason as
+/// [`plaintext`].
+pub use vitaminc_aead_frame as frame;
 
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
@@ -499,8 +512,8 @@ reasons! {
         /// A field is named twice in the plan.
         DuplicateField => "duplicate_field", "a field is named twice";
         /// A field spec has a key other than `"context"`, `"outputs"`,
-        /// `"target"` and `"type"`.
-        UnknownKey => "unknown_key", r#"a key other than "context", "outputs", "target" and "type""#;
+        /// `"target"`, `"type"` and `"null"`.
+        UnknownKey => "unknown_key", r#"a key other than "context", "outputs", "target", "type" and "null""#;
         /// A key is given twice: in a field spec, or in a map inside a source
         /// value or a stored record.
         RepeatedKey => "repeated_key", "a key is given twice";
@@ -529,11 +542,6 @@ reasons! {
         /// The field's declared type has no such index: match on an integer,
         /// equality or an order index on a boolean, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
-        /// The field declares an ORE or OPE index on a decimal, date or
-        /// timestamp. Their order terms wait for cllw-ore and ore-rs
-        /// releases that encode them the ADR-0002 way (#1236); equality on
-        /// them works today.
-        OrderTermPending => "order_term_pending", "an order index on a decimal, date or timestamp waits for new cllw-ore and ore-rs releases (#1236)";
         /// The field declares the JSON index, which a data plan names but
         /// cannot run yet: the engine's typed path produces a JSON
         /// document, and the binding's half, a document plaintext and its
@@ -595,6 +603,25 @@ reasons! {
         /// Statistics are not a row count with an optional histogram and
         /// confidence ([`Stats::from_frame`](crate::op::Stats::from_frame)).
         NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
+        /// `"null"` is not `"sealed"` or `"sql"`.
+        UnknownNull => "unknown_null", r#""null" is not "sealed" or "sql""#;
+        /// A passthrough field says how to store a null: it carries one as
+        /// it is.
+        NullPassthrough => "null_passthrough", r#"a passthrough carries a null as it is, and takes no "null""#;
+        /// A field with `"null": "sealed"` derives a term other than
+        /// equality's, or names an EQL type that carries one: a null has an
+        /// equality term and no other (#1298), so its absence would show in
+        /// that term's column.
+        SealedNullIndex => "sealed_null_index", r#"a null has an equality term and no other, so a field with another index takes "null": "sql""#;
+        /// A field with `"null": "sealed"` declares no type, or one of no
+        /// fixed width (text, bytes, a container), whose absence the length
+        /// of its ciphertext would show.
+        SealedNullType => "sealed_null_type", "a sealed null needs a declared type of fixed width: a bool, a number, a date, a timestamp or a decimal";
+        /// A query's input is a null, and the field does not seal its nulls
+        /// beside an equality term: only `eq` on a `"null": "sealed"` field
+        /// finds a null by its term. A `"null": "sql"` field's nulls are SQL
+        /// `NULL`, which `IS NULL` finds.
+        NullQuery => "null_query", r#"a null is found by its term only with eq on a field with "null": "sealed"; a "null": "sql" field's nulls are SQL NULL"#;
     }
 }
 

@@ -93,6 +93,8 @@ type encMember struct {
 type genField struct {
 	Field
 	typeExpr   string        // the field's Go type
+	valueExpr  string        // the type of one value: typeExpr, or what a nullable field points to
+	memberType string        // the encrypted type's member: outputType, or a pointer to it for NullSQL
 	via        string        // the embedded passthrough struct it is promoted from, or ""
 	tags       string        // the other libraries' tags, without stash
 	outputType string        // the encrypted type's field type: "eql.TextEq" or "EncryptedContactEmail"
@@ -108,8 +110,12 @@ type genField struct {
 // scalar (type Email string): the engine returns the underlying type, and
 // the generated code converts.
 func (g genField) definedScalar() bool {
-	return g.GoType.Kind.Scalar() && g.GoType.Basic != "" && g.typeExpr != g.GoType.Basic
+	return g.GoType.Kind.Scalar() && g.GoType.Basic != "" && g.valueExpr != g.GoType.Basic
 }
+
+// nullable reports whether the field is declared over a pointer, so its
+// value may be nil.
+func (g genField) nullable() bool { return g.Null != NotNull }
 
 // output is one output of a sealed field in separate columns.
 type output struct {
@@ -686,11 +692,34 @@ func (r *reader) buildFields(c *collected) error {
 		if t.Omit {
 			field.Verb = VerbOmit
 		}
+		// A sealed field declared over a pointer to one scalar may be nil:
+		// it is that scalar's field, and says how it stores nil (#1298).
+		pointer := field.Sealed() && field.GoType.Kind == KindPointer && field.GoType.Elem != nil && field.GoType.Elem.Kind.Scalar()
+		if pointer {
+			field.GoType = *field.GoType.Elem
+		}
+		if t.Null != NotNull && !pointer {
+			return fieldErr(typeName, cf.goName, "null= says how a field declared over a pointer stores nil, and a field of type %s is never nil; declare it as a pointer to one scalar, *%s", r.typeExpr(cf.typ), r.typeExpr(cf.typ))
+		}
+		if pointer {
+			mode, err := r.nullMode(field, t.Null)
+			if err != nil {
+				return fieldErr(typeName, cf.goName, "%s", err)
+			}
+			field.Null = mode
+		}
+		if field.Null == NullSQL && len(r.req.Models) > 0 {
+			return fieldErr(typeName, cf.goName, "a null=sql field stores no columns when it is nil, and -model does not map such a field yet; leave out -model, or store nil as a sealed null")
+		}
 		f.decl.Fields = append(f.decl.Fields, field)
 		if t.Omit {
 			continue
 		}
 		g := genField{Field: field, typeExpr: r.typeExpr(cf.typ), via: cf.via, tags: cf.tags, pathType: pathType(cf.typ)}
+		g.valueExpr = g.typeExpr
+		if pointer {
+			g.valueExpr = field.GoType.Name
+		}
 		if g.Sealed() && !g.GoType.Kind.Scalar() {
 			// The engine seals a composite as a tree of leaves, and a column
 			// holds one leaf; only an opaque struct seals a whole value.
@@ -744,6 +773,10 @@ func (r *reader) buildFields(c *collected) error {
 		if g.Sealed() {
 			g.fieldType = f.fieldTypePrefix + cf.goName + "Field"
 		}
+		g.memberType = g.outputType
+		if g.Null == NullSQL {
+			g.memberType = "*" + g.outputType
+		}
 		f.fields = append(f.fields, g)
 		if cf.via != "" {
 			if !embedded[cf.via] {
@@ -752,9 +785,49 @@ func (r *reader) buildFields(c *collected) error {
 			}
 			continue
 		}
-		f.members = append(f.members, encMember{name: cf.goName, typeExpr: g.outputType, tags: cf.tags})
+		f.members = append(f.members, encMember{name: cf.goName, typeExpr: g.memberType, tags: cf.tags})
 	}
 	return nil
+}
+
+// nullMode is how a sealed field declared over a pointer stores nil: the
+// tag's `null=` if it says, else NullSealed where a sealed nil hides that the
+// value is absent. That needs a type of fixed width, so a nil is as long as a
+// value, and no index but equality, the one index a nil has a term for
+// (#1298): any other index's column would show which values are absent.
+// Anywhere else the field says null=sql, so a visible SQL NULL is a choice
+// the source shows.
+func (r *reader) nullMode(field Field, tagged Null) (Null, error) {
+	indexes := make([]IndexName, 0, len(field.Indexes))
+	for _, idx := range field.Indexes {
+		indexes = append(indexes, idx.Name)
+	}
+	if field.Verb == VerbEncryptInto {
+		for _, eqlType := range r.eql {
+			if eqlType.Name == field.EQLType {
+				indexes = eqlType.Indexes
+			}
+		}
+	}
+	indexed := false
+	for _, name := range indexes {
+		indexed = indexed || name != IndexEquality
+	}
+	fixed := field.GoType.Kind.fixedWidth()
+	switch {
+	case tagged == NullSQL:
+		return NullSQL, nil
+	case tagged == NullSealed && indexed:
+		return "", fmt.Errorf("a nil has an equality term and no other, so another index's column would show which values are absent; write null=sql, which stores SQL NULL")
+	case tagged == NullSealed && !fixed:
+		return "", fmt.Errorf("a sealed nil is as long as a value only for a type of fixed width, and a %s shows its length; write null=sql, which stores SQL NULL", field.GoType)
+	case fixed && !indexed:
+		return NullSealed, nil
+	case indexed:
+		return "", fmt.Errorf("a field with an index other than equality stores nil as SQL NULL, which shows which values are absent: a nil has an equality term and no other. Write null=sql to say so")
+	default:
+		return "", fmt.Errorf("a %s field stores nil as SQL NULL, which shows which values are absent: a %s shows its length, so a sealed nil would not hide it. Write null=sql to say so", "*"+field.GoType.Name, field.GoType)
+	}
 }
 
 func (r *reader) embeddedTags(fieldName string) string {

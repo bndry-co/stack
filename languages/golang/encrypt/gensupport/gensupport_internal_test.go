@@ -1,6 +1,7 @@
 package gensupport
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -458,5 +459,26 @@ func TestAsKindLeavesAValueThatWritesItself(t *testing.T) {
 		if err != nil || got != encodedInt(7) {
 			t.Errorf("asKind(%s, encodedInt(7)) = %v (%T), %v; want encodedInt(7)", kind, got, got, err)
 		}
+	}
+}
+
+// EncryptNull seals nil only for a field that stores it as a sealed null.
+// Under null=sql nil is SQL NULL, and a field of no null mode has no nil,
+// so both are refused before any cipher is used.
+func TestEncryptNullOnlyForASealedNull(t *testing.T) {
+	d := Declare("people").
+		EncryptIndex("age", Int32, encrypt.Equality).Null("age", NullSealed).
+		Encrypt("nick", String).Null("nick", NullSQL).
+		Encrypt("score", Int64)
+	for _, name := range []string{"nick", "score"} {
+		_, err := NewField[int64](d, name).EncryptNull(context.Background(), nil)
+		if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "null=sealed") {
+			t.Fatalf("%s: EncryptNull = %v", name, err)
+		}
+	}
+	// A sealed null passes the check and reaches the cipher.
+	_, err := NewField[int32](d, "age").EncryptNull(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "EncryptNull needs a cipher") {
+		t.Fatalf("age: EncryptNull = %v", err)
 	}
 }

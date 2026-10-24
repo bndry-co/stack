@@ -208,10 +208,19 @@ mod tests {
                 "BigintOrdOpe",
                 "Date",
                 "DateEq",
+                "DateOrdOre",
+                "DateOrd",
+                "DateOrdOpe",
                 "Timestamp",
                 "TimestampEq",
+                "TimestampOrdOre",
+                "TimestampOrd",
+                "TimestampOrdOpe",
                 "Numeric",
                 "NumericEq",
+                "NumericOrdOre",
+                "NumericOrd",
+                "NumericOrdOpe",
                 "Text",
                 "TextEq",
                 "TextMatch",
@@ -235,7 +244,7 @@ mod tests {
             "the engine's producible types, in catalog order"
         );
         assert!(matches!(
-            resolver().resolve("DateOrdOre"),
+            resolver().resolve("Json"),
             Err(TargetError::Unproducible { .. })
         ));
         assert!(matches!(

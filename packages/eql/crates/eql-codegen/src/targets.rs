@@ -30,8 +30,7 @@
 //! terms at once.
 //!
 //! The reasons a type is not producible: eql-bindings names no Rust
-//! plaintext type for the family; the engine derives no order term for a
-//! date, timestamp or decimal; and the JSON index is a new engine
+//! plaintext type for the family, and the JSON index is a new engine
 //! operation. Each reason string names the issue that tracks it.
 //!
 //! The query dispatch takes the index that answers the query's operator. A
@@ -425,10 +424,22 @@ fn render_targets_from(rows: &[Row]) -> String {
         let source = format_ident!("{}", rust.rsplit("::").next().unwrap_or(rust));
         (name.clone(), quote!(super::#module::#ty), quote!(#source))
     };
+    // A type whose terms a null has (none, or equality's alone) seals,
+    // opens and queries an `Option` of its plaintext: a value exactly as the
+    // plaintext does, and a null as a null with a null's terms (#1298).
+    // Whether a field may hold one is its plan's.
+    let stored_source = |r: &Row, source: TokenStream| {
+        if r.indexes.iter().all(|index| *index == "eq") {
+            quote!(Option<#source>)
+        } else {
+            source
+        }
+    };
     let encrypt_arms: TokenStream = producible
         .iter()
         .map(|r| {
             let (name, ty, source) = arm(r, &r.name);
+            let source = stored_source(r, source);
             quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), }
         })
         .collect();
@@ -436,6 +447,7 @@ fn render_targets_from(rows: &[Row]) -> String {
         .iter()
         .map(|r| {
             let (name, ty, source) = arm(r, &r.name);
+            let source = stored_source(r, source);
             quote! { #name => open_target::<#ty, #source, K>(#name, opener, column, stored), }
         })
         .collect();
@@ -451,6 +463,7 @@ fn render_targets_from(rows: &[Row]) -> String {
         .filter_map(|r| {
             let (query, _) = r.query.as_ref()?;
             let (name, ty, source) = arm(r, query);
+            let source = stored_source(r, source);
             if r.projections.is_empty() {
                 return Some(
                     quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), },
@@ -736,29 +749,22 @@ mod tests {
                 .find(|f| f.name == name)
                 .expect("family")
         };
-        for family_name in ["integer", "smallint", "bigint", "real", "double"] {
+        for family_name in [
+            "integer",
+            "smallint",
+            "bigint",
+            "real",
+            "double",
+            "date",
+            "timestamp",
+            "numeric",
+        ] {
             let family = family(family_name);
             assert!(gap(family, "").is_none(), "{family_name}");
             for producible in ["eq", "ord", "ord_ope", "ord_ore"] {
                 assert!(
                     gap(family, producible).is_none(),
                     "{family_name} {producible}"
-                );
-            }
-        }
-        // A date, a timestamp and a decimal are stored and compared for
-        // equality; every ordered domain of theirs, block ORE included,
-        // waits for an order term.
-        for family_name in ["date", "timestamp", "numeric"] {
-            let family = family(family_name);
-            assert!(gap(family, "").is_none(), "{family_name}");
-            assert!(gap(family, "eq").is_none(), "{family_name}Eq is producible");
-            for ordered in ["ord", "ord_ope", "ord_ore"] {
-                assert!(
-                    gap(family, ordered)
-                        .unwrap()
-                        .contains("no order term for a date, timestamp or decimal"),
-                    "{family_name} {ordered}"
                 );
             }
         }
@@ -824,15 +830,20 @@ mod tests {
             let module = family.name;
             let (_, plaintext) = plaintext_of(family.name).expect("a derived family's plaintext");
             let plaintext = plaintext.rsplit("::").next().unwrap();
+            // A type whose terms a null has (none, or equality's alone)
+            // stores, opens and queries an `Option` of its plaintext.
+            let source = if crate::bindings::nullable_terms(domain) {
+                format!("Option<{plaintext}>")
+            } else {
+                plaintext.to_owned()
+            };
             let arm = |helper: &str, ty: &str| {
                 format!(
-                    "\"{name}\" => {{ {helper}::<super::{module}::{ty}, {plaintext}, K>(\"{name}\", "
+                    "\"{name}\" => {{ {helper}::<super::{module}::{ty}, {source}, K>(\"{name}\", "
                 )
             };
             let flat_arm = |helper: &str, ty: &str| {
-                format!(
-                    "\"{name}\" => {helper}::<super::{module}::{ty}, {plaintext}, K>(\"{name}\", "
-                )
+                format!("\"{name}\" => {helper}::<super::{module}::{ty}, {source}, K>(\"{name}\", ")
             };
             // rustfmt breaks long arms at different points, so compare with
             // all whitespace gone.
@@ -1073,8 +1084,9 @@ mod tests {
     }
 
     /// A producible type with no query twin — the storage-only `Text` —
-    /// renders encrypt and decrypt arms and no query arm: the query
-    /// dispatch's fall-through refuses it as answering no query.
+    /// renders encrypt and decrypt arms over an `Option` of its plaintext,
+    /// so it stores a null (#1298), and no query arm: the query dispatch's
+    /// fall-through refuses it as answering no query.
     #[test]
     fn a_producible_type_without_a_query_twin_gets_no_query_arm() {
         let rows = rows();
@@ -1089,12 +1101,12 @@ mod tests {
             .join(" ");
         let arms_for = |helper: &str| {
             out.matches(&format!(
-                "\"Text\" => {{ {helper}::<super::text::Text, String, K>(\"Text\","
+                "\"Text\" => {{ {helper}::<super::text::Text, Option<String>, K>(\"Text\","
             ))
             .count()
                 + out
                     .matches(&format!(
-                        "\"Text\" => {helper}::<super::text::Text, String, K>(\"Text\","
+                        "\"Text\" => {helper}::<super::text::Text, Option<String>, K>(\"Text\","
                     ))
                     .count()
         };

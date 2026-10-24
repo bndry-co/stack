@@ -30,6 +30,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or `{"json": {"sealed_root": bool}}`) and refuses to run it with
   `Reason::JsonIndexPending`.
 
+- **The order terms are serde types.** `OreTerm`, `OpeTerm` and
+  `OreBlockTerm` serialize as the lowercase hex of their bytes in a
+  human-readable format such as JSON, and as the raw bytes in a binary one,
+  through `serdect`, whose hex is constant-time. Deserializing decodes
+  through `from_bytes`, so it refuses what `from_bytes` refuses, and no
+  error carries a byte of the term. EQL v4's bindings store them this way.
+
+- **Dates, timestamps and decimals are ordered** (#1236). The new
+  `value` module holds `Date`, `Timestamp` and `Decimal` (and their
+  `RangeError`), moved here from eql-bindings, which re-exports them at
+  `v4::plaintext`: wipeable, `Clone` plaintexts with no Rust standard type,
+  with conversions to chrono's and rust_decimal's types behind the new
+  `chrono` and `rust_decimal` features. Each is `sem::Orderable` and
+  `op::Ordered`, so ORE, OPE and block ORE terms derive over it and `Lt`,
+  `Lte`, `Gt`, `Gte` and `Between` answer it, at vitaminc-ore's `Date`,
+  `Timestamp` and `Decimal` targets: a date by its day, a timestamp by the
+  microsecond (floored, as its equality term is), a decimal by value
+  whatever its scale, so `1.5` ties `1.50`. On the data-plan path a
+  `decimal`, `date` or `timestamp` field admits `ore`, `ope` and
+  `ore_block`, and its order terms are the typed path's. Block ORE puts a
+  date through the 6-bit fixed-width engine and a timestamp or decimal
+  through the chained one.
+
+- **The vitaminc a binding speaks through is re-exported.** `dynamic::frame`
+  is `vitaminc-aead-frame` (the transport frame and ciphertext codec, with
+  its `serde` module), `dynamic::plaintext` is vitaminc-aead's value model,
+  for implementing `Encrypt` on a binding's own values, and the crate root
+  adds `DecodeError`, `Protected` and `Controlled`. A binding that takes
+  these from stack-encrypt cannot resolve a second vitaminc, which would
+  fail only at a `ValueFrame: Decrypt` bound. The Go guest now takes
+  vitaminc only this way.
+
+- **A data plan field says how it stores a null** (`dynamic` feature,
+  #1298). A field spec takes `"null": "sealed"` or `"null": "sql"`
+  (`dynamic::NullMode`, `FieldPlan::with_null`). `"sealed"` seals a null
+  like a value, under the field's label, as vitaminc 0.8's typed null of
+  the field's type, as long as a present value, so the stored record does
+  not show which rows are absent; it opens as a null. Beside an equality
+  index it stores a null's equality term, the one every null of the field
+  shares, so the absent rows are one equality group, as any repeated value
+  is, and an `eq` query whose input is a null finds them (`query_term`,
+  `record::query`). It needs a declared type of fixed width (a bool's plain
+  null is already as long as its value) and no index but equality, on the
+  field or on the EQL type it names, since a null has no other term:
+  refused otherwise with `Reason::SealedNullType` or
+  `Reason::SealedNullIndex`. A null query of any other field or operator is
+  `Reason::NullQuery`. `"sql"`
+  stores nothing for a null, or for a row with no entry for the field: the
+  stored record has no entry, so a host writes SQL `NULL`, and a stored
+  record with no entry for the field opens it as a null. A batch's rows are
+  run by one lowered plan per set of fields they leave out, and every
+  group's requests go in the one ZeroKMS call. A passthrough takes no
+  `"null"` (`Reason::NullPassthrough`), and an unknown mode is
+  `Reason::UnknownNull`. A field with no `"null"` is unchanged: every row
+  has it, and a typed field refuses a null.
 - **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended
   2026-10-19). It derives ore-rs 0.9.0's 6-bit block ORE under its own key
   domain, over the same order keys as the CLLW indexes:
@@ -64,10 +119,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them, through vitaminc-normalize: one term per integer value at every
   width, decimals at any scale, timestamps to the microsecond. ORE and OPE
   apply to every integer width, each passed to cllw-ore as its own type.
-  An ORE or OPE index on a decimal, date or timestamp is refused with the
-  new `Reason::OrderTermPending`, which names #1236: those order terms wait
-  for new cllw-ore and ore-rs releases. `dynamic::not_admitted` says why a
-  kind does not admit an index. `dynamic::read` converts between the new
+  A decimal, a date and a timestamp take an order index too (see
+  "Dates, timestamps and decimals are ordered"). `dynamic::not_admitted`
+  says why a kind does not admit an index. `dynamic::read` converts between the new
   kinds where a value fits (an integer into any width that holds it, a
   whole integer into a decimal at scale 0). `tests/value_kinds.rs` and its
   fixture hold the record path, the data query path and the typed path to
@@ -241,6 +295,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`IndexSpec` has a sixth variant, `Json(JsonOptions)`** (the JSON index
   above), so a `match` over it needs an arm for it.
+
+- **The order terms' `from_bytes` takes the buffer.** `OreTerm`, `OpeTerm`
+  and `OreBlockTerm::from_bytes` take a `Vec<u8>` and keep it, copying
+  nothing; each also implements `TryFrom<Vec<u8>>`. `TryFrom<&[u8]>`
+  remains, and copies once. `OpeTerm` now refuses a term whose leading
+  carry byte is not 0 or 1, which clww-ore's comparator already refuses
+  (`TermBytesError::MalformedCllwCiphertext`).
+
+- **stack-encrypt requires the vitaminc 0.8 crates, clww-ore 0.6 and
+  ore-rs 0.10.** A crate that names a vitaminc type stack-encrypt takes or
+  returns moves to 0.8 with it. What changes for a caller:
+  - **Every order term changes.** cllw-ore is now `clww-ore`. Its
+    keystream was fixed, and its schemes' names (`clww-ore`, `clww-ope`),
+    which every term's salt binds, changed, so ORE and OPE terms written
+    before do not compare with new ones. Block ORE goes through ore-rs's
+    single `BlockOre` scheme, which keys its 6-bit and chained engines
+    under a new label, so its terms change too. The wire formats, the key
+    domains of this crate and every sealed ciphertext and equality term are
+    unchanged: a stored row still opens, and its order terms are re-derived.
+    `tests/fixtures/stored_rows_v1.json`'s order terms were re-frozen.
+  - `sem::OreCllw8VariableV1` and `sem::OpeCllw8VariableV1` are renamed
+    `OreClww8VariableV1` and `OpeClww8VariableV1`, as clww-ore names them.
+  - **A sealed `None` of a fixed-width type is as long as a `Some`.**
+    vitaminc 0.8 seals it as a typed null, padded to the type's leaf length,
+    so absent values no longer show in the length of their ciphertexts. A
+    reader on vitaminc 0.7 or older refuses a typed null, so upgrade
+    readers before writers; every null written before still opens. The
+    `dynamic` feature's sinks carry a typed null through the value model,
+    and the frame a binding receives holds the plain null.
+  - **A null has an equality term** (vitaminc-normalize 0.8, #1298), the
+    one term every null of a context shares, on the typed path
+    (`EqualityTerm` of a `None`) and the dynamic one (`IndexSpec::Equality`
+    now defines a null). No other index has a term for a null.
+  - **Block ORE's text ceiling is unchanged, but counted the new way.**
+    `vitaminc-ore` puts the marker byte in front of text itself now, and
+    ore-rs's 1024-byte ceiling counts it, so the fold is still at most 1023
+    bytes.
+
 - **`IndexSpec` has a fifth variant, `OreBlock`** (the block ORE index
   above). The enum is exhaustive on purpose, since a binding has to be
   taught each index, so a `match` over it needs an arm for `OreBlock`. The
