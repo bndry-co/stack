@@ -38,7 +38,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw, TimeUnit};
+use vitaminc_aead::plaintext::{FixedType, Float, Int, Logical, Physical, Raw, TimeUnit, Width};
 use vitaminc_aead::Encrypt;
 
 use super::term::OneScalar;
@@ -56,14 +56,11 @@ use crate::target::IndexSpec;
 /// of every width, both floats, a decimal, a date, a timestamp, text and
 /// bytes, and not a boolean. The rest are this crate's: match over text
 /// alone, and ORE, OPE and block ORE over the integers of 16 bits and
-/// wider, both floats, text and bytes. A boolean and an 8-bit integer have
-/// no order term: over so small a domain it would reveal which rows are
-/// `true`, or each row's rank among 256 values.
-/// A decimal, a date and a timestamp have none yet: their order encodings
-/// wait for new cllw-ore and ore-rs releases (#1236), and [`not_admitted`]
-/// names that reason. A composite (`array`, `object`) has no term. Only the
-/// index's kind matters: a match index's options do not change what it
-/// applies to.
+/// wider, both floats, text, bytes, a decimal, a date and a timestamp. A
+/// boolean and an 8-bit integer have no order term: over so small a domain
+/// it would reveal which rows are `true`, or each row's rank among 256
+/// values. A composite (`array`, `object`) has no term. Only the index's
+/// kind matters: a match index's options do not change what it applies to.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{admits, ValueKind};
@@ -74,7 +71,7 @@ use crate::target::IndexSpec;
 /// assert!(admits(ValueKind::Int8, &IndexSpec::Equality));
 /// assert!(!admits(ValueKind::Int8, &IndexSpec::Ore));
 /// assert!(admits(ValueKind::Date, &IndexSpec::Equality));
-/// assert!(!admits(ValueKind::Date, &IndexSpec::Ore));
+/// assert!(admits(ValueKind::Date, &IndexSpec::Ore));
 /// assert!(!admits(ValueKind::Bool, &IndexSpec::Equality));
 /// assert!(!admits(ValueKind::Bool, &IndexSpec::Ore));
 /// assert!(!admits(ValueKind::Object, &IndexSpec::Ore));
@@ -84,35 +81,22 @@ pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
 }
 
 /// Why `kind` does not admit `index`, or `None` when it does: the reason a
-/// plan that declares the pair is refused with.
-///
-/// [`Reason::OrderTermPending`] for an order index on a decimal, date
-/// or timestamp, whose order terms wait for new cllw-ore and ore-rs
-/// releases (#1236). [`Reason::IndexNotAdmitted`] for every other pair
-/// [`admits`] refuses.
+/// plan that declares the pair is refused with,
+/// [`Reason::IndexNotAdmitted`] for every pair [`admits`] refuses.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{not_admitted, Reason, ValueKind};
 /// use stack_encrypt::target::IndexSpec;
 ///
-/// assert_eq!(not_admitted(ValueKind::Timestamp, &IndexSpec::Ope), Some(Reason::OrderTermPending));
 /// assert_eq!(not_admitted(ValueKind::Bool, &IndexSpec::Ore), Some(Reason::IndexNotAdmitted));
-/// assert_eq!(not_admitted(ValueKind::Timestamp, &IndexSpec::Equality), None);
+/// assert_eq!(not_admitted(ValueKind::Timestamp, &IndexSpec::Ope), None);
 /// ```
 pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
     if admits(kind, index) {
         return None;
     }
-    if matches!(index, IndexSpec::Json(_)) {
-        return Some(Reason::JsonIndexPending);
-    }
-    let ordering = matches!(index, IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock);
-    let pending = matches!(
-        kind,
-        ValueKind::Decimal | ValueKind::Date | ValueKind::Timestamp
-    );
-    Some(if ordering && pending {
-        Reason::OrderTermPending
+    Some(if matches!(index, IndexSpec::Json(_)) {
+        Reason::JsonIndexPending
     } else {
         Reason::IndexNotAdmitted
     })
@@ -464,6 +448,40 @@ impl ValueKind {
             ValueKind::Object => "object",
         }
     }
+
+    /// How an absent value of this kind is sealed so that it is as long as
+    /// a present one (a plan's `"null": "sealed"`, #1298): `Some(Some(ty))`
+    /// for a kind of fixed width, sealed as a typed null of `ty` (vitaminc
+    /// 0.8); `Some(None)` for a boolean, whose leaf is one byte, as the
+    /// plain null is; `None` for a kind of no fixed width (text, bytes, a
+    /// container), whose absence no padding can hide.
+    pub(crate) const fn sealed_null(self) -> Option<Option<FixedType>> {
+        let plain = FixedType::plain;
+        Some(match self {
+            ValueKind::Bool => None,
+            ValueKind::Int8 => plain(Width::I8),
+            ValueKind::Int16 => plain(Width::I16),
+            ValueKind::Int32 => plain(Width::I32),
+            ValueKind::Int64 => plain(Width::I64),
+            ValueKind::Int128 => plain(Width::I128),
+            ValueKind::UInt8 => plain(Width::U8),
+            ValueKind::UInt16 => plain(Width::U16),
+            ValueKind::UInt32 => plain(Width::U32),
+            ValueKind::UInt64 => plain(Width::U64),
+            ValueKind::UInt128 => plain(Width::U128),
+            ValueKind::Float32 => plain(Width::F32),
+            ValueKind::Float64 => plain(Width::F64),
+            // The widths the value model holds each logical type at.
+            ValueKind::Decimal => FixedType::new(Some(Logical::Decimal { scale: 0 }), Width::I128),
+            ValueKind::Date => FixedType::new(Some(Logical::Date), Width::I32),
+            ValueKind::Timestamp => {
+                FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128)
+            }
+            ValueKind::String | ValueKind::Bytes | ValueKind::Array | ValueKind::Object => {
+                return None
+            }
+        })
+    }
 }
 
 impl fmt::Display for ValueKind {
@@ -668,7 +686,7 @@ mod tests {
     }
 
     /// The new kinds' rows, spelled out: equality on every one, order on
-    /// every integer width but 8 bits and on none of the decimal, date and
+    /// every integer width but 8 bits and on the decimal, date and
     /// timestamp, match on none.
     #[test]
     fn admits_the_new_kinds_where_their_terms_exist() {
@@ -702,43 +720,26 @@ mod tests {
         }
         for kind in logical {
             assert!(admits(kind, &IndexSpec::Equality), "{kind} equality");
-            assert!(!admits(kind, &IndexSpec::Ore), "{kind} ore");
-            assert!(!admits(kind, &IndexSpec::Ope), "{kind} ope");
-            assert!(!admits(kind, &IndexSpec::OreBlock), "{kind} ore_block");
+            assert!(admits(kind, &IndexSpec::Ore), "{kind} ore");
+            assert!(admits(kind, &IndexSpec::Ope), "{kind} ope");
+            assert!(admits(kind, &IndexSpec::OreBlock), "{kind} ore_block");
             assert!(!admits(kind, &matched), "{kind} match");
         }
     }
 
     /// `not_admitted` is `admits` with a reason: none for an admitted pair,
-    /// the #1236 reason for an order index on a decimal, date or timestamp
-    /// and nothing else, and the generic reason for every other refusal.
+    /// and one reason for every refusal.
     #[test]
-    fn not_admitted_names_the_pending_order_terms_and_nothing_else() {
+    fn not_admitted_is_admits_with_a_reason() {
         for kind in ValueKind::ALL {
             for index in indexes() {
                 let reason = not_admitted(kind, &index);
                 assert_eq!(reason.is_none(), admits(kind, &index), "{kind} and {index}");
-                let pending =
-                    matches!(index, IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock)
-                        && matches!(
-                            kind,
-                            ValueKind::Decimal | ValueKind::Date | ValueKind::Timestamp
-                        );
-                if pending {
-                    assert_eq!(reason, Some(Reason::OrderTermPending), "{kind} and {index}");
-                } else if reason.is_some() {
+                if reason.is_some() {
                     assert_eq!(reason, Some(Reason::IndexNotAdmitted), "{kind} and {index}");
                 }
             }
         }
-        assert_eq!(
-            not_admitted(ValueKind::Decimal, &IndexSpec::Ore),
-            Some(Reason::OrderTermPending)
-        );
-        assert_eq!(
-            not_admitted(ValueKind::Date, &IndexSpec::Ope),
-            Some(Reason::OrderTermPending)
-        );
         assert_eq!(
             not_admitted(ValueKind::Bool, &IndexSpec::Ope),
             Some(Reason::IndexNotAdmitted)
@@ -747,19 +748,18 @@ mod tests {
             not_admitted(ValueKind::Date, &IndexSpec::Match(MatchOptions::default())),
             Some(Reason::IndexNotAdmitted)
         );
-        assert_eq!(
-            not_admitted(ValueKind::Timestamp, &IndexSpec::OreBlock),
-            Some(Reason::OrderTermPending)
-        );
-        assert_eq!(not_admitted(ValueKind::Int16, &IndexSpec::Ore), None);
+        for kind in [ValueKind::Decimal, ValueKind::Date, ValueKind::Timestamp] {
+            for index in [IndexSpec::Ore, IndexSpec::Ope, IndexSpec::OreBlock] {
+                assert_eq!(not_admitted(kind, &index), None, "{kind} and {index}");
+            }
+        }
         for index in [IndexSpec::Ore, IndexSpec::Ope, IndexSpec::OreBlock] {
             assert_eq!(
                 not_admitted(ValueKind::Int8, &index),
                 Some(Reason::IndexNotAdmitted),
-                "an 8-bit integer is refused {index} as a boolean is, not as pending"
+                "an 8-bit integer is refused {index} as a boolean is"
             );
         }
-        assert!(Reason::OrderTermPending.to_string().contains("#1236"));
     }
 
     /// Every integer width is a source and a target: a value in range

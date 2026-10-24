@@ -100,9 +100,7 @@ pub mod targets;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 #[allow(deprecated)]
 use stack_encrypt::sem::MatchTerm;
-use stack_encrypt::sem::{
-    EqualityTerm, MatchConfig, MatchOptions, OpeTerm, Orderable, OreBlockTerm, TermError, Tokenizer,
-};
+use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, TermError, Tokenizer};
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{self, AeadContext, CallerContext, IndexSpec};
 use stack_encrypt::{
@@ -112,7 +110,7 @@ use stack_encrypt::{
 };
 
 use crate::{
-    v3::terms::{BloomFilter, Ciphertext, Hmac256, OpeCllw, OreBlock256},
+    v3::terms::{BloomFilter, Ciphertext, Hmac256},
     v4::terms::SearchBloomFilter,
     Identifier,
 };
@@ -445,97 +443,6 @@ impl Decryptable for SearchBloomFilter {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for SearchBloomFilter {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
-        None
-    }
-}
-
-/// Builds EQL's hex OPE term from the native order-preserving term.
-///
-/// The bytes are Stack Encrypt's CLLW OPE ciphertext of the value's
-/// ADR-0002 order key, which `vitaminc-ore` encodes: an integer at its own
-/// width, a float as the `f64` it widens to (`-0.0` ties `0.0`, every NaN is
-/// one value after `+Infinity`), text in Unicode 16 NFC with case and accents
-/// folded. EQL compares `op` as `bytea`, which is the lexicographic byte
-/// order the scheme preserves, so `<` on the stored terms is `<` on the
-/// order keys. Matching cipherstash-client's bytes is not a goal:
-/// cipherstash-client never writes an `eql_v4` column.
-///
-/// Text with no fold (a code point Unicode 16 does not assign) has no order
-/// term and is refused, stored or queried.
-#[doc(hidden)]
-pub struct OpeVisitor;
-impl Visitor for OpeVisitor {
-    type Value = OpeCllw;
-    fn ope<T: Orderable>(self, term: OpeTerm<T>) -> Result<Self::Value, Error> {
-        Ok(OpeCllw(hex::encode(term.as_bytes())))
-    }
-}
-impl Transcode for OpeCllw {
-    type Visitor = OpeVisitor;
-    fn visitor() -> Self::Visitor {
-        OpeVisitor
-    }
-}
-impl<S: Orderable + Clone> EncryptFrom<S> for OpeCllw {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        target::ope().transcode()
-    }
-}
-impl Decryptable for OpeCllw {
-    const DECRYPTABLE: bool = false;
-}
-impl<P, Ctx> DecryptField<P, Ctx> for OpeCllw {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
-        None
-    }
-}
-
-/// Builds EQL v4's `ob` from the native block ORE term: one element, the
-/// hex of the whole ore-rs ciphertext.
-///
-/// The ciphertext is ore-rs's 6-bit block ORE of the value's ADR-0002 order
-/// key (`OreBlockTerm`): the fixed-width scheme for integers and floats, the
-/// chained one, padded to a power-of-two length bucket of at least 16
-/// bytes, for text. EQL v4 compares `ob` with the comparator for that
-/// format, which takes exactly one element; EQL v3's `ob` holds 8-bit block
-/// terms, up to six for text, that cipherstash-client writes. A query
-/// carries the full ciphertext too: the comparator reads the right half of
-/// the operand a btree index or `between` passes second.
-///
-/// Text with no fold, text whose fold ends in NUL or is longer than 1023
-/// bytes has no block ORE term and is refused, stored or queried.
-#[doc(hidden)]
-pub struct OreBlockVisitor;
-impl Visitor for OreBlockVisitor {
-    type Value = OreBlock256;
-    fn ore_block<T: Orderable>(self, term: OreBlockTerm<T>) -> Result<Self::Value, Error> {
-        Ok(OreBlock256(vec![hex::encode(term.as_bytes())]))
-    }
-}
-impl Transcode for OreBlock256 {
-    type Visitor = OreBlockVisitor;
-    fn visitor() -> Self::Visitor {
-        OreBlockVisitor
-    }
-}
-impl<S: Orderable + Clone> EncryptFrom<S> for OreBlock256 {
-    type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
-    where
-        S: 's,
-    {
-        target::ore_block().transcode()
-    }
-}
-impl Decryptable for OreBlock256 {
-    const DECRYPTABLE: bool = false;
-}
-impl<P, Ctx> DecryptField<P, Ctx> for OreBlock256 {
     fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
         None
     }

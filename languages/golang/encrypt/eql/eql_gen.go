@@ -26,19 +26,19 @@ var Types = []Type{
 	{Name: "BigintOrdOpe", GoName: "BigintOrdOpe", Family: "bigint", Suffix: "OrdOpe", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord_ope", Indexes: []string{"ope"}, Query: "BigintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ope", Producible: true, Reason: ""},
 	{Name: "Date", GoName: "Date", Family: "date", Suffix: "", Plaintext: "date", SQLDomain: "public.eql_v4_date", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "DateEq", GoName: "DateEq", Family: "date", Suffix: "Eq", Plaintext: "date", SQLDomain: "public.eql_v4_date_eq", Indexes: []string{"eq"}, Query: "DateEqQuery", QuerySQLDomain: "eql_v4.query_date_eq", Producible: true, Reason: ""},
-	{Name: "DateOrdOre", GoName: "DateOrdOre", Family: "date", Suffix: "OrdOre", Plaintext: "date", SQLDomain: "public.eql_v4_date_ord_ore", Indexes: []string{"ore_block"}, Query: "DateOrdOreQuery", QuerySQLDomain: "eql_v4.query_date_ord_ore", Producible: false, Reason: "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)"},
-	{Name: "DateOrd", GoName: "DateOrd", Family: "date", Suffix: "Ord", Plaintext: "date", SQLDomain: "public.eql_v4_date_ord", Indexes: []string{"ope"}, Query: "DateOrdQuery", QuerySQLDomain: "eql_v4.query_date_ord", Producible: false, Reason: "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)"},
-	{Name: "DateOrdOpe", GoName: "DateOrdOpe", Family: "date", Suffix: "OrdOpe", Plaintext: "date", SQLDomain: "public.eql_v4_date_ord_ope", Indexes: []string{"ope"}, Query: "DateOrdOpeQuery", QuerySQLDomain: "eql_v4.query_date_ord_ope", Producible: false, Reason: "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)"},
+	{Name: "DateOrdOre", GoName: "DateOrdOre", Family: "date", Suffix: "OrdOre", Plaintext: "date", SQLDomain: "public.eql_v4_date_ord_ore", Indexes: []string{"ore_block"}, Query: "DateOrdOreQuery", QuerySQLDomain: "eql_v4.query_date_ord_ore", Producible: true, Reason: ""},
+	{Name: "DateOrd", GoName: "DateOrd", Family: "date", Suffix: "Ord", Plaintext: "date", SQLDomain: "public.eql_v4_date_ord", Indexes: []string{"ope"}, Query: "DateOrdQuery", QuerySQLDomain: "eql_v4.query_date_ord", Producible: true, Reason: ""},
+	{Name: "DateOrdOpe", GoName: "DateOrdOpe", Family: "date", Suffix: "OrdOpe", Plaintext: "date", SQLDomain: "public.eql_v4_date_ord_ope", Indexes: []string{"ope"}, Query: "DateOrdOpeQuery", QuerySQLDomain: "eql_v4.query_date_ord_ope", Producible: true, Reason: ""},
 	{Name: "Timestamp", GoName: "Timestamp", Family: "timestamp", Suffix: "", Plaintext: "timestamp", SQLDomain: "public.eql_v4_timestamp", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "TimestampEq", GoName: "TimestampEq", Family: "timestamp", Suffix: "Eq", Plaintext: "timestamp", SQLDomain: "public.eql_v4_timestamp_eq", Indexes: []string{"eq"}, Query: "TimestampEqQuery", QuerySQLDomain: "eql_v4.query_timestamp_eq", Producible: true, Reason: ""},
-	{Name: "TimestampOrdOre", GoName: "TimestampOrdOre", Family: "timestamp", Suffix: "OrdOre", Plaintext: "timestamp", SQLDomain: "public.eql_v4_timestamp_ord_ore", Indexes: []string{"ore_block"}, Query: "TimestampOrdOreQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ore", Producible: false, Reason: "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)"},
-	{Name: "TimestampOrd", GoName: "TimestampOrd", Family: "timestamp", Suffix: "Ord", Plaintext: "timestamp", SQLDomain: "public.eql_v4_timestamp_ord", Indexes: []string{"ope"}, Query: "TimestampOrdQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord", Producible: false, Reason: "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)"},
-	{Name: "TimestampOrdOpe", GoName: "TimestampOrdOpe", Family: "timestamp", Suffix: "OrdOpe", Plaintext: "timestamp", SQLDomain: "public.eql_v4_timestamp_ord_ope", Indexes: []string{"ope"}, Query: "TimestampOrdOpeQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ope", Producible: false, Reason: "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)"},
+	{Name: "TimestampOrdOre", GoName: "TimestampOrdOre", Family: "timestamp", Suffix: "OrdOre", Plaintext: "timestamp", SQLDomain: "public.eql_v4_timestamp_ord_ore", Indexes: []string{"ore_block"}, Query: "TimestampOrdOreQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ore", Producible: true, Reason: ""},
+	{Name: "TimestampOrd", GoName: "TimestampOrd", Family: "timestamp", Suffix: "Ord", Plaintext: "timestamp", SQLDomain: "public.eql_v4_timestamp_ord", Indexes: []string{"ope"}, Query: "TimestampOrdQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord", Producible: true, Reason: ""},
+	{Name: "TimestampOrdOpe", GoName: "TimestampOrdOpe", Family: "timestamp", Suffix: "OrdOpe", Plaintext: "timestamp", SQLDomain: "public.eql_v4_timestamp_ord_ope", Indexes: []string{"ope"}, Query: "TimestampOrdOpeQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ope", Producible: true, Reason: ""},
 	{Name: "Numeric", GoName: "Numeric", Family: "numeric", Suffix: "", Plaintext: "decimal", SQLDomain: "public.eql_v4_numeric", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "NumericEq", GoName: "NumericEq", Family: "numeric", Suffix: "Eq", Plaintext: "decimal", SQLDomain: "public.eql_v4_numeric_eq", Indexes: []string{"eq"}, Query: "NumericEqQuery", QuerySQLDomain: "eql_v4.query_numeric_eq", Producible: true, Reason: ""},
-	{Name: "NumericOrdOre", GoName: "NumericOrdOre", Family: "numeric", Suffix: "OrdOre", Plaintext: "decimal", SQLDomain: "public.eql_v4_numeric_ord_ore", Indexes: []string{"ore_block"}, Query: "NumericOrdOreQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ore", Producible: false, Reason: "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)"},
-	{Name: "NumericOrd", GoName: "NumericOrd", Family: "numeric", Suffix: "Ord", Plaintext: "decimal", SQLDomain: "public.eql_v4_numeric_ord", Indexes: []string{"ope"}, Query: "NumericOrdQuery", QuerySQLDomain: "eql_v4.query_numeric_ord", Producible: false, Reason: "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)"},
-	{Name: "NumericOrdOpe", GoName: "NumericOrdOpe", Family: "numeric", Suffix: "OrdOpe", Plaintext: "decimal", SQLDomain: "public.eql_v4_numeric_ord_ope", Indexes: []string{"ope"}, Query: "NumericOrdOpeQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ope", Producible: false, Reason: "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)"},
+	{Name: "NumericOrdOre", GoName: "NumericOrdOre", Family: "numeric", Suffix: "OrdOre", Plaintext: "decimal", SQLDomain: "public.eql_v4_numeric_ord_ore", Indexes: []string{"ore_block"}, Query: "NumericOrdOreQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ore", Producible: true, Reason: ""},
+	{Name: "NumericOrd", GoName: "NumericOrd", Family: "numeric", Suffix: "Ord", Plaintext: "decimal", SQLDomain: "public.eql_v4_numeric_ord", Indexes: []string{"ope"}, Query: "NumericOrdQuery", QuerySQLDomain: "eql_v4.query_numeric_ord", Producible: true, Reason: ""},
+	{Name: "NumericOrdOpe", GoName: "NumericOrdOpe", Family: "numeric", Suffix: "OrdOpe", Plaintext: "decimal", SQLDomain: "public.eql_v4_numeric_ord_ope", Indexes: []string{"ope"}, Query: "NumericOrdOpeQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ope", Producible: true, Reason: ""},
 	{Name: "Text", GoName: "Text", Family: "text", Suffix: "", Plaintext: "string", SQLDomain: "public.eql_v4_text", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "TextEq", GoName: "TextEq", Family: "text", Suffix: "Eq", Plaintext: "string", SQLDomain: "public.eql_v4_text_eq", Indexes: []string{"eq"}, Query: "TextEqQuery", QuerySQLDomain: "eql_v4.query_text_eq", Producible: true, Reason: ""},
 	{Name: "TextMatch", GoName: "TextMatch", Family: "text", Suffix: "Match", Plaintext: "string", SQLDomain: "public.eql_v4_text_match", Indexes: []string{"match"}, Query: "TextMatchQuery", QuerySQLDomain: "eql_v4.query_text_match", Producible: true, Reason: ""},
@@ -770,7 +770,7 @@ func (v *DateEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DateOrdOre is the EQL type stored in public.eql_v4_date_ord_ore: the date family with the ore_block index.
-// The engine cannot produce it yet: the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236).
+// The engine produces it from a date.
 type DateOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -817,7 +817,7 @@ func (v *DateOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DateOrd is the EQL type stored in public.eql_v4_date_ord: the date family with the ope index.
-// The engine cannot produce it yet: the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236).
+// The engine produces it from a date.
 type DateOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -864,7 +864,7 @@ func (v *DateOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DateOrdOpe is the EQL type stored in public.eql_v4_date_ord_ope: the date family with the ope index.
-// The engine cannot produce it yet: the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236).
+// The engine produces it from a date.
 type DateOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -982,7 +982,7 @@ func (v *TimestampEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampOrdOre is the EQL type stored in public.eql_v4_timestamp_ord_ore: the timestamp family with the ore_block index.
-// The engine cannot produce it yet: the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236).
+// The engine produces it from a timestamp.
 type TimestampOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1029,7 +1029,7 @@ func (v *TimestampOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampOrd is the EQL type stored in public.eql_v4_timestamp_ord: the timestamp family with the ope index.
-// The engine cannot produce it yet: the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236).
+// The engine produces it from a timestamp.
 type TimestampOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1076,7 +1076,7 @@ func (v *TimestampOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampOrdOpe is the EQL type stored in public.eql_v4_timestamp_ord_ope: the timestamp family with the ope index.
-// The engine cannot produce it yet: the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236).
+// The engine produces it from a timestamp.
 type TimestampOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1194,7 +1194,7 @@ func (v *NumericEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // NumericOrdOre is the EQL type stored in public.eql_v4_numeric_ord_ore: the numeric family with the ore_block index.
-// The engine cannot produce it yet: the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236).
+// The engine produces it from a decimal.
 type NumericOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1241,7 +1241,7 @@ func (v *NumericOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // NumericOrd is the EQL type stored in public.eql_v4_numeric_ord: the numeric family with the ope index.
-// The engine cannot produce it yet: the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236).
+// The engine produces it from a decimal.
 type NumericOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1288,7 +1288,7 @@ func (v *NumericOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // NumericOrdOpe is the EQL type stored in public.eql_v4_numeric_ord_ope: the numeric family with the ope index.
-// The engine cannot produce it yet: the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236).
+// The engine produces it from a decimal.
 type NumericOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.

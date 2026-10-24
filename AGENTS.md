@@ -252,7 +252,8 @@ EQL versions installed** in the database.
   rather than listing it, so a task added there tomorrow is covered.
 
   `typecheck` is the deliberate exception: it *should* run under `turbo run
-  typecheck`, and does, from `tests.yml`, on every PR. It needs no credentials
+  typecheck`, and does, from `tests.yml`, on every PR that can reach the JS
+  side (see "`tests.yml` gates its live jobs" below). It needs no credentials
   and no database, and its tsconfig sets `checkJs` so the suite's two `.cjs`
   fixtures are compiled too — one of them is a real `AccessKeyStrategy` call
   site, and a `tests/**/*.ts` scope would leave it checked by nothing but the
@@ -697,10 +698,12 @@ monorepo, which is where the silent failures are.
 ## Working on the Rust crates
 
 The stack-* crates came from `cipherstash/cipherstash-suite`, which still owns
-`cipherstash-client`, `cts-common`, `zerokms-protocol`, `recipher` and
-`cllw-ore`. Here those come from crates.io, and `Cargo.lock` holds their
-exact versions. In the root `Cargo.toml`, `recipher` and `cllw-ore` are
-pinned with `=`. `cts-common` and `zerokms-protocol` take caret
+`cipherstash-client`, `cts-common`, `zerokms-protocol` and `recipher`. Here
+those come from crates.io, and `Cargo.lock` holds their exact versions. In the
+root `Cargo.toml`, `recipher` is pinned with `=`, and so are the order
+schemes `clww-ore` (formerly `cllw-ore`) and `ore-rs`, which live in
+`cipherstash/ore.rs`: a new release of either can change every stored order
+term. `cts-common` and `zerokms-protocol` take caret
 requirements, because the published `stack-auth` inherits them, and an
 exact pin would stop the suite sharing one `cts-common` with it.
 
@@ -715,7 +718,9 @@ exact pin would stop the suite sharing one `cts-common` with it.
   `cargo metadata --locked`, and `run.sh` builds it with `--locked`.
 - **The toolchain is pinned in the root `mise.toml`:** Rust 1.94.1 (the
   `stack-encrypt` `tests/ui` trybuild snapshots record its diagnostics) and
-  Go 1.26. EQL's `mise.toml` overrides the Rust pin in its folder.
+  Go 1.26.10, the module's `go` minimum (#1300: the first 1.26 patch whose
+  `crypto/x509` blocks the compromised eMudhra intermediates). EQL's
+  `mise.toml` overrides the Rust pin in its folder.
   protect-ffi's does not pin Rust, so the root pin applies there.
 - **The cargo tools are pinned in `mise.test.toml`, not `mise.toml`:**
   nextest, llvm-cov, crap, mutants, fuzz and udeps. EQL and protect-ffi
@@ -738,7 +743,9 @@ exact pin would stop the suite sharing one `cts-common` with it.
 - **CI:** `tests-crates.yml` (fmt, clippy, nextest including the trybuild
   `tests/ui` binary, doctests, rustdoc, the node bindings and
   `stack-auth-wasm`), `tests-golang.yml` (WASI checks, the guests, the Go
-  module on Linux, macOS and Windows, and the live tests), `crap-crates.yml`,
+  module on Linux, macOS and Windows, its PostgreSQL tests against the EQL v4
+  bundle built from the tree — `mise run go:test:postgres` locally — and the
+  live tests), `crap-crates.yml`,
   `mutants.yml`, `fuzz.yml`, `miri.yml` and `udeps.yml`.
   `scripts/__tests__/crates-ci.test.mjs` fails when a mise task in the root
   `mise.toml` or the five crate `tasks.toml` files loses its last CI caller.
@@ -947,6 +954,16 @@ pnpm changeset:publish
   `languages/typescript/packages/cli/tests/e2e/**` run via `pnpm --filter stash
   test:e2e` (requires a build). See `languages/typescript/packages/cli/AGENTS.md` for when to
   add or update them.
+- **`tests.yml` gates its live jobs on what a pull request changes.** Its
+  `changes` job skips `run-tests`, `e2e-tests`, `wasm-e2e-tests` and
+  `run-tests-bun` when every changed file sits in a tree they cannot read
+  (the Go module, the Stack Encrypt crates, EQL's SQL and Rust outside the
+  compiled `eql-bindings` files, docs, other workflows). A test that reads a
+  path in one of those trees would be skipped on the change that breaks it:
+  `scripts/__tests__/tests-workflow-gate.test.mjs` scans for that and fails.
+  Checks that read the whole tree (the lint scripts, `test:scripts`, the
+  release gate, the suites that read workflow files) run in the ungated
+  `repo-checks` job instead.
 
 ## Bundling and Deployment Notes
 
