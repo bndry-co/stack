@@ -31,10 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `JsonTreeSelector` (`s`, and the pairs of `q`), `JsonTreeTag` (`p`),
   `JsonTreeOrderingTerm` (`op`) and `JsonTreeKeyHeader` (`h`) hold an
   `encoding::Base64Text`, padded standard base64, and `JsonTreeCiphertext`
-  (`c`) an `encoding::Base85Text`, RFC 1924 base85. Both encoding newtypes
-  serialize as the bare string and render as `string` in TypeScript and
-  JSON Schema.
-  `JsonLeafQuery`.
+  (`c`) an `encoding::Base85Text`, RFC 1924 base85. Each encoding newtype
+  is a guarantee that its text is in that encoding: the string inside is
+  private, and a value is made only by `encode`, from bytes, or by
+  deserializing, which decodes the text and refuses text that is not in the
+  encoding (base85 whose final group is not the one `encode` writes
+  included), so `decode` cannot fail. Both serialize as the bare string and
+  render as `string` in TypeScript and JSON Schema.
 - **The date, timestamp and numeric ordered types are producible**
   (`stack-encrypt` feature, #1236): `DateOrd`, `DateOrdOpe`, `DateOrdOre`,
   `TimestampOrd`, `TimestampOrdOpe`, `TimestampOrdOre`, `NumericOrd`,

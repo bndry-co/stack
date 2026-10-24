@@ -1204,8 +1204,10 @@ name = "eql-bindings"
 version = "3.0.6"
 dependencies = [
  "base64",
+ "base85-simd",
  "eql-domains",
  "hex",
+ "proptest",
  "schemars",
  "serde",
  "serde_json",
