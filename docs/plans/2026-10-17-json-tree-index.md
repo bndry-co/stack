@@ -116,6 +116,8 @@ Wildcard paths. A client cannot derive `t($.a[*].b)`, because the token is posit
 
 Arrays. `jsonb_array_length(doc, t)` is the count of children of `t`; `jsonb_array_elements(doc, t)` is the children, each a subtree root. Positional access (`$.a[2]`) is a token, not a selector, so the item (`[@]`) and positional (`[n]`) `ArrayIndexMode`s have no reason to exist in v4: wildcard only, and the chain for positions.
 
+> **2026-10-24:** as written, a positional token names the element's children, not the element: a scalar at `$.a[2]` has no children and its selector is every sibling's, so `subtree(doc, t($.a[2]))` could neither return nor identify it (review of #1250). The implementation reaches a position from its parent: the client sends the parent's token and a position gate `#2:<selector>` (`JsonSubtreeKey::gates()`), `json_tree_subtree_at` admits the entry at ordinal 2 only if it carries the element selector, and returns that entry itself at depth 0 with its descendants below it. See the Phase 3b and 3c notes below (#1329).
+
 #### The sealed root: no root token, the document at the root (decided 2026-10-18)
 
 Two properties make a token worse than a selector. It is a capability over structure rather than a presence bit, and it is deterministic per column, so a server that has seen it once can re-walk every row for as long as the column lives. The chain as written above hands the server the **root** token in two legitimate queries: a wildcard extraction anchored at the root (`$[*].x`) and `jsonb_array_elements` on a root array. `t($)` unlocks the shape of every document in the column, once, forever. Any shallow token is nearly as broad.
@@ -199,7 +201,7 @@ A document in the new domain, `public.eql_v4_json_tree` (placeholder name; a sib
   "v": 4,
   "k": "sv",
   "i": { "t": "users", "c": "profile" },
-  "h": "…",                       // key header, once: iv, key tag, descriptor, keyset id (opaque to SQL)
+  "h": "…",                       // key header, once: iv, key tag, descriptor, keyset id (SQL reads the iv and the flags at fixed offsets; see the note below)
   "sv": [
     { "s": "…", "vs": "…",                                  "c": "…" },            // $      sealed root: c is the whole document; no p, w
     { "s": "…", "vs": "…",                                  "c": "…", "op": "…" }, // $.hello = "world-1"   a chain head: no p, w
@@ -210,6 +212,8 @@ A document in the new domain, `public.eql_v4_json_tree` (placeholder name; a sib
   "q": { "sv": [ {"s": "…", "vs": "…"}, … ], "el": [ { "sv": [ … ], "el": [ … ] } ] }  // the containment projection, written by the client (Phase 3)
 }
 ```
+
+> **2026-10-24:** `h` is not opaque to the SQL. The walk needs the document's `iv` to derive the parent tag `p`, and the sealed-root flag to know whether to fall back, and neither is stored anywhere else (review of #1250). The header's layout is frozen, so the implementation reads both from `h` at fixed byte offsets: `eql_v4_internal.json_tree_iv(h)` is the sixteen bytes at offset 22 and `json_tree_sealed_root(h)` is bit 0 of the flags byte at offset 1 (`packages/eql/src/v3/json_tree/functions.sql`, #1329). No field was added to the domain. The key tag and descriptor stay unread by SQL.
 
 A `Contains` needle, `eql_v4.query_json`:
 
