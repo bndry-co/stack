@@ -53,13 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wiped once the walked path is selected from it.
 
 - **A layout chosen by value, `target::Layout`, and
-  `Plan::value().encrypt_as(layout)`.** `EncryptFrom` is a type's own
-  layout, fixed where the type is written; a `Layout<S>` is a value with
-  options that seals the same target under them and names the index a
-  query answers through. `Json::new(options)` is one. `encrypt_as` builds
-  a `ValuePlan<S, plan::Laid<X, T>>` that seals under the layout and
-  resolves every query through its index, so a query does not name the
-  options again; `ValuePlan::specs` and `ValuePlan::layout` report them.
+  `Plan::value().encrypt_with_layout(layout)`.** `EncryptFrom` is a type's
+  own layout, fixed where the type is written; a `Layout<S>` is a value
+  with options that seals the same target under them and names the index
+  a query answers through. `Json::new(options)` is one.
+  `encrypt_with_layout` builds a `ValuePlan<S, plan::Laid<X, T>>` that
+  seals under the layout and resolves every query through its index, so a
+  query does not name the options again; `ValuePlan::specs` and
+  `ValuePlan::layout` report them.
   `Error` gains `From<json::JsonPathError>`.
 
 - **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended

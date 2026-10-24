@@ -772,7 +772,7 @@ type OrderedPlan =
 fn ordered_plan() -> OrderedPlan {
     Plan::value::<Value>()
         .context("users/profile")
-        .encrypt_as(Json::new(ordering(&["$.hello", "$.number", "$.flag"])))
+        .encrypt_with_layout(Json::new(ordering(&["$.hello", "$.number", "$.flag"])))
         .build()
         .unwrap()
 }
@@ -1176,7 +1176,7 @@ async fn an_accessor_asks_at_a_path() {
     // named.
     let by_element = Plan::value::<Value>()
         .context("users/profile")
-        .encrypt_as(Json::new(ordering(&["$.nested.list[*].x"])))
+        .encrypt_with_layout(Json::new(ordering(&["$.nested.list[*].x"])))
         .build()
         .unwrap();
     assert!(cipher
