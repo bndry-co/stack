@@ -41,6 +41,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub mod encoding;
 pub mod from_v2;
 pub mod sql;
 pub mod v3;

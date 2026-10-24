@@ -321,7 +321,7 @@ fn index_value(index: &IndexSpec) -> serde_json::Value {
         IndexSpec::Json(options) => serde_json::json!({
             "json": {
                 "sealed_root": options.sealed_root,
-                "ordered": options.ordered.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "ordered": options.ordered,
             }
         }),
         IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => {

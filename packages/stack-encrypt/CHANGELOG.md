@@ -27,13 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the root exists. A document is at most 127 levels deep. New `TermError`
   variants: `JsonPath`, `JsonTooDeep`, `JsonTooWide`, `JsonSealedRoot`,
   `JsonLeafNotOrdered`, `JsonPathNotOrdered`, `JsonOrderingAtPosition`
-  and `JsonValueNotScalar`. `JsonOptions::ordering([..])` names the
+  and `JsonValueNotScalar`. `JsonTooWide` also refuses a subtree key for a
+  path naming an array position past 2^31 - 1, PostgreSQL's `integer`,
+  which the SQL walk casts a position gate to. `JsonOptions::ordering([..])` names the
   ordered paths, `JsonPath::covers` is the rule that matches them, and a
   path naming an array position is refused there and in an ordering
   query, since the comparison extracts by selector and reads a position as
   the wildcard. A data plan reads and writes the index (`"json"`, or
   `{"json": {"sealed_root": bool, "ordered": [path, …]}}`) and refuses to
-  run it with `Reason::JsonIndexPending`. A subtree key is a token and
+  run it with `Reason::JsonIndexPending`. `JsonPath` implements `Serialize`
+  and `Deserialize` as its text, read back through `JsonPath::parse`. A subtree key is a token and
   `JsonSubtreeKey::gates()`, one gate per path step below it, a selector
   or `#n:<selector>` for an array position. A walk past its budget returns
   the sealed root in place of the subtree. The key carries the path it
@@ -49,8 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   theirs: each node's plaintext is encoded straight from the caller's value
   into a `Protected<Vec<u8>>` for the cipher, and what an entry opens to
   (a key, a scalar, a sealed root's document) stays wrapped until it is
-  handed to the caller, so the sealed-root fallback's whole document is
-  wiped once the walked path is selected from it.
+  handed to the caller. The sealed-root fallback moves the nodes at the
+  walked path out of the whole document rather than copying them, so their
+  plaintext exists once, and the rest of the document is wiped.
 
 - **A layout chosen by value, `target::Layout`, and
   `Plan::value().encrypt_with_layout(layout)`.** `EncryptFrom` is a type's

@@ -219,6 +219,35 @@ impl JsonPath {
         current
     }
 
+    /// The values at this path in `value`, as [`select`](Self::select)
+    /// finds them, borrowed mutably: so that a caller holding the whole
+    /// document can move the nodes it wants out of it rather than copy
+    /// them.
+    pub(crate) fn select_mut<'a>(
+        &self,
+        value: &'a mut serde_json::Value,
+    ) -> Vec<&'a mut serde_json::Value> {
+        let mut current = vec![value];
+        for segment in &self.segments {
+            let mut next = Vec::new();
+            for node in current {
+                match segment {
+                    Segment::Key(key) => {
+                        next.extend(node.as_object_mut().and_then(|o| o.get_mut(key)));
+                    }
+                    Segment::Index(index) => next.extend(
+                        usize::try_from(*index)
+                            .ok()
+                            .and_then(|i| node.as_array_mut().and_then(|a| a.get_mut(i))),
+                    ),
+                    Segment::Wildcard => next.extend(node.as_array_mut().into_iter().flatten()),
+                }
+            }
+            current = next;
+        }
+        current
+    }
+
     /// This path with one more step.
     pub(crate) fn then(&self, segment: Segment) -> Self {
         let mut segments = Vec::with_capacity(self.segments.len() + 1);
@@ -332,6 +361,24 @@ impl fmt::Display for JsonPath {
             }
         }
         Ok(())
+    }
+}
+
+/// A path serializes as its text, as [`Display`](fmt::Display) renders it,
+/// so a plan's ordered paths read as `["$.age"]` on the wire.
+impl serde::Serialize for JsonPath {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+/// A path deserializes from its text through [`JsonPath::parse`], so a
+/// string that is not a path is refused where it is read, with the
+/// [`JsonPathError`]'s message.
+impl<'de> serde::Deserialize<'de> for JsonPath {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(d)?;
+        Self::parse(&text).map_err(serde::de::Error::custom)
     }
 }
 
@@ -504,5 +551,39 @@ mod tests {
         assert_eq!(needle, serde_json::json!({"a": [{"x": 1}]}));
         let needle = JsonPath::root().needle(serde_json::json!("v"));
         assert_eq!(needle, serde_json::json!("v"));
+    }
+
+    #[test]
+    fn a_path_round_trips_through_serde_as_its_text() {
+        for text in ["$", "$.a[*].b", r#"$["a.b"][2]"#, r#"$["say \"hi\""]"#] {
+            let path = JsonPath::parse(text).unwrap();
+            let wire = serde_json::to_value(&path).unwrap();
+            assert_eq!(wire, serde_json::Value::String(path.to_string()));
+            assert_eq!(serde_json::from_value::<JsonPath>(wire).unwrap(), path);
+        }
+        let refused = serde_json::from_value::<JsonPath>(serde_json::json!("a.b")).unwrap_err();
+        assert_eq!(
+            refused.to_string(),
+            "not a JSON path: expected `$` at byte 0"
+        );
+        assert!(serde_json::from_value::<JsonPath>(serde_json::json!(1)).is_err());
+    }
+
+    #[test]
+    fn select_mut_reaches_what_select_reaches() {
+        let doc = serde_json::json!({"a": [{"x": 1}, {"x": 2}, 3], "b": {"x": 4}});
+        for text in [
+            "$", "$.a", "$.a[1].x", "$.a[*].x", "$.a[*]", "$.b.x", "$.a.x", "$.b[0]", "$.c",
+        ] {
+            let path = JsonPath::parse(text).unwrap();
+            let mut copy = doc.clone();
+            let found: Vec<serde_json::Value> = path.select(&doc).into_iter().cloned().collect();
+            let found_mut: Vec<serde_json::Value> = path
+                .select_mut(&mut copy)
+                .into_iter()
+                .map(|v| v.clone())
+                .collect();
+            assert_eq!(found_mut, found, "{text}");
+        }
     }
 }
