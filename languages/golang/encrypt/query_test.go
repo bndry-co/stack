@@ -407,10 +407,7 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	if len(targets) == 0 {
 		t.Skip("this build holds no EQL types: import encrypt/eql")
 	}
-	families := []string{"Integer", "Smallint", "Bigint", "Real", "Double", "Text"}
-	// Stored and compared for equality only today: the engine derives no
-	// order term for these kinds, so their ordered types are refused.
-	equalityOnly := []string{"Date", "Timestamp", "Numeric"}
+	families := []string{"Integer", "Smallint", "Bigint", "Real", "Double", "Date", "Timestamp", "Numeric", "Text"}
 	// The index a type answers the orderings through: OPE for Ord and
 	// OrdOpe, block ORE for OrdOre.
 	orderIndex := map[string]record.Output{}
@@ -429,7 +426,7 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	for _, target := range targets {
 		index, ordered := orderIndex[target.Name]
 		switch {
-		case strings.HasSuffix(target.Name, "Eq") && slices.Contains(slices.Concat(families, equalityOnly), strings.TrimSuffix(target.Name, "Eq")):
+		case strings.HasSuffix(target.Name, "Eq") && slices.Contains(families, strings.TrimSuffix(target.Name, "Eq")):
 			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
 			if len(target.Operators) != 1 || target.Operators[0] != want[0] {
 				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)

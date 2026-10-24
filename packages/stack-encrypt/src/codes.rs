@@ -78,7 +78,7 @@ mod tests {
         ]));
         errors.extend(boxed(variants![
             TermError::Prf(_) => TermError::Prf(cause()),
-            TermError::Ore(_) => TermError::Ore(cllw_ore::Error),
+            TermError::Ore(_) => TermError::Ore(clww_ore::Error),
             TermError::OreBlockTooLong => TermError::OreBlockTooLong,
             TermError::OreBlockTrailingNul => TermError::OreBlockTrailingNul,
             TermError::OreBlock(_) => TermError::OreBlock(cause()),

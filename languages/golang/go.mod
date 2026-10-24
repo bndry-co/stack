@@ -1,6 +1,6 @@
 module github.com/cipherstash/stack/languages/golang
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261017042657-ca2298d3e7e8
@@ -10,7 +10,7 @@ require (
 )
 
 require (
-	github.com/jackc/pgx/v5 v5.11.0 // test only: encrypt/postgres_test.go
+	github.com/jackc/pgx/v5 v5.11.0 // test only: encrypt/postgres_test.go, encrypt/eql_postgres_test.go
 	golang.org/x/sys v0.49.0
 	golang.org/x/tools v0.51.0
 	google.golang.org/protobuf v1.36.12

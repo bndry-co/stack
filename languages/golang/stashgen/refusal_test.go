@@ -63,6 +63,19 @@ func TestRefusals(t *testing.T) {
 		want  string
 	}{
 		{"an exported field with no stash tag", user(ctx + "\tEmail string"), stashgen.Request{Type: "User"}, "Email", "no stash tag"},
+		// Optional fields (#1298): a pointer to one scalar, and how it stores nil.
+		{"a sealed pointer to a pointer", user(ctx + "\tAge **int32 `stash:\"age,encrypt\"`"), stashgen.Request{Type: "User"}, "Age", "a sealed field is one scalar"},
+		{"a sealed pointer to a struct", user(ctx + "\tAddr *crm.Contact `stash:\"addr,encrypt\"`"), stashgen.Request{Type: "User"}, "Addr", "a sealed field is one scalar"},
+		{"a sealed pointer to a slice", user(ctx + "\tTags *[]string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "a sealed field is one scalar"},
+		{"null= on a field that is not a pointer", user(ctx + "\tAge int32 `stash:\"age,encrypt,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "a field of type int32 is never nil"},
+		{"null= on a passthrough", user(ctx + "\tAge *int32 `stash:\"age,passthrough,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "keeps nil as nil"},
+		{"an unknown null mode", user(ctx + "\tAge *int32 `stash:\"age,encrypt,null=zero\"`"), stashgen.Request{Type: "User"}, "Age", "null= is sealed or sql"},
+		{"null= given twice", user(ctx + "\tAge *int32 `stash:\"age,encrypt,null=sql,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "null is given twice"},
+		{"an ordered pointer that does not say null=sql", user(ctx + "\tAge *int32 `stash:\"age,encrypt,index=ore\"`"), stashgen.Request{Type: "User"}, "Age", "Write null=sql to say so"},
+		{"an ordered pointer with equality that does not say null=sql", user(ctx + "\tAge *int32 `stash:\"age,encrypt,index=equality;ore\"`"), stashgen.Request{Type: "User"}, "Age", "Write null=sql to say so"},
+		{"a pointer to text that does not say null=sql", user(ctx + "\tNick *string `stash:\"nick,encrypt\"`"), stashgen.Request{Type: "User"}, "Nick", "a string shows its length"},
+		{"a sealed null on an ordered pointer", user(ctx + "\tAge *int32 `stash:\"age,encrypt,index=ore,null=sealed\"`"), stashgen.Request{Type: "User"}, "Age", "a nil has an equality term and no other"},
+		{"a sealed null on a pointer to bytes", user(ctx + "\tBlob *[]byte `stash:\"blob,encrypt,null=sealed\"`"), stashgen.Request{Type: "User"}, "Blob", "a []byte shows its length"},
 		{"a match query on an index-only field", user(ctx + "\tName string `stash:\"name,index=match\"`"), stashgen.Request{Type: "User"}, "Name", "an index-only field stores no ciphertext to decrypt"},
 		{"a tag that does not parse", user(ctx + "\tEmail string `stash:\"email,shred\"`"), stashgen.Request{Type: "User"}, "Email", `unknown part "shred"`},
 		{"two fields with one name", user(ctx + "\tEmail string `stash:\"email,encrypt\"`\n\tAlt string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "Alt", `two fields write the name "email"`},
@@ -85,7 +98,6 @@ func TestRefusals(t *testing.T) {
 		{"a float of another width", user(ctx + "\tScore float64 `stash:\"score,encrypt_into=Real\"`"), stashgen.Request{Type: "User"}, "Score", "Real seals float32, and float64 seals as float64"},
 		{"a field type the engine cannot seal", user(ctx + "\tDone chan int `stash:\"done,encrypt\"`"), stashgen.Request{Type: "User"}, "Done", "seals only as part of an opaque struct"},
 		{"a composite sealed outside an opaque struct", user(ctx + "\tAt time.Location `stash:\"at,encrypt\"`"), stashgen.Request{Type: "User"}, "At", "a time.Location seals only as part of an opaque struct"},
-		{"an order index on a timestamp", user(ctx + "\tAt time.Time `stash:\"at,encrypt,index=ore\"`"), stashgen.Request{Type: "User"}, "At", "#1236"},
 		{"a slice sealed outside an opaque struct", user(ctx + "\tTags []string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "seals only as part of an opaque struct"},
 		{"a map sealed outside an opaque struct", user(ctx + "\tCounts map[string]int64 `stash:\"counts,encrypt\"`"), stashgen.Request{Type: "User"}, "Counts", "seals only as part of an opaque struct"},
 		{"a slice of ints sealed outside an opaque struct", user(ctx + "\tNs []int64 `stash:\"ns,encrypt\"`"), stashgen.Request{Type: "User"}, "Ns", "seals only as part of an opaque struct"},
@@ -265,7 +277,6 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 	defer engine.(io.Closer).Close()
 	for _, c := range []struct{ name, field, line, want string }{
 		{"time.Location", "At", "\tAt time.Location `stash:\"at,encrypt\"`", "seals only as part of an opaque struct"},
-		{"order on a time.Time", "At", "\tAt time.Time `stash:\"at,encrypt,index=ope\"`", "the engine refuses the declaration"},
 		{"a channel", "Done", "\tDone chan int `stash:\"done,encrypt\"`", "seals only as part of an opaque struct"},
 		{"equality on a map", "Attrs", "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`", "seals only as part of an opaque struct"},
 		{"a sealed []string", "Tags", "\tTags []string `stash:\"tags,encrypt\"`", "seals only as part of an opaque struct"},
@@ -303,6 +314,7 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 		{"equality on a float", "\tScore float64 `stash:\"score,encrypt,index=equality\"`"},
 		{"a declaration the engine runs", "\tAge uint32 `stash:\"age,encrypt,index=equality;ore\"`\n\tName string `stash:\"name,encrypt,index=match\"`"},
 		{"every index on an integer", "\tScore int64 `stash:\"score,encrypt,index=equality;ore;ope\"`\n\tRank int32 `stash:\"rank,index=ope\"`"},
+		{"orders on a decimal, a date and a timestamp", "\tAmount encrypt.Decimal `stash:\"amount,encrypt,index=equality;ore\"`\n\tDay encrypt.Date `stash:\"day,encrypt,index=ope\"`\n\tAt time.Time `stash:\"at,encrypt,index=equality;ore\"`"},
 		{"orders on text, bytes and a float", "\tName string `stash:\"name,encrypt,index=ore;ope;match\"`\n\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`"},
 		{"a match query on an index-only field", "\tName string `stash:\"name,index=match\"`"},
 	} {
