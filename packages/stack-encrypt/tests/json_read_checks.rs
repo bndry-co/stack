@@ -316,6 +316,24 @@ mod given_the_rows_of_a_read {
     }
 
     #[tokio::test]
+    async fn one_token_answered_twice_is_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let xs = key(&cipher, "$.nested.list[*].x").await;
+        // Both x, the second carrying the first's self tag: each a genuine
+        // node at the selector, but the read sent each token once, and a
+        // row matches only a token after the one before it.
+        let rows = walk(&doc, &xs);
+        assert_eq!(rows.len(), 2, "both x");
+        let first = serde_json::to_value(&rows[0]).unwrap()["x"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let forged = with_x(rows, 1, first);
+        assertions::wrong_entry(open_list(&cipher, xs.open(forged)).await, REACHED);
+    }
+
+    #[tokio::test]
     async fn a_child_with_a_forged_self_tag_is_refused() {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &fixture()).await;
