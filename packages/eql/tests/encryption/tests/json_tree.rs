@@ -912,9 +912,12 @@ fn nested_document(i: i64) -> Value {
 /// off; this one shows it with them on, which is what a customer's
 /// database runs. The ordering path is held the same way: a functional
 /// btree on `ord_term(doc -> selector)` serves a range at a path. Both
-/// are asked twice: as one-shot statements, planned with their operands
-/// in view, and as a prepared statement executed past its fifth run,
-/// where `plan_cache_mode = auto` may plan once for any operand.
+/// are asked three times: as one-shot statements, planned with their
+/// operands in view; as a prepared statement executed past its fifth run,
+/// where `plan_cache_mode = auto` may plan once for any operand; and as
+/// the same statement under `plan_cache_mode = force_generic_plan`, since
+/// `auto` keeps a custom plan whenever it costs less than the generic one
+/// and would otherwise leave the generic plan untested.
 ///
 /// The last block is a control: with the function's cost set to the
 /// minimum for one transaction, the planner prefers the sequential scan
@@ -1115,7 +1118,11 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
         // `plan_cache_mode = auto` may switch to a generic plan, whose
         // operand is a parameter the planner cannot see. The selector stays
         // a literal, as it has to for the functional index to match.
-        // `EXPLAIN EXECUTE` shows the plan the cache would run next.
+        // `EXPLAIN EXECUTE` shows the plan the cache would run next. Under
+        // `auto` that may still be a custom plan (the cache keeps one while
+        // it costs less than the generic plan), so each statement is then
+        // explained again under `force_generic_plan`, which is the plan a
+        // pooled driver can reach whatever the costs say.
         let containment = needle(shape.needle.clone());
         let range = leaf(shape.rows - 5);
         for literal in [&containment, &range] {
@@ -1136,20 +1143,39 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
                 db.batch_execute(&format!("EXECUTE {table}_{statement}('{operand}')"))
                     .unwrap();
             }
-            let text = db
-                .simple_query(&format!("EXPLAIN EXECUTE {table}_{statement}('{operand}')"))
-                .unwrap()
-                .into_iter()
-                .filter_map(|message| match message {
-                    postgres::SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            assert!(
+            let explain_execute = |db: &mut postgres::Client| {
+                db.simple_query(&format!("EXPLAIN EXECUTE {table}_{statement}('{operand}')"))
+                    .unwrap()
+                    .into_iter()
+                    .filter_map(|message| match message {
+                        postgres::SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let uses_index = |text: &str| {
                 text.contains(&format!("Index Scan using {table}{index}"))
-                    || text.contains(&format!("Bitmap Index Scan on {table}{index}")),
+                    || text.contains(&format!("Bitmap Index Scan on {table}{index}"))
+            };
+            let text = explain_execute(&mut db);
+            assert!(
+                uses_index(&text),
                 "{} on PostgreSQL {version}: {what} from a prepared statement past its fifth execution should use the index:\n{text}",
+                shape.name
+            );
+            db.batch_execute("SET plan_cache_mode = force_generic_plan")
+                .unwrap();
+            let text = explain_execute(&mut db);
+            db.batch_execute("RESET plan_cache_mode").unwrap();
+            assert!(
+                text.contains("$1"),
+                "{} on PostgreSQL {version}: {what} under force_generic_plan should be planned with its operand as a parameter:\n{text}",
+                shape.name
+            );
+            assert!(
+                uses_index(&text),
+                "{} on PostgreSQL {version}: {what} from a prepared statement's generic plan should use the index:\n{text}",
                 shape.name
             );
         }
