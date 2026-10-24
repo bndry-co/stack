@@ -609,8 +609,8 @@ pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
 /// index is one: `Json::new(options)` seals a [`JsonDocument`] as
 /// `encrypt_into::<JsonDocument>()` does, under its options rather than
 /// the defaults. A plan takes one with
-/// [`encrypt_as`](crate::plan::ValueStart::encrypt_as), and a query
-/// through that plan runs through the layout's own index
+/// [`encrypt_with_layout`](crate::plan::ValueStart::encrypt_with_layout),
+/// and a query through that plan runs through the layout's own index
 /// ([`Layout::index`]), so it derives under the plan's options without
 /// naming them again.
 pub trait Layout<S>: Clone + fmt::Debug + 'static {

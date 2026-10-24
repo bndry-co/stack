@@ -50,7 +50,7 @@ async fn seal(cipher: &Cipher, value: &Value) -> JsonTreeDocument {
 fn plan() -> ValuePlan<Value, Laid<Json, JsonDocument>> {
     Plan::value::<Value>()
         .context("users/profile")
-        .encrypt_as(Json::new(options()))
+        .encrypt_with_layout(Json::new(options()))
         .build()
         .unwrap()
 }

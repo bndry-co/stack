@@ -1,7 +1,8 @@
 //! One-value plans: one plaintext, sealed with its indexes beside it
 //! ([`with`](ValueStart::with)), laid out by a target type
 //! ([`encrypt_into`](ValueStart::encrypt_into)), or laid out by a layout
-//! value with its options ([`encrypt_as`](ValueStart::encrypt_as)).
+//! value with its options
+//! ([`encrypt_with_layout`](ValueStart::encrypt_with_layout)).
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -134,6 +135,11 @@ impl<S> ValueStart<S> {
     /// runs through the layout's index, under its options: the JSON index
     /// with the paths it orders, say.
     ///
+    /// The cipher's own [`encrypt_as`](crate::KeysetCipher::encrypt_as) is
+    /// unrelated: it runs a target type's `EncryptFrom` for one value, and is
+    /// [`encrypt_into`](crate::EncryptInto::encrypt_into) seen from the
+    /// target's side.
+    ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use serde_json::json;
@@ -146,7 +152,7 @@ impl<S> ValueStart<S> {
     /// let options = JsonOptions::default().ordering(["$.age"])?;
     /// let plan = Plan::value::<serde_json::Value>()
     ///     .context("users/profile")
-    ///     .encrypt_as(Json::new(options))
+    ///     .encrypt_with_layout(Json::new(options))
     ///     .build()?;
     /// let doc: JsonDocument = cipher.encrypt(&json!({"age": 34, "name": "Bob"})).using(&plan).await?;
     /// assert_eq!(doc.entries().iter().filter(|e| e.ordering_term().is_some()).count(), 1);
@@ -156,7 +162,7 @@ impl<S> ValueStart<S> {
     /// # }
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
     /// ```
-    pub fn encrypt_as<X>(self, layout: X) -> ValuePlanBuilder<S, Laid<X, X::Target>>
+    pub fn encrypt_with_layout<X>(self, layout: X) -> ValuePlanBuilder<S, Laid<X, X::Target>>
     where
         X: Layout<S>,
     {
@@ -363,11 +369,11 @@ impl<T> fmt::Debug for Typed<T> {
 }
 
 /// A one-value plan's layout when it was given one by value
-/// ([`encrypt_as`](ValueStart::encrypt_as)): the layout `X`, whose target
-/// `T` is its output, and a query runs through the layout's own index,
-/// with its options ([`Layout::index`]). `T` is the layout's
-/// [`Target`](Layout::Target), spelled out so that opening one `T` and a
-/// `Vec<T>` are told apart as they are for a [`Typed`] plan.
+/// ([`encrypt_with_layout`](ValueStart::encrypt_with_layout)): the layout
+/// `X`, whose target `T` is its output, and a query runs through the
+/// layout's own index, with its options ([`Layout::index`]). `T` is the
+/// layout's [`Target`](Layout::Target), spelled out so that opening one
+/// `T` and a `Vec<T>` are told apart as they are for a [`Typed`] plan.
 pub struct Laid<X, T>(X, PhantomData<fn() -> T>);
 
 impl<X: Clone, T> Clone for Laid<X, T> {
