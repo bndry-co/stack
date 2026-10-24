@@ -11,7 +11,7 @@ import { dirname, join, relative, resolve } from 'node:path'
  * directory also names its tests, its docs, its generated bindings and every
  * module behind a feature the dependent never turns on. `eql-bindings` is the
  * case that made this matter. protect-ffi compiles it with no features, so its
- * `v4` and `encryption` modules (feature `stack-encrypt`) never reach
+ * `v4`, `encryption` and `encoding` modules (feature `stack-encrypt`) never reach
  * `index.node`, yet a pull request touching only those modules started every
  * TypeScript integration suite. This walk is what lets the key and the filters
  * name the compiled files instead, while a guard still fails the day a new
