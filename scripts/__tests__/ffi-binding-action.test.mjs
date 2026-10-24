@@ -847,10 +847,12 @@ describe('build-ffi-binding — the keys cover every crate the build compiles', 
     const gated = all.files.filter((file) => !eqlBindings.files.includes(file))
     expect(
       eqlBindings.features.has('stack-encrypt') ? [] : gated.length,
-      'With every feature on, the walk should find the `v4` and `encryption` modules on top of what the binding compiles. If it finds nothing more, the feature gate is no longer being read and every module counts as compiled.',
+      'With every feature on, the walk should find the `v4`, `encryption` and `encoding` modules on top of what the binding compiles. If it finds nothing more, the feature gate is no longer being read and every module counts as compiled.',
     ).not.toBe(0)
     expect(
-      gated.every((file) => /\/src\/(v4|encryption)(\/|\.rs$)/.test(file)),
+      gated.every((file) =>
+        /\/src\/(v4|encryption|encoding)(\/|\.rs$)/.test(file),
+      ),
       `The walk dropped files outside the modules eql-bindings gates behind \`stack-encrypt\`:\n${gated.join('\n')}`,
     ).toBe(true)
   })

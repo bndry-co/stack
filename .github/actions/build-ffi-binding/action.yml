@@ -69,7 +69,7 @@ runs:
         #
         # The files cargo compiles from that crate, not the crate directory and
         # not `packages/eql/crates/**`. protect-ffi builds eql-bindings with no
-        # features, so its `v4` and `encryption` modules (feature
+        # features, so its `v4`, `encryption` and `encoding` modules (feature
         # `stack-encrypt`) never reach the binding, and its tests, docs and
         # generated `bindings/` / `schema/` are not compile inputs at all. The
         # wider glob hashed all of that, plus eql-codegen and the other crates
