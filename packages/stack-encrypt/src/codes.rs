@@ -97,6 +97,8 @@ mod tests {
             TermError::JsonTooWide => TermError::JsonTooWide,
             TermError::JsonSealedRoot => TermError::JsonSealedRoot,
             TermError::JsonLeafNotOrdered => TermError::JsonLeafNotOrdered,
+            TermError::JsonPathNotOrdered => TermError::JsonPathNotOrdered,
+            TermError::JsonOrderingAtPosition => TermError::JsonOrderingAtPosition,
             TermError::JsonValueNotScalar => TermError::JsonValueNotScalar,
         ]));
         errors.extend(boxed(variants![

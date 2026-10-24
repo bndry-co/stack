@@ -303,9 +303,14 @@ pub enum TermError {
         help("The JSON index takes a document at most 127 levels deep, the depth its sealed root parses back. Flatten the document, or store it as a ciphertext without the index.")
     )]
     JsonTooDeep,
-    /// A JSON array has more elements than the JSON index numbers.
+    /// A JSON array or object has more children than the JSON index
+    /// numbers, or a path names an array position past the last one it
+    /// numbers: 2³¹ − 1, PostgreSQL's `integer`.
     #[error("a JSON array is too wide for the JSON index")]
-    #[diagnostic(code(stack_encrypt::json_too_wide))]
+    #[diagnostic(
+        code(stack_encrypt::json_too_wide),
+        help("The JSON index numbers at most 2147483647 children under one node, so no stored document has an element past position 2147483647. Split the array, or ask for a position below that.")
+    )]
     JsonTooWide,
     /// A subtree key was asked for the root, or a path whose first step is
     /// a wildcard, of a JSON index whose root is sealed: no token exists
@@ -324,6 +329,27 @@ pub enum TermError {
         help("The JSON index derives an ordering term for number and string leaves only: query `op::AtPath(op::Eq)` for a boolean or a null.")
     )]
     JsonLeafNotOrdered,
+    /// An ordering was asked at a JSON path the index does not order: no
+    /// stored leaf there carries an ordering term, so the comparison would
+    /// match no row.
+    #[error("the JSON index orders no leaf at this path")]
+    #[diagnostic(
+        code(stack_encrypt::json_path_not_ordered),
+        help("A leaf carries an ordering term only at a path the index's `ordered` option covers (`$.age`, or `$.orders[*].total` for every element). Declare the path on the index, and re-encrypt the documents stored before it was, then order at it.")
+    )]
+    JsonPathNotOrdered,
+    /// An ordered path, or an ordering asked at a path, names an array
+    /// position. An ordering compares the leaf `->` extracts by the path's
+    /// selector, and a selector reads every position as the wildcard, so
+    /// `->` returns the first element at the path whatever position was
+    /// named: the comparison would be against another element's leaf, or
+    /// against one with no term.
+    #[error("an ordering at a JSON path cannot name an array position")]
+    #[diagnostic(
+        code(stack_encrypt::json_ordering_at_position),
+        help("Write `[*]` where an ordered path, or the path an ordering asks at, crosses an array: `$.orders[*].total`, not `$.orders[2].total`. The comparison extracts the first element at the path.")
+    )]
+    JsonOrderingAtPosition,
     #[error("equality at a JSON path takes a scalar")]
     #[diagnostic(
         code(stack_encrypt::json_value_not_scalar),
@@ -350,6 +376,8 @@ impl crate::ErrorPayload for TermError {
             | Self::JsonTooWide
             | Self::JsonSealedRoot
             | Self::JsonLeafNotOrdered
+            | Self::JsonPathNotOrdered
+            | Self::JsonOrderingAtPosition
             | Self::JsonValueNotScalar => serde_json::Map::new(),
         }
     }

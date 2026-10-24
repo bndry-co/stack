@@ -11,6 +11,7 @@
 //! by name, with [`Encryption::under`] or [`Encryption::extend`].
 use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
 use super::core::{encrypt_native, open_native, Term};
+use super::index::{Index, IndexSpec, Json};
 use super::source::{Borrowed, ConsumeSource, ShareSource, SourceMode};
 use super::{CipherScope, Pending};
 use crate::json::{JsonDocument, JsonOptions, JsonTerms};
@@ -576,7 +577,7 @@ pub fn json_terms<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
     Encryption {
         build: Box::new(
             move |source, cipher, cx: CallerContext| match cx.validated() {
-                Ok(ctx) => crate::json::terms_pending(M::view(&source), options, cipher, ctx),
+                Ok(ctx) => crate::json::terms_pending(M::view(&source), &options, cipher, ctx),
                 Err(e) => Pending::failed(cipher, e),
             },
         ),
@@ -595,10 +596,109 @@ pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
     Encryption {
         build: Box::new(
             move |source, cipher, cx: CallerContext| match cx.validated() {
-                Ok(ctx) => crate::json::seal_pending(M::take(source), options, cipher, ctx),
+                Ok(ctx) => crate::json::seal_pending(M::take(source), &options, cipher, ctx),
                 Err(e) => Pending::failed(cipher, e),
             },
         ),
+    }
+}
+
+/// A target's layout, chosen by value rather than by type.
+///
+/// Most targets have one layout, fixed by their type: the type's
+/// [`EncryptFrom`] says what is sealed and which terms sit beside it, and
+/// a plan uses it with
+/// [`encrypt_into::<T>()`](crate::plan::ValueStart::encrypt_into). A
+/// target that takes options needs more than a type, and a layout is the
+/// value that carries them.
+///
+/// The JSON index is the layout this crate provides. `Json::new(options)`
+/// seals the same [`JsonDocument`] as `encrypt_into::<JsonDocument>()`,
+/// but under `options` instead of the defaults: for example, with the
+/// leaves at `$.age` ordered, so that a query can compare them.
+///
+/// A plan takes a layout with
+/// [`encrypt_with_layout`](crate::plan::ValueStart::encrypt_with_layout).
+/// A query through that plan uses the layout's index ([`Layout::index`]),
+/// so it derives under the same options without naming them again.
+///
+/// ```
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use serde_json::json;
+/// use stack_encrypt::json::{JsonDocument, JsonOptions};
+/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::sem::TermError;
+/// use stack_encrypt::target::Json;
+/// use stack_encrypt::{op, Error, Plan, StackCipher};
+///
+/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// let profile = json!({"name": "Bob", "age": 34});
+///
+/// // By value: the JSON index with `$.age` ordered.
+/// let options = JsonOptions::default().ordering(["$.age"])?;
+/// let ordered = Plan::value::<serde_json::Value>()
+///     .context("users/profile")
+///     .encrypt_with_layout(Json::new(options))
+///     .build()?;
+/// let doc: JsonDocument = cipher.encrypt(&profile).using(&ordered).await?;
+/// // The leaf at `$.age` carries an ordering term...
+/// assert_eq!(doc.entries().iter().filter(|e| e.ordering_term().is_some()).count(), 1);
+/// // ...and a query through the plan derives under the same options.
+/// let _adults = cipher.query(op::AtPath(op::Gte), &("$.age", 18)).on(&ordered).await?;
+///
+/// // By type: the same target under the default options, which order no
+/// // path, so the same query is refused.
+/// let unordered = Plan::value::<serde_json::Value>()
+///     .context("users/profile")
+///     .encrypt_into::<JsonDocument>()
+///     .build()?;
+/// let refused = cipher.query(op::AtPath(op::Gte), &("$.age", 18)).on(&unordered).await;
+/// assert!(matches!(refused, Err(Error::Term(TermError::JsonPathNotOrdered))));
+/// # Ok(())
+/// # }
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+/// ```
+///
+/// A layout belongs to a plan. The cipher's
+/// [`encrypt_as`](crate::KeysetCipher::encrypt_as) is a different layer:
+/// it seals one value as a target type's own `EncryptFrom` does, with no
+/// plan and no options.
+pub trait Layout<S>: Clone + fmt::Debug + 'static {
+    /// What a run produces: the target the layout seals a value into.
+    type Target: EncryptFrom<S>;
+    /// The index a query through the plan runs through: the layout
+    /// itself, for an index with options.
+    type Index: Index<S> + Clone;
+    /// The description the cipher executes for one value of `S`, under
+    /// this layout's options.
+    fn encryption<'s, K: 'static>(
+        &self,
+    ) -> Encryption<'s, S, Self::Target, K, <Self::Target as EncryptFrom<S>>::Context>
+    where
+        S: 's;
+    /// The index, with its options.
+    fn index(&self) -> &Self::Index;
+    /// The indexes the plan declares, as data: the index's.
+    fn specs(&self) -> Vec<IndexSpec> {
+        vec![self.index().spec()]
+    }
+}
+
+/// The JSON index seals a [`JsonDocument`] under its options, and is the
+/// index a query through the plan runs through.
+impl Layout<serde_json::Value> for Json {
+    type Target = JsonDocument;
+    type Index = Json;
+    fn encryption<'s, K: 'static>(
+        &self,
+    ) -> Encryption<'s, serde_json::Value, JsonDocument, K, CallerContext>
+    where
+        serde_json::Value: 's,
+    {
+        json_document(self.options.clone())
+    }
+    fn index(&self) -> &Json {
+        self
     }
 }
 

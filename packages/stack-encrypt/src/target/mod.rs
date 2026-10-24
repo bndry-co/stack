@@ -107,7 +107,7 @@ pub(crate) use operations::inspect;
 pub use operations::{
     ciphertext, equality, json_document, json_terms, matching, ope, open, ore, ore_block,
     passthrough, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption, EncryptFrom,
-    EncryptInto, Encryption,
+    EncryptInto, Encryption, Layout,
 };
 pub use pending::{CipherScope, Pending, PendingFuture};
 pub use request::{Request, Responses};

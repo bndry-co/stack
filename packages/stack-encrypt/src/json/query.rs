@@ -2,9 +2,9 @@
 //!
 //! A containment needle is the **element-nested projection** of the
 //! needle's terms: the selector pairs `{s, vs}` of every node, grouped by
-//! the array element they sit in. The server projects a stored document the
-//! same way from its group tags, and native `jsonb @>` over the two
-//! projections is exact containment: each needle element has to fit inside
+//! the array element they sit in. A stored document carries its own
+//! projection, built the same way, as `q`, which the server reads, and
+//! native `jsonb @>` over the two projections is exact containment: each needle element has to fit inside
 //! one stored element, which is PostgreSQL's own rule for arrays. The
 //! design's "The preferred form" records why no re-check is needed.
 use std::fmt;
@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use super::derive::{JsonTerms, TermNode};
 use super::path::JsonPath;
-use super::{hex, JsonDocument, JsonEntry, JsonOptions, Tag};
+use super::{base64, JsonDocument, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::op::{
     Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
     LabelledTarget, Lt, Lte, One, Pair, Pathed, QueryTerm, QueryToken, Supports,
@@ -32,8 +32,8 @@ struct Pair16 {
 
 /// The element-nested projection of a document: the selector pairs that
 /// sit outside any array element, and one nested projection per array
-/// element that is a container. What the server computes from a stored
-/// document's group tags (`json_tree_query`), and what a containment
+/// element that is a container. What a stored document carries as `q`,
+/// which the server reads (`json_tree_query`), and what a containment
 /// needle is.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct JsonProjection {
@@ -106,8 +106,9 @@ impl JsonQuery {
 }
 
 /// The group of the nodes that sit directly in `parent` (`None` is the top
-/// level), with the container elements in it nested as groups.
-fn group_of(nodes: &[TermNode], parent: Option<usize>) -> JsonProjection {
+/// level), with the container elements in it nested as groups. What a
+/// needle is, and what a document writes to `q` when it is sealed.
+pub(crate) fn group_of(nodes: &[TermNode], parent: Option<usize>) -> JsonProjection {
     let belongs = |index: usize, node: &TermNode| {
         if node.container_element {
             Some(index)
@@ -128,34 +129,6 @@ fn group_of(nodes: &[TermNode], parent: Option<usize>) -> JsonProjection {
             .filter(|(_, n)| n.container_element && n.element == parent)
             .map(|(i, _)| group_of(nodes, Some(i)))
             .collect(),
-    }
-}
-
-impl JsonDocument {
-    /// The stored document's projection, from its group tags: what a
-    /// [`JsonQuery`] is matched against. The document writes it to the wire
-    /// as `q`, beside `sv`, and the SQL's `json_tree_query` reads it from
-    /// there; a document deserialized from the wire derives it again from
-    /// the entries, so a stored `q` is never trusted over them.
-    pub fn projection(&self) -> JsonProjection {
-        fn belongs(e: &JsonEntry) -> Option<&Tag> {
-            e.n.as_ref().or(e.g.as_ref())
-        }
-        fn group(entries: &[JsonEntry], parent: Option<&Tag>) -> JsonProjection {
-            JsonProjection {
-                sv: entries
-                    .iter()
-                    .filter(|e| belongs(e) == parent)
-                    .map(|e| Pair16 { s: e.s, vs: e.vs })
-                    .collect(),
-                el: entries
-                    .iter()
-                    .filter(|e| e.n.is_some() && e.g.as_ref() == parent)
-                    .map(|e| group(entries, e.n.as_ref()))
-                    .collect(),
-            }
-        }
-        group(&self.entries, None)
     }
 }
 
@@ -187,8 +160,8 @@ impl From<&JsonProjection> for GroupWire {
                 .sv
                 .iter()
                 .map(|p| PairWire {
-                    s: hex(&p.s),
-                    vs: hex(&p.vs),
+                    s: base64(&p.s),
+                    vs: base64(&p.vs),
                 })
                 .collect(),
             el: group.el.iter().map(GroupWire::from).collect(),
@@ -196,11 +169,25 @@ impl From<&JsonProjection> for GroupWire {
     }
 }
 
+/// A projection serializes as a stored `q` and a needle do: `{"sv": [{"s",
+/// "vs"}, …], "el": [group, …]}`.
+impl Serialize for JsonProjection {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        GroupWire::from(self).serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for JsonProjection {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        JsonProjection::try_from(GroupWire::deserialize(d)?).map_err(serde::de::Error::custom)
+    }
+}
+
 impl TryFrom<GroupWire> for JsonProjection {
     type Error = super::WireError;
     fn try_from(w: GroupWire) -> Result<Self, Self::Error> {
         let tag = |text: &str| {
-            Tag::try_from(super::unhex(text)?).map_err(|_| super::WireError("not 16 bytes"))
+            Tag::try_from(super::unbase64(text)?).map_err(|_| super::WireError("not 16 bytes"))
         };
         Ok(Self {
             sv: w
@@ -288,8 +275,8 @@ struct LeafWire {
 impl Serialize for JsonLeafQuery {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         LeafWire {
-            s: hex(&self.s),
-            op: hex(&self.op),
+            s: base64(&self.s),
+            op: base64(&self.op),
         }
         .serialize(s)
     }
@@ -298,17 +285,17 @@ impl Serialize for JsonLeafQuery {
 impl<'de> Deserialize<'de> for JsonLeafQuery {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let wire = LeafWire::deserialize(d)?;
-        let s = super::unhex(&wire.s)
+        let s = super::unbase64(&wire.s)
             .ok()
             .and_then(|b| Tag::try_from(b).ok())
             .ok_or_else(|| serde::de::Error::custom("not a selector"))?;
-        let op = super::unhex(&wire.op).map_err(serde::de::Error::custom)?;
+        let op = super::unbase64(&wire.op).map_err(serde::de::Error::custom)?;
         Ok(Self { s, op })
     }
 }
 
 /// A path selector: what `->` and the path functions take. Prints and
-/// serializes as the hex the stored entry carries in `s`.
+/// serializes as the base64 the stored entry carries in `s`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct JsonSelector(pub(crate) Tag);
 
@@ -321,35 +308,64 @@ impl JsonSelector {
 
 impl fmt::Display for JsonSelector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&hex(&self.0))
+        f.write_str(&base64(&self.0))
     }
 }
 
 impl fmt::Debug for JsonSelector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "JsonSelector({})", hex(&self.0))
+        write!(f, "JsonSelector({})", base64(&self.0))
     }
 }
 
 impl Serialize for JsonSelector {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&hex(&self.0))
+        s.serialize_str(&base64(&self.0))
     }
 }
 
-/// The key of a subtree walk: the token of a positional node, and, when
-/// the walked path continues with a wildcard below it, the selector of the
-/// whole path the walk gates on. Serializes as `{"t": "…", "s": "…"}`.
+/// One gate of a subtree walk: what the entry at one depth below the
+/// walk's token must be for the walk to descend through it.
 #[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Gate {
+    /// The selector of the path down to that depth: a key step, or a
+    /// wildcard, whose selector every element carries.
+    Selector(Tag),
+    /// An array position: the one ordinal probed at that depth, and the
+    /// selector of an element there (the wildcard's), which the entry at
+    /// that ordinal must carry. The ordinal alone would admit an object
+    /// member that ranks there in a row whose node at the path is an
+    /// object.
+    Slot(u32, Tag),
+}
+
+impl Gate {
+    /// The gate as `json_tree_subtree_at` takes it: the selector's base64, or
+    /// `#n:` and the element selector's base64 for a position.
+    fn text(&self) -> String {
+        match self {
+            Gate::Selector(s) => base64(s),
+            Gate::Slot(n, s) => format!("#{n}:{}", base64(s)),
+        }
+    }
+}
+
+/// The key of a subtree walk: the token of the deepest node on the path
+/// the client can derive, one gate per step below it, and the path it was
+/// derived from, which [`open`](Self::open) attaches to the rows the walk
+/// returns. Serializes as `{"t": "…", "g": ["…", "#0:…", …]}`, `g` omitted
+/// when empty; the path is not part of the wire.
+#[derive(Clone, PartialEq, Eq)]
 pub struct JsonSubtreeKey {
     pub(crate) token: Tag,
-    pub(crate) selector: Option<Tag>,
+    pub(crate) gates: Vec<Gate>,
+    pub(crate) path: JsonPath,
 }
 
 impl JsonSubtreeKey {
-    /// The token, as the hex the walk takes.
+    /// The token, as the base64 the walk takes.
     pub fn token(&self) -> String {
-        hex(&self.token)
+        base64(&self.token)
     }
 
     /// The token's bytes. A token is a capability over the structure of
@@ -359,10 +375,30 @@ impl JsonSubtreeKey {
         &self.token
     }
 
-    /// The selector the walk gates on, when the path has a wildcard below
-    /// the token's node.
-    pub fn selector(&self) -> Option<JsonSelector> {
-        self.selector.map(JsonSelector)
+    /// The gates the walk descends through below the token, one per step,
+    /// as `json_tree_subtree_at` takes them: a selector's base64, or
+    /// `#n:<selector>` for an array position, the selector being the array
+    /// elements' own. Empty when the token names the walked node itself,
+    /// which `json_tree_subtree` takes.
+    pub fn gates(&self) -> Vec<String> {
+        self.gates.iter().map(Gate::text).collect()
+    }
+
+    /// The path the key was derived from.
+    pub fn path(&self) -> &JsonPath {
+        &self.path
+    }
+
+    /// The rows the walk this key keyed returned, ready to open: the only
+    /// way to build a [`JsonSubtree`], so the rows always carry the path
+    /// a sealed-root fallback is opened at. With no gates the rows came
+    /// from `json_tree_subtree(doc, token)` and are the descendants of the
+    /// path's node; with gates they came from `json_tree_subtree_at(doc,
+    /// token, gates)` and are the nodes the path reaches, with theirs. The
+    /// key knows which, so the fallback opens to what the walked rows
+    /// open to either way.
+    pub fn open(&self, rows: Vec<JsonNode>) -> JsonSubtree {
+        JsonSubtree::keyed(rows, self.path.clone(), self.gates.is_empty())
     }
 }
 
@@ -370,7 +406,7 @@ impl JsonSubtreeKey {
 impl fmt::Debug for JsonSubtreeKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("JsonSubtreeKey")
-            .field("gated", &self.selector.is_some())
+            .field("gates", &self.gates.len())
             .finish_non_exhaustive()
     }
 }
@@ -380,12 +416,12 @@ impl Serialize for JsonSubtreeKey {
         #[derive(Serialize)]
         struct Wire {
             t: String,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            s: Option<String>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            g: Vec<String>,
         }
         Wire {
-            t: hex(&self.token),
-            s: self.selector.as_ref().map(|t| hex(t)),
+            t: base64(&self.token),
+            g: self.gates(),
         }
         .serialize(s)
     }
@@ -596,9 +632,26 @@ fn ordered(value: &Value) -> Result<(), Error> {
     }
 }
 
+/// Whether the index orders the leaves at `path`: some path in its
+/// `ordered` option covers it. A path that names a position is refused
+/// first: the comparison extracts by selector, which reads the position as
+/// the wildcard, so it would compare the first element at the path rather
+/// than the one named.
+fn orders(index: &Json, path: &JsonPath) -> Result<(), Error> {
+    if path.names_a_position() {
+        Err(TermError::JsonOrderingAtPosition.into())
+    } else if index.options.orders(path) {
+        Ok(())
+    } else {
+        Err(TermError::JsonPathNotOrdered.into())
+    }
+}
+
 /// The orderings at a path: the path's selector and the value's leaf
 /// ordering term. Refused, when the query is awaited, for a value that is
-/// neither a number nor a string.
+/// neither a number nor a string, and for a path the index does not order
+/// ([`JsonOptions::ordered`]): no stored leaf there carries a term, so the
+/// comparison would match no row.
 macro_rules! orderings {
     ($($op:ident),+ $(,)?) => {$(
         impl<P, V> Supports<AtPath<$op>, (P, V)> for Json
@@ -609,7 +662,8 @@ macro_rules! orderings {
             type Query = JsonLeafQuery;
             type Verifier = ();
             fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
-                let _ = parse_path(path.as_ref())?;
+                let path = parse_path(path.as_ref())?;
+                orders(self, &path)?;
                 ordered(&value.clone().into())
             }
             fn verifier(&self, _: &(P, V)) {}
@@ -643,7 +697,8 @@ where
     type Query = RangeQuery<JsonLeafQuery>;
     type Verifier = ();
     fn check(&self, (path, (lo, hi)): &(P, (V, V))) -> Result<(), Error> {
-        let _ = parse_path(path.as_ref())?;
+        let path = parse_path(path.as_ref())?;
+        orders(self, &path)?;
         ordered(&lo.clone().into())?;
         ordered(&hi.clone().into())
     }
@@ -676,9 +731,9 @@ where
 /// plan that declares the index carries them, and a query through it takes
 /// them from there.
 impl Json {
-    /// The index's layout options.
-    pub fn options(&self) -> JsonOptions {
-        self.options
+    /// The index's options: its layout, and the paths it orders.
+    pub fn options(&self) -> &JsonOptions {
+        &self.options
     }
 }
 
@@ -707,8 +762,8 @@ mod tests {
         assert_eq!(
             json,
             json!({
-                "sv": [{"s": "01".repeat(16), "vs": "02".repeat(16)}],
-                "el": [{"sv": [{"s": "03".repeat(16), "vs": "04".repeat(16)}], "el": []}],
+                "sv": [{"s": "AQEBAQEBAQEBAQEBAQEBAQ==", "vs": "AgICAgICAgICAgICAgICAg=="}],
+                "el": [{"sv": [{"s": "AwMDAwMDAwMDAwMDAwMDAw==", "vs": "BAQEBAQEBAQEBAQEBAQEBA=="}], "el": []}],
             })
         );
         let back: JsonQuery = serde_json::from_value(json).unwrap();
@@ -716,24 +771,41 @@ mod tests {
     }
 
     #[test]
-    fn a_selector_prints_as_its_hex_and_a_subtree_key_hides_its_token() {
+    fn a_selector_prints_as_its_base64_and_a_subtree_key_hides_its_token() {
         let selector = JsonSelector([0xab; 16]);
-        assert_eq!(selector.to_string(), "ab".repeat(16));
+        assert_eq!(selector.to_string(), "q6urq6urq6urq6urq6urqw==");
         assert_eq!(
             format!("{selector:?}"),
-            format!("JsonSelector({})", "ab".repeat(16))
+            format!("JsonSelector({})", "q6urq6urq6urq6urq6urqw==")
         );
         let key = JsonSubtreeKey {
             token: [0xcd; 16],
-            selector: Some([0xab; 16]),
+            gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3, [0xab; 16])],
+            path: JsonPath::parse("$.a.b[3]").unwrap(),
         };
-        assert_eq!(key.token(), "cd".repeat(16));
+        assert_eq!(key.token(), "zc3Nzc3Nzc3Nzc3Nzc3NzQ==");
         assert_eq!(key.token_bytes(), &[0xcd; 16]);
-        assert_eq!(key.selector(), Some(selector));
+        assert_eq!(
+            key.gates(),
+            ["q6urq6urq6urq6urq6urqw==", "#3:q6urq6urq6urq6urq6urqw=="]
+        );
+        assert_eq!(
+            serde_json::to_value(&key).unwrap(),
+            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ==", "g": ["q6urq6urq6urq6urq6urqw==", "#3:q6urq6urq6urq6urq6urqw=="]})
+        );
         assert_eq!(
             format!("{key:?}"),
-            "JsonSubtreeKey { gated: true, .. }",
+            "JsonSubtreeKey { gates: 2, .. }",
             "a token is a capability: it never prints"
+        );
+        let bare = JsonSubtreeKey {
+            token: [0xcd; 16],
+            gates: Vec::new(),
+            path: JsonPath::parse("$.a").unwrap(),
+        };
+        assert_eq!(
+            serde_json::to_value(&bare).unwrap(),
+            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ=="})
         );
     }
 
@@ -749,9 +821,52 @@ mod tests {
 
     #[test]
     fn the_index_reports_its_options() {
-        let open = JsonOptions { sealed_root: false };
-        assert_eq!(Json::new(open).options(), open);
-        assert_eq!(Json::default().options(), JsonOptions::default());
+        let open = JsonOptions {
+            sealed_root: false,
+            ..JsonOptions::new()
+        };
+        assert_eq!(Json::new(open.clone()).options(), &open);
+        assert_eq!(Json::default().options(), &JsonOptions::default());
+    }
+
+    #[test]
+    fn a_projection_round_trips_through_its_wire_form() {
+        let projection = JsonProjection {
+            sv: vec![Pair16 {
+                s: [1; 16],
+                vs: [2; 16],
+            }],
+            el: vec![JsonProjection {
+                sv: vec![Pair16 {
+                    s: [3; 16],
+                    vs: [4; 16],
+                }],
+                el: Vec::new(),
+            }],
+        };
+        let wire = serde_json::to_value(&projection).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "sv": [{"s": "AQEBAQEBAQEBAQEBAQEBAQ==", "vs": "AgICAgICAgICAgICAgICAg=="}],
+                "el": [{"sv": [{"s": "AwMDAwMDAwMDAwMDAwMDAw==", "vs": "BAQEBAQEBAQEBAQEBAQEBA=="}], "el": []}],
+            })
+        );
+        let back: JsonProjection = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, projection);
+        assert!(
+            serde_json::from_value::<JsonProjection>(serde_json::json!({"sv": [], "el": []}))
+                .unwrap()
+                .el
+                .is_empty()
+        );
+        assert!(
+            serde_json::from_value::<JsonProjection>(
+                serde_json::json!({"sv": [{"s": "zz", "vs": "00"}], "el": []})
+            )
+            .is_err(),
+            "a pair that is not two tags is refused"
+        );
     }
 
     #[test]

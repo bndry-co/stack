@@ -16,13 +16,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `JsonTreeEntry` is one entry as `->` and the walks return it,
   `JsonTreeQuery` the containment needle and `JsonTreeLeafQuery` the
   ordering operand at a path. `JsonTreeSubtree` collects a walk's rows; past
-  the walk's budget the server returns the sealed root instead, and
-  `JsonTreeSubtree::below(path)` (for `json_tree_subtree`) or `at(path)`
-  (for `json_tree_subtree_at`) attaches the path the rows then open at.
+  the walk's budget the server returns the sealed root instead, which
+  opens at the path the walk's key was derived from: the rows are built
+  with `JsonTreeSubtree::from_key(&key, rows)`, and there is no
+  constructor without the key.
   The document is an `EncryptFrom<Value>` and `DecryptInto<Value>` target,
   the entry and the subtree open through `DecryptInto`, and the needle and
   the ordering operand convert from Stack Encrypt's `JsonQuery` and
-  `JsonLeafQuery`.
+  `JsonLeafQuery`. `JsonTree::new(options)` is the `json_tree` layout under
+  index options other than the defaults (a `Layout<Value>`, so a program
+  seals with `keyset.run(JsonTree::new(options).encryption(), ..)`), such
+  as the paths that carry an ordering term. The wire fields are typed apart
+  from the v3 hex terms, and each names its text encoding:
+  `JsonTreeSelector` (`s`, and the pairs of `q`), `JsonTreeTag` (`p`),
+  `JsonTreeOrderingTerm` (`op`) and `JsonTreeKeyHeader` (`h`) hold an
+  `encoding::Base64Text`, padded standard base64, and `JsonTreeCiphertext`
+  (`c`) an `encoding::Base85Text`, RFC 1924 base85. Each encoding newtype
+  is a guarantee that its text is in that encoding: the string inside is
+  private, and a value is made only by `encode`, from bytes, or by
+  deserializing, which decodes the text and refuses text that is not in the
+  encoding (base85 whose final group is not the one `encode` writes
+  included), so `decode` cannot fail. Both serialize as the bare string and
+  render as `string` in TypeScript and JSON Schema.
 - **The date, timestamp and numeric ordered types are producible**
   (`stack-encrypt` feature, #1236): `DateOrd`, `DateOrdOpe`, `DateOrdOre`,
   `TimestampOrd`, `TimestampOrdOpe`, `TimestampOrdOre`, `NumericOrd`,

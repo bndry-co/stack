@@ -50,8 +50,14 @@ serde = { workspace = true }
 # format, through serdect's constant-time hex.
 serdect = { workspace = true }
 # `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS,
-# and the JSON index's ciphertext and header fields on the wire.
+# and the JSON index's chain fields, header and ordering term on the wire:
+# padded standard base64, the one form PostgreSQL's `decode(x, 'base64')`
+# reads and `encode(x, 'base64')` writes.
 base64ct = { version = "1.7", features = ["alloc"] }
+# The JSON index's ciphertext field on the wire, which nothing in SQL
+# decodes: RFC 1924 base85, five characters per four bytes. SIMD on
+# aarch64 and x86_64, portable scalar code elsewhere (wasm32 included).
+base85-simd = "0.1.0"
 # The JSON index's token chain: SHA-256 is what links a node to its
 # children, because core PostgreSQL computes `sha256(bytea)` and can walk
 # the chain server-side (`json` module). The same version vitaminc-hmac

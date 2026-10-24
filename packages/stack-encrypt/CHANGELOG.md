@@ -12,30 +12,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A JSON index, `target::Json`** (`docs/plans/2026-10-17-json-tree-index.md`,
   ADR-0009). An `Index<serde_json::Value>` whose stored form,
   `json::JsonDocument`, is one entry per node under one data key per
-  document: a path selector and a value selector, the node's own
-  ciphertext, a token chain the server walks from one client-derived
-  token, group tags that make containment agree with `jsonb @>` across
-  array elements, and an ordering term on number and string leaves. It is
-  what EQL v4's `json_tree` family stores. `target::json_document` seals
-  one, `JsonDocument` is an `EncryptFrom<Value>` / `DecryptInto<Value>`
-  target, and it answers `op::Contains`, `op::ContainedBy`,
-  `op::AtPath(op::Eq)` (a scalar at a path) and the orderings at a path;
-  `KeysetCipher::json_selector` and `json_subtree_key` derive the
-  extraction keys, and `JsonNode` and `JsonSubtree` open what the server
-  returns. `JsonOptions::sealed_root`, on by default, makes the root entry
-  the whole document so no token for the root exists. A document is at
-  most 127 levels deep. New `TermError` variants: `JsonPath`,
-  `JsonTooDeep`, `JsonTooWide`, `JsonSealedRoot`, `JsonLeafNotOrdered` and
-  `JsonValueNotScalar`. A data plan reads and writes the index (`"json"`,
-  or `{"json": {"sealed_root": bool}}`) and refuses to run it with
-  `Reason::JsonIndexPending`. A `JsonDocument` writes its own containment
-  projection to the wire as `q`, beside `sv`, for the server to compare
-  with a needle, and ignores a stored one, deriving it from the entries
-  again. A walk past its budget returns the sealed root in place of the
-  subtree: `JsonSubtree::below(path)` (for `json_tree_subtree`) or
-  `JsonSubtree::at(path)` (for `json_tree_subtree_at`) attaches the walked
-  path, and the rows then open to the same value either way, over
-  `JsonPath::select`, which evaluates a path over a value.
+  document: a path selector, the node's own ciphertext, a chain of tokens
+  derived by ordinal that the server walks from one client-derived token,
+  a stored containment projection that agrees with `jsonb @>` across array
+  elements, and, at the paths `JsonOptions::ordered` names, an ordering
+  term on number and string leaves. It is what EQL v4's `json_tree` family
+  stores. `target::json_document` seals one, `JsonDocument` is an
+  `EncryptFrom<Value>` / `DecryptInto<Value>` target, and it answers
+  `op::Contains`, `op::ContainedBy`, `op::AtPath(op::Eq)` (a scalar at a
+  path) and the orderings at an ordered path; `KeysetCipher::json_selector`
+  and `json_subtree_key` derive the extraction keys, and `JsonNode` and
+  `JsonSubtree` open what the server returns. `JsonOptions::sealed_root`,
+  on by default, makes the root entry the whole document so no token for
+  the root exists. A document is at most 127 levels deep. New `TermError`
+  variants: `JsonPath`, `JsonTooDeep`, `JsonTooWide`, `JsonSealedRoot`,
+  `JsonLeafNotOrdered`, `JsonPathNotOrdered`, `JsonOrderingAtPosition`
+  and `JsonValueNotScalar`. `JsonTooWide` also refuses a subtree key for a
+  path naming an array position past 2^31 - 1, PostgreSQL's `integer`,
+  which the SQL walk casts a position gate to. `JsonOptions::ordering([..])` names the
+  ordered paths, `JsonPath::covers` is the rule that matches them, and a
+  path naming an array position is refused there and in an ordering
+  query, since the comparison extracts by selector and reads a position as
+  the wildcard. A data plan reads and writes the index (`"json"`, or
+  `{"json": {"sealed_root": bool, "ordered": [path, …]}}`) and refuses to
+  run it with `Reason::JsonIndexPending`. `JsonPath` implements `Serialize`
+  and `Deserialize` as its text, read back through `JsonPath::parse`. A subtree key is a token and
+  `JsonSubtreeKey::gates()`, one gate per path step below it, a selector
+  or `#n:<selector>` for an array position. A walk past its budget returns
+  the sealed root in place of the subtree. The key carries the path it
+  was derived from (`JsonSubtreeKey::path`) and builds the rows' wrapper,
+  `key.open(rows) -> JsonSubtree`, the wrapper's only constructor; from
+  its gates it knows whether the rows are below the path's node
+  (`json_tree_subtree`) or at the nodes it reaches (`json_tree_subtree_at`),
+  so the rows open to the same value either way, over `JsonPath::select`,
+  which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
+  of `q`, `p`, `op`, `h`, tokens and gates) is padded standard base64, and
+  the ciphertext `c` is RFC 1924 base85 (`base85-simd`). The document's
+  plaintext is held under `Protected` throughout, as the scalar paths hold
+  theirs: each node's plaintext is encoded straight from the caller's value
+  into a `Protected<Vec<u8>>` for the cipher, and what an entry opens to
+  (a key, a scalar, a sealed root's document) stays wrapped until it is
+  handed to the caller. The sealed-root fallback moves the nodes at the
+  walked path out of the whole document rather than copying them, so their
+  plaintext exists once, and the rest of the document is wiped.
+
+- **A layout chosen by value, `target::Layout`, and
+  `Plan::value().encrypt_with_layout(layout)`.** `EncryptFrom` is a type's
+  own layout, fixed where the type is written; a `Layout<S>` is a value
+  with options that seals the same target under them and names the index
+  a query answers through. `Json::new(options)` is one.
+  `encrypt_with_layout` builds a `ValuePlan<S, plan::Laid<X, T>>` that
+  seals under the layout and resolves every query through its index, so a
+  query does not name the options again; `ValuePlan::specs` and
+  `ValuePlan::layout` report them.
+  `Error` gains `From<json::JsonPathError>`.
 
 - **The order terms are serde types.** `OreTerm`, `OpeTerm` and
   `OreBlockTerm` serialize as the lowercase hex of their bytes in a

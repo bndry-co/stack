@@ -190,8 +190,9 @@ pub struct Ope;
 pub struct OreBlock;
 
 /// The JSON index, over a [`serde_json::Value`] alone: one searchable
-/// document per value, with a selector and a value selector per node, a
-/// token chain and group tags (the [`json`](crate::json) module).
+/// document per value, with a path selector per node, a token chain, and
+/// a containment projection of the nodes' value selectors grouped by array
+/// element (the [`json`](crate::json) module).
 ///
 /// Its term is a [`JsonTerms`], the document's one-way terms, which every
 /// query term is built from; the stored document is the output of the
@@ -205,14 +206,14 @@ pub struct OreBlock;
 /// is another. The options are part of the index's identity, as a match
 /// index's are: a stored document and the query probing it agree on them
 /// through the plan that declares the index.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Json {
     pub(crate) options: JsonOptions,
 }
 
 /// The JSON index under the default options, as a value: `.with(Json)`.
 #[allow(non_upper_case_globals)]
-pub const Json: Json = Json::new(JsonOptions { sealed_root: true });
+pub const Json: Json = Json::new(JsonOptions::new());
 
 impl Json {
     /// The index under `options`.
@@ -350,12 +351,12 @@ where
 impl Index<serde_json::Value> for Json {
     type Term = JsonTerms;
     fn spec(&self) -> IndexSpec {
-        IndexSpec::Json(self.options)
+        IndexSpec::Json(self.options.clone())
     }
     fn operation<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
         &self,
     ) -> Encryption<'s, serde_json::Value, Self::Term, K, CallerContext, M> {
-        json_terms::<K, M>(self.options)
+        json_terms::<K, M>(self.options.clone())
     }
 }
 

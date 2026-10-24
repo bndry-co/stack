@@ -24,7 +24,7 @@
 --!   returns native jsonb semantics, as it does on every EQL jsonb domain.
 --!
 --! @param e public.{{prefix}}_json_tree The stored document.
---! @param selector text The path selector, hex.
+--! @param selector text The path selector, base64.
 --! @return public.{{prefix}}_json_tree_entry The entry, or NULL.
 CREATE FUNCTION {{prefix}}."->"(e public.{{prefix}}_json_tree, selector text)
   RETURNS public.{{prefix}}_json_tree_entry
@@ -42,7 +42,7 @@ CREATE OPERATOR ->(
 --! @brief ->> operator with a text selector: the first entry at the path, as
 --!        JSON text. It does not decrypt.
 --! @param e public.{{prefix}}_json_tree The stored document.
---! @param selector text The path selector, hex.
+--! @param selector text The path selector, base64.
 --! @return text The entry as text, or NULL.
 CREATE FUNCTION {{prefix}}."->>"(e public.{{prefix}}_json_tree, selector text)
   RETURNS text

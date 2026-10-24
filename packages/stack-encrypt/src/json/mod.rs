@@ -7,22 +7,28 @@
 //!
 //! - a **selector** `s`, a PRF of the node's path with every array position
 //!   folded into the wildcard, so every element of an array shares one;
-//! - a **value selector** `vs`, a PRF of the node's kind and, for a scalar,
-//!   its canonical value, bound to `s`; containment is a set comparison
-//!   over these two;
 //! - the node's own **ciphertext** `c`, sealed under one ZeroKMS data key
 //!   per document: the node's label, its kind and, for a scalar, its
 //!   value, and for a container its child count. Nothing beneath a node is
 //!   encrypted in that node's entry, so a document's ciphertext is linear
 //!   in its size;
-//! - the **token chain** fields `p` and `w`, which let the server walk the
-//!   subtree under a node from one client-derived token and nothing else,
-//!   and the **group tags** `n` and `g`, which tell the server which
-//!   entries sit inside the same array element, so containment agrees with
-//!   PostgreSQL's own `jsonb @>` across elements;
-//! - a leaf ordering term `op` on number and string leaves, the same OPE
-//!   term the scalar [`Ope`](crate::target::Ope) index derives, keyed by
-//!   the column.
+//! - the **parent tag** `p`, the first eight bytes of
+//!   `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`, which lets the server walk the subtree under a node from one client-derived
+//!   token and nothing else: the ordinals `o` under a node are dense from
+//!   zero, so a walk probes them in turn until the first miss, and derives
+//!   each hit's own token as `H("t" ‖ t(parent) ‖ s ‖ LE32(o))` from the
+//!   hit's own selector `s`, which keeps an array element's token apart
+//!   from an object member's at the same ordinal;
+//! - a leaf ordering term `op` on the number and string leaves at the
+//!   paths the index declares ordered ([`JsonOptions::ordered`]), the
+//!   same OPE term the scalar [`Ope`](crate::target::Ope) index derives,
+//!   keyed by the column. No path is ordered by default.
+//!
+//! Beside the entries the document stores its containment **projection**
+//! `q`: one `(s, vs)` pair per node, `vs` being a PRF of the node's kind
+//! and, for a scalar, its canonical value, bound to `s`, nested by array
+//! element so that PostgreSQL's own `jsonb @>` over two projections is
+//! exact containment. The value selectors live there and nowhere else.
 //!
 //! By default the root is **sealed** ([`JsonOptions::sealed_root`]): the root
 //! entry's ciphertext is the whole document, the top-level fields are the
@@ -60,18 +66,38 @@
 //!   `N² / 2^97`, negligible for any document. The ordinal still binds the
 //!   entry to its place through the AAD, so a moved or reordered entry fails
 //!   to open as the design requires. The cost is twelve bytes per entry.
-//! - **The ordinal field is `o`, not `i`**, because `i` is the EQL
-//!   envelope's identifier, which the SQL grafts onto an extracted entry.
+//! - **Tokens chain by ordinal, not by label, and nothing stores a token.**
+//!   The design wraps each child's label-derived token under its parent's
+//!   (`w`) and stores the ordinal (`o`) so the server can find and unmask
+//!   it. Here a child's token is a hash of its parent's token, its own
+//!   selector and its ordinal, so the server derives it as it walks and
+//!   both fields go. The
+//!   ordinals under a node are dense from zero, so the walk needs no
+//!   fan-out bound either: it probes until the first miss. The price is
+//!   that the client cannot derive an object member's token (its ordinal
+//!   is a rank among sibling keys it does not know), so it walks from the
+//!   nearest token it can derive through one gate per step
+//!   ([`JsonSubtreeKey`]).
 //!
 //! # Byte encodings
 //!
-//! The document's wire form is JSON, as the EQL domain stores it:
-//! sixteen-byte fields (`s`, `vs`, `p`, `w`, `n`, `g`) and the OPE term `op`
-//! in lowercase hex, the ciphertext `c` and the header `h` in standard
-//! base64. The header's bytes are a frozen layout, [`JsonHeader`]. The
+//! The document's wire form is JSON, as the EQL domain stores it. Every
+//! field the SQL compares, derives or decodes is standard base64 with
+//! padding, which is what PostgreSQL's `encode(x, 'base64')` writes and
+//! `decode(x, 'base64')` reads: the selectors `s` and the pairs of `q`
+//! (sixteen bytes, 24 characters), the parent tag `p` (eight bytes, 12
+//! characters), the ordering term `op`, the tokens and gates a walk
+//! takes, and the header `h`, which the SQL reads the `iv` and the
+//! sealed-root flag from. The ciphertext `c`, which nothing in SQL
+//! decodes, is RFC 1924 base85 (`base85-simd`): five characters per four
+//! bytes against base64's eight per six, on the one field that is most of
+//! a document. The alphabet has no `"` or `\`, so a JSON string carries it
+//! unescaped. The header's bytes are a frozen layout, [`JsonHeader`]. The
 //! derivations are versioned by their PAE domain labels, as every other
 //! term kind's are ([`sem`](crate::sem)): a change to any of them is a new
 //! version, never an edit in place.
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vitaminc_protected::OpaqueDebug;
@@ -80,6 +106,7 @@ use crate::target::{DecryptField, DecryptInto, Decryptable, Decryption};
 
 mod derive;
 mod path;
+mod plain;
 mod query;
 
 pub use derive::JsonTerms;
@@ -90,14 +117,23 @@ pub use query::{
 
 pub(crate) use derive::{seal_pending, terms_pending};
 
-/// A sixteen-byte tag: a selector, a token, a parent tag or a group tag.
+/// A sixteen-byte tag: a selector or a token.
 pub type Tag = [u8; 16];
 
-/// How a JSON index lays a document out. Part of the index's identity: a
-/// stored document and the query probing it must agree on it, so it rides
-/// in the data plan beside the index and is recorded in every document's
-/// header.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// An eight-byte parent tag: the first eight bytes of the parent-tag hash.
+/// A parent tag is a lookup key for the server's walk and nothing else (an
+/// entry's AAD binds its selector and ordinal, not its parent tag), so it
+/// needs only to be distinct among the entries of one document; eight
+/// bytes put a collision in a document of ten thousand nodes below one in
+/// 10^11, and save eight bytes an entry over the full hash.
+pub type ParentTag = [u8; 8];
+
+/// How a JSON index lays a document out, and which of its leaves it
+/// orders. Part of the index's identity: a stored document and the query
+/// probing it must agree on it, so it rides in the data plan beside the
+/// index. The layout is recorded in every document's header; the ordered
+/// paths are not, since a stored leaf shows whether it carries a term.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct JsonOptions {
     /// Seal the root: the root entry's ciphertext is the whole document and
     /// the top-level fields are the heads of the token chain, so no token
@@ -105,11 +141,77 @@ pub struct JsonOptions {
     /// default. Off, the chain starts at the root and a query may walk the
     /// whole document from the root's token.
     pub sealed_root: bool,
+    /// The paths whose number and string leaves carry an ordering term
+    /// `op`, and so answer `op::AtPath(op::Lt)` and the other orderings.
+    /// None by default: an ordering term reveals the order of the leaf
+    /// across every row that holds one, and costs about eighty bytes a
+    /// leaf, so a path pays for it only when asked. A wildcard step covers
+    /// every element of the array (`$.orders[*].total`). A position
+    /// (`$.scores[2]`) is refused, here and in an ordering query
+    /// ([`TermError::JsonOrderingAtPosition`](crate::sem::TermError::JsonOrderingAtPosition)):
+    /// an ordering compares the leaf `->` extracts by the path's selector,
+    /// which reads every position as the wildcard, so it reaches the first
+    /// element at the path and never the one a position names. An ordering
+    /// asked at a path no entry here covers is refused
+    /// ([`TermError::JsonPathNotOrdered`](crate::sem::TermError::JsonPathNotOrdered)).
+    pub ordered: BTreeSet<JsonPath>,
+}
+
+impl JsonOptions {
+    /// The defaults: the root sealed, no leaf ordered.
+    pub const fn new() -> Self {
+        Self {
+            sealed_root: true,
+            ordered: BTreeSet::new(),
+        }
+    }
+
+    /// These options with the leaves at `paths` ordered, each path parsed
+    /// as [`JsonPath::parse`] does.
+    ///
+    /// # Errors
+    ///
+    /// [`TermError::JsonPath`](crate::sem::TermError::JsonPath) for a path
+    /// that is not one, and
+    /// [`TermError::JsonOrderingAtPosition`](crate::sem::TermError::JsonOrderingAtPosition)
+    /// for a path that names an array position, which no ordering can
+    /// reach (see [`ordered`](Self::ordered)).
+    pub fn ordering<I>(mut self, paths: I) -> Result<Self, crate::sem::TermError>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        for path in paths {
+            let path = JsonPath::parse(path.as_ref())?;
+            if path.names_a_position() {
+                return Err(crate::sem::TermError::JsonOrderingAtPosition);
+            }
+            let _ = self.ordered.insert(path);
+        }
+        Ok(self)
+    }
+
+    /// Refuse options whose ordered paths name a position, which the
+    /// field admits but [`ordering`](Self::ordering) does not: sealing
+    /// under them would put a term no ordering can reach on the leaf.
+    pub(crate) fn check(&self) -> Result<(), crate::sem::TermError> {
+        if self.ordered.iter().any(JsonPath::names_a_position) {
+            Err(crate::sem::TermError::JsonOrderingAtPosition)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Whether the leaf at `path` carries an ordering term: some ordered
+    /// path [covers](JsonPath::covers) it.
+    pub fn orders(&self, path: &JsonPath) -> bool {
+        self.ordered.iter().any(|ordered| ordered.covers(path))
+    }
 }
 
 impl Default for JsonOptions {
     fn default() -> Self {
-        Self { sealed_root: true }
+        Self::new()
     }
 }
 
@@ -128,8 +230,9 @@ impl Default for JsonOptions {
 /// | 38 | `tag_len` | 2 | `u16` little-endian |
 /// | 40 | ZeroKMS key `tag` | `tag_len` | required to retrieve the key |
 ///
-/// The SQL reads the `iv` at offset 22 to compute parent and group tags; it
-/// parses nothing else. The epoch is reserved for bounding a revealed token
+/// The SQL reads the `iv` at offset 22 to compute parent tags, and the
+/// flags at offset 1 to know whether a walk may fall back to the sealed
+/// root; it parses nothing else. The epoch is reserved for bounding a revealed token
 /// in time (the design's "Epochs"); writing it now keeps that a new value
 /// rather than a new layout.
 ///
@@ -187,13 +290,6 @@ impl JsonHeader {
     /// Whether the root is sealed: see [`JsonOptions::sealed_root`].
     pub fn sealed_root(&self) -> bool {
         self.sealed_root
-    }
-
-    /// The layout this document was laid out under.
-    pub fn options(&self) -> JsonOptions {
-        JsonOptions {
-            sealed_root: self.sealed_root,
-        }
     }
 
     /// The frozen byte layout; see the type docs.
@@ -262,21 +358,14 @@ impl JsonHeader {
 
 /// One entry of a stored document: one JSON node.
 ///
-/// Every field but `s`, `vs` and `c` is optional, and which are present
-/// says what the node is: `p`, `w` and `o` on a node whose parent has a
-/// token (everything below the chain's heads); `n` on an array element
-/// that is a container; `g` on every entry inside such an element; `op` on
-/// a number or string leaf.
+/// `s` and `c` are always present. `p` is present on a node whose parent
+/// has a token (everything below the chain's heads); `op` on a number or
+/// string leaf at a path the index orders ([`JsonOptions::ordered`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonEntry {
     s: Tag,
-    vs: Tag,
     c: Vec<u8>,
-    o: Option<u32>,
-    p: Option<Tag>,
-    w: Option<Tag>,
-    n: Option<Tag>,
-    g: Option<Tag>,
+    p: Option<ParentTag>,
     op: Option<Vec<u8>>,
 }
 
@@ -285,37 +374,16 @@ impl JsonEntry {
     pub fn selector(&self) -> &Tag {
         &self.s
     }
-    /// The value selector.
-    pub fn value_selector(&self) -> &Tag {
-        &self.vs
-    }
     /// The node's ciphertext, as sealed.
     pub fn ciphertext(&self) -> &[u8] {
         &self.c
     }
-    /// The node's ordinal under its parent, when its parent has a token.
-    pub fn ordinal(&self) -> Option<u32> {
-        self.o
-    }
     /// The parent tag, when the parent has a token.
-    pub fn parent_tag(&self) -> Option<&Tag> {
+    pub fn parent_tag(&self) -> Option<&ParentTag> {
         self.p.as_ref()
     }
-    /// The wrapped token, when the parent has a token.
-    pub fn wrapped_token(&self) -> Option<&Tag> {
-        self.w.as_ref()
-    }
-    /// This node's group tag, when it is an array element that is a
-    /// container.
-    pub fn group_tag(&self) -> Option<&Tag> {
-        self.n.as_ref()
-    }
-    /// The enclosing array element's group tag, when this node sits inside
-    /// an element that is a container.
-    pub fn enclosing_group_tag(&self) -> Option<&Tag> {
-        self.g.as_ref()
-    }
-    /// The leaf ordering term, on a number or string leaf.
+    /// The leaf ordering term, on a number or string leaf at an ordered
+    /// path.
     pub fn ordering_term(&self) -> Option<&[u8]> {
         self.op.as_deref()
     }
@@ -327,15 +395,15 @@ impl JsonEntry {
 /// [`DecryptInto<Value>`](crate::DecryptInto) opens.
 ///
 /// Serializes to the wire form the EQL domain stores: `{"h": "…", "sv":
-/// [{"s": "…", "vs": "…", "c": "…", …}, …], "q": {"sv": [{"s", "vs"}, …],
-/// "el": […]}}`, where `q` is the document's own containment
-/// [projection](Self::projection), written once so the server never
-/// rebuilds it; see the [module docs](self#byte-encodings).
+/// [{"s": "…", "c": "…", …}, …], "q": {"sv": [{"s", "vs"}, …], "el":
+/// […]}}`, where `q` is the document's containment
+/// [projection](Self::projection); see the [module docs](self#byte-encodings).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "DocumentWire", into = "DocumentWire")]
 pub struct JsonDocument {
     header: JsonHeader,
     entries: Vec<JsonEntry>,
+    projection: JsonProjection,
 }
 
 impl JsonDocument {
@@ -349,32 +417,40 @@ impl JsonDocument {
         &self.entries
     }
 
+    /// The document's containment projection: what a [`JsonQuery`] is
+    /// matched against, stored as `q`. Computed from the plaintext when the
+    /// document is sealed and read back as stored: like every search field
+    /// it is unauthenticated (only `c` is), and a tampered `q` changes
+    /// which rows a containment query returns and nothing else.
+    pub fn projection(&self) -> &JsonProjection {
+        &self.projection
+    }
+
     /// The children of the node whose token is `token`, as the server
-    /// finds them: every entry whose parent tag is the tag of `token` at
-    /// the entry's own ordinal, with its own token unwrapped, in ordinal
-    /// order. The SQL walk finds the same entries by trying the ordinals
-    /// `0..F`, where `F` is one more than the largest ordinal in the
-    /// document; checking each entry at its own ordinal gives the same
-    /// answer without a loop whose length a stored document chooses. A
+    /// finds them: the entries at the ordinals `0, 1, 2, …` under it,
+    /// probed until the first miss, each with its own token derived. A
     /// token that names no node yields nothing.
     ///
-    /// What a `jsonb_array_elements(doc, token)` returns; one level of the
+    /// What `json_tree_children(doc, token)` returns; one level of the
     /// walk [`subtree`](Self::subtree) runs to the bottom.
     pub fn children(&self, token: &Tag) -> Vec<(usize, &JsonEntry, Tag)> {
         let iv = &self.header.iv;
-        let mut out: Vec<(usize, &JsonEntry, Tag)> = self
-            .entries
-            .iter()
-            .enumerate()
-            .filter_map(|(j, e)| {
-                let (p, w, o) = (e.p.as_ref()?, e.w.as_ref()?, e.o?);
-                (derive::parent_tag(iv, token, o) == *p).then(|| {
-                    let child = derive::xor(w, &derive::mask(iv, token, &e.c));
-                    (j, e, child)
-                })
-            })
-            .collect();
-        out.sort_by_key(|(_, e, _)| e.o);
+        let mut out = Vec::new();
+        // A node has at most as many children as the document has entries,
+        // so the probe loop is bounded whatever the entries say.
+        let most = u32::try_from(self.entries.len()).unwrap_or(u32::MAX);
+        for o in 0..most {
+            let tag = derive::parent_tag(iv, token, o);
+            let Some((j, entry)) = self
+                .entries
+                .iter()
+                .enumerate()
+                .find(|(_, e)| e.p.as_ref() == Some(&tag))
+            else {
+                break;
+            };
+            out.push((j, entry, derive::child_token(token, &entry.s, o)));
+        }
         out
     }
 
@@ -396,7 +472,12 @@ impl JsonDocument {
     }
 
     fn walk<'a>(&'a self, token: &Tag, depth: u32, out: &mut Vec<(usize, &'a JsonEntry, u32)>) {
-        if depth as usize > derive::MAX_DEPTH {
+        // A walk finds each entry at most once, so a document whose tags do
+        // not form a tree (which no sealing produces) ends the walk once it
+        // has returned as many entries as the document holds, instead of
+        // looping; and no sealed document nests deeper than MAX_DEPTH, so a
+        // chain of tags longer than that stops there, in bounded stack.
+        if out.len() >= self.entries.len() || depth as usize > derive::MAX_DEPTH {
             return;
         }
         for (j, entry, child) in self.children(token) {
@@ -419,8 +500,16 @@ impl JsonDocument {
         })
     }
 
-    pub(crate) fn new(header: JsonHeader, entries: Vec<JsonEntry>) -> Self {
-        Self { header, entries }
+    pub(crate) fn new(
+        header: JsonHeader,
+        entries: Vec<JsonEntry>,
+        projection: JsonProjection,
+    ) -> Self {
+        Self {
+            header,
+            entries,
+            projection,
+        }
     }
 }
 
@@ -486,69 +575,39 @@ where
     }
 }
 
-/// The entries the server's walk returned for one token: what
-/// `json_tree_subtree(doc, token)` yields, collected, and what
+/// The entries the server's walk returned for one key, ready to open:
+/// what `json_tree_subtree(doc, token)` or `json_tree_subtree_at(doc,
+/// token, gates)` yields, collected, and what
 /// [`DecryptInto<Value>`](crate::DecryptInto) reassembles into the value
-/// under that node.
+/// under the walked path. Built only by the key that keyed the walk
+/// ([`JsonSubtreeKey::open`]), so it always carries the walked path.
 ///
-/// The walk returns the node's descendants and not the node itself, so the
-/// node's kind is read from its children's labels: elements make an array,
-/// members an object. A node with no descendants, an empty container or a
-/// scalar, yields no rows and so no value; `->` on its selector returns the
-/// node itself.
+/// The ungated walk returns the node's descendants and not the node
+/// itself, so the node's kind is read from its children's labels: elements
+/// make an array, members an object. A node with no descendants, an empty
+/// container or a scalar, yields no rows and so no value; `->` on its
+/// selector returns the node itself. A gated walk also returns each node
+/// its gates reach, at depth `0`, with that node's descendants beneath it.
 ///
 /// Past its budget, a walk over a document with a sealed root returns the
 /// root entry alone, at depth `0`, instead of a subtree it would be
 /// cheaper to open whole: the client opens the document and takes the
-/// walked path over it. Opening such rows needs that path and which walk
-/// it keyed, attached with [`below`](Self::below) for `json_tree_subtree`
-/// or [`at`](Self::at) for `json_tree_subtree_at`, so that the rows open
-/// to the same value whichever form the server returned; without a path
-/// the opening fails with [`Error::OpenedType`](crate::Error::OpenedType).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
+/// walked path over it, to the same value the walked rows open to. Whether
+/// the path names the node walked below (`json_tree_subtree`) or the nodes
+/// reached (`json_tree_subtree_at`) is the key's to say, by whether it has
+/// gates, so no caller attaches it.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonSubtree {
     nodes: Vec<JsonNode>,
-    #[serde(skip)]
-    path: Option<JsonPath>,
-    #[serde(skip)]
+    path: JsonPath,
     below: bool,
 }
 
 impl JsonSubtree {
-    /// The rows, as returned.
-    pub fn new(nodes: Vec<JsonNode>) -> Self {
-        Self {
-            nodes,
-            path: None,
-            below: false,
-        }
-    }
-
-    /// The rows of `json_tree_subtree_at`, with the whole path its key was
-    /// derived from: what the opening takes over the whole document when
-    /// the rows are the sealed root the server fell back to. They open as
-    /// the walked rows do, to one value per node the path reaches.
-    pub fn at(self, path: JsonPath) -> Self {
-        Self {
-            path: Some(path),
-            below: false,
-            ..self
-        }
-    }
-
-    /// The rows of `json_tree_subtree`, with the path of the node whose
-    /// token keyed the walk. They open as the walked rows do, which are
-    /// that node's descendants: to the node's value, or, as a
-    /// [`Vec`], to its children's values. Attach the path this way and not
-    /// with [`at`](Self::at), which would open the fallback to the node
-    /// itself where the walk opens to its children.
-    pub fn below(self, path: JsonPath) -> Self {
-        Self {
-            path: Some(path),
-            below: true,
-            ..self
-        }
+    /// The rows of a walk keyed from `path`: below the path's node when
+    /// `below` (`json_tree_subtree`), at the nodes it reaches otherwise.
+    pub(crate) fn keyed(nodes: Vec<JsonNode>, path: JsonPath, below: bool) -> Self {
+        Self { nodes, path, below }
     }
 
     /// The rows.
@@ -556,10 +615,9 @@ impl JsonSubtree {
         &self.nodes
     }
 
-    /// The path attached with [`at`](Self::at) or [`below`](Self::below),
-    /// if any.
-    pub fn path(&self) -> Option<&JsonPath> {
-        self.path.as_ref()
+    /// The path the walk was keyed from.
+    pub fn path(&self) -> &JsonPath {
+        &self.path
     }
 
     /// Whether the rows are the sealed root the server returned in place
@@ -589,49 +647,36 @@ where
 // Wire form
 // =============================================================================
 
-/// Lowercase hex, as the SQL decodes with `decode(x, 'hex')`.
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(DIGITS[usize::from(b >> 4)] as char);
-        out.push(DIGITS[usize::from(b & 0xf)] as char);
-    }
-    out
-}
-
-/// The inverse of [`hex`]; either case.
-pub(crate) fn unhex(text: &str) -> Result<Vec<u8>, WireError> {
-    fn nibble(c: u8) -> Result<u8, WireError> {
-        match c {
-            b'0'..=b'9' => Ok(c - b'0'),
-            b'a'..=b'f' => Ok(c - b'a' + 10),
-            b'A'..=b'F' => Ok(c - b'A' + 10),
-            _ => Err(WireError("not hex")),
-        }
-    }
-    let bytes = text.as_bytes();
-    if !bytes.len().is_multiple_of(2) {
-        return Err(WireError("odd hex length"));
-    }
-    bytes
-        .chunks_exact(2)
-        .map(|pair| Ok(nibble(pair[0])? << 4 | nibble(pair[1])?))
-        .collect()
-}
-
-fn unhex16(text: &str) -> Result<Tag, WireError> {
-    Tag::try_from(unhex(text)?).map_err(|_| WireError("not 16 bytes"))
-}
-
-fn base64(bytes: &[u8]) -> String {
+/// Standard base64 with padding, as PostgreSQL's `encode(x, 'base64')`
+/// writes it and `decode(x, 'base64')` reads it (which refuses the unpadded
+/// form): every field the SQL compares, derives or decodes.
+pub(crate) fn base64(bytes: &[u8]) -> String {
     use base64ct::{Base64, Encoding};
     Base64::encode_string(bytes)
 }
 
-fn unbase64(text: &str) -> Result<Vec<u8>, WireError> {
+/// The inverse of [`base64`]: padded, canonical.
+pub(crate) fn unbase64(text: &str) -> Result<Vec<u8>, WireError> {
     use base64ct::{Base64, Encoding};
     Base64::decode_vec(text).map_err(|_| WireError("not base64"))
+}
+
+fn unbase64_16(text: &str) -> Result<Tag, WireError> {
+    Tag::try_from(unbase64(text)?).map_err(|_| WireError("not 16 bytes"))
+}
+
+fn unbase64_8(text: &str) -> Result<ParentTag, WireError> {
+    ParentTag::try_from(unbase64(text)?).map_err(|_| WireError("not 8 bytes"))
+}
+
+/// RFC 1924 base85: the ciphertext, which nothing in SQL decodes. Five
+/// characters per four bytes; the alphabet has no `"` or `\`.
+fn base85(bytes: &[u8]) -> String {
+    base85_simd::encode(bytes)
+}
+
+fn unbase85(text: &str) -> Result<Vec<u8>, WireError> {
+    base85_simd::decode(text).map_err(|_| WireError("not base85"))
 }
 
 /// A wire field that does not decode. Names the field's fault and never its
@@ -640,35 +685,25 @@ fn unbase64(text: &str) -> Result<Vec<u8>, WireError> {
 #[error("a JSON index wire field does not decode: {0}")]
 pub struct WireError(&'static str);
 
-/// `h`, `sv` and `q`, as stored. `q` is written from the entries and not
-/// read back: a document deserialized from the wire derives its projection
-/// from `sv` again, so the field is accepted and ignored on the way in.
+/// `h`, `sv` and `q`, as stored. All three are required: the projection
+/// `q` is the only place the value selectors live.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DocumentWire {
     h: String,
     sv: Vec<EntryWire>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    q: Option<query::GroupWire>,
+    q: query::GroupWire,
 }
 
-/// One entry, as stored: tags in hex, the ciphertext in base64.
+/// One entry, as stored: the tags and the ordering term in base64, the
+/// ciphertext in base85.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EntryWire {
     s: String,
-    vs: String,
     c: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    o: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     p: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    w: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    n: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    g: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     op: Option<String>,
 }
@@ -676,15 +711,10 @@ struct EntryWire {
 impl From<&JsonEntry> for EntryWire {
     fn from(e: &JsonEntry) -> Self {
         Self {
-            s: hex(&e.s),
-            vs: hex(&e.vs),
-            c: base64(&e.c),
-            o: e.o,
-            p: e.p.as_ref().map(|t| hex(t)),
-            w: e.w.as_ref().map(|t| hex(t)),
-            n: e.n.as_ref().map(|t| hex(t)),
-            g: e.g.as_ref().map(|t| hex(t)),
-            op: e.op.as_deref().map(hex),
+            s: base64(&e.s),
+            c: base85(&e.c),
+            p: e.p.as_ref().map(|t| base64(t)),
+            op: e.op.as_deref().map(base64),
         }
     }
 }
@@ -694,15 +724,10 @@ impl TryFrom<EntryWire> for JsonEntry {
 
     fn try_from(w: EntryWire) -> Result<Self, WireError> {
         Ok(Self {
-            s: unhex16(&w.s)?,
-            vs: unhex16(&w.vs)?,
-            c: unbase64(&w.c)?,
-            o: w.o,
-            p: w.p.as_deref().map(unhex16).transpose()?,
-            w: w.w.as_deref().map(unhex16).transpose()?,
-            n: w.n.as_deref().map(unhex16).transpose()?,
-            g: w.g.as_deref().map(unhex16).transpose()?,
-            op: w.op.as_deref().map(unhex).transpose()?,
+            s: unbase64_16(&w.s)?,
+            c: unbase85(&w.c)?,
+            p: w.p.as_deref().map(unbase64_8).transpose()?,
+            op: w.op.as_deref().map(unbase64).transpose()?,
         })
     }
 }
@@ -712,7 +737,7 @@ impl From<JsonDocument> for DocumentWire {
         Self {
             h: base64(&doc.header.to_bytes()),
             sv: doc.entries.iter().map(EntryWire::from).collect(),
-            q: Some(query::GroupWire::from(&doc.projection())),
+            q: query::GroupWire::from(&doc.projection),
         }
     }
 }
@@ -727,7 +752,12 @@ impl TryFrom<DocumentWire> for JsonDocument {
             w.sv.into_iter()
                 .map(JsonEntry::try_from)
                 .collect::<Result<_, _>>()?;
-        Ok(Self { header, entries })
+        let projection = JsonProjection::try_from(w.q)?;
+        Ok(Self {
+            header,
+            entries,
+            projection,
+        })
     }
 }
 
@@ -813,9 +843,8 @@ mod tests {
         assert_eq!(header.iv(), &[9; 16]);
         assert_eq!(header.tag(), &[1, 2, 3]);
         assert!(!header.sealed_root());
-        assert_eq!(header.options(), JsonOptions { sealed_root: false });
         let sealed = JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![], true);
-        assert_eq!(sealed.options(), JsonOptions { sealed_root: true });
+        assert!(sealed.sealed_root());
     }
 
     #[test]
@@ -851,84 +880,39 @@ mod tests {
         );
     }
 
-    /// A chained entry that unwraps to `child` under `parent` at ordinal `o`,
-    /// as whoever holds `parent` can write one.
-    fn chained(iv: &[u8], parent: &Tag, o: u32, child: &Tag, c: Vec<u8>) -> JsonEntry {
+    /// An entry at ordinal `o` under `parent`, as whoever holds `parent` can
+    /// write one: its parent tag is public given the token.
+    fn chained(iv: &[u8], parent: &Tag, o: u32) -> JsonEntry {
         JsonEntry {
             s: [0; 16],
-            vs: [0; 16],
-            o: Some(o),
+            c: o.to_le_bytes().to_vec(),
             p: Some(derive::parent_tag(iv, parent, o)),
-            w: Some(derive::xor(child, &derive::mask(iv, parent, &c))),
-            n: None,
-            g: None,
-            op: None,
-            c,
-        }
-    }
-
-    fn root() -> JsonEntry {
-        JsonEntry {
-            s: [0; 16],
-            vs: [0; 16],
-            c: vec![0],
-            o: None,
-            p: None,
-            w: None,
-            n: None,
-            g: None,
             op: None,
         }
     }
 
-    fn document(entries: Vec<JsonEntry>) -> JsonDocument {
-        JsonDocument::new(
-            JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![], true),
-            entries,
-        )
-    }
-
     #[test]
-    fn an_ordinal_at_the_top_of_its_range_is_an_entry_like_any_other() {
-        let token = [1; 16];
-        let mut entry = chained(&[9; 16], &token, u32::MAX, &[2; 16], vec![3; 20]);
-        let doc = document(vec![root(), entry.clone()]);
-        let children = doc.children(&token);
-        assert_eq!(children.len(), 1, "found at its own ordinal, no fan-out");
-        assert_eq!(children[0].2, [2; 16]);
-        assert!(doc.children(&[7; 16]).is_empty());
-        entry.p = Some([0; 16]);
-        assert!(document(vec![root(), entry]).children(&token).is_empty());
-    }
-
-    #[test]
-    fn a_walk_ends_on_tags_that_do_not_form_a_tree() {
+    fn a_walk_ends_on_a_chain_deeper_than_any_sealed_document() {
         let iv = [9; 16];
         let token = [1; 16];
-        // Two children of the token that each unwrap to the token itself:
-        // a cycle that doubles at every level.
-        let cycle = document(vec![
-            root(),
-            chained(&iv, &token, 0, &token, vec![4; 20]),
-            chained(&iv, &token, 1, &token, vec![5; 20]),
-        ]);
-        assert_eq!(
-            cycle.subtree(&token).len(),
-            cycle.entries().len(),
-            "no more entries than the document holds"
-        );
-
-        // A chain longer than any document the index seals.
-        let mut entries = vec![root()];
+        // A chain longer than any document the index seals: the first child
+        // of each link's token, a thousand times.
+        let mut entries = vec![JsonEntry {
+            s: [0; 16],
+            c: vec![0],
+            p: None,
+            op: None,
+        }];
         let mut parent = token;
-        for i in 0..1000u32 {
-            let mut child = [0; 16];
-            child[..4].copy_from_slice(&i.to_le_bytes());
-            child[15] = 0xee;
-            entries.push(chained(&iv, &parent, 0, &child, i.to_le_bytes().to_vec()));
-            parent = child;
+        for _ in 0..1000 {
+            entries.push(chained(&iv, &parent, 0));
+            parent = derive::child_token(&parent, &[0; 16], 0);
         }
-        let chain = document(entries);
+        let chain = JsonDocument::new(
+            JsonHeader::new(Uuid::from_u128(7), iv, vec![], true),
+            entries,
+            JsonProjection::default(),
+        );
         let walked = chain.subtree(&token);
         assert_eq!(walked.len(), derive::MAX_DEPTH, "cut at the deepest level");
         assert_eq!(
@@ -938,10 +922,35 @@ mod tests {
     }
 
     #[test]
-    fn hex_round_trips_and_refuses_what_is_not_hex() {
-        assert_eq!(hex(&[0, 15, 255]), "000fff");
-        assert_eq!(unhex("000FfF").unwrap(), vec![0, 15, 255]);
-        assert!(unhex("abc").is_err());
-        assert!(unhex("zz").is_err());
+    fn the_encodings_round_trip_and_refuse_what_they_are_not() {
+        assert_eq!(base64(&[0, 15, 255]), "AA//");
+        assert_eq!(unbase64("AA//").unwrap(), vec![0, 15, 255]);
+        assert_eq!(base64(&[1; 16]).len(), 24, "a sixteen-byte tag, padded");
+        assert_eq!(
+            base64(&[1; 8]).len(),
+            12,
+            "an eight-byte parent tag, padded"
+        );
+        assert!(
+            unbase64("AA/").is_err(),
+            "unpadded, which the SQL refuses too"
+        );
+        assert!(unbase64("AA//=").is_err());
+        assert!(unbase64("zz").is_err());
+        assert!(unbase64_16("AA//").is_err());
+        assert!(unbase64_8("AA//").is_err());
+        assert_eq!(unbase64_8(&base64(&[7; 8])).unwrap(), [7; 8]);
+
+        assert_eq!(base85(&[0, 15, 255]), "01y8");
+        assert_eq!(unbase85("01y8").unwrap(), vec![0, 15, 255]);
+        let bytes: Vec<u8> = (0..=255).collect();
+        assert_eq!(unbase85(&base85(&bytes)).unwrap(), bytes);
+        assert_eq!(base85(&bytes).len(), 320, "five characters per four bytes");
+        assert!(
+            !base85(&bytes).contains(['"', '\\']),
+            "unescaped in a JSON string"
+        );
+        assert!(unbase85("\"").is_err());
+        assert!(unbase85("z").is_err(), "a one-character tail is no byte");
     }
 }

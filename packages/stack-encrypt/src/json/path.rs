@@ -17,7 +17,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// One step of a [`JsonPath`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Segment {
     /// An object member, by key.
     Key(String),
@@ -28,7 +28,7 @@ pub enum Segment {
 }
 
 /// A path into a JSON document, from the root (`$`) down.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub struct JsonPath {
     segments: Vec<Segment>,
 }
@@ -147,9 +147,50 @@ impl JsonPath {
         &self.segments
     }
 
+    /// Whether some step is an array position (`[2]`), which a selector
+    /// reads as the wildcard.
+    pub(crate) fn names_a_position(&self) -> bool {
+        self.segments.iter().any(|s| matches!(s, Segment::Index(_)))
+    }
+
     /// Whether this path names one node: no step is the wildcard.
     pub fn is_positional(&self) -> bool {
         !self.segments.iter().any(|s| matches!(s, Segment::Wildcard))
+    }
+
+    /// Whether this path, read as a pattern, covers `path`: the same
+    /// steps, except that a wildcard here covers any array step there, a
+    /// position or the wildcard. A position here covers that position
+    /// alone, not the wildcard, since the wildcard names elements the
+    /// position does not. How the index's ordered paths
+    /// ([`JsonOptions::ordered`](super::JsonOptions::ordered)) are matched
+    /// against a node's path when a document is sealed, and against a
+    /// query's path when an ordering is asked.
+    ///
+    /// ```
+    /// use stack_encrypt::json::JsonPath;
+    ///
+    /// let wild = JsonPath::parse("$.orders[*].total").unwrap();
+    /// assert!(wild.covers(&JsonPath::parse("$.orders[3].total").unwrap()));
+    /// assert!(wild.covers(&JsonPath::parse("$.orders[*].total").unwrap()));
+    /// let third = JsonPath::parse("$.orders[3].total").unwrap();
+    /// assert!(third.covers(&JsonPath::parse("$.orders[3].total").unwrap()));
+    /// assert!(!third.covers(&JsonPath::parse("$.orders[2].total").unwrap()));
+    /// assert!(!third.covers(&JsonPath::parse("$.orders[*].total").unwrap()));
+    /// assert!(!wild.covers(&JsonPath::parse("$.orders[*]").unwrap()));
+    /// ```
+    pub fn covers(&self, path: &JsonPath) -> bool {
+        self.segments.len() == path.segments.len()
+            && self
+                .segments
+                .iter()
+                .zip(&path.segments)
+                .all(|(pattern, step)| match (pattern, step) {
+                    (Segment::Key(a), Segment::Key(b)) => a == b,
+                    (Segment::Wildcard, Segment::Index(_) | Segment::Wildcard) => true,
+                    (Segment::Index(a), Segment::Index(b)) => a == b,
+                    _ => false,
+                })
     }
 
     /// The values at this path in `value`, in document order: at most one
@@ -178,27 +219,41 @@ impl JsonPath {
         current
     }
 
+    /// The values at this path in `value`, as [`select`](Self::select)
+    /// finds them, borrowed mutably: so that a caller holding the whole
+    /// document can move the nodes it wants out of it rather than copy
+    /// them.
+    pub(crate) fn select_mut<'a>(
+        &self,
+        value: &'a mut serde_json::Value,
+    ) -> Vec<&'a mut serde_json::Value> {
+        let mut current = vec![value];
+        for segment in &self.segments {
+            let mut next = Vec::new();
+            for node in current {
+                match segment {
+                    Segment::Key(key) => {
+                        next.extend(node.as_object_mut().and_then(|o| o.get_mut(key)));
+                    }
+                    Segment::Index(index) => next.extend(
+                        usize::try_from(*index)
+                            .ok()
+                            .and_then(|i| node.as_array_mut().and_then(|a| a.get_mut(i))),
+                    ),
+                    Segment::Wildcard => next.extend(node.as_array_mut().into_iter().flatten()),
+                }
+            }
+            current = next;
+        }
+        current
+    }
+
     /// This path with one more step.
     pub(crate) fn then(&self, segment: Segment) -> Self {
         let mut segments = Vec::with_capacity(self.segments.len() + 1);
         segments.extend_from_slice(&self.segments);
         segments.push(segment);
         Self { segments }
-    }
-
-    /// The longest prefix with no wildcard, and whether anything was cut.
-    pub(crate) fn anchor(&self) -> (Self, bool) {
-        let end = self
-            .segments
-            .iter()
-            .position(|s| matches!(s, Segment::Wildcard))
-            .unwrap_or(self.segments.len());
-        (
-            Self {
-                segments: self.segments[..end].to_vec(),
-            },
-            end < self.segments.len(),
-        )
     }
 
     /// The canonical bytes a selector is derived over: every array step,
@@ -306,6 +361,24 @@ impl fmt::Display for JsonPath {
             }
         }
         Ok(())
+    }
+}
+
+/// A path serializes as its text, as [`Display`](fmt::Display) renders it,
+/// so a plan's ordered paths read as `["$.age"]` on the wire.
+impl serde::Serialize for JsonPath {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+/// A path deserializes from its text through [`JsonPath::parse`], so a
+/// string that is not a path is refused where it is read, with the
+/// [`JsonPathError`]'s message.
+impl<'de> serde::Deserialize<'de> for JsonPath {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(d)?;
+        Self::parse(&text).map_err(serde::de::Error::custom)
     }
 }
 
@@ -457,14 +530,17 @@ mod tests {
         );
     }
 
+    /// `covers` is public and matches positions though an ordered path may
+    /// not name one: a position covers that position alone.
     #[test]
-    fn the_anchor_is_the_prefix_before_the_first_wildcard() {
-        let (anchor, cut) = JsonPath::parse("$.a[*].x").unwrap().anchor();
-        assert_eq!(anchor, JsonPath::parse("$.a").unwrap());
-        assert!(cut);
-        let (anchor, cut) = JsonPath::parse("$.a[1].x").unwrap().anchor();
-        assert_eq!(anchor.to_string(), "$.a[1].x");
-        assert!(!cut);
+    fn a_position_covers_its_own_position_only() {
+        let path = |text: &str| JsonPath::parse(text).unwrap();
+        let third = path("$.orders[3].total");
+        assert!(third.covers(&path("$.orders[3].total")));
+        assert!(!third.covers(&path("$.orders[2].total")));
+        assert!(!third.covers(&path("$.orders[*].total")));
+        assert!(path("$.orders[*].total").covers(&third));
+        assert!(!path("$.orders[3]").covers(&third), "the same steps only");
     }
 
     #[test]
@@ -475,5 +551,39 @@ mod tests {
         assert_eq!(needle, serde_json::json!({"a": [{"x": 1}]}));
         let needle = JsonPath::root().needle(serde_json::json!("v"));
         assert_eq!(needle, serde_json::json!("v"));
+    }
+
+    #[test]
+    fn a_path_round_trips_through_serde_as_its_text() {
+        for text in ["$", "$.a[*].b", r#"$["a.b"][2]"#, r#"$["say \"hi\""]"#] {
+            let path = JsonPath::parse(text).unwrap();
+            let wire = serde_json::to_value(&path).unwrap();
+            assert_eq!(wire, serde_json::Value::String(path.to_string()));
+            assert_eq!(serde_json::from_value::<JsonPath>(wire).unwrap(), path);
+        }
+        let refused = serde_json::from_value::<JsonPath>(serde_json::json!("a.b")).unwrap_err();
+        assert_eq!(
+            refused.to_string(),
+            "not a JSON path: expected `$` at byte 0"
+        );
+        assert!(serde_json::from_value::<JsonPath>(serde_json::json!(1)).is_err());
+    }
+
+    #[test]
+    fn select_mut_reaches_what_select_reaches() {
+        let doc = serde_json::json!({"a": [{"x": 1}, {"x": 2}, 3], "b": {"x": 4}});
+        for text in [
+            "$", "$.a", "$.a[1].x", "$.a[*].x", "$.a[*]", "$.b.x", "$.a.x", "$.b[0]", "$.c",
+        ] {
+            let path = JsonPath::parse(text).unwrap();
+            let mut copy = doc.clone();
+            let found: Vec<serde_json::Value> = path.select(&doc).into_iter().cloned().collect();
+            let found_mut: Vec<serde_json::Value> = path
+                .select_mut(&mut copy)
+                .into_iter()
+                .map(|v| v.clone())
+                .collect();
+            assert_eq!(found_mut, found, "{text}");
+        }
     }
 }

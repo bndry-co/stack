@@ -14,8 +14,8 @@
 --! extension, no superuser, so the surface installs wherever the rest of
 --! {{prefix}} does.
 --!
---! `selector` parameters are *encrypted-side* selectors, the hex the index
---! emits in `s`; `token` parameters are the hex of a chain token the client
+--! `selector` parameters are *encrypted-side* selectors, the base64 the index
+--! emits in `s`; `token` parameters are the base64 of a chain token the client
 --! derived from a path. Plaintext paths are never accepted.
 
 ------------------------------------------------------------------------------
@@ -31,26 +31,6 @@ CREATE FUNCTION {{prefix}}_internal.json_tree_h16(x bytea)
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   SELECT substr(sha256(x), 1, 16)
-$$;
-
---! @brief XOR of two sixteen-byte strings.
---! @internal
---! @param a bytea Sixteen bytes.
---! @param b bytea Sixteen bytes.
---! @return bytea `a XOR b`, byte by byte.
-CREATE FUNCTION {{prefix}}_internal.json_tree_xor16(a bytea, b bytea)
-  RETURNS bytea
-  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
-AS $$
-DECLARE
-  r bytea := a;
-  i int;
-BEGIN
-  FOR i IN 0..15 LOOP
-    r := set_byte(r, i, get_byte(a, i) # get_byte(b, i));
-  END LOOP;
-  RETURN r;
-END;
 $$;
 
 --! @brief A 32-bit integer as four little-endian bytes.
@@ -79,56 +59,40 @@ AS $$
 $$;
 
 --! @brief The parent tag a child at ordinal `o` under the node with token
---!        `token` carries: `H("p" ‖ iv ‖ token ‖ LE32(o))`.
+--!        `token` carries: the first eight bytes of
+--!        `H("p" ‖ iv ‖ token ‖ LE32(o))`. Eight, since the tag is a lookup
+--!        key within one document and nothing else: an entry's AAD binds
+--!        its selector and ordinal, not its parent tag.
 --! @internal
 --! @param iv bytea The document's iv.
 --! @param token bytea The parent's token, sixteen bytes.
 --! @param o integer The child's ordinal.
---! @return text The tag, hex, as the entry's `p` spells it.
+--! @return text The tag, padded base64, as the entry's `p` spells it.
 CREATE FUNCTION {{prefix}}_internal.json_tree_parent_tag(iv bytea, token bytea, o integer)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT encode({{prefix}}_internal.json_tree_h16('p'::bytea || iv || token || {{prefix}}_internal.json_tree_le32(o)), 'hex')
+  SELECT encode(substr({{prefix}}_internal.json_tree_h16('p'::bytea || iv || token || {{prefix}}_internal.json_tree_le32(o)), 1, 8), 'base64')
 $$;
 
---! @brief Unwrap a child's token from its entry, given its parent's token:
---!        `w XOR H("w" ‖ iv ‖ token ‖ c)`.
+--! @brief The token of the child at ordinal `o` under the node with token
+--!        `token`, whose selector is `s`: `H("t" ‖ token ‖ s ‖ LE32(o))`.
+--!        Column-wide like every token, with no document salt, so a client
+--!        derives an array element's token from the path alone and the walk
+--!        derives a hit's token from its parent's and the hit's own `s` on
+--!        the spot. Nothing stores a token. The selector keeps an array
+--!        element apart from an object member at the same ordinal, which a
+--!        row whose node at the path is an object would otherwise put there.
 --! @internal
---! @param iv bytea The document's iv.
---! @param token bytea The parent's token.
---! @param entry jsonb The child's entry, carrying `w` and `c`.
+--! @param token bytea The parent's token, sixteen bytes.
+--! @param s bytea The child's selector, sixteen bytes.
+--! @param o integer The child's ordinal.
 --! @return bytea The child's token, sixteen bytes.
-CREATE FUNCTION {{prefix}}_internal.json_tree_unwrap(iv bytea, token bytea, entry jsonb)
+CREATE FUNCTION {{prefix}}_internal.json_tree_child_token(token bytea, s bytea, o integer)
   RETURNS bytea
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT {{prefix}}_internal.json_tree_xor16(
-    decode(entry ->> 'w', 'hex'),
-    {{prefix}}_internal.json_tree_h16('w'::bytea || iv || token || decode(entry ->> 'c', 'base64'))
-  )
-$$;
-
---! @brief How many ordinals a walk tries under each node: one more than the
---!        largest ordinal any entry of the document carries, and never more
---!        than the document has entries.
---!
---! A node's children sit at ordinals below its child count, which is below
---! the document's entry count, so the cap changes nothing for a sealed
---! document. It is there for a stored one: `o` is not authenticated, and
---! without the cap one entry carrying `o = 2147483646` would make every
---! level of every walk hash two billion candidate tags.
---!
---! @internal
---! @param val jsonb The document.
---! @return integer The fan-out bound; `0` for a document with no chained
---!         entry.
-CREATE FUNCTION {{prefix}}_internal.json_tree_fanout(val jsonb)
-  RETURNS integer
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$
-  SELECT LEAST(COALESCE(MAX((elem ->> 'o')::integer), -1) + 1, count(*)::integer)
-  FROM jsonb_array_elements(val -> 'sv') AS elem
+  SELECT {{prefix}}_internal.json_tree_h16('t'::bytea || token || s || {{prefix}}_internal.json_tree_le32(o))
 $$;
 
 --! @brief Whether the document's root is sealed: its header's sealed-root
@@ -145,12 +109,30 @@ AS $$
   SELECT (get_byte(decode(h, 'base64'), 1) & 1) = 1
 $$;
 
+--! @brief The CLLW OPE term of a JSON tree entry or ordering operand: its
+--!        `op`, base64-decoded. The JSON tree spells `op` in base64 like
+--!        its other fields, where the scalar types' shared
+--!        `{{prefix}}_internal.ope_cllw(jsonb)` reads hex, so the family
+--!        has its own extractor.
+--! @internal
+--! @param val jsonb An entry or a `query_json_tree_leaf`, as jsonb.
+--! @return {{prefix}}_internal.ope_cllw The term; NULL when there is none.
+CREATE FUNCTION {{prefix}}_internal.json_tree_ope_cllw(val jsonb)
+  RETURNS {{prefix}}_internal.ope_cllw
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT decode(val ->> 'op', 'base64')::{{prefix}}_internal.ope_cllw
+$$;
+
+COMMENT ON FUNCTION {{prefix}}_internal.json_tree_ope_cllw(jsonb) IS
+  'eql-inline-critical: raw-jsonb CLLW OPE extractor of the JSON tree family; must stay inlinable (unpinned search_path)';
+
 --! @brief The chained entries of a document keyed by parent tag: one object
 --!        whose keys are each entry's `p` and whose values are the entry
 --!        with its ordinal `j` in `sv` added. A walk looks a child up by
 --!        the tag it computes, `map -> tag`, instead of scanning `sv` for
---!        it, so the document is read once per walk and a level costs its
---!        fan-out in hashes, not its fan-out times the document's size.
+--!        it, so the document is read once per walk and a probe costs one
+--!        hash and one lookup, not a pass over the document.
 --! @internal
 --! @param val jsonb The document.
 --! @return jsonb The map; `{}` for a document with no chained entry.
@@ -209,7 +191,7 @@ $$;
 --! own: it carries the document's header `h` and its own ordinal `j`.
 --!
 --! @param val jsonb The document.
---! @param selector text The path selector, hex.
+--! @param selector text The path selector, base64.
 --! @return SETOF public.{{prefix}}_json_tree_entry The matching entries, in
 --!         document order.
 CREATE FUNCTION {{prefix}}.json_tree_path_query(val jsonb, selector text)
@@ -235,7 +217,7 @@ COMMENT ON FUNCTION {{prefix}}.json_tree_path_query(jsonb, text) IS
 --! operand's selectivity is a guess, the default cost chose the scan.
 --!
 --! @param val jsonb The document.
---! @param selector text The path selector, hex.
+--! @param selector text The path selector, base64.
 --! @return public.{{prefix}}_json_tree_entry The entry, or NULL when the document
 --!         has no node at that path.
 CREATE FUNCTION {{prefix}}.json_tree_path_query_first(val jsonb, selector text)
@@ -255,7 +237,7 @@ COMMENT ON FUNCTION {{prefix}}.json_tree_path_query_first(jsonb, text) IS
 
 --! @brief Whether the document has a node at the path `selector` names.
 --! @param val jsonb The document.
---! @param selector text The path selector, hex.
+--! @param selector text The path selector, base64.
 --! @return boolean True when some entry carries the selector.
 CREATE FUNCTION {{prefix}}.json_tree_path_exists(val jsonb, selector text)
   RETURNS boolean
@@ -372,246 +354,267 @@ $$;
 -- The token chain: children and subtrees by token
 ------------------------------------------------------------------------------
 
---! The walk, in every function below: for the node in hand, compute the
---! parent tag a child at each ordinal under the document's fan-out would
---! carry, and look each tag up in the document's parent map
---! ({{prefix}}_internal.json_tree_by_parent). A hit is a child; its token
---! unwraps under the parent's and the walk recurses. The map and the
---! document's header fields are computed once per call, so a level costs
---! its fan-out in SHA-256 evaluations and one lookup each, and the
---! document is never scanned per node.
+--! The walk, in every function below. A node's children sit at the dense
+--! ordinals `0, 1, 2, …` under it, and a child's parent tag is
+--! `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`. So from a token the walk probes
+--! ordinal 0, then 1, and so on, looking each tag up in the document's
+--! parent map ({{prefix}}_internal.json_tree_by_parent), and stops at the
+--! first miss. A hit's own token is `H("t" ‖ t(parent) ‖ s ‖ LE32(o))`,
+--! `s` being the hit's own selector, derived on the spot
+--! ({{prefix}}_internal.json_tree_child_token), and the walk recurses under
+--! it. A subtree of `N` nodes therefore costs about
+--! `2N` probes, `N` hits and a miss for every node visited (the end of a
+--! parent's children, or a leaf's lack of any), each probe one SHA-256 and
+--! one map lookup, plus one SHA-256 per hit for its token: about `3N`
+--! hashes whatever the document's width. The map and the header fields
+--! are computed once per call, so the document is read once.
+--!
+--! **The bound.** A stored document is untrusted: its parent tags are not
+--! authenticated, so whoever holds a token can write entries of any shape
+--! under it. The walk still ends after at most one row per entry. A probe
+--! `(t(parent), o)` finds at most one entry, since the map keeps one entry
+--! per tag and entries sharing a `p` collapse into it; a hit's token is a
+--! hash of that probe, so no two rows share a token and no probe is made
+--! twice; and a miss adds no row. Each walk also reads its recursion
+--! through `LIMIT` the entry count plus one, the seed row, so the bound
+--! holds without relying on either fact: PostgreSQL computes a recursive
+--! query only as far as its reader pulls rows, so the limit stops the
+--! recursion and not only the output, and a walk of a sealed document
+--! never reaches it.
+--!
+--! **Gates.** An object member's ordinal is a function of its siblings'
+--! keys, which the client does not know, so the client derives a token
+--! only for a chain head and the array positions that directly follow it,
+--! and walks the rest through one gate per further step: either the step's selector,
+--! which the entry at that depth must carry in `s`, or `#n:<selector>`, an
+--! array position, which is the one ordinal probed at that depth and whose
+--! entry must carry the array elements' selector, so that an object member
+--! ranked at ordinal `n` in a row whose node there is an object is not
+--! taken for an element. A wildcard step's selector is every element's, so
+--! it admits them all. Entries are returned from the depth of the last gate
+--! down: the node each gate chain reaches, and everything beneath it.
 
---! @brief The children of the node whose token is `token`, as rows.
+--! @brief The children of the node the gates reach from the node whose
+--!        token is `token`, as rows.
 --!
 --! What `jsonb_array_elements` is for an encrypted array: one row per
---! element, in ordinal order, each opening on its own. Each child's token
---! is unwrapped on the way, though not returned.
+--! element, in the document's order, each opening on its own. With no
+--! gates, the children of the token's own node; with gates, the walk
+--! descends through them as `json_tree_subtree_at` does and returns one
+--! level below the node they reach.
 --!
 --! @param e public.{{prefix}}_json_tree The stored document.
---! @param token text The parent's token, hex: derived by the client from the
---!        path alone, and never stored.
+--! @param token text The start node's token, base64: derived by the client
+--!        from the path alone, and never stored.
+--! @param gates text[] One gate per step below the token, as
+--!        `json_tree_subtree_at` takes them. Default none.
 --! @return SETOF public.{{prefix}}_json_tree_entry The children, each with `d = 1`.
-CREATE FUNCTION {{prefix}}.json_tree_children(e public.{{prefix}}_json_tree, token text)
+CREATE FUNCTION {{prefix}}.json_tree_children(e public.{{prefix}}_json_tree, token text, gates text[] DEFAULT ARRAY[]::text[])
   RETURNS SETOF public.{{prefix}}_json_tree_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  WITH
+  WITH RECURSIVE
     doc AS MATERIALIZED (
       SELECT {{prefix}}_internal.json_tree_iv(e::jsonb ->> 'h') AS iv,
-             {{prefix}}_internal.json_tree_fanout(e::jsonb) AS fanout,
              {{prefix}}_internal.json_tree_by_parent(e::jsonb) AS map,
-             {{prefix}}.json_tree_meta(e::jsonb) AS meta
+             {{prefix}}.json_tree_meta(e::jsonb) AS meta,
+             jsonb_array_length(e::jsonb -> 'sv') AS entries,
+             COALESCE(array_length(gates, 1), 0) AS gated
+    ),
+    -- The walk of `json_tree_subtree_at`, cut one level below the gates.
+    walk(depth, pt, o, entry, t, ppass, pass) AS (
+        SELECT 0, NULL::bytea, NULL::integer, NULL::jsonb, decode(token, 'base64'), true, true
+      UNION ALL
+        SELECT probe.depth, probe.pt, probe.o, hit.entry,
+               {{prefix}}_internal.json_tree_child_token(probe.pt, decode(hit.entry ->> 's', 'base64'), probe.o),
+               probe.ppass,
+               probe.ppass AND (
+                 probe.depth > doc.gated
+                 OR hit.entry ->> 's' = CASE WHEN gates[probe.depth] LIKE '#%'
+                                             THEN split_part(gates[probe.depth], ':', 2)
+                                             ELSE gates[probe.depth] END)
+        FROM walk AS w
+        CROSS JOIN doc
+        CROSS JOIN LATERAL (
+          SELECT w.depth + 1 AS depth,
+                 w.t AS pt,
+                 CASE WHEN COALESCE(gates[w.depth + 1], '') LIKE '#%'
+                      THEN split_part(substr(gates[w.depth + 1], 2), ':', 1)::integer
+                      ELSE 0 END AS o,
+                 w.pass AS ppass
+          WHERE w.pass AND w.depth <= doc.gated
+          UNION ALL
+          SELECT w.depth, w.pt, w.o + 1, w.ppass
+          WHERE w.entry IS NOT NULL AND COALESCE(gates[w.depth], '') NOT LIKE '#%'
+        ) AS probe
+        CROSS JOIN LATERAL (
+          SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, probe.pt, probe.o) AS entry
+        ) AS hit
+        WHERE hit.entry IS NOT NULL
+    ),
+    -- At most one row per entry and the seed (see "The bound" above).
+    visited AS MATERIALIZED (
+      SELECT w.* FROM walk AS w LIMIT (SELECT doc.entries + 1 FROM doc)
     )
-  SELECT (doc.meta || c.entry || '{"d": 1}'::jsonb)::public.{{prefix}}_json_tree_entry
-  FROM doc
-  CROSS JOIN generate_series(0, doc.fanout - 1) AS o
-  CROSS JOIN LATERAL (
-    SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, decode(token, 'hex'), o) AS entry
-  ) AS c
-  WHERE c.entry IS NOT NULL
-  ORDER BY o
+  SELECT (doc.meta || w.entry || '{"d": 1}'::jsonb)::public.{{prefix}}_json_tree_entry
+  FROM visited AS w, doc
+  WHERE w.entry IS NOT NULL AND w.pass AND w.depth = doc.gated + 1
+  ORDER BY (w.entry ->> 'j')::integer
 $$;
 
---! @brief How many children the node whose token is `token` has: the length
---!        of an encrypted array, or the member count of an object.
+--! @brief How many children the node the gates reach from `token` has:
+--!        the length of an encrypted array, or the member count of an
+--!        object.
 --! @param e public.{{prefix}}_json_tree The stored document.
---! @param token text The node's token, hex.
+--! @param token text The start node's token, base64.
+--! @param gates text[] One gate per step below the token. Default none.
 --! @return integer The count; `0` for a node with no children, a token that
 --!         names no node included.
-CREATE FUNCTION {{prefix}}.json_tree_child_count(e public.{{prefix}}_json_tree, token text)
+CREATE FUNCTION {{prefix}}.json_tree_child_count(e public.{{prefix}}_json_tree, token text, gates text[] DEFAULT ARRAY[]::text[])
   RETURNS integer
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT count(*)::integer FROM {{prefix}}.json_tree_children(e, token)
+  SELECT count(*)::integer FROM {{prefix}}.json_tree_children(e, token, gates)
 $$;
 
---! @brief Every entry under the node whose token is `token`, as rows: the
---!        recursive walk of the chain, in core SQL.
+--! @brief The entries under the node the gates reach from the node whose
+--!        token is `token`, as rows: the recursive walk of the chain, in
+--!        core SQL.
 --!
---! Starting from the token, each level finds its children by parent tag,
---! unwraps their tokens, and recurses. A token that names no node yields no
---! row, and nothing in a row is linkable to anything without the token. The
---! node itself is not returned: the walk addresses nodes by their parent,
---! and the client reads the node's kind from its children's labels, or
---! fetches the node by its selector.
---! The walk descends at most 127 levels, the deepest a sealed document
---! nests, and returns at most as many rows as the document has entries,
---! which a tree never exceeds. A stored document whose tags form a longer
---! chain or a loop therefore still ends it, after at most its entry count
---! times its fan-out in hashes.
+--! Each level probes the ordinals under the node in hand until the first
+--! miss, derives each hit's token, and recurses. A token that names no node
+--! yields no row, and nothing in a row is linkable to anything without the
+--! token. At depth `d` (1 below the token) the gate `gates[d]`, if there
+--! is one, decides which hits the walk descends through: an entry whose
+--! `s` is the gate's selector, or, for a gate `#n:<selector>`, the one hit
+--! at ordinal `n` if it carries that selector. Rows are returned from the depth of the last gate down: the
+--! node a gate chain reaches, with `d = 0`, and everything beneath it, with
+--! `d` its depth below that node. The start node is never returned. With
+--! no gates, every descendant of the start node, with `d` its depth below
+--! it, from 1.
 --!
---! **The budget.** A walk costs the fan-out in hashes per node it visits,
---! and returns about four hundred characters per entry, where a sealed root
---! holds the whole document in one ciphertext of about the plaintext's
---! size. So when the root is sealed and the subtree has more than `budget`
---! entries, the walk stops and returns the root entry alone, with `d = 0`:
---! the client opens it to the whole document and takes the path itself,
---! which is cheaper on both sides than the walk past that point. The
---! default of 64 is past the crossover by bytes (about a dozen entries) by
---! a margin that keeps a small subtree arriving as the entries it is. A
---! `budget` of `0` never falls back. A token that names no node yields no
---! row under any budget, and a document whose root is not sealed is always
---! walked in full, since its root holds no document to return.
+--! **The budget.** A walk returns about two hundred characters per entry,
+--! where a sealed root holds the whole document in one ciphertext of about
+--! the plaintext's size. So when the root is sealed and the walk would
+--! return more than `budget` entries, it stops and returns the root entry
+--! alone, with `d = 0`: the client opens it to the whole document and takes
+--! the path itself, which is cheaper on both sides than the walk past that
+--! point. The default of 64 is past the crossover by bytes (about a dozen
+--! entries) by a margin that keeps a small subtree arriving as the entries
+--! it is. A `budget` of `0` never falls back. A token that names no node
+--! yields no row under any budget, and a document whose root is not sealed
+--! is always walked in full, since its root holds no document to return.
 --!
 --! @param e public.{{prefix}}_json_tree The stored document.
---! @param token text The subtree's token, hex.
+--! @param token text The start node's token, base64.
+--! @param gates text[] One gate per step below the token: a selector, base64,
+--!        or `#n:<selector>` for the array position `n`, with the array
+--!        elements' selector. Empty for the whole subtree.
+--! @param budget integer The most entries to return before falling back to
+--!        the sealed root; `0` to always walk out. Default 64.
+--! @return SETOF public.{{prefix}}_json_tree_entry The entries, each with its
+--!         depth `d` below the node the gates reach, in document order; or
+--!         the root entry alone, with `j = 0` and `d = 0`, past the budget.
+CREATE FUNCTION {{prefix}}.json_tree_subtree_at(e public.{{prefix}}_json_tree, token text, gates text[], budget integer DEFAULT 64)
+  RETURNS SETOF public.{{prefix}}_json_tree_entry
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  WITH RECURSIVE
+    doc AS MATERIALIZED (
+      SELECT {{prefix}}_internal.json_tree_iv(e::jsonb ->> 'h') AS iv,
+             {{prefix}}_internal.json_tree_by_parent(e::jsonb) AS map,
+             {{prefix}}.json_tree_meta(e::jsonb) AS meta,
+             e::jsonb -> 'sv' -> 0 AS root,
+             jsonb_array_length(e::jsonb -> 'sv') AS entries,
+             budget > 0 AND {{prefix}}_internal.json_tree_sealed_root(e::jsonb ->> 'h') AS capped,
+             COALESCE(array_length(gates, 1), 0) AS gated
+    ),
+    -- One row per hit, after the seed row for the start node. `pt` and `o`
+    -- are where the hit sits, its parent's token and its ordinal; `t` is its
+    -- own token; `ppass` whether every gate down to its parent admitted the
+    -- parent, `pass` whether this hit's gate admits it too.
+    walk(depth, pt, o, entry, t, ppass, pass) AS (
+        SELECT 0, NULL::bytea, NULL::integer, NULL::jsonb, decode(token, 'base64'), true, true
+      UNION ALL
+        SELECT probe.depth, probe.pt, probe.o, hit.entry,
+               {{prefix}}_internal.json_tree_child_token(probe.pt, decode(hit.entry ->> 's', 'base64'), probe.o),
+               probe.ppass,
+               probe.ppass AND (
+                 probe.depth > doc.gated
+                 OR hit.entry ->> 's' = CASE WHEN gates[probe.depth] LIKE '#%'
+                                             THEN split_part(gates[probe.depth], ':', 2)
+                                             ELSE gates[probe.depth] END)
+        FROM walk AS w
+        CROSS JOIN doc
+        CROSS JOIN LATERAL (
+          -- Down: the first ordinal under this node, or the one position an
+          -- array gate names, from a node its gates admitted.
+          SELECT w.depth + 1 AS depth,
+                 w.t AS pt,
+                 CASE WHEN COALESCE(gates[w.depth + 1], '') LIKE '#%'
+                      THEN split_part(substr(gates[w.depth + 1], 2), ':', 1)::integer
+                      ELSE 0 END AS o,
+                 w.pass AS ppass
+          WHERE w.pass
+          UNION ALL
+          -- Across: the next ordinal under the same parent, from any hit,
+          -- since a hit its gate refused still has siblings to find; not
+          -- when an array gate pins this depth to one position.
+          SELECT w.depth, w.pt, w.o + 1, w.ppass
+          WHERE w.entry IS NOT NULL AND COALESCE(gates[w.depth], '') NOT LIKE '#%'
+        ) AS probe
+        CROSS JOIN LATERAL (
+          SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, probe.pt, probe.o) AS entry
+        ) AS hit
+        WHERE hit.entry IS NOT NULL
+    ),
+    -- At most one row per entry and the seed (see "The bound" above),
+    -- whatever the budget: a budget of 0, or an open root, leaves `found`
+    -- uncapped, and this is then the walk's only limit.
+    visited AS MATERIALIZED (
+      SELECT w.* FROM walk AS w LIMIT (SELECT doc.entries + 1 FROM doc)
+    ),
+    -- One row past the budget is enough to know the walk went over; a walk
+    -- under it is the subtree complete. Uncapped, the limit is NULL: all
+    -- that `visited` holds.
+    found AS MATERIALIZED (
+      SELECT w.depth, w.entry
+      FROM visited AS w, doc
+      WHERE w.entry IS NOT NULL AND w.pass AND w.depth >= doc.gated
+      LIMIT (SELECT CASE WHEN doc.capped THEN budget + 1 END FROM doc)
+    ),
+    over AS MATERIALIZED (
+      SELECT doc.capped AND (SELECT count(*) FROM found) > budget AS fallback FROM doc
+    )
+  SELECT rows.entry
+  FROM (
+    SELECT 0 AS j,
+           (doc.meta || doc.root || '{"j": 0, "d": 0}'::jsonb)::public.{{prefix}}_json_tree_entry AS entry
+    FROM doc, over
+    WHERE over.fallback
+    UNION ALL
+    SELECT (f.entry ->> 'j')::integer,
+           (doc.meta || f.entry || jsonb_build_object('d', f.depth - doc.gated))::public.{{prefix}}_json_tree_entry
+    FROM found AS f, doc, over
+    WHERE NOT over.fallback
+  ) AS rows
+  ORDER BY rows.j
+$$;
+
+--! @brief Every entry under the node whose token is `token`:
+--!        `json_tree_subtree_at` with no gates.
+--! @param e public.{{prefix}}_json_tree The stored document.
+--! @param token text The subtree's token, base64.
 --! @param budget integer The most entries to return before falling back to
 --!        the sealed root; `0` to always walk the subtree out. Default 64.
 --! @return SETOF public.{{prefix}}_json_tree_entry The descendants, each with its
---!         depth `d` below the node, in depth-first order; or the root
---!         entry alone, with `d = 0`, past the budget.
+--!         depth `d` below the node, in document order; or the root entry
+--!         alone, with `d = 0`, past the budget.
 CREATE FUNCTION {{prefix}}.json_tree_subtree(e public.{{prefix}}_json_tree, token text, budget integer DEFAULT 64)
   RETURNS SETOF public.{{prefix}}_json_tree_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  WITH RECURSIVE
-    doc AS MATERIALIZED (
-      SELECT {{prefix}}_internal.json_tree_iv(e::jsonb ->> 'h') AS iv,
-             {{prefix}}_internal.json_tree_fanout(e::jsonb) AS fanout,
-             {{prefix}}_internal.json_tree_by_parent(e::jsonb) AS map,
-             {{prefix}}.json_tree_meta(e::jsonb) AS meta,
-             e::jsonb -> 'sv' -> 0 AS root,
-             jsonb_array_length(e::jsonb -> 'sv') AS entries,
-             budget > 0 AND {{prefix}}_internal.json_tree_sealed_root(e::jsonb ->> 'h') AS capped
-    ),
-    walk(depth, t, entry) AS (
-        SELECT 0, decode(token, 'hex'), NULL::jsonb
-      UNION ALL
-        SELECT w.depth + 1,
-               {{prefix}}_internal.json_tree_unwrap(doc.iv, w.t, c.entry),
-               c.entry
-        FROM walk AS w
-        CROSS JOIN doc
-        CROSS JOIN generate_series(0, doc.fanout - 1) AS o
-        CROSS JOIN LATERAL (
-          SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, w.t, o) AS entry
-        ) AS c
-        -- No sealed document nests deeper than 127 levels. A stored one
-        -- whose tags form a longer chain, which whoever holds a token can
-        -- write, stops here. A cycle that branches is stopped by `visited`.
-        WHERE c.entry IS NOT NULL AND w.depth < 127
-    ),
-    -- A walk of a sealed document reaches each entry at most once, so it
-    -- has at most as many rows as the document has entries, the seed row
-    -- standing in for the root. A stored document can loop instead: `w`
-    -- is not authenticated, so whoever holds a token can wrap a child's
-    -- token to its parent's, and two such children double the rows at
-    -- every level the depth bound allows. PostgreSQL computes a recursive
-    -- query only as far as its reader pulls rows, so this limit stops the
-    -- recursion, and not only the output.
-    visited AS MATERIALIZED (
-      SELECT w.* FROM walk AS w LIMIT (SELECT doc.entries FROM doc)
-    ),
-    -- One row past the budget is enough to know the walk went over; a walk
-    -- under it is the subtree complete. Uncapped, the limit is NULL: all.
-    found AS MATERIALIZED (
-      SELECT w.depth, w.entry
-      FROM visited AS w
-      WHERE w.entry IS NOT NULL
-      LIMIT (SELECT CASE WHEN doc.capped THEN budget + 1 END FROM doc)
-    ),
-    over AS MATERIALIZED (
-      SELECT doc.capped AND (SELECT count(*) FROM found) > budget AS fallback FROM doc
-    )
-  SELECT rows.entry
-  FROM (
-    SELECT 0 AS j,
-           (doc.meta || doc.root || '{"j": 0, "d": 0}'::jsonb)::public.{{prefix}}_json_tree_entry AS entry
-    FROM doc, over
-    WHERE over.fallback
-    UNION ALL
-    SELECT (f.entry ->> 'j')::integer,
-           (doc.meta || f.entry || jsonb_build_object('d', f.depth))::public.{{prefix}}_json_tree_entry
-    FROM found AS f, doc, over
-    WHERE NOT over.fallback
-  ) AS rows
-  ORDER BY rows.j
-$$;
-
---! @brief The subtrees under the node whose token is `token` whose path
---!        continues through a node with selector `selector`: how a path
---!        with a wildcard below its last positional step is walked.
---!
---! The walk starts at the token and emits an entry once it has passed
---! through, or reached, an entry carrying the selector: for
---! `$.orders[*].items` it starts at `$.orders` and returns every element's
---! `items` subtree, each complete. The budget is `json_tree_subtree`'s,
---! counted over the entries emitted: past it, the sealed root alone, with
---! `d = 0`, and the client takes the wildcard path over the whole document.
---!
---! @param e public.{{prefix}}_json_tree The stored document.
---! @param token text The anchor's token, hex.
---! @param selector text The whole path's selector, hex.
---! @param budget integer The most entries to return before falling back to
---!        the sealed root; `0` to always walk out. Default 64.
---! @return SETOF public.{{prefix}}_json_tree_entry The matching subtrees' entries,
---!         each with its depth `d` below the anchor, in depth-first order;
---!         or the root entry alone, with `d = 0`, past the budget.
-CREATE FUNCTION {{prefix}}.json_tree_subtree_at(e public.{{prefix}}_json_tree, token text, selector text, budget integer DEFAULT 64)
-  RETURNS SETOF public.{{prefix}}_json_tree_entry
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$
-  WITH RECURSIVE
-    doc AS MATERIALIZED (
-      SELECT {{prefix}}_internal.json_tree_iv(e::jsonb ->> 'h') AS iv,
-             {{prefix}}_internal.json_tree_fanout(e::jsonb) AS fanout,
-             {{prefix}}_internal.json_tree_by_parent(e::jsonb) AS map,
-             {{prefix}}.json_tree_meta(e::jsonb) AS meta,
-             e::jsonb -> 'sv' -> 0 AS root,
-             jsonb_array_length(e::jsonb -> 'sv') AS entries,
-             budget > 0 AND {{prefix}}_internal.json_tree_sealed_root(e::jsonb ->> 'h') AS capped
-    ),
-    walk(depth, t, entry, hit) AS (
-        SELECT 0, decode(token, 'hex'), NULL::jsonb, false
-      UNION ALL
-        SELECT w.depth + 1,
-               {{prefix}}_internal.json_tree_unwrap(doc.iv, w.t, c.entry),
-               c.entry,
-               w.hit OR c.entry ->> 's' = selector
-        FROM walk AS w
-        CROSS JOIN doc
-        CROSS JOIN generate_series(0, doc.fanout - 1) AS o
-        CROSS JOIN LATERAL (
-          SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, w.t, o) AS entry
-        ) AS c
-        -- No sealed document nests deeper than 127 levels. A stored one
-        -- whose tags form a longer chain, which whoever holds a token can
-        -- write, stops here. A cycle that branches is stopped by `visited`.
-        WHERE c.entry IS NOT NULL AND w.depth < 127
-    ),
-    -- A walk of a sealed document reaches each entry at most once, so it
-    -- has at most as many rows as the document has entries, the seed row
-    -- standing in for the root. A stored document can loop instead: `w`
-    -- is not authenticated, so whoever holds a token can wrap a child's
-    -- token to its parent's, and two such children double the rows at
-    -- every level the depth bound allows. PostgreSQL computes a recursive
-    -- query only as far as its reader pulls rows, so this limit stops the
-    -- recursion, and not only the output.
-    visited AS MATERIALIZED (
-      SELECT w.* FROM walk AS w LIMIT (SELECT doc.entries FROM doc)
-    ),
-    found AS MATERIALIZED (
-      SELECT w.depth, w.entry
-      FROM visited AS w
-      WHERE w.entry IS NOT NULL AND w.hit
-      LIMIT (SELECT CASE WHEN doc.capped THEN budget + 1 END FROM doc)
-    ),
-    over AS MATERIALIZED (
-      SELECT doc.capped AND (SELECT count(*) FROM found) > budget AS fallback FROM doc
-    )
-  SELECT rows.entry
-  FROM (
-    SELECT 0 AS j,
-           (doc.meta || doc.root || '{"j": 0, "d": 0}'::jsonb)::public.{{prefix}}_json_tree_entry AS entry
-    FROM doc, over
-    WHERE over.fallback
-    UNION ALL
-    SELECT (f.entry ->> 'j')::integer,
-           (doc.meta || f.entry || jsonb_build_object('d', f.depth))::public.{{prefix}}_json_tree_entry
-    FROM found AS f, doc, over
-    WHERE NOT over.fallback
-  ) AS rows
-  ORDER BY rows.j
+  SELECT * FROM {{prefix}}.json_tree_subtree_at(e, token, ARRAY[]::text[], budget)
 $$;
 
 ------------------------------------------------------------------------------
@@ -620,7 +623,7 @@ $$;
 
 --! @brief The path selector of an entry.
 --! @param entry public.{{prefix}}_json_tree_entry The entry.
---! @return text Its `s`, hex.
+--! @return text Its `s`, base64.
 CREATE FUNCTION {{prefix}}.selector(entry public.{{prefix}}_json_tree_entry)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
@@ -631,7 +634,7 @@ $$;
 --! @brief The leaf ordering term of an entry, for ordered comparison.
 --!
 --! The CLLW OPE term the index derived for a number or string leaf, keyed by
---! the column, hex-decoded to the bytea-backed `{{prefix}}_internal.ope_cllw`
+--! the column, base64-decoded to the bytea-backed `{{prefix}}_internal.ope_cllw`
 --! domain: native byte order is plaintext order, so a functional btree on
 --! `{{prefix}}.ord_term(col -> 'selector')` engages with the DEFAULT opclass. NULL
 --! for an entry with no term (a container, a boolean, a null), which btree's
@@ -648,23 +651,23 @@ CREATE FUNCTION {{prefix}}.ord_term(entry public.{{prefix}}_json_tree_entry)
   RETURNS {{prefix}}_internal.ope_cllw
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT {{prefix}}_internal.ope_cllw(entry::jsonb)
+  SELECT {{prefix}}_internal.json_tree_ope_cllw(entry::jsonb)
 $$;
 
 --! @brief The leaf ordering term of an ordering operand.
 --! @param q {{prefix}}.query_json_tree_leaf The operand.
---! @return {{prefix}}_internal.ope_cllw Its `op`, hex-decoded.
+--! @return {{prefix}}_internal.ope_cllw Its `op`, base64-decoded.
 CREATE FUNCTION {{prefix}}.ord_term(q {{prefix}}.query_json_tree_leaf)
   RETURNS {{prefix}}_internal.ope_cllw
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT {{prefix}}_internal.ope_cllw(q::jsonb)
+  SELECT {{prefix}}_internal.json_tree_ope_cllw(q::jsonb)
 $$;
 
 --! @brief The path selector of an ordering operand: what `->` takes to reach
 --!        the leaf the operand compares against.
 --! @param q {{prefix}}.query_json_tree_leaf The operand.
---! @return text Its `s`, hex.
+--! @return text Its `s`, base64.
 CREATE FUNCTION {{prefix}}.selector(q {{prefix}}.query_json_tree_leaf)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
