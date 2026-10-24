@@ -78,7 +78,7 @@ fn plan() -> JsonPlan {
 fn ordered_plan() -> OrderedPlan {
     Plan::value::<Value>()
         .context("users/profile")
-        .encrypt_as(Json::new(ordering(&["$.hello", "$.number", "$.flag"])))
+        .encrypt_with_layout(Json::new(ordering(&["$.hello", "$.number", "$.flag"])))
         .build()
         .unwrap()
 }
@@ -2415,7 +2415,7 @@ mod given_an_accessor {
         let Scenario { cipher, .. } = scenario().await;
         let by_element = Plan::value::<Value>()
             .context("users/profile")
-            .encrypt_as(Json::new(ordering(&["$.nested.list[*].x"])))
+            .encrypt_with_layout(Json::new(ordering(&["$.nested.list[*].x"])))
             .build()
             .unwrap();
         let wildcard = cipher
