@@ -1044,3 +1044,74 @@ fn postgres_walks_end_on_hostile_documents() {
         assert_eq!(children, 1);
     }
 }
+
+/// Needs an EQL v4 installation. Entries that share a parent tag do not
+/// multiply a walk. Here every level of a 60-level chain is written twice:
+/// two entries with the same `p`, so the same parent and ordinal, and the
+/// same `s`, told apart only by `c`. Walked once per copy, the rows would
+/// double at every level, 2^60 in all; the walk keeps one entry per tag and
+/// reads its recursion through the entry count, so it returns one row per
+/// level, under no budget (`0`), under an open root, and under a budget
+/// above the entry count, and still falls back past a budget below it.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_walks_do_not_multiply_on_duplicated_entries() {
+    let mut db = connect();
+    db.batch_execute("SET statement_timeout = '10s'").unwrap();
+    const LEVELS: i64 = 60;
+    let doc = |flags: i32| {
+        format!(
+            "WITH RECURSIVE k AS (
+               SELECT set_byte(set_byte(decode(repeat('00', 40), 'hex'), 0, 1), 1, {flags}) AS h,
+                      decode(repeat('00', 16), 'hex') AS iv
+             ), link(n, t) AS (
+                 SELECT 0, decode(repeat('00', 16), 'hex')
+               UNION ALL
+                 SELECT n + 1, eql_v4_internal.json_tree_child_token(t, decode(repeat('00', 16), 'hex'), 0) FROM link WHERE n < {last}
+             ), copy(c) AS (VALUES ('00'), ('01'))
+             SELECT (jsonb_build_object(
+               'v', 4, 'i', jsonb_build_object('t', 'users', 'c', 'profile'),
+               'h', (SELECT encode(h, 'base64') FROM k),
+               'sv', jsonb_build_array(jsonb_build_object('s', 'AAAAAAAAAAAAAAAAAAAAAA==', 'c', '00'))
+                     || (SELECT jsonb_agg(jsonb_build_object('s', 'AAAAAAAAAAAAAAAAAAAAAA==', 'c', copy.c, 'p', eql_v4_internal.json_tree_parent_tag(k.iv, link.t, 0)) ORDER BY n, copy.c) FROM link, k, copy),
+               'q', '{{\"sv\": [], \"el\": []}}'::jsonb))::public.eql_v4_json_tree",
+            last = LEVELS - 1
+        )
+    };
+    let token = "AAAAAAAAAAAAAAAAAAAAAA==".to_owned();
+    let entries = 1 + 2 * LEVELS;
+    for (flags, budget, expected) in [
+        (0, 0, LEVELS),
+        (1, 0, LEVELS),
+        (0, 10, LEVELS),
+        (1, 200, LEVELS),
+        (1, 10, 1),
+    ] {
+        let doc = doc(flags);
+        let stored: i64 = db
+            .query_one(
+                &format!("SELECT jsonb_array_length(d.doc::jsonb -> 'sv')::bigint FROM ({doc}) AS d(doc)"),
+                &[],
+            )
+            .unwrap()
+            .get(0);
+        assert_eq!(stored, entries);
+        let walked: i64 = db
+            .query_one(
+                &format!("SELECT count(*) FROM ({doc}) AS d(doc), eql_v4.json_tree_subtree(d.doc, $1::text, {budget}) e"),
+                &[&token],
+            )
+            .unwrap_or_else(|error| panic!("flags {flags}, budget {budget}: {error}"))
+            .get(0);
+        assert_eq!(walked, expected, "flags {flags}, budget {budget}");
+        assert!(walked <= entries);
+        let children: i64 = db
+            .query_one(
+                &format!("SELECT count(*) FROM ({doc}) AS d(doc), eql_v4.json_tree_children(d.doc, $1::text) e"),
+                &[&token],
+            )
+            .unwrap()
+            .get(0);
+        assert_eq!(children, 1, "flags {flags}");
+    }
+}
