@@ -219,6 +219,35 @@ impl JsonPath {
         current
     }
 
+    /// The values at this path in `value`, as [`select`](Self::select)
+    /// finds them, borrowed mutably: so that a caller holding the whole
+    /// document can move the nodes it wants out of it rather than copy
+    /// them.
+    pub(crate) fn select_mut<'a>(
+        &self,
+        value: &'a mut serde_json::Value,
+    ) -> Vec<&'a mut serde_json::Value> {
+        let mut current = vec![value];
+        for segment in &self.segments {
+            let mut next = Vec::new();
+            for node in current {
+                match segment {
+                    Segment::Key(key) => {
+                        next.extend(node.as_object_mut().and_then(|o| o.get_mut(key)));
+                    }
+                    Segment::Index(index) => next.extend(
+                        usize::try_from(*index)
+                            .ok()
+                            .and_then(|i| node.as_array_mut().and_then(|a| a.get_mut(i))),
+                    ),
+                    Segment::Wildcard => next.extend(node.as_array_mut().into_iter().flatten()),
+                }
+            }
+            current = next;
+        }
+        current
+    }
+
     /// This path with one more step.
     pub(crate) fn then(&self, segment: Segment) -> Self {
         let mut segments = Vec::with_capacity(self.segments.len() + 1);
@@ -538,5 +567,23 @@ mod tests {
             "not a JSON path: expected `$` at byte 0"
         );
         assert!(serde_json::from_value::<JsonPath>(serde_json::json!(1)).is_err());
+    }
+
+    #[test]
+    fn select_mut_reaches_what_select_reaches() {
+        let doc = serde_json::json!({"a": [{"x": 1}, {"x": 2}, 3], "b": {"x": 4}});
+        for text in [
+            "$", "$.a", "$.a[1].x", "$.a[*].x", "$.a[*]", "$.b.x", "$.a.x", "$.b[0]", "$.c",
+        ] {
+            let path = JsonPath::parse(text).unwrap();
+            let mut copy = doc.clone();
+            let found: Vec<serde_json::Value> = path.select(&doc).into_iter().cloned().collect();
+            let found_mut: Vec<serde_json::Value> = path
+                .select_mut(&mut copy)
+                .into_iter()
+                .map(|v| v.clone())
+                .collect();
+            assert_eq!(found_mut, found, "{text}");
+        }
     }
 }

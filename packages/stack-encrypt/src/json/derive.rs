@@ -20,7 +20,8 @@ use vitaminc_protected::{Controlled, Protected};
 
 use super::path::{JsonPath, Segment};
 use super::plain::{
-    insert_member, protected_array, protected_object, push_element, read_protected, PlainJson,
+    insert_member, protected_array, protected_object, push_element, read_protected, take_protected,
+    PlainJson,
 };
 use super::query::{Gate, JsonSelector, JsonSubtreeKey};
 use super::{JsonDocument, JsonEntry, JsonHeader, JsonNode, JsonOptions, JsonSubtree, Tag};
@@ -1119,19 +1120,21 @@ impl DecryptInto<Vec<Value>> for JsonSubtree {
         Decryption::from_open(move |cipher| {
             if self.is_sealed_root() {
                 let below = self.below;
-                return open_fallback(self, cipher, context).try_map(move |(path, whole)| {
-                    // The selection is made inside the document's
-                    // `Protected` and comes out wrapped; the document is
-                    // wiped when it drops at the end of this closure.
-                    let selected = read_protected(&whole, |doc: &PlainJson| {
-                        let found = path.select(doc.value());
+                return open_fallback(self, cipher, context).try_map(move |(path, mut whole)| {
+                    // The selected nodes move out of the document's
+                    // `Protected` into one of their own, leaving `null`
+                    // behind, so their plaintext is never copied; what is
+                    // left of the document is wiped when it drops at the
+                    // end of this closure.
+                    let selected = take_protected(&mut whole, |doc: &mut PlainJson| {
+                        let mut found = path.select_mut(doc.value_mut());
                         let selected = if below {
-                            match found.as_slice() {
-                                [node] => children(node),
+                            match found.as_mut_slice() {
+                                [node] => take_children(node),
                                 _ => return None,
                             }
                         } else {
-                            found.into_iter().cloned().collect()
+                            found.into_iter().map(std::mem::take).collect()
                         };
                         Some(PlainJson::from_value(Value::Array(selected)))
                     })
@@ -1166,13 +1169,18 @@ impl DecryptInto<Value> for JsonSubtree {
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
         Decryption::from_open(move |cipher| {
             if self.is_sealed_root() {
-                return open_fallback(self, cipher, context).try_map(|(path, whole)| {
+                return open_fallback(self, cipher, context).try_map(|(path, mut whole)| {
+                    // The one node at the path moves out of the document's
+                    // `Protected` into one of its own, leaving `null`
+                    // behind, so its plaintext is never copied; what is
+                    // left of the document is wiped when it drops at the
+                    // end of this closure.
                     let mut reached = 0;
-                    let selected = read_protected(&whole, |doc: &PlainJson| {
-                        let found = path.select(doc.value());
+                    let selected = take_protected(&mut whole, |doc: &mut PlainJson| {
+                        let mut found = path.select_mut(doc.value_mut());
                         reached = found.len();
-                        match found.as_slice() {
-                            [node] => Some(PlainJson::from_value((*node).clone())),
+                        match found.as_mut_slice() {
+                            [node] => Some(PlainJson::from_value(std::mem::take(&mut **node))),
                             _ => None,
                         }
                     });
@@ -1266,14 +1274,16 @@ fn open_subtree<'a, K>(
     })
 }
 
-/// The values of a node's children, in the node's order: an array's
-/// elements, an object's member values, and none for a scalar. What a
-/// `json_tree_subtree` walk's rows open to as a [`Vec`], taken over the
-/// whole document when the walk fell back to the sealed root.
-fn children(node: &Value) -> Vec<Value> {
+/// The values of a node's children, in the node's order, moved out of it:
+/// an array's elements, an object's member values (each leaving `null`
+/// under its key, which stays in the document to be wiped with it), and
+/// none for a scalar. What a `json_tree_subtree` walk's rows open to as a
+/// [`Vec`], taken out of the whole document when the walk fell back to the
+/// sealed root.
+fn take_children(node: &mut Value) -> Vec<Value> {
     match node {
-        Value::Array(items) => items.clone(),
-        Value::Object(members) => members.values().cloned().collect(),
+        Value::Array(items) => std::mem::take(items),
+        Value::Object(members) => members.values_mut().map(std::mem::take).collect(),
         _ => Vec::new(),
     }
 }
