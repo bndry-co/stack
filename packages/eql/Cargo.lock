@@ -1251,6 +1251,7 @@ dependencies = [
  "eql-bindings",
  "eql-domains",
  "postgres",
+ "proptest",
  "rust_decimal",
  "serde",
  "serde_json",
