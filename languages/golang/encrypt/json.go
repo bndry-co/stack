@@ -18,7 +18,7 @@ import (
 // rows holds one group per database row: for selector, the entry col ->
 // selector returned, or none for SQL NULL; for subtree, the rows
 // eql_v4.json_tree_subtree returned. Each entry is the
-// public.eql_v4_json_tree_entry JSON the database sent.
+// public.eql_v4_json_entry JSON the database sent.
 //
 // The engine derives the selector or the read's key again from the request,
 // the field's declaration and this cipher's keyset, and checks every row

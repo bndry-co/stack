@@ -12,9 +12,10 @@ use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
 /// Every EQL type a plan may name as a target, in
-/// `eql-domains::CATALOG` order: one per stored domain (every flat
-/// scalar domain plus the SteVec document). Query twins are not
-/// targets; each row names its own under `query`.
+/// `eql-domains::CATALOG` order: one per stored scalar domain, then
+/// one per document family's stored type
+/// (`eql-domains::DOCUMENT_FAMILIES`). Query twins are not targets;
+/// each row names its own under `query`.
 pub const TARGETS: &[Target] = &[
     Target {
         name: "Integer",
@@ -605,18 +606,6 @@ pub const TARGETS: &[Target] = &[
         reason: None,
     },
     Target {
-        name: "SteVecDocument",
-        family: "json",
-        suffix: "Search",
-        plaintext: None,
-        sql_domain: "public.eql_v4_json_search",
-        indexes: &["json"],
-        query: Some("SteVecQuery"),
-        query_sql_domain: Some("eql_v4.query_json"),
-        producible: false,
-        reason: Some("the JSON index is a new operation in the engine (#1060)"),
-    },
-    Target {
         name: "Json",
         family: "json",
         suffix: "",
@@ -631,14 +620,14 @@ pub const TARGETS: &[Target] = &[
         ),
     },
     Target {
-        name: "EncryptedJson",
+        name: "JsonSearch",
         family: "json_tree",
         suffix: "",
         plaintext: Some("json"),
-        sql_domain: "public.eql_v4_json_tree",
+        sql_domain: "public.eql_v4_json_search",
         indexes: &["json"],
-        query: Some("EncryptedJsonQuery"),
-        query_sql_domain: Some("eql_v4.query_json_tree"),
+        query: Some("JsonSearchQuery"),
+        query_sql_domain: Some("eql_v4.query_json"),
         producible: true,
         reason: None,
     },

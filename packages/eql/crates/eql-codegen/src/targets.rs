@@ -69,11 +69,6 @@ pub fn index_key(term: Term) -> &'static str {
     }
 }
 
-/// The index a SteVec document carries: the engine's JSON index, which has
-/// no catalog `Term` because its terms live per `sv` leaf, not as flat
-/// payload keys.
-const JSON_INDEX_KEY: &str = "json";
-
 /// An operator a producible EQL type answers in Stack Encrypt's typed query
 /// chain: what the generated file implements `op::Answers` for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -194,10 +189,18 @@ pub(crate) struct Row {
     pub(crate) document: bool,
 }
 
-/// Every row, in catalog order: one per stored domain, then one per
-/// document family's stored domain.
+/// The catalog domains that are targets, in catalog order: every stored
+/// scalar domain. The `json` family's SteVec document is not one: its SQL is
+/// EQL v3 only, and in v4 its domain name, `json_search`, is the JSON tree
+/// family's stored type, a document family's row.
+fn target_domains() -> impl Iterator<Item = (&'static DomainFamily, &'static Domain)> {
+    stored_payload_domains().filter(|(_, d)| d.is_scalar())
+}
+
+/// Every row, in catalog order: one per [target domain](target_domains),
+/// then one per document family's stored domain.
 pub(crate) fn rows() -> Vec<Row> {
-    stored_payload_domains()
+    target_domains()
         .map(|(f, d)| row(f, d))
         .chain(eql_domains::DOCUMENT_FAMILIES.iter().map(document_row))
         .collect()
@@ -243,36 +246,11 @@ fn suffix(domain: &Domain) -> String {
 }
 
 fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
-    let is_stevec = matches!(domain.shape, Shape::SteVec);
-    let indexes = if is_stevec {
-        vec![JSON_INDEX_KEY]
-    } else {
-        Term::payload_terms(domain.terms)
-            .into_iter()
-            .map(index_key)
-            .collect()
-    };
-    let query = if is_stevec {
-        // The containment needle is the document's query form. Its struct
-        // is the hand-written `SteVecQuery`; its domain is the family's
-        // `query` domain (`eql_v4.query_json`), read from the catalog so
-        // the name is spelled once. v4 has no compiled SteVec types yet, so
-        // these rows are never producible.
-        family
-            .domains
-            .iter()
-            .find(|d| matches!(d.shape, Shape::SteVec) && d.name == "query")
-            .map(|needle| {
-                (
-                    needle.rust_struct_name(family.name),
-                    format!(
-                        "{}.{}",
-                        TARGET_VERSION.prefix(),
-                        needle.full_name(family.name)
-                    ),
-                )
-            })
-    } else if domain.terms.is_empty() {
+    let indexes: Vec<&'static str> = Term::payload_terms(domain.terms)
+        .into_iter()
+        .map(index_key)
+        .collect();
+    let query = if domain.terms.is_empty() {
         None
     } else {
         Some((
@@ -303,7 +281,7 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
         ),
         indexes,
         query,
-        projections: if !is_stevec && v4_optional_query_terms(domain) {
+        projections: if v4_optional_query_terms(domain) {
             Term::payload_terms(domain.terms)
                 .into_iter()
                 .map(|term| {
@@ -580,9 +558,10 @@ fn render_targets_from(rows: &[Row]) -> String {
         use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
 
         /// Every EQL type a plan may name as a target, in
-        /// `eql-domains::CATALOG` order: one per stored domain (every flat
-        /// scalar domain plus the SteVec document). Query twins are not
-        /// targets; each row names its own under `query`.
+        /// `eql-domains::CATALOG` order: one per stored scalar domain, then
+        /// one per document family's stored type
+        /// (`eql-domains::DOCUMENT_FAMILIES`). Query twins are not targets;
+        /// each row names its own under `query`.
         pub const TARGETS: &[Target] = &[
             #entries
         ];
@@ -850,20 +829,21 @@ mod tests {
         // whitespace-collapsed line so the assertions below do not depend on
         // where it broke.
         let out: String = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
-        // One row per stored domain, in catalog order, named as the struct.
+        // One row per target domain, in catalog order, named as the struct.
         let mut last = 0;
-        for (family, domain) in stored_payload_domains() {
+        for (family, domain) in target_domains() {
             let needle = format!("name: \"{}\",", domain.rust_struct_name(family.name));
             let at = out[last..]
                 .find(&needle)
                 .unwrap_or_else(|| panic!("{needle} missing or out of order"));
             last += at + needle.len();
         }
-        // The SteVec document carries the JSON index and the containment
-        // needle as its query form; the scalar storage domain carries none.
-        assert!(out.contains("name: \"SteVecDocument\""));
+        // The SteVec document is EQL v3 only, so it is no target: the
+        // v4 `json_search` domain is the JSON tree family's stored type,
+        // `JsonSearch`, which carries the JSON index and the containment
+        // needle as its query form.
+        assert!(!out.contains("SteVec"));
         assert!(out.contains("indexes: &[\"json\"]"));
-        assert!(out.contains("query: Some(\"SteVecQuery\")"));
         assert!(out.contains("query_sql_domain: Some(\"eql_v4.query_json\")"));
         assert!(out.contains("sql_domain: \"public.eql_v4_text_eq\""));
         assert!(out.contains("query_sql_domain: Some(\"eql_v4.query_text_eq\")"));

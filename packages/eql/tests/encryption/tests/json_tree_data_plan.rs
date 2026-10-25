@@ -2,10 +2,10 @@
 //! takes (the Go guest installs the same resolver), against the typed Rust
 //! path it must agree with.
 //!
-//! A data-plan field names the target `EncryptedJson`, declares the `json`
+//! A data-plan field names the target `JsonSearch`, declares the `json`
 //! type, and hands its document over as JSON text. The engine parses it by
 //! one set of rules, lays it out with the JSON index under the field's
-//! options, and stores the `public.eql_v4_json_tree` value; opening gives
+//! options, and stores the `public.eql_v4_json_search` value; opening gives
 //! the document's text back. Here:
 //!
 //! - a batch of documents seals in one key request and opens to the same
@@ -109,7 +109,7 @@ fn options() -> JsonOptions {
 }
 
 /// A plan with one `json` field, `profile`, under `users/profile`, naming
-/// `EncryptedJson` with [`options`], as a binding writes it.
+/// `JsonSearch` with [`options`], as a binding writes it.
 fn plan() -> record::Plan {
     let wire = json!({
         "profile": {
@@ -117,7 +117,7 @@ fn plan() -> record::Plan {
             "type": "json",
             "null": "sql",
             "target": {
-                "name": "EncryptedJson",
+                "name": "JsonSearch",
                 "options": {"ordered": ["$.age", "$.visits[*].at"]}
             }
         }
@@ -426,7 +426,7 @@ fn a_document_field_answers_the_json_operators() {
     );
     let unordered = record::plan_with(
         &dynamic::frame::serde::to_vec(&json!({
-            "profile": {"context": ["users", "profile"], "target": "EncryptedJson"}
+            "profile": {"context": ["users", "profile"], "target": "JsonSearch"}
         }))
         .unwrap(),
         &Eql,
@@ -487,7 +487,7 @@ async fn every_operand_is_the_typed_chains() {
             serde_json::to_value(&typed).unwrap(),
             "{operator}"
         );
-        assert_eq!(term.domain(), Some("eql_v4.query_json_tree"));
+        assert_eq!(term.domain(), Some("eql_v4.query_json"));
         assert_eq!(term.encoding(), "eql");
     }
 
@@ -504,7 +504,7 @@ async fn every_operand_is_the_typed_chains() {
         .await
         .unwrap();
     assert_eq!(one(&eq), serde_json::to_value(&typed_eq).unwrap());
-    assert_eq!(eq.domain(), Some("eql_v4.query_json_tree"));
+    assert_eq!(eq.domain(), Some("eql_v4.query_json"));
 
     let lt = data_term(
         &keyset,
@@ -519,7 +519,7 @@ async fn every_operand_is_the_typed_chains() {
         .await
         .unwrap();
     assert_eq!(one(&lt), serde_json::to_value(&typed_lt).unwrap());
-    assert_eq!(lt.domain(), Some("eql_v4.query_json_tree_leaf"));
+    assert_eq!(lt.domain(), Some("eql_v4.query_json_leaf"));
 
     let between = data_term(
         &keyset,
@@ -552,7 +552,7 @@ async fn every_operand_is_the_typed_chains() {
         one(&lt),
         "the high bound"
     );
-    assert_eq!(between.domain(), Some("eql_v4.query_json_tree_leaf"));
+    assert_eq!(between.domain(), Some("eql_v4.query_json_leaf"));
 
     let path = stack_encrypt::json::JsonPath::parse("$.visits[*].at").unwrap();
     let selector = data_term(
@@ -950,7 +950,7 @@ async fn a_document_has_no_one_plaintext_query() {
     let keyset = cipher.default_keyset();
     let label: Label = "users/profile".parse().unwrap();
     let error = eql_targets::query(
-        "EncryptedJson",
+        "JsonSearch",
         &stack_encrypt::target::IndexSpec::Json(JsonOptions::default()),
         &keyset,
         &label,
@@ -961,9 +961,7 @@ async fn a_document_has_no_one_plaintext_query() {
     assert!(
         matches!(
             error,
-            eql_targets::TargetError::DocumentQuery {
-                name: "EncryptedJson"
-            }
+            eql_targets::TargetError::DocumentQuery { name: "JsonSearch" }
         ),
         "{error}"
     );

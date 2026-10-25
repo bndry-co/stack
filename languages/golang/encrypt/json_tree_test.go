@@ -15,13 +15,13 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// An encrypted JSON document (the EQL type EncryptedJson) through the guest
+// An encrypted JSON document (the EQL type JsonSearch) through the guest
 // that holds the EQL types: a field of kind json names the target with the
 // JSON index's options, crosses as its JSON text, and opens back to it.
 
 func jsonPlan() *record.Plan {
 	return &record.Plan{Context: []string{"users"}, Fields: []record.Field{{
-		Name: "profile", Kind: record.JSON, Target: "EncryptedJson", Null: record.SQLNull,
+		Name: "profile", Kind: record.JSON, Target: "JsonSearch", Null: record.SQLNull,
 		TargetOptions: &record.TargetOptions{Ordered: []string{"$.age"}},
 	}}}
 }
@@ -60,7 +60,7 @@ func TestJSONDocumentsRoundTripThroughTheGuest(t *testing.T) {
 			t.Fatalf("row %d: stored %+v", i, stored)
 		}
 		// The value scans and binds as the generated EQL type.
-		var col eql.EncryptedJSON
+		var col eql.JSONSearch
 		if err := col.Scan(s["profile"].EQL); err != nil {
 			t.Fatalf("row %d: Scan: %v", i, err)
 		}
@@ -148,11 +148,11 @@ func TestJSONOperatorsDeriveTaggedTerms(t *testing.T) {
 		input                obj
 		parts                int
 	}{
-		{"contains", "eql", "eql_v4.query_json_tree", obj{{Key: "json", Value: []byte(`{"age":34}`)}}, 1},
-		{"contained_by", "eql", "eql_v4.query_json_tree", obj{{Key: "json", Value: `{"age":34}`}}, 1},
-		{"eq_at", "eql", "eql_v4.query_json_tree", obj{{Key: "path", Value: "$.name"}, {Key: "json", Value: []byte(`"Alice"`)}}, 1},
-		{"lt_at", "eql", "eql_v4.query_json_tree_leaf", obj{{Key: "path", Value: "$.age"}, {Key: "json", Value: []byte(`40`)}}, 1},
-		{"between_at", "eql", "eql_v4.query_json_tree_leaf", obj{{Key: "path", Value: "$.age"}, {Key: "low", Value: []byte(`18`)}, {Key: "high", Value: []byte(`40`)}}, 2},
+		{"contains", "eql", "eql_v4.query_json", obj{{Key: "json", Value: []byte(`{"age":34}`)}}, 1},
+		{"contained_by", "eql", "eql_v4.query_json", obj{{Key: "json", Value: `{"age":34}`}}, 1},
+		{"eq_at", "eql", "eql_v4.query_json", obj{{Key: "path", Value: "$.name"}, {Key: "json", Value: []byte(`"Alice"`)}}, 1},
+		{"lt_at", "eql", "eql_v4.query_json_leaf", obj{{Key: "path", Value: "$.age"}, {Key: "json", Value: []byte(`40`)}}, 1},
+		{"between_at", "eql", "eql_v4.query_json_leaf", obj{{Key: "path", Value: "$.age"}, {Key: "low", Value: []byte(`18`)}, {Key: "high", Value: []byte(`40`)}}, 2},
 		{"selector", "text", "text", obj{{Key: "path", Value: "$.name"}}, 1},
 		{"subtree", "text_array", "text[]", obj{{Key: "path", Value: "$.visits[*]"}, {Key: "wildcard_bound", Value: uint32(3)}}, 4},
 		{"children", "text", "text", obj{{Key: "path", Value: "$.visits"}}, 1},

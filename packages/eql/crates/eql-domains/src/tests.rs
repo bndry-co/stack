@@ -1663,10 +1663,25 @@ mod document_families {
     }
 
     #[test]
-    fn json_tree_is_the_encrypted_json_target() {
-        let stored = JSON_TREE.domain(DocumentRole::Stored).unwrap();
-        assert_eq!(stored.name, "EncryptedJson");
-        assert_eq!(stored.sql_domain, "public.eql_v4_json_tree");
+    fn json_tree_is_the_json_search_target() {
+        // The names EQL v3 gives its searchable JSON document, in v4.
+        for (role, name, sql_domain) in [
+            (
+                DocumentRole::Stored,
+                "JsonSearch",
+                "public.eql_v4_json_search",
+            ),
+            (DocumentRole::Query, "JsonSearchQuery", "eql_v4.query_json"),
+            (
+                DocumentRole::LeafQuery,
+                "JsonSearchLeafQuery",
+                "eql_v4.query_json_leaf",
+            ),
+            (DocumentRole::Entry, "JsonEntry", "public.eql_v4_json_entry"),
+        ] {
+            let domain = JSON_TREE.domain(role).unwrap();
+            assert_eq!((domain.name, domain.sql_domain), (name, sql_domain));
+        }
         assert_eq!(JSON_TREE.plaintext, "json");
         assert_eq!(JSON_TREE.index, "json");
     }

@@ -8,7 +8,7 @@ mod common;
 use eql_bindings::encryption::targets::{self as targets, Opener, Target, TargetError};
 use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use eql_bindings::{v4, Identifier};
-use eql_domains::{Shape, Term, CATALOG};
+use eql_domains::{Term, CATALOG};
 use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 use stack_encrypt::{Decrypt, Encrypt, Label};
 
@@ -453,7 +453,9 @@ mod the_table {
     use super::*;
 
     /// The stored domains of the catalog, in catalog order: every scalar
-    /// domain plus the SteVec document — the rows the table must have.
+    /// domain — the rows the table must have before the document families'.
+    /// The SteVec document is EQL v3 only: in v4 its domain name,
+    /// `json_search`, is the JSON tree family's stored type.
     fn stored_domains() -> Vec<(
         &'static eql_domains::DomainFamily,
         &'static eql_domains::Domain,
@@ -461,7 +463,7 @@ mod the_table {
         CATALOG
             .iter()
             .flat_map(|f| f.domains.iter().map(move |d| (f, d)))
-            .filter(|(f, d)| d.is_scalar() || d.full_name(f.name) == "json_search")
+            .filter(|(_, d)| d.is_scalar())
             .collect()
     }
 
@@ -511,14 +513,10 @@ mod the_table {
                 format!("public.eql_v4_{}", domain.full_name(family.name)),
                 "{name}: stored domain"
             );
-            let indexes: Vec<&str> = if matches!(domain.shape, Shape::SteVec) {
-                vec!["json"]
-            } else {
-                Term::payload_terms(domain.terms)
-                    .into_iter()
-                    .map(index_key)
-                    .collect()
-            };
+            let indexes: Vec<&str> = Term::payload_terms(domain.terms)
+                .into_iter()
+                .map(index_key)
+                .collect();
             assert_eq!(row.indexes, indexes.as_slice(), "{name}: indexes");
             let suffix: String = domain
                 .name
@@ -554,14 +552,7 @@ mod the_table {
                 kind,
                 "{name}: the plaintext name is a vitaminc kind"
             );
-            if matches!(domain.shape, Shape::SteVec) {
-                assert_eq!(
-                    row.query,
-                    Some("SteVecQuery"),
-                    "{name}: the containment needle"
-                );
-                assert_eq!(row.query_sql_domain, Some("eql_v4.query_json"), "{name}");
-            } else if domain.terms.is_empty() {
+            if domain.terms.is_empty() {
                 assert_eq!(
                     (row.query, row.query_sql_domain),
                     (None, None),
@@ -586,19 +577,7 @@ mod the_table {
     fn every_row_is_a_compiled_domain_type_and_so_is_its_query() {
         let stored: Vec<&str> = v4::all().iter().map(|d| d.sql_domain()).collect();
         let queries: Vec<&str> = v4::all_query().iter().map(|d| d.sql_domain()).collect();
-        // v4 has no SteVec bindings yet, so the SteVec rows (the document
-        // and its `SteVecQuery` needle) have no compiled type behind them.
-        // They must stay unproducible, so neither Rust's `encrypt`/`query`
-        // nor a generator such as Go's can select them.
         for row in targets::targets() {
-            if row.query == Some("SteVecQuery") {
-                assert!(
-                    !row.producible,
-                    "{}: a SteVec row has no v4 type and must not be producible",
-                    row.name
-                );
-                continue;
-            }
             assert!(
                 stored.contains(&row.sql_domain),
                 "{}: {} is in all()",
@@ -678,13 +657,12 @@ mod the_table {
                 "DoubleOrdOre",
                 "DoubleOrd",
                 "DoubleOrdOpe",
-                "EncryptedJson"
+                "JsonSearch"
             ],
         );
         for row in targets::targets().iter().filter(|t| !t.producible) {
             let reason = row.reason.expect("an unproducible type has a reason");
             let expected = match (row.family, row.suffix) {
-                ("json", "Search") => "JSON index",
                 ("json", "") => "tree of leaves",
                 (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };

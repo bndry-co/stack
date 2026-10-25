@@ -397,7 +397,7 @@ pub enum ValueKind {
     /// ([`crate::json::parse_text`]) and opens back to as bytes. A value
     /// is never of this kind ([`ValueFrame::kind`] says `string` or
     /// `bytes`); a field declares it, and takes a target that stores a
-    /// document (`EncryptedJson`). A JSON document's `null` is the text
+    /// document (`JsonSearch`). A JSON document's `null` is the text
     /// `null`, not the frame's null.
     Json,
 }

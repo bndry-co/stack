@@ -1413,7 +1413,7 @@ fn targets_lists_what_the_build_holds() {
             "DoubleOrdOre",
             "DoubleOrd",
             "DoubleOrdOpe",
-            "EncryptedJson"
+            "JsonSearch"
         ],
         "the engine's producible types, in catalog order"
     );
@@ -1845,7 +1845,7 @@ fn the_catalog_lists_each_types_operators() {
             ]),
             // A document's operators under the index's defaults: the
             // orderings at a path only for a field that orders one.
-            "EncryptedJson" => {
+            "JsonSearch" => {
                 let json = |operator: &'static str, arity: &'static str, input: &'static str| {
                     vec![
                         ("operator", operator),

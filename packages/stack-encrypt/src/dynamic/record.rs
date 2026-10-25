@@ -1113,11 +1113,11 @@ pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
 ///
 /// `"target"` may instead be an object of the name and the options of the
 /// index the type carries: a type that stores a JSON document
-/// (`EncryptedJson`) takes the JSON index's options object, as the
+/// (`JsonSearch`) takes the JSON index's options object, as the
 /// `{"json": ...}` output spells it, and no other type takes any.
 ///
 /// ```text
-/// "target": { "name": "EncryptedJson",
+/// "target": { "name": "JsonSearch",
 ///             "options": { "sealed_root": <bool>, "ordered": [<path>, ...] } }
 /// ```
 ///
@@ -6383,14 +6383,14 @@ mod tests {
                         None,
                     ),
                     TargetDescriptor::new(
-                        "EncryptedJson",
+                        "JsonSearch",
                         "json_tree",
                         "",
                         Some(ValueKind::Json),
-                        "public.eql_v4_json_tree",
+                        "public.eql_v4_json_search",
                         vec!["json".to_string()],
-                        Some("EncryptedJsonQuery".to_string()),
-                        Some("eql_v4.query_json_tree".to_string()),
+                        Some("JsonSearchQuery".to_string()),
+                        Some("eql_v4.query_json".to_string()),
                         true,
                         None,
                     ),
@@ -6568,7 +6568,7 @@ mod tests {
             let bare = plan_with(
                 obj(vec![(
                     "profile",
-                    target_spec(label("profile"), "EncryptedJson"),
+                    target_spec(label("profile"), "JsonSearch"),
                 )]),
                 &FakeEql,
             )
@@ -6591,7 +6591,7 @@ mod tests {
                             ("context", label("profile")),
                             (
                                 "target",
-                                obj(vec![("name", s("EncryptedJson")), ("options", options)]),
+                                obj(vec![("name", s("JsonSearch")), ("options", options)]),
                             ),
                         ]),
                     )]),
@@ -6650,7 +6650,7 @@ mod tests {
             assert_eq!(error.reason(), Some(Reason::TargetOptions), "{error}");
             // A present `"options"` holds an object: a null is refused,
             // never read as no options.
-            for target in [TEXT_EQ, "EncryptedJson"] {
+            for target in [TEXT_EQ, "JsonSearch"] {
                 let error = refused(plan_with(
                     obj(vec![(
                         "email",
@@ -6699,7 +6699,7 @@ mod tests {
                 &FakeEql,
             ));
             assert_eq!(error.reason(), Some(Reason::JsonNeedsTarget), "{error}");
-            let mut spec = target_spec(label("profile"), "EncryptedJson");
+            let mut spec = target_spec(label("profile"), "JsonSearch");
             if let Tree::Object(entries) = &mut spec {
                 entries.push(("null".to_string(), s("sealed")));
             }
@@ -6715,7 +6715,7 @@ mod tests {
         /// the check, before any key, with the code encrypt gives it.
         #[test]
         fn the_check_reads_a_document_by_the_engines_rules() {
-            let mut spec = target_spec(label("profile"), "EncryptedJson");
+            let mut spec = target_spec(label("profile"), "JsonSearch");
             if let Tree::Object(entries) = &mut spec {
                 entries.push(("null".to_string(), s("sql")));
             }
@@ -6736,7 +6736,7 @@ mod tests {
                 };
                 assert_eq!(
                     (name.as_str(), target.as_str(), *reason),
-                    ("profile", "EncryptedJson", code)
+                    ("profile", "JsonSearch", code)
                 );
                 assert!(!error.to_string().contains("secret"), "{error}");
             }
