@@ -521,7 +521,10 @@ fn raw_len(rest: &[u8]) -> usize {
 /// one: the values it held were moved, but their bytes (a number, the
 /// pointer and length of a string) stay in the freed block otherwise.
 fn push_wiping(items: &mut Vec<Value>, value: Value) {
-    if items.len() == items.capacity() {
+    // Full when there is no spare capacity; asked of the buffer rather
+    // than compared, so a mutation of the test cannot make every push grow
+    // it (and wipe ever larger buffers) instead of failing.
+    if items.spare_capacity_mut().is_empty() {
         let mut grown = Vec::with_capacity(items.capacity().saturating_mul(2).max(4));
         grown.append(items);
         items.spare_capacity_mut().zeroize();
