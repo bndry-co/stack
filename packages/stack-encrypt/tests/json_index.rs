@@ -345,6 +345,31 @@ mod given_the_deepest_document {
             }
         }
     }
+
+    /// An empty container at the deepest level is itself the 128th nested
+    /// container: `serde_json` refuses to read the document back, so the
+    /// index refuses to seal it, under either root option, where a scalar at
+    /// the same depth seals and opens.
+    #[tokio::test]
+    async fn an_empty_container_at_the_deepest_level_is_refused_when_sealed() {
+        let Scenario { cipher, .. } = scenario().await;
+        let arrays = (0..127).fold(json!([]), |inner, _| json!([inner]));
+        let objects = (0..127).fold(json!({}), |inner, _| json!({"k": inner}));
+        for deepest in [&arrays, &objects] {
+            assert!(
+                serde_json::from_str::<Value>(&deepest.to_string()).is_err(),
+                "128 nested containers: serde_json would not read the sealed root back"
+            );
+            for options in [JsonOptions::default(), open_root()] {
+                let refused = try_seal(&cipher, deepest, &options).await;
+                assertions::refused_by_term(
+                    &refused,
+                    |e| matches!(e, TermError::JsonTooDeep),
+                    &format!("an empty container 127 levels down under {options:?}"),
+                );
+            }
+        }
+    }
 }
 
 // =============================================================================

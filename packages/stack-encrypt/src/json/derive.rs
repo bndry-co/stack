@@ -51,11 +51,12 @@ const RANK_DOMAIN: &[u8] = b"stack-encrypt/json/rank/v1";
 /// The bound is what reading the document back needs, not what the walk
 /// could manage. A sealed root's plaintext is the document as JSON, which
 /// `serde_json` parses with a nesting limit of 128 containers, so a
-/// document whose innermost value sits 128 levels down seals and then never
-/// opens. Refusing it here moves that failure from the read, where the
-/// value is lost, to the write, where the caller still holds it. The bound
-/// is the same under either root option, so the option never changes which
-/// documents the index accepts.
+/// document whose innermost value sits 128 levels down, or whose innermost
+/// container is the 128th (an empty `[]` or `{}` at depth 127), seals and
+/// then never opens. Refusing both here moves that failure from the read,
+/// where the value is lost, to the write, where the caller still holds it.
+/// The bound is the same under either root option, so the option never
+/// changes which documents the index accepts.
 pub(crate) const MAX_DEPTH: usize = 127;
 
 /// The largest number the index gives an array element's position, a
@@ -602,10 +603,13 @@ impl Walker<'_> {
         element: Option<usize>,
         depth: usize,
     ) -> Result<usize, TermError> {
-        if depth > MAX_DEPTH {
+        let kind = Kind::of(value);
+        // A container at MAX_DEPTH, empty or not, would be the 128th nested
+        // container, which serde_json refuses to read back; only a scalar
+        // may sit that deep.
+        if depth > MAX_DEPTH || (depth == MAX_DEPTH && kind.is_container()) {
             return Err(TermError::JsonTooDeep);
         }
-        let kind = Kind::of(value);
         let s = prf16(
             self.prf,
             SELECTOR_DOMAIN,
