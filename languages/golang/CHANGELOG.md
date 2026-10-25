@@ -42,6 +42,19 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Breaking
 
+- **An opaque struct seals as a storage blob, and reads the JSON it used
+  to (#1347).** `stash:"context=...,opaque"` now seals the struct as one
+  blob in vitaminc's storage profile, version 1 (`vcffi.MarshalStorage`),
+  the format vitaminc keeps readable across releases and languages, where
+  it sealed the JSON document `encoding/json` wrote. Rows sealed before
+  still decrypt: `Decrypt` reads a value that is not a blob as JSON. Run
+  stashgen again: the generated shape struct gains `vc` tags. What
+  changes for a program: a NaN or infinite float now seals (JSON refused
+  it with `ErrEncoding`); a nil slice or map comes back empty, not nil,
+  from a blob; and `stashgen` refuses a field type that only
+  `MarshalJSON` carries over a struct with unexported fields, which a
+  blob would write without them. This takes vcffi from the unreleased
+  cipherstash/vitaminc#526 by pseudo-version until vitaminc releases it.
 - **Every order term changes: re-derive stored `ore`, `ope` and
   `ore_block` index terms.** The engine moved to vitaminc 0.8, clww-ore 0.6
   (formerly cllw-ore) and ore-rs 0.10, and both order schemes now derive

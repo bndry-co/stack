@@ -1,6 +1,7 @@
 package gensupport
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // Values is a struct's field values by declared name: what Source gives and
@@ -377,23 +379,32 @@ func (c *RecordsCodec[P, R]) Decrypt(ctx context.Context, d encrypt.Decrypter, r
 }
 
 // opaqueBytes is an opaque struct's fields as the one value the engine
-// seals: a JSON document of the generated shape struct, so the struct is one
-// column and every field type encoding/json round-trips comes back as it
-// was.
+// seals: a storage blob (vitaminc's storage profile, version 1, written by
+// vcffi.MarshalStorage) of the generated shape struct, so the struct is one
+// column and every field comes back at the Go type the struct declares. The
+// storage profile is the format for bytes that are kept: unlike the
+// transport, its version 1 is a compatibility commitment shared with Rust,
+// and it carries every float, NaN and the infinities included.
 func opaqueBytes(fields any) ([]byte, error) {
-	encoded, err := json.Marshal(fields)
+	encoded, err := vcffi.MarshalStorage(fields)
 	if err != nil {
-		// encoding/json refuses NaN and the infinities, which a sealed float
-		// field outside an opaque struct accepts.
-		// Its error is not wrapped: encoding/json's text quotes the value.
-		return nil, fmt.Errorf("%w: the opaque value does not encode as JSON (NaN, an infinity, or a type encoding/json refuses)", encrypt.ErrEncoding)
+		// Not wrapped: the reason is the kind of value and where, and a
+		// value is never quoted, but the opaque struct is plaintext and
+		// nothing here needs more than the class.
+		return nil, fmt.Errorf("%w: the opaque value cannot be written as a storage blob (a type the storage profile has no form for, a repeated map key, or text that is not UTF-8)", encrypt.ErrEncoding)
 	}
 	return encoded, nil
 }
 
-// Opaque reads an opened opaque value into the generated shape struct: the
-// JSON document the engine returned, decoded into the exact Go types the
-// struct declares. Generated code calls it from Value.
+// Opaque reads an opened opaque value into the generated shape struct, at
+// the exact Go types the struct declares. Generated code calls it from
+// Value.
+//
+// The value is a storage blob, which begins "VCS". A value an earlier
+// release sealed is the JSON document encoding/json wrote, which begins
+// "{": it is read as JSON, so stored rows open without being encrypted
+// again. Each is read by its own rules: a storage blob gives back an empty
+// slice or map where the struct held nil, and JSON gives back nil.
 func Opaque[T any](vals Values, out *T) error {
 	v, ok := vals[OpaqueField]
 	if !ok {
@@ -402,6 +413,16 @@ func Opaque[T any](vals Values, out *T) error {
 	encoded, ok := v.([]byte)
 	if !ok {
 		return fmt.Errorf("gensupport: %w: the opaque value opened as %T, not bytes", encrypt.ErrEncoding, v)
+	}
+	if bytes.HasPrefix(encoded, vcffi.StorageHeader[:3]) {
+		if err := vcffi.UnmarshalStorage(encoded, out); err != nil {
+			// The vcffi error names the kind found and where, never the
+			// value; it is wrapped so errors.Is reads its class
+			// (vcffi.ErrUnsupportedVersion for a blob a later release
+			// wrote, say).
+			return fmt.Errorf("gensupport: %w: the opaque value does not read into a %T: %w", encrypt.ErrEncoding, *out, err)
+		}
+		return nil
 	}
 	if err := json.Unmarshal(encoded, out); err != nil {
 		// Its error is not wrapped: encoding/json's text quotes the value.

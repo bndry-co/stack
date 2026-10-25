@@ -664,7 +664,10 @@ func (r *reader) buildFields(c *collected) error {
 			}
 			g := genField{Field: Field{Name: cf.tag.Name, GoName: cf.goName, GoType: r.goType(cf.typ), Verb: VerbEncrypt}, typeExpr: r.typeExpr(cf.typ)}
 			if reason := notJSONEncodable(cf.typ, map[types.Type]bool{}); reason != "" {
-				return fieldErr(typeName, cf.goName, "an opaque struct crosses as one JSON document, and %s %s", g.typeExpr, reason)
+				return fieldErr(typeName, cf.goName, "an opaque struct is read back from the JSON document earlier releases sealed, and %s %s", g.typeExpr, reason)
+			}
+			if reason := notStorable(cf.typ, map[types.Type]bool{}); reason != "" {
+				return fieldErr(typeName, cf.goName, "an opaque struct is sealed as one storage blob, and %s %s", g.typeExpr, reason)
 			}
 			if prev, dup := seen[g.Name]; dup {
 				return fieldErr(typeName, cf.goName, "two fields write the name %q: %s and %s", g.Name, prev, cf.goName)
@@ -1051,9 +1054,10 @@ func itOrEach(fields []string) string {
 }
 
 // notJSONEncodable says why encoding/json cannot carry a type both ways, or
-// "" when it can: every field of an opaque struct must, because the struct
-// crosses the binding as one JSON document and comes back by decoding it
-// into the generated shape struct. A type with its own MarshalJSON and
+// "" when it can: every field of an opaque struct must, because a row an
+// earlier release sealed holds the struct as one JSON document, which
+// comes back by decoding it into the generated shape struct. The struct
+// is sealed as a storage blob now, which notStorable checks. A type with its own MarshalJSON and
 // UnmarshalJSON (time.Time) carries itself; otherwise a scalar, a slice or
 // array of an encodable type, a map with string or integer keys, a pointer,
 // or a struct whose every field is exported and encodable. A struct with an
@@ -1098,6 +1102,51 @@ func notJSONEncodable(t types.Type, seen map[types.Type]bool) string {
 		return ""
 	}
 	return "is not a type JSON carries"
+}
+
+// notStorable says why the storage profile (vcffi.MarshalStorage) cannot
+// carry a type both ways when encoding/json can, or "" when it can. The
+// storage profile writes a struct field by field, by name, and a value
+// with MarshalText as its text; it knows nothing of MarshalJSON. So a type
+// that carries itself through JSON alone, over a struct with unexported
+// fields, would be written without them, and a struct with no exported
+// field at all has no storage form. notJSONEncodable has refused every
+// other type the two disagree on.
+func notStorable(t types.Type, seen map[types.Type]bool) string {
+	if seen[t] {
+		return ""
+	}
+	seen[t] = true
+	defer delete(seen, t)
+	if hasMethod(types.NewPointer(t), "UnmarshalText") && hasMethod(t, "MarshalText") {
+		return ""
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Slice:
+		return notStorable(u.Elem(), seen)
+	case *types.Array:
+		return notStorable(u.Elem(), seen)
+	case *types.Pointer:
+		return notStorable(u.Elem(), seen)
+	case *types.Map:
+		return notStorable(u.Elem(), seen)
+	case *types.Struct:
+		exported := 0
+		for i := range u.NumFields() {
+			fld := u.Field(i)
+			if !fld.Exported() {
+				return fmt.Sprintf("has an unexported field %s that a storage blob would drop (give the type MarshalText and UnmarshalText)", fld.Name())
+			}
+			exported++
+			if reason := notStorable(fld.Type(), seen); reason != "" {
+				return "has a field " + fld.Name() + " that " + reason
+			}
+		}
+		if exported == 0 {
+			return "has no exported field, and a storage blob writes a struct by its exported fields"
+		}
+	}
+	return ""
 }
 
 // valueBaseName is the plaintext type's bare name: User for User, *pb.Individual, crm.Contact.

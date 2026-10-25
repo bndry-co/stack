@@ -1,6 +1,7 @@
 package gensupport
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -148,20 +149,37 @@ func TestConvertStaysWithinAFamily(t *testing.T) {
 	if err := convert(obj, &x); err == nil {
 		t.Fatal("a struct target was accepted")
 	}
-	// An opaque value decodes straight into the generated shape type.
+	// An opaque value is a storage blob of the generated shape type, and
+	// decodes straight into it.
 	type shape struct {
-		Title string            `json:"title"`
-		N     int32             `json:"n"`
-		Tags  []string          `json:"tags"`
-		Inner map[string]string `json:"inner"`
+		Title string            `vc:"title" json:"title"`
+		N     int32             `vc:"n" json:"n"`
+		Tags  []string          `vc:"tags" json:"tags"`
+		Inner map[string]string `vc:"inner" json:"inner"`
 	}
 	encoded, err := opaqueBytes(shape{Title: "x", N: 4, Tags: []string{"a"}, Inner: map[string]string{"k": "v"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !bytes.HasPrefix(encoded, vcffi.StorageHeader[:]) {
+		t.Fatalf("opaqueBytes wrote % x, not a version 1 storage blob", encoded[:4])
+	}
 	var back shape
 	if err := Opaque(Values{OpaqueField: encoded}, &back); err != nil || back.Title != "x" || back.N != 4 || back.Inner["k"] != "v" {
 		t.Fatalf("Opaque: %v %+v", err, back)
+	}
+	// A value an earlier release sealed is the JSON document it wrote, and
+	// still opens.
+	var legacy shape
+	if err := Opaque(Values{OpaqueField: []byte(`{"title":"x","n":4,"tags":["a"],"inner":{"k":"v"}}`)}, &legacy); err != nil || !reflect.DeepEqual(legacy, back) {
+		t.Fatalf("Opaque of a JSON document: %v %+v", err, legacy)
+	}
+	// A blob of a storage version this release does not read is refused as
+	// such, not misread as JSON.
+	future := append([]byte(nil), encoded...)
+	future[3] = vcffi.StorageVersion + 1
+	if err := Opaque(Values{OpaqueField: future}, &back); !errors.Is(err, encrypt.ErrEncoding) || !errors.Is(err, vcffi.ErrUnsupportedVersion) {
+		t.Fatalf("Opaque of a version %d blob: %v", vcffi.StorageVersion+1, err)
 	}
 	if err := Opaque(Values{OpaqueField: "not bytes"}, &back); err == nil {
 		t.Fatal("Opaque accepted a string")
@@ -259,8 +277,16 @@ func TestDecryptErrorsHoldNoPlaintext(t *testing.T) {
 		{"json uint", json.Number("-4242"), func(v Values) error { _, err := Get[uint64](v, "f"); return err }, "4242"},
 		{"json float", json.Number("4242e999"), func(v Values) error { _, err := Get[float64](v, "f"); return err }, "4242"},
 		{"map key", Values{"secret-key-4242": "x"}, func(v Values) error { _, err := Get[map[string]int](v, "f"); return err }, "4242"},
-		{"opaque bytes", []byte(`{"n":4242}`), func(v Values) error {
+		{"opaque JSON bytes", []byte(`{"n":4242}`), func(v Values) error {
 			var out struct{ N uint8 }
+			return Opaque(Values{OpaqueField: v["f"]}, &out)
+		}, "4242"},
+		{"opaque storage bytes", mustStorage(t, struct {
+			N uint32 `vc:"n"`
+		}{4242}), func(v Values) error {
+			var out struct {
+				N uint8 `vc:"n"`
+			}
 			return Opaque(Values{OpaqueField: v["f"]}, &out)
 		}, "4242"},
 	}
@@ -276,11 +302,31 @@ func TestDecryptErrorsHoldNoPlaintext(t *testing.T) {
 			t.Errorf("%s: the error holds the value: %v", tc.name, err)
 		}
 	}
-	// encoding/json's own error ("json: unsupported value: NaN") quotes the
-	// value, so it is not wrapped.
-	if _, err := opaqueBytes(struct{ F float64 }{math.NaN()}); !errors.Is(err, encrypt.ErrEncoding) || strings.Contains(err.Error(), "json:") {
-		t.Errorf("opaqueBytes NaN: %v", err)
+	// A value the storage profile has no form for is ErrEncoding, and the
+	// error names the class, not the value.
+	if _, err := opaqueBytes(struct{ C chan int }{make(chan int)}); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("opaqueBytes chan: %v", err)
 	}
+	// The storage profile writes a float by its bits: NaN and the
+	// infinities, which encoding/json refused, are values like any other.
+	blob, err := opaqueBytes(struct{ F float64 }{math.NaN()})
+	if err != nil {
+		t.Fatalf("opaqueBytes NaN: %v", err)
+	}
+	var nan struct{ F float64 }
+	if err := Opaque(Values{OpaqueField: blob}, &nan); err != nil || !math.IsNaN(nan.F) {
+		t.Fatalf("NaN came back as %v, %v", nan.F, err)
+	}
+}
+
+// mustStorage is v as a storage blob.
+func mustStorage(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := vcffi.MarshalStorage(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func TestSplitFailsClosedInBothDirections(t *testing.T) {

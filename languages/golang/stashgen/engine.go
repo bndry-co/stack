@@ -184,7 +184,7 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 		plan.Context = segments
 	}
 	if d.Opaque {
-		// gensupport seals an opaque struct as one JSON document under
+		// gensupport seals an opaque struct as one storage blob under
 		// <context>/value; see gensupport.OpaqueField.
 		plan.Fields = []record.Field{{Name: "value", Kind: record.Bytes, Outputs: []record.Output{record.Ciphertext}}}
 		return plan, nil

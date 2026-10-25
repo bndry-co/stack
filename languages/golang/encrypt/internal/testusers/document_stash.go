@@ -38,12 +38,13 @@ type documentShape struct {
 	Tags  []string
 }
 
-// The opaque value as it crosses the binding: one JSON document of the
-// struct's fields, by their declared names.
+// The opaque value as it crosses the binding: one storage blob of the
+// struct's fields, by their declared names. The json names read a value
+// an earlier release sealed as a JSON document.
 type documentOpaque struct {
-	Title string   `json:"title"`
-	Body  string   `json:"body"`
-	Tags  []string `json:"tags"`
+	Title string   `vc:"title" json:"title"`
+	Body  string   `vc:"body" json:"body"`
+	Tags  []string `vc:"tags" json:"tags"`
 }
 
 var documentDeclaration = gensupport.DeclareOpaque("documents/v2/body")

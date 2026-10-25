@@ -107,7 +107,7 @@ An EQL `TextMatch` field is stricter: see below.
 An index takes its options in parentheses after its name, separated by commas: `index=equality;match(k=3)`.
 This build refuses an index with options: a query term is derived with the default options only, so a stored term with other options would never match one.
 These words are the same as the Rust API's words for the same behaviour, with two that only Go has.
-`opaque` seals the whole struct as one `bytes` field holding a JSON document (see "What crosses the binding").
+`opaque` seals the whole struct as one `bytes` field holding a storage blob (see "What crosses the binding").
 `json` names the JSON index, which the Rust API does not declare yet; this build refuses it.
 
 ### Optional fields
@@ -227,7 +227,7 @@ The error names the type and the field, and never a value.
 - an embedded struct from another package with no tag;
 - a struct whose every field is left out;
 - a struct, slice or map field with `encrypt` or `index=` outside an opaque struct;
-- a field of an opaque struct whose type JSON cannot carry both ways.
+- a field of an opaque struct whose type the storage profile or JSON cannot carry both ways.
 
 ## Declarations from a policy
 
@@ -273,8 +273,12 @@ No warning, error or log line holds a plaintext value.
 
 Generated code sends the engine every sealed field with its value, under the declaration lowered to data: each field's label (`<context>/<name>`), its outputs and its wire type (`int64`, `string`, `bytes`, ...), which `stashgen` chose from the field's Go type.
 A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext (a `driver.Valuer`, a `sql.NullTime`).
-An `opaque` struct crosses as one JSON document and is one column, decoded back into the exact Go types the struct declares; a field may be any type `encoding/json` carries both ways (a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, `time.Time`).
-A float in an opaque struct must be finite: `encoding/json` refuses NaN and the infinities, so `Encrypt` fails for the batch with `encrypt.ErrEncoding`. A sealed float field outside an opaque struct carries them.
+An `opaque` struct crosses as one storage blob and is one column, read back into the exact Go types the struct declares.
+The blob is vitaminc's storage profile, version 1 (`vcffi.MarshalStorage`), the format vitaminc keeps readable across releases and languages.
+A field may be any type that both the storage profile and `encoding/json` carry both ways: a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, and types with `MarshalText` and `UnmarshalText`, such as `time.Time`.
+`encoding/json` still matters because a row an earlier release sealed holds a JSON document, and `Decrypt` reads it as JSON.
+A float in an opaque struct may be NaN or an infinity: the blob writes a float by its bits.
+A nil slice or map in an opaque struct comes back empty, not nil, from a blob; from an earlier release's JSON document it comes back nil.
 A sealed field outside an opaque struct is one scalar, a type defined over one, or a pointer to either (see "Optional fields"); a struct, slice or map field seals only inside an opaque struct.
 The scalars are `string`, `[]byte`, `bool`, every integer type (each sealed at its own width, `int` and `uint` as 64-bit), `encrypt.Int128` and `encrypt.Uint128`, `float32`, `float64`, `encrypt.Decimal`, `encrypt.Date` and `time.Time` (a timestamp). The wire type `stashgen` writes for each is the field's own: `int8` is `gensupport.Int8`, `time.Time` is `gensupport.Timestamp`, and so on.
 A decimal orders by value, so `1.5` ties `1.50`; a `time.Time` orders by the microsecond, so instants within one microsecond tie.

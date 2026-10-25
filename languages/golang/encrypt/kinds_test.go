@@ -148,7 +148,7 @@ func TestEveryOpaqueFieldTypeRoundTrips(t *testing.T) {
 		In: testusers.Inner{Name: "in", N: 5}, Ins: []testusers.Inner{{Name: "i", N: 6}}, P: &hello, PI: &testusers.Inner{Name: "pi", N: 7},
 		T: when, N: sql.NullTime{Time: when, Valid: true}, Nested: [][]byte{{1}, {2, 3}}, Arr: [2]uint8{9, 8},
 	}, {
-		// Zero values, with the slices and maps nil: JSON null comes back as nil.
+		// Zero values, with the slices and maps nil.
 	}}
 	encrypted, err := testusers.EncryptEverything(ctx, cipher, in)
 	if err != nil {
@@ -158,8 +158,14 @@ func TestEveryOpaqueFieldTypeRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(back, in) {
-		t.Fatalf("DecryptEverything =\n%+v\nwant\n%+v", back, in)
+	// A storage blob writes a nil slice or map as an empty one, so the zero
+	// value's come back empty; its nil pointers stay nil.
+	want := []testusers.Everything{in[0], {
+		By: []byte{}, Bl: testusers.Blob{}, Tags: []string{}, Ints: []int{}, F32s: []float32{}, Emails: []testusers.Email{},
+		Counts: map[string]int{}, Labels: map[string]string{}, ByKey: map[int]string{}, Ins: []testusers.Inner{}, Nested: [][]byte{},
+	}}
+	if !reflect.DeepEqual(back, want) {
+		t.Fatalf("DecryptEverything =\n%+v\nwant\n%+v", back, want)
 	}
 }
 
@@ -227,16 +233,23 @@ func TestAnEmptyBatchRoundTrips(t *testing.T) {
 	}
 }
 
-// encoding/json refuses NaN and the infinities, so an opaque struct holding
-// one is an ErrEncoding that names the value, not an unclassified error.
-func TestANonFiniteFloatInAnOpaqueStructIsErrEncoding(t *testing.T) {
+// A storage blob writes a float by its bits, so an opaque struct holding NaN
+// or an infinity, which the JSON document of earlier releases refused, seals
+// and comes back as it was.
+func TestANonFiniteFloatInAnOpaqueStructRoundTrips(t *testing.T) {
 	c := deterministicClient(t)
 	ctx := context.Background()
-	for _, v := range []testusers.Everything{{F64: math.NaN()}, {F32: float32(math.Inf(1))}} {
-		_, err := testusers.EncryptEverything(ctx, c.DefaultKeyset(), []testusers.Everything{v})
-		if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "value 0") {
-			t.Fatalf("err = %v, want ErrEncoding naming value 0", err)
-		}
+	in := []testusers.Everything{{F64: math.NaN()}, {F32: float32(math.Inf(1)), F64: math.Inf(-1)}}
+	encrypted, err := testusers.EncryptEverything(ctx, c.DefaultKeyset(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := testusers.DecryptEverything(ctx, c, encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !math.IsNaN(back[0].F64) || !math.IsInf(float64(back[1].F32), 1) || !math.IsInf(back[1].F64, -1) {
+		t.Fatalf("came back as %v, %v, %v", back[0].F64, back[1].F32, back[1].F64)
 	}
 }
 
