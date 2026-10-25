@@ -475,9 +475,10 @@ $$;
 --! fields are computed once per call, so the document is read once, and an
 --! entry is copied out of `sv` only when it is returned.
 --!
---! **Inlining.** Every chain primitive above is evaluated per probe or per
---! hit, so each carries the `eql-inline-critical` marker that keeps its
---! search_path unpinned: the planner does not inline a function with a
+--! **Inlining.** Every chain primitive a probe or a hit evaluates (the
+--! hashes, the tags and the token rules; not `json_tree_iv` or
+--! `json_tree_sealed_root`, read once per call) carries the
+--! `eql-inline-critical` marker that keeps its search_path unpinned: the planner does not inline a function with a
 --! pinned search_path, and a probe then costs a full SQL-function call,
 --! about ten microseconds, against under one for the hashes it performs.
 --! For the same reason a hit's token is derived where it is consumed, in

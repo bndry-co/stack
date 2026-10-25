@@ -33,6 +33,9 @@ use stack_kms::FakeDataKeySource;
 
 type Cipher = StackCipher<FakeDataKeySource>;
 
+/// `proptest!` generates synchronous `#[test]` functions and runs each body
+/// once per case through a plain closure, so `#[tokio::test]` cannot wrap a
+/// property; each test builds one runtime and `block_on`s its cases.
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
