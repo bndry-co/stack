@@ -60,14 +60,15 @@ pub(crate) const MAX_DEPTH: usize = 127;
 
 /// The largest number the index gives an array element's position, a
 /// node's ordinal or a node's child count: PostgreSQL's `integer`, which is
-/// what the SQL walk casts a position gate's ordinal to and what
-/// `json_tree_child_count` returns.
+/// what the SQL walk's ordinals are and what `json_tree_child_count`
+/// returns.
 ///
 /// A document with a wider array or object is refused when it is sealed,
-/// and a path naming a position past this is refused when its subtree key
-/// is derived. No stored document has a node there, so the refusal loses no
-/// answer, and without it the position would reach the server as a gate
-/// that PostgreSQL refuses to cast (error 22003) instead of finding nothing.
+/// and a path naming a position past this, or a wildcard bound past it, is
+/// refused when its subtree key is derived. No stored document has a node
+/// there, so the refusal loses no answer: a position reaches the server only
+/// inside a token, so without the refusal the read would find nothing,
+/// where the caller asked for something no document can hold.
 const MAX_ORDINAL: u32 = i32::MAX.unsigned_abs();
 
 /// `n` as an ordinal, or [`TermError::JsonTooWide`] past [`MAX_ORDINAL`].
@@ -1760,8 +1761,8 @@ fn read_tokens(wildcards: usize, bound: u32) -> Option<u64> {
 }
 
 /// The key that reads `path`: one token per concrete path the path names,
-/// each derived from the path alone, in document order, with a probe per
-/// wildcard level for the element at `bound`.
+/// each derived from the path alone, in document order, with a probe for
+/// the element at `bound` of each array a wildcard expands.
 ///
 /// Every node's token derives from its path: the root's and, under the
 /// sealed root, each chain head's are PRFs of their paths; below them a
@@ -1909,9 +1910,9 @@ impl<K> KeysetCipher<'_, K> {
     /// token, its node's, and nothing that covers any node above it; `$`
     /// is a read too, of the root entry, which under the sealed root opens
     /// to the whole document. A path with a wildcard sends one token per
-    /// concrete path and, per wildcard level, a probe for the element at
-    /// `bound`; a row where a probe names a node has an array longer than
-    /// `bound` there, and its rows open to
+    /// concrete path and, for each array a wildcard expands, a probe for
+    /// the element at `bound`; a row where a probe names a node has an
+    /// array longer than `bound` there, and its rows open to
     /// [`Error::JsonWildcardTruncated`] rather than to part of the answer.
     /// Raise `bound`, or read the array itself, for longer arrays; lower it
     /// for a nested wildcard over many rows, which sends `bound² + bound +

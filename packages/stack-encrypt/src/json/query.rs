@@ -358,8 +358,9 @@ pub(crate) struct Read {
 }
 
 /// The key of a subtree read: one token per concrete path the read's path
-/// names, in document order, with a probe per wildcard level, the bound
-/// the wildcards were expanded to, and the path it was derived from, which
+/// names, in document order, with a probe for each array a wildcard
+/// expands, the bound the wildcards were expanded to, and the path it was
+/// derived from, which
 /// [`open`](Self::open) attaches to the rows the read returns. What
 /// `json_tree_subtree(doc, tokens, budget)` takes is
 /// [`tokens`](Self::tokens). Serializes as `{"t": ["…", …]}`; the paths
