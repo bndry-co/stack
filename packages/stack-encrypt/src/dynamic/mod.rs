@@ -552,12 +552,12 @@ reasons! {
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
         /// The field declares the JSON index as an output. A data plan
         /// reaches the JSON index through a target that stores a document
-        /// (`EncryptedJson`, with the `json` type), whose options are the
+        /// (`JsonSearch`, with the `json` type), whose options are the
         /// index's; the index is not an output of its own.
         JsonIndexPending => "json_index_pending", "the JSON index is reached through a target that stores a document, not as an output";
         /// The field declares the `json` type and names no target: a JSON
         /// document is stored through a target that stores one
-        /// (`EncryptedJson`).
+        /// (`JsonSearch`).
         JsonNeedsTarget => "json_needs_target", r#"a "json" field names a target that stores a document"#;
         /// The field gives its target options the target does not take: a
         /// target takes the options of the index it carries, and this one

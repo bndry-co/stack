@@ -151,8 +151,8 @@ type modelField struct {
 
 // EQLGoName is the Go type name in encrypt/eql of an EQL type the engine
 // names: the same name in every language, save that the word Json is JSON,
-// as Go spells initialisms (Json is JSON, EncryptedJsonQuery is
-// EncryptedJSONQuery; Json is a word where the name ends or the next
+// as Go spells initialisms (Json is JSON, JsonSearchQuery is
+// JSONSearchQuery; Json is a word where the name ends or the next
 // letter is upper case). The
 // generated encrypt/eql package follows the same rule (eql-codegen's go_eql
 // renderer), and its Types table records both names, which is what holds

@@ -74,7 +74,7 @@ pub struct JsonTreeOrderingTerm(pub Base64Text);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
 pub struct JsonTreeKeyHeader(pub Base64Text);
 
-/// `public.eql_v4_json_tree`: a JSON tree document, `{v, i, h, sv:
+/// `public.eql_v4_json_search`: a JSON tree document, `{v, i, h, sv:
 /// [entry], q: group}`. Strict. `h` is the document's key header, stored
 /// once (every entry is sealed under the document's one data key); `sv`
 /// holds one entry per node in depth-first order, the root first; `q` is
@@ -93,7 +93,7 @@ pub struct JsonTreeDocument {
     pub q: JsonTreeQueryGroup,
 }
 
-/// `public.eql_v4_json_tree_entry`: one node. `s` is the path selector,
+/// `public.eql_v4_json_entry`: one node. `s` is the path selector,
 /// `c` the node's own ciphertext, `x` the self tag by which a read finds
 /// the node its token names; `p` the parent tag below the chain's heads,
 /// which a read probes by ordinal; `op` the leaf ordering term.
@@ -151,7 +151,7 @@ pub struct JsonTreeQueryGroup {
     pub el: Vec<JsonTreeQueryGroup>,
 }
 
-/// `eql_v4.query_json_tree`: a containment needle, the element-nested
+/// `eql_v4.query_json`: a containment needle, the element-nested
 /// projection of the needle document's selectors, with the alternative
 /// projection a root scalar carries. Strict. What
 /// [`stack_encrypt::json::JsonQuery`] serializes to; [`TryFrom`] converts
@@ -166,7 +166,7 @@ pub struct JsonTreeQuery {
     pub alt: Option<JsonTreeQueryGroup>,
 }
 
-/// `eql_v4.query_json_tree_leaf`: an ordering operand at a path, the path's
+/// `eql_v4.query_json_leaf`: an ordering operand at a path, the path's
 /// selector and the leaf ordering term. What
 /// [`stack_encrypt::json::JsonLeafQuery`] serializes to.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -282,10 +282,10 @@ macro_rules! json_tree_domain_type {
     };
 }
 
-json_tree_domain_type!(JsonTreeDocument, "public.eql_v4_json_tree");
-json_tree_domain_type!(JsonTreeEntry, "public.eql_v4_json_tree_entry");
-json_tree_domain_type!(JsonTreeQuery, "eql_v4.query_json_tree");
-json_tree_domain_type!(JsonTreeLeafQuery, "eql_v4.query_json_tree_leaf");
+json_tree_domain_type!(JsonTreeDocument, "public.eql_v4_json_search");
+json_tree_domain_type!(JsonTreeEntry, "public.eql_v4_json_entry");
+json_tree_domain_type!(JsonTreeQuery, "eql_v4.query_json");
+json_tree_domain_type!(JsonTreeLeafQuery, "eql_v4.query_json_leaf");
 
 // =============================================================================
 // Conversions to and from the engine's types, through their one wire form
@@ -535,16 +535,16 @@ mod tests {
     fn the_domains_are_the_v4_json_tree_family() {
         assert_eq!(
             JsonTreeDocument::sql_domain_static(),
-            "public.eql_v4_json_tree"
+            "public.eql_v4_json_search"
         );
         assert_eq!(
             JsonTreeEntry::sql_domain_static(),
-            "public.eql_v4_json_tree_entry"
+            "public.eql_v4_json_entry"
         );
-        assert_eq!(JsonTreeQuery::sql_domain_static(), "eql_v4.query_json_tree");
+        assert_eq!(JsonTreeQuery::sql_domain_static(), "eql_v4.query_json");
         assert_eq!(
             JsonTreeLeafQuery::sql_domain_static(),
-            "eql_v4.query_json_tree_leaf"
+            "eql_v4.query_json_leaf"
         );
     }
 
