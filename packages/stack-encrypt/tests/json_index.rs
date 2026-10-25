@@ -197,27 +197,9 @@ fn base64(bytes: &[u8]) -> String {
     Base64::encode_string(bytes)
 }
 
-/// The ordinals the walk from `token` reaches.
-fn subtree_ordinals(doc: &JsonDocument, token: &Tag) -> Vec<usize> {
-    doc.subtree(token).iter().map(|(j, _, _)| *j).collect()
-}
-
-/// The nodes the walk from `token` reaches, as the server returns them.
-fn subtree_nodes(doc: &JsonDocument, token: &Tag) -> Vec<JsonNode> {
-    doc.subtree(token)
-        .iter()
-        .map(|(j, _, _)| doc.node(*j).unwrap())
-        .collect()
-}
-
-/// The token of the child at ordinal `j` under `token`, as the server
-/// derives it.
-fn child_token(doc: &JsonDocument, token: &Tag, j: usize) -> Tag {
-    doc.children(token)
-        .into_iter()
-        .find(|(ordinal, _, _)| *ordinal == j)
-        .map(|(_, _, t)| t)
-        .unwrap_or_else(|| panic!("entry {j} is a child of the token's node"))
+/// The ordinals the read of `tokens` finds.
+fn subtree_ordinals(doc: &JsonDocument, tokens: &[Tag]) -> Vec<usize> {
+    doc.subtree(tokens).iter().map(|(j, _, _)| *j).collect()
 }
 
 /// Node `j` as a walk returns it, `d` levels below where it started.
@@ -227,50 +209,14 @@ fn with_depth(doc: &JsonDocument, j: usize, d: u32) -> JsonNode {
     serde_json::from_value(wire).unwrap()
 }
 
-/// The rows `json_tree_subtree_at(doc, token, gates)` returns for `key`,
-/// walked here as the SQL walks them: from the key's token, through each
-/// gate (a selector the entry at that depth must carry, or `#n:<selector>`,
-/// the child at ordinal `n` carrying it), then everything beneath each node
-/// the gates reach, each row with its depth below that node.
-fn gated_walk(doc: &JsonDocument, key: &JsonSubtreeKey) -> Vec<JsonNode> {
-    let mut frontier = vec![(None, *key.token_bytes())];
-    for gate in key.gates() {
-        let mut next = Vec::new();
-        for (_, token) in &frontier {
-            let children = doc.children(token);
-            match gate.strip_prefix('#') {
-                Some(slot) => {
-                    let (n, selector) = slot.split_once(':').unwrap();
-                    if let Some((j, entry, t)) = children.get(n.parse::<usize>().unwrap()) {
-                        if base64(entry.selector()) == selector {
-                            next.push((Some(*j), *t));
-                        }
-                    }
-                }
-                None => next.extend(
-                    children
-                        .iter()
-                        .filter(|(_, entry, _)| base64(entry.selector()) == gate)
-                        .map(|(j, _, t)| (Some(*j), *t)),
-                ),
-            }
-        }
-        frontier = next;
-    }
-    let mut rows = Vec::new();
-    for (reached, token) in frontier {
-        let below = u32::from(reached.is_some());
-        if let Some(j) = reached {
-            rows.push(with_depth(doc, j, 0));
-        }
-        rows.extend(
-            doc.subtree(&token)
-                .iter()
-                .map(|(j, _, d)| with_depth(doc, *j, d - 1 + below)),
-        );
-    }
-    rows.sort_by_key(JsonNode::ordinal);
-    rows
+/// The rows `json_tree_subtree(doc, key.tokens(), 0)` returns for `key`,
+/// read here as the SQL reads them, each with its depth below the node its
+/// token named.
+fn read_rows(doc: &JsonDocument, key: &JsonSubtreeKey) -> Vec<JsonNode> {
+    doc.subtree(&key.token_bytes())
+        .iter()
+        .map(|(j, _, d)| with_depth(doc, *j, *d))
+        .collect()
 }
 
 /// PostgreSQL's `jsonb @>`, from its documented rules: an object contains
@@ -452,11 +398,12 @@ mod given_the_fixture_document {
             let entry = entry.as_object().unwrap();
             for key in entry.keys() {
                 assert!(
-                    ["s", "c", "p", "op"].contains(&key.as_str()),
+                    ["s", "c", "x", "p", "op"].contains(&key.as_str()),
                     "entry {j} carries an unknown key {key}"
                 );
             }
-            for (tag, chars, bytes) in [("s", 24, 16), ("p", 12, 8)] {
+            assert!(entry.contains_key("x"), "entry {j} carries its self tag");
+            for (tag, chars, bytes) in [("s", 24, 16), ("x", 12, 8), ("p", 12, 8)] {
                 if let Some(text) = entry.get(tag) {
                     assert_eq!(
                         text.as_str().unwrap().len(),
@@ -499,6 +446,14 @@ mod given_the_fixture_document {
                 j + 3
             );
         }
+        // Every entry carries a self tag, the root and the heads included, and
+        // every one is distinct, so its presence marks nothing.
+        let selves: std::collections::HashSet<_> = entries.iter().map(|e| *e.self_tag()).collect();
+        assert_eq!(
+            selves.len(),
+            entries.len(),
+            "one distinct self tag per entry"
+        );
         // Every parent tag is distinct: siblings are not linkable at rest.
         let tags: std::collections::HashSet<_> = entries[3..9]
             .iter()
@@ -614,9 +569,9 @@ mod given_the_fixture_document {
         );
     }
 
-    /// No token is stored: an entry below a head carries only the parent
-    /// tag, and no tag in the document is a token, or a parent's hash of one
-    /// without the document's salt.
+    /// No token is stored: every tag in the document is a self tag or a
+    /// parent tag, salted by the document, and no tag, nor a selector, is a
+    /// token or a prefix of one.
     #[tokio::test]
     async fn stores_no_token() {
         let Scenario { cipher, .. } = scenario().await;
@@ -624,24 +579,25 @@ mod given_the_fixture_document {
         let nested = subtree_key(&cipher, "$.nested", JsonOptions::default())
             .await
             .unwrap();
-        let mut tokens = vec![*nested.token_bytes()];
-        let mut frontier = vec![*nested.token_bytes()];
+        let mut tokens = nested.token_bytes();
+        let mut frontier = nested.token_bytes();
         while let Some(token) = frontier.pop() {
             assert!(
                 tokens.len() <= doc.entries().len(),
                 "the chain is a tree: no token is reached twice"
             );
             for (_, _, child) in doc.children(&token) {
+                let child = child.expect("every child of a sealed node takes a rule");
                 tokens.push(child);
                 frontier.push(child);
             }
         }
         assert_eq!(tokens.len(), 7, "nested and its six descendants");
         for (j, entry) in doc.entries().iter().enumerate() {
-            if let Some(p) = entry.parent_tag() {
+            for tag in std::iter::once(entry.self_tag()).chain(entry.parent_tag()) {
                 assert!(
-                    !tokens.iter().any(|t| t.starts_with(p)),
-                    "entry {j}'s parent tag is not a prefix of a token"
+                    !tokens.iter().any(|t| t.starts_with(tag)),
+                    "entry {j}'s stored tag is not a prefix of a token"
                 );
             }
             assert!(
@@ -650,8 +606,8 @@ mod given_the_fixture_document {
             );
         }
         assert_eq!(
-            nested.token(),
-            base64(nested.token_bytes()),
+            nested.tokens(),
+            [base64(&nested.token_bytes()[0])],
             "a token's text form is its padded base64"
         );
     }
@@ -733,44 +689,48 @@ mod given_a_subtree_key {
     use super::*;
 
     #[tokio::test]
-    async fn unlocks_exactly_its_subtree_from_the_path_alone() {
+    async fn finds_exactly_its_node_from_the_path_alone() {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &fixture()).await;
         let key = subtree_key(&cipher, "$.nested", JsonOptions::default())
             .await
             .unwrap();
-        assert!(
-            key.gates().is_empty(),
-            "a chain head's token is derived, nothing to gate"
+        assert_eq!(
+            key.tokens().len(),
+            1,
+            "a path with no wildcard sends one token"
         );
+        assert!(key.probes().is_empty(), "and no probe");
         assert_eq!(
             key.path(),
             &JsonPath::parse("$.nested").unwrap(),
             "the key carries the path it was derived from"
         );
-        let under = doc.subtree(key.token_bytes());
+        let under = doc.subtree(&key.token_bytes());
         let found: Vec<usize> = under.iter().map(|(j, _, _)| *j).collect();
         assert_eq!(
             found,
-            [3, 4, 5, 6, 7, 8],
-            "deep, list, both elements, both leaves"
+            [2, 3, 4, 5, 6, 7, 8],
+            "nested itself, then deep, list, both elements, both leaves"
         );
         let depths: Vec<u32> = under.iter().map(|(_, _, d)| *d).collect();
         assert_eq!(
             depths,
-            [1, 1, 2, 3, 2, 3],
+            [0, 1, 1, 2, 3, 2, 3],
             "each row's depth below $.nested"
         );
         assert!(
-            doc.subtree(&[7; 16]).is_empty(),
-            "a wrong token unlocks nothing"
+            doc.subtree(&[[7; 16]]).is_empty(),
+            "a wrong token finds nothing"
         );
     }
 
-    /// Below a head the client derives nothing but array positions: a key
-    /// step becomes a gate, and the walk from the head takes it.
+    /// Below a head the client derives every token itself: a member's from
+    /// its parent's and its selector, an element's with its index too. The
+    /// read of the second element sends that element's token, and nothing
+    /// that covers the list or nested.
     #[tokio::test]
-    async fn gates_each_key_step_below_its_head() {
+    async fn derives_every_token_below_its_head() {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &fixture()).await;
         let key = subtree_key(&cipher, "$.nested", JsonOptions::default())
@@ -779,26 +739,34 @@ mod given_a_subtree_key {
         let deeper = subtree_key(&cipher, "$.nested.list[1]", JsonOptions::default())
             .await
             .unwrap();
+        assert_eq!(deeper.tokens().len(), 1, "one token");
+        assert_ne!(deeper.token_bytes(), key.token_bytes(), "not nested's");
         assert_eq!(
-            deeper.token_bytes(),
-            key.token_bytes(),
-            "anchored at the head"
+            subtree_ordinals(&doc, &deeper.token_bytes()),
+            [7, 8],
+            "the second element and its x"
         );
-        assert_eq!(deeper.gates().len(), 2, "list, then [1]");
+        let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
+            .await
+            .unwrap();
+        let (_, entry, list_token) = doc
+            .children(&key.token_bytes()[0])
+            .into_iter()
+            .find(|(j, _, _)| *j == 4)
+            .expect("the list is a child of nested");
         assert_eq!(
-            deeper.gates()[1],
-            format!("#1:{}", base64(doc.entries()[5].selector())),
-            "the position, and the selector every element of the list carries"
+            list_token,
+            Some(list.token_bytes()[0]),
+            "the server derives the token the client sends"
         );
-        let list_token = child_token(&doc, key.token_bytes(), 4);
-        let second = child_token(&doc, &list_token, 7);
         assert_eq!(
-            subtree_ordinals(&doc, &second),
-            [8],
-            "the second element's x"
+            doc.find(&list.token_bytes()[0]).map(|(j, _)| j),
+            Some(4),
+            "the list's token finds the list"
         );
+        assert_eq!(entry.selector(), doc.entries()[4].selector());
         let children: Vec<usize> = doc
-            .children(&list_token)
+            .children(&list.token_bytes()[0])
             .iter()
             .map(|(j, _, _)| *j)
             .collect();
@@ -807,63 +775,40 @@ mod given_a_subtree_key {
             [5, 7],
             "the children of a node, by ordinal: the list's two elements"
         );
-        // A wildcard path anchors at the head and gates on each step's
-        // selector: the list's, then every element's (the wildcard's), then x's.
-        let gated = subtree_key(&cipher, "$.nested.list[*].x", JsonOptions::default())
+        assert!(doc.children(&[7; 16]).is_empty(), "no node, no children");
+    }
+
+    /// `$` is a read under either root. Under the sealed root its token
+    /// finds the root entry and nothing beneath it, since nothing chains
+    /// from it; under an open root it covers every node, and positions
+    /// derive below it.
+    #[tokio::test]
+    async fn reads_the_root_under_either_option() {
+        let Scenario { cipher, .. } = scenario().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let sealed_root = subtree_key(&cipher, "$", JsonOptions::default())
             .await
             .unwrap();
         assert_eq!(
-            gated.token_bytes(),
-            key.token_bytes(),
-            "a wildcard path anchors at the head"
+            doc.subtree(&sealed_root.token_bytes())
+                .iter()
+                .map(|(j, _, d)| (*j, *d))
+                .collect::<Vec<_>>(),
+            [(0, 0)],
+            "the sealed root alone"
         );
-        assert_eq!(
-            gated.gates(),
-            [
-                base64(doc.entries()[4].selector()),
-                base64(doc.entries()[5].selector()),
-                base64(doc.entries()[6].selector()),
-            ],
-            "the list's selector, every element's, then x's"
-        );
-    }
-
-    /// The sealed root has no token; the open root's unlocks every node, and
-    /// under an open root the chain is derivable down to the first key step.
-    #[tokio::test]
-    async fn has_no_token_at_a_sealed_root_and_derives_from_an_open_one() {
-        let Scenario { cipher, .. } = scenario().await;
-        for path in ["$", "$[*].x"] {
-            let refused = subtree_key(&cipher, path, JsonOptions::default()).await;
-            assertions::refused_by_term(
-                &refused,
-                |e| matches!(e, TermError::JsonSealedRoot),
-                &format!("{path} under the sealed root"),
-            );
-        }
         let open_doc = seal_with(&cipher, &fixture(), &open_root()).await;
         let root = subtree_key(&cipher, "$", open_root()).await.unwrap();
         assert_eq!(
-            open_doc.subtree(root.token_bytes()).len(),
-            9,
-            "every entry but the root"
+            open_doc.subtree(&root.token_bytes()).len(),
+            10,
+            "the root and every entry beneath it"
         );
-        // `$[0]` would be a position, `$.nested` is a gate.
-        let open_key = subtree_key(&cipher, "$.nested.list[1]", open_root())
-            .await
-            .unwrap();
-        assert_eq!(
-            open_key.token_bytes(),
-            root.token_bytes(),
-            "anchored at the open root"
-        );
-        assert_eq!(open_key.gates().len(), 3, "nested, list, then [1]");
         let array_doc = seal_with(&cipher, &json!([[1, 2], [3]]), &open_root()).await;
         let second_row = subtree_key(&cipher, "$[1]", open_root()).await.unwrap();
-        assert!(second_row.gates().is_empty(), "positions derive");
         assert_eq!(
-            subtree_ordinals(&array_doc, second_row.token_bytes()),
-            [5],
+            subtree_ordinals(&array_doc, &second_row.token_bytes()),
+            [4, 5],
             "$, [0], [0][0], [0][1], [1], [1][0]"
         );
     }
@@ -873,63 +818,39 @@ mod given_a_position {
     use super::*;
 
     /// A position names an array element and nothing else. A column's rows
-    /// need not agree on a node's kind, and an object member's ordinal is a
-    /// rank among its siblings, so a token derived for `$.a[0]` must not
-    /// open the rank-0 member of a row whose `$.a` is an object: `jsonb` has
-    /// no node at `{a,0}` there, and neither does the index.
+    /// need not agree on a node's kind, so a token derived for `$.a[0]` must
+    /// not find a member of a row whose `$.a` is an object, the member named
+    /// `"0"` included: `jsonb` has no node at `{a,0}` there under a strict
+    /// path, and neither does the index. A member's token and an element's
+    /// are different hashes, so no entry there carries the element's self
+    /// tag. The same holds below a key step (`$.h.a[0]`).
     #[tokio::test]
     async fn reaches_no_object_member() {
         let Scenario { cipher, .. } = scenario().await;
-        let first = subtree_key(&cipher, "$.a[0]", JsonOptions::default())
-            .await
-            .unwrap();
-        assert!(
-            first.gates().is_empty(),
-            "a position after the head derives"
-        );
-        let array = seal(&cipher, &json!({"a": [{"x": 2}]})).await;
-        assert_eq!(
-            subtree_ordinals(&array, first.token_bytes()),
-            [3],
-            "$, $.a, $.a[0], $.a[0].x"
-        );
-        for object in [
-            json!({"a": {"k": {"x": 1}}}),
-            json!({"a": {"k": [1, 2]}}),
-            json!({"a": {"0": {"x": 1}}}),
-        ] {
-            let doc = seal(&cipher, &object).await;
-            assert!(
-                doc.subtree(first.token_bytes()).is_empty(),
-                "{object}: an object member is not an element"
-            );
+        for path in ["$.a[0]", "$.h.a[0]"] {
+            let first = subtree_key(&cipher, path, JsonOptions::default())
+                .await
+                .unwrap();
+            let array = seal(&cipher, &json!({"a": [{"x": 2}], "h": {"a": [{"x": 2}]}})).await;
+            let found = subtree_ordinals(&array, &first.token_bytes());
+            let at = array
+                .entries()
+                .iter()
+                .position(|e| e.self_tag() == array.entries()[found[0]].self_tag())
+                .unwrap();
+            assert_eq!(found, [at, at + 1], "{path}: the element and its x");
+            for object in [
+                json!({"a": {"k": {"x": 1}}, "h": {"a": {"k": {"x": 1}}}}),
+                json!({"a": {"k": [1, 2]}, "h": {"a": {"k": [1, 2]}}}),
+                json!({"a": {"0": {"x": 1}}, "h": {"a": {"0": {"x": 1}}}}),
+            ] {
+                let doc = seal(&cipher, &object).await;
+                assert!(
+                    doc.subtree(&first.token_bytes()).is_empty(),
+                    "{path} in {object}: an object member is not an element"
+                );
+            }
         }
-    }
-
-    /// The same below a key step, where the position is a gate: the walk
-    /// from the head reaches `$.h.a` by its selector, and the gate at the
-    /// next step admits an element only. A member at ordinal 0 under an
-    /// object `$.h.a` carries its own selector, not the element's.
-    #[tokio::test]
-    async fn gates_on_the_elements_selector_below_a_key_step() {
-        let Scenario { cipher, .. } = scenario().await;
-        let gated = subtree_key(&cipher, "$.h.a[0]", JsonOptions::default())
-            .await
-            .unwrap();
-        assert_eq!(gated.gates().len(), 2, "a, then [0]");
-        let element = cipher
-            .default_keyset()
-            .json_selector(
-                &JsonPath::parse("$.h.a[*]").unwrap(),
-                nonempty!("users").with("profile"),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            gated.gates()[1],
-            format!("#0:{element}"),
-            "the position gate names the elements' selector"
-        );
     }
 }
 
@@ -978,7 +899,7 @@ mod given_an_extracted_node {
         let key = subtree_key(&cipher, "$.nested", JsonOptions::default())
             .await
             .unwrap();
-        let rows = subtree_nodes(&doc, key.token_bytes());
+        let rows = read_rows(&doc, &key);
         let nested = cipher
             .decrypt_as::<Value, JsonSubtree>(key.open(rows.clone()), aead())
             .await
@@ -994,16 +915,15 @@ mod given_an_extracted_node {
             .unwrap();
         assert_eq!(
             forest,
-            vec![json!("constant"), json!([{"x": 1}, {"x": 2}])],
-            "as a list, the walk opens to $.nested's members"
+            vec![fixture()["nested"].clone()],
+            "as a list, one value: the node at the path"
         );
 
-        // The list is one gate below nested: the walk reaches it and returns
-        // it with its subtree.
+        // The list, below nested: its own token finds it and its subtree.
         let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
             .await
             .unwrap();
-        let rows = gated_walk(&doc, &list);
+        let rows = read_rows(&doc, &list);
         let elements = cipher
             .decrypt_as::<Value, JsonSubtree>(list.open(rows), aead())
             .await
@@ -1066,86 +986,90 @@ mod given_an_extracted_node {
     }
 }
 
-mod given_gated_walk_rows {
+mod given_wildcard_rows {
     use super::*;
 
-    /// The rows of a gated walk carry the node the gates reached at depth 0
-    /// and its descendants beneath. Opened as a value, they are that node's
-    /// value; two reached nodes open as a list, or refuse to be one value.
+    /// A wildcard read's rows hold each element it reaches below the bound,
+    /// each at depth 0 with everything beneath it. As a list they open to
+    /// one value per element; as one value they refuse, unless exactly one
+    /// element is there. A probe that finds an element fails the read with
+    /// the bound.
     #[tokio::test]
-    async fn open_to_the_reached_nodes_value() {
+    async fn open_to_one_value_per_element_or_fail_with_the_bound() {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &fixture()).await;
-        let nested = subtree_key(&cipher, "$.nested", JsonOptions::default())
+        let xs = subtree_key(&cipher, "$.nested.list[*].x", JsonOptions::default())
             .await
             .unwrap();
-        let list = child_token(&doc, nested.token_bytes(), 4);
-        // What `json_tree_subtree_at(doc, t(nested), [s(list), #1])` returns:
-        // the second element at d = 0, its x at d = 1.
-        let rows_at = |reached: &[usize], below: &[(usize, u32)]| -> Vec<JsonNode> {
-            reached
-                .iter()
-                .map(|j| (*j, 0u32))
-                .chain(below.iter().copied())
-                .map(|(j, d)| with_depth(&doc, j, d))
-                .collect()
-        };
-        let second = keyed(&cipher, "$.nested.list[1]", rows_at(&[7], &[(8, 1)])).await;
-        assert!(
-            !second.is_sealed_root(),
-            "a reached node is not the fallback"
-        );
-        let value = cipher
-            .decrypt_as::<Value, JsonSubtree>(second.clone(), aead())
-            .await
-            .unwrap();
-        assert_eq!(value, json!({"x": 2}), "the reached node's own value");
+        assert_eq!(xs.tokens().len(), 65, "64 positions and the probe");
+        assert_eq!(xs.probes(), [64]);
+        let rows = read_rows(&doc, &xs);
+        assert_eq!(rows.len(), 2, "both x");
         let values = cipher
-            .decrypt_as::<Vec<Value>, JsonSubtree>(second, aead())
+            .decrypt_as::<Vec<Value>, JsonSubtree>(xs.open(rows.clone()), aead())
             .await
             .unwrap();
-        assert_eq!(
-            values,
-            vec![json!({"x": 2})],
-            "as a list, the one reached node"
+        assert_eq!(values, vec![json!(1), json!(2)], "one value per element");
+        assertions::refused_as_opened_type(
+            &cipher
+                .decrypt_as::<Value, JsonSubtree>(xs.open(rows), aead())
+                .await,
+            Some("one node at the walked path"),
+            "two elements are not one value",
         );
-        // A scalar reached by a gate opens to the scalar, where the ungated
-        // walk of a scalar yields no rows and no value.
-        let x = cipher
-            .decrypt_as::<Value, JsonSubtree>(
-                keyed(&cipher, "$.nested.list[1].x", rows_at(&[8], &[])).await,
-                aead(),
+        // At a bound of 1, the second element is the probe's: the read fails
+        // rather than return the first x alone, as a list and as one value.
+        let one = cipher
+            .default_keyset()
+            .json_subtree_key_with_bound(
+                &JsonPath::parse("$.nested.list[*].x").unwrap(),
+                &JsonOptions::default(),
+                1,
+                nonempty!("users").with("profile"),
             )
             .await
             .unwrap();
-        assert_eq!(x, json!(2), "a scalar reached by a gate opens to it");
-        // Two reached nodes (a wildcard): a list, never one value.
-        let both = keyed(&cipher, "$.nested.list[*].x", rows_at(&[6, 8], &[])).await;
+        assert_eq!(one.tokens().len(), 2, "one position and the probe");
+        let rows = read_rows(&doc, &one);
+        assert_eq!(
+            rows.len(),
+            3,
+            "the first x, and the second element with its x"
+        );
+        for opened in [
+            cipher
+                .decrypt_as::<Vec<Value>, JsonSubtree>(one.open(rows.clone()), aead())
+                .await
+                .map(|_| ()),
+            cipher
+                .decrypt_as::<Option<Value>, JsonSubtree>(one.open(rows.clone()), aead())
+                .await
+                .map(|_| ()),
+        ] {
+            assert!(
+                matches!(opened, Err(Error::JsonWildcardTruncated { bound: 1 })),
+                "{opened:?}"
+            );
+        }
+        // At a bound of 2, exactly as long: no probe finds anything.
+        let two = cipher
+            .default_keyset()
+            .json_subtree_key_with_bound(
+                &JsonPath::parse("$.nested.list[*].x").unwrap(),
+                &JsonOptions::default(),
+                2,
+                nonempty!("users").with("profile"),
+            )
+            .await
+            .unwrap();
         let values = cipher
-            .decrypt_as::<Vec<Value>, JsonSubtree>(both.clone(), aead())
+            .decrypt_as::<Vec<Value>, JsonSubtree>(two.open(read_rows(&doc, &two)), aead())
             .await
             .unwrap();
         assert_eq!(
             values,
             vec![json!(1), json!(2)],
-            "two reached nodes open as a list"
-        );
-        assertions::refused_as_opened_type(
-            &cipher.decrypt_as::<Value, JsonSubtree>(both, aead()).await,
-            Some("one node at the walked path"),
-            "two reached nodes are not one value",
-        );
-        // The key says which walk the rows came from: the children of the
-        // list, which an ungated walk from the list's token would return, are
-        // not what the gated walk to the list returns, and are refused.
-        assertions::refused_as_wrong_entry(
-            &cipher
-                .decrypt_as::<Value, JsonSubtree>(
-                    keyed(&cipher, "$.nested.list", subtree_nodes(&doc, &list)).await,
-                    aead(),
-                )
-                .await,
-            "the ungated walk's rows under the gated key",
+            "an array as long as the bound"
         );
     }
 }
@@ -1164,7 +1088,7 @@ mod given_a_derived_record {
         let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
             .await
             .unwrap();
-        let rows = gated_walk(&doc, &list);
+        let rows = read_rows(&doc, &list);
         let subtree = list.open(rows.clone());
         assert_eq!(
             subtree.nodes(),
@@ -1315,53 +1239,45 @@ mod given_a_fallback_root {
         );
     }
 
-    /// The sealed root a walk fell back to opens to exactly what the walked
-    /// rows open to, so a caller's result does not change shape when a
-    /// document grows past the budget, and no caller says which walk the
-    /// rows came from: the key does, by its gates. A key with none keyed
-    /// `json_tree_subtree`, whose rows are the descendants of the path's
-    /// node, so a `Vec` opens to that node's children; a key with gates
-    /// keyed `json_tree_subtree_at`, whose rows are the nodes the path
-    /// reaches.
+    /// The sealed root a read fell back to opens to exactly what the walked
+    /// rows open to, as a list, as an optional value and as one value, so a
+    /// caller's result does not change shape when a document grows past the
+    /// budget: the key's concrete paths and probes are evaluated over the
+    /// whole document.
     #[tokio::test]
     async fn opens_to_what_the_walk_opens_to() {
         let document = json!({
             "list": [{"x": 1}, {"x": 2}],
-            "obj": {"a": "constant", "b": [1, 2], "c": {"d": [true, null]}},
+            "obj": {"a": "constant", "b": [1, 2], "c": {"d": [true, null]}, "e": {}, "f": []},
             "hello": "world"
         });
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &document).await;
         let root = fallback(&doc);
-        let sorted = |mut values: Vec<Value>| {
-            values.sort_by_key(ToString::to_string);
-            values
-        };
-        for (text, gated) in [
-            ("$.list", false),
-            ("$.obj", false),
-            ("$.hello", false),
-            ("$.list[1]", false),
-            ("$.obj.b", true),
-            ("$.obj.c.d", true),
-            ("$.obj.b[0]", true),
-            ("$.list[*].x", true),
-            ("$.list[1].x", true),
-            ("$.obj.c", true),
+        for text in [
+            "$",
+            "$.list",
+            "$.obj",
+            "$.hello",
+            "$.list[1]",
+            "$.obj.b",
+            "$.obj.c.d",
+            "$.obj.b[0]",
+            "$.list[*].x",
+            "$.list[1].x",
+            "$.obj.c",
+            "$.obj.e",
+            "$.obj.f",
+            "$.missing",
+            "$.obj.c.d[*]",
+            "$.list[*]",
+            "$[*]",
+            "$.obj.missing[*]",
         ] {
             let key = subtree_key(&cipher, text, JsonOptions::default())
                 .await
                 .unwrap();
-            assert_eq!(
-                !key.gates().is_empty(),
-                gated,
-                "{text}: whether the key gates"
-            );
-            let walked = if gated {
-                gated_walk(&doc, &key)
-            } else {
-                subtree_nodes(&doc, key.token_bytes())
-            };
+            let walked = read_rows(&doc, &key);
             let fallen_back = key.open(vec![root.clone()]);
             assert!(fallen_back.is_sealed_root(), "{text}: the fallback");
             let as_walked = cipher
@@ -1372,49 +1288,23 @@ mod given_a_fallback_root {
                 .decrypt_as::<Vec<Value>, JsonSubtree>(fallen_back.clone(), aead())
                 .await
                 .unwrap();
-            // An object's members come back in an order neither form fixes.
-            assert_eq!(sorted(as_fallen), sorted(as_walked), "{text}, as a list");
-            // A walk with no rows (a scalar's, or an empty container's) is
-            // never past a budget, so it never falls back: nothing to compare.
-            if walked.is_empty() {
-                continue;
-            }
+            let expected: Vec<Value> = key.path().select(&document).into_iter().cloned().collect();
+            assert_eq!(as_walked, expected, "{text}, walked, as a list");
+            assert_eq!(as_fallen, expected, "{text}, fallen back, as a list");
             let one_walked = cipher
-                .decrypt_as::<Value, JsonSubtree>(key.open(walked), aead())
+                .decrypt_as::<Option<Value>, JsonSubtree>(key.open(walked), aead())
                 .await;
             let one_fallen = cipher
-                .decrypt_as::<Value, JsonSubtree>(fallen_back, aead())
+                .decrypt_as::<Option<Value>, JsonSubtree>(fallen_back, aead())
                 .await;
             match (one_walked, one_fallen) {
                 (Ok(a), Ok(b)) => assert_eq!(a, b, "{text}, as one value"),
-                (Err(_), Err(_)) => {}
+                (Err(Error::OpenedType { .. }), Err(Error::OpenedType { .. })) => {
+                    assert!(expected.len() > 1, "{text}: refused only for several nodes")
+                }
                 (a, b) => panic!("{text}: the walk opened to {a:?}, the fallback to {b:?}"),
             }
         }
-        // As one value an ungated walk opens to its node, either way.
-        let key = subtree_key(&cipher, "$.obj", JsonOptions::default())
-            .await
-            .unwrap();
-        assert_eq!(
-            cipher
-                .decrypt_as::<Value, JsonSubtree>(key.open(vec![root.clone()]), aead())
-                .await
-                .unwrap(),
-            document["obj"],
-            "an ungated fallback opens to its node as one value"
-        );
-        // An ungated key names one node: a fallback with nothing at the path
-        // is refused.
-        let missing = subtree_key(&cipher, "$.missing", JsonOptions::default())
-            .await
-            .unwrap();
-        assertions::refused_as_opened_type(
-            &cipher
-                .decrypt_as::<Vec<Value>, JsonSubtree>(missing.open(vec![root]), aead())
-                .await,
-            Some("one node at the walked path"),
-            "an ungated fallback with nothing at the path",
-        );
     }
 }
 
@@ -1436,11 +1326,10 @@ mod given_rows_the_server_chose {
         let doc = seal(&cipher, &fixture()).await;
         let node = |j: usize| doc.node(j).unwrap();
         let repeated = keyed(&cipher, "$.nested", vec![node(1), node(1)]).await;
-        assertions::refused_as_opened_type(
+        assertions::refused_as_wrong_entry(
             &cipher
                 .decrypt_as::<Vec<Value>, JsonSubtree>(repeated, aead())
                 .await,
-            None,
             "a repeated row",
         );
 
