@@ -2244,11 +2244,7 @@ mod tests {
                 "two levels at the default bound"
             );
             assert_eq!(read_tokens(2, 90), Some(8_191), "two levels at 90");
-            assert_eq!(
-                read_tokens(2, 91),
-                None,
-                "two levels at 91 is past 8,192"
-            );
+            assert_eq!(read_tokens(2, 91), None, "two levels at 91 is past 8,192");
             assert_eq!(
                 read_tokens(3, 64),
                 None,
