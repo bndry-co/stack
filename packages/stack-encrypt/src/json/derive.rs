@@ -1382,7 +1382,8 @@ fn open_subtree<'a, K>(
 /// last step is one. Without gates, the rows are the children of the
 /// path's node and their subtrees, side by side: each child carries the
 /// selector of the path extended by its label, at depth `1`, right after
-/// the subtree before it.
+/// the subtree before it, and an element at the position after the
+/// elements before it, from `0`.
 fn place(
     rows: Vec<Row>,
     key: &JsonSubtreeKey,
@@ -1399,8 +1400,19 @@ fn place(
         let (bytes, depth) = if below {
             let bytes = child_selector_bytes(&at, &top.node.label)
                 .ok_or_else(|| wrong("a child of the walked node"))?;
+            // The walk does not return the node it starts from, so no row
+            // bounds where the children begin; an element's position does.
+            // The children of an array are its elements from `0`, so the
+            // `n`th row at depth 1 must be element `n`: a database that
+            // leaves out the first element would otherwise move every
+            // element down a position. A member's place is a keyed rank
+            // the client does not hold, so a member left out, and the last
+            // children of either, are still the database's word.
+            let out_of_place =
+                matches!(top.node.label, Label::Index(i) if i != forest.len() as u64);
             if top.d.is_some_and(|d| d != 1)
                 || next.is_some_and(|j| j != top.j)
+                || out_of_place
                 || key.selectors.of(bytes.clone())? != top.s
             {
                 return Err(wrong("a child of the walked node"));
