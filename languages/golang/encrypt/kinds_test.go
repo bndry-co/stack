@@ -16,6 +16,7 @@ import (
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // Everything the generator accepts round-trips: one sealed field of every
@@ -322,5 +323,21 @@ func TestARedactedStructPrintsNoSealedField(t *testing.T) {
 	slog.New(slog.NewTextHandler(&buf, nil)).Info("secret", "s", s)
 	if strings.Contains(buf.String(), "hunter2") {
 		t.Errorf("slog printed the sealed field: %s", buf.String())
+	}
+}
+
+// A value with no storage form (here a string that is not UTF-8, which the
+// JSON document of earlier releases wrote as U+FFFD) refuses the batch as
+// ErrEncoding naming the value, with vcffi's class wrapped and no byte of
+// the value in the error.
+func TestAnOpaqueStructWithNoStorageFormIsErrEncoding(t *testing.T) {
+	c := deterministicClient(t)
+	in := []testusers.Everything{{S: "fine"}, {S: "secret-4242\xff"}}
+	_, err := testusers.EncryptEverything(context.Background(), c.DefaultKeyset(), in)
+	if !errors.Is(err, encrypt.ErrEncoding) || !errors.Is(err, vcffi.ErrUnwritable) {
+		t.Fatalf("err = %v, want ErrEncoding wrapping vcffi.ErrUnwritable", err)
+	}
+	if !strings.Contains(err.Error(), "value 1") || strings.Contains(err.Error(), "4242") {
+		t.Fatalf("err = %v, want it to name value 1 and hold none of the value", err)
 	}
 }

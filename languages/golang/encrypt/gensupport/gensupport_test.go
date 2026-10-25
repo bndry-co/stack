@@ -64,12 +64,12 @@ func TestNoticesPrintOnceForEachType(t *testing.T) {
 }
 
 func TestVersionConstantIsTyped(t *testing.T) {
-	// A generated file holds `const _ = gensupport.GeneratedVersion1`. The
+	// A generated file holds `const _ = gensupport.GeneratedVersion2`. The
 	// constant's type is unexported, so no other package can declare a value
 	// that satisfies the same reference.
 	accepts := func(generatedVersion) {}
-	accepts(GeneratedVersion1)
-	if GeneratedVersion1 != 1 {
-		t.Fatalf("GeneratedVersion1 = %d", GeneratedVersion1)
+	accepts(GeneratedVersion2)
+	if GeneratedVersion2 != 2 {
+		t.Fatalf("GeneratedVersion2 = %d", GeneratedVersion2)
 	}
 }

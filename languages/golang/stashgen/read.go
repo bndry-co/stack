@@ -1121,22 +1121,26 @@ func notJSONEncodable(t types.Type, seen map[types.Type]bool) string {
 	return "is not a type JSON carries"
 }
 
-// notStorable says why the storage profile (vcffi.MarshalStorage) cannot
-// carry a type both ways when encoding/json can, or "" when it can. The
-// storage profile writes a struct field by field, by name, and a value
-// with MarshalText as its text; it knows nothing of MarshalJSON. So a type
-// that carries itself through JSON alone, over a struct with unexported
-// fields, would be written without them, and a struct with no exported
-// field at all has no storage form. notJSONEncodable has refused every
-// other type the two disagree on.
+// notStorable says why the storage profile (vcffi.MarshalStorage and
+// UnmarshalStorage) cannot carry a type both ways, or "" when it can, by
+// vcffi's own rules: a scalar by its kind; a type with MarshalText and
+// UnmarshalText as its text; a slice, array or pointer by its element; a
+// map whose key is an integer, a string, bytes or text, by its value; a
+// struct by its exported fields. It knows nothing of MarshalJSON, so a type
+// that carries itself through JSON alone is walked like any other.
+// notJSONEncodable is the other half: an opaque struct must still read the
+// JSON documents earlier releases sealed.
 func notStorable(t types.Type, seen map[types.Type]bool) string {
 	if seen[t] {
 		return ""
 	}
 	seen[t] = true
 	defer delete(seen, t)
-	if hasMethod(types.NewPointer(t), "UnmarshalText") && hasMethod(t, "MarshalText") {
-		return ""
+	if reason := noStorageForm(t); reason != "" {
+		return reason
+	}
+	if text, reason := textForm(t); text || reason != "" {
+		return reason
 	}
 	switch u := t.Underlying().(type) {
 	case *types.Slice:
@@ -1146,24 +1150,94 @@ func notStorable(t types.Type, seen map[types.Type]bool) string {
 	case *types.Pointer:
 		return notStorable(u.Elem(), seen)
 	case *types.Map:
+		if reason := notStorableKey(u.Key()); reason != "" {
+			return reason
+		}
 		return notStorable(u.Elem(), seen)
 	case *types.Struct:
-		exported := 0
+		// vcffi writes a struct by its exported fields and refuses one
+		// that has unexported fields only; a struct with none at all
+		// (struct{}) is an empty object, read back as itself.
 		for i := range u.NumFields() {
 			fld := u.Field(i)
 			if !fld.Exported() {
 				return fmt.Sprintf("has an unexported field %s that a storage blob would drop (give the type MarshalText and UnmarshalText)", fld.Name())
 			}
-			exported++
 			if reason := notStorable(fld.Type(), seen); reason != "" {
 				return "has a field " + fld.Name() + " that " + reason
 			}
 		}
-		if exported == 0 {
-			return "has no exported field, and a storage blob writes a struct by its exported fields"
-		}
 	}
 	return ""
+}
+
+// noStorageForm refuses vitaminc's logical value types, which the
+// transport carries and the storage profile does not: encrypt.Date and
+// encrypt.Decimal (vcvalue.Date and vcvalue.Decimal), and vcvalue's other
+// logical types. Its 128-bit integers and Object have a storage form.
+func noStorageForm(t types.Type) string {
+	switch kind, _ := valueKind(t); kind {
+	case KindDate:
+		return "is a date, which has no storage form (store it as text, or by its parts)"
+	case KindDecimal:
+		return "is a decimal, which has no storage form (store it as text, or by its parts)"
+	case KindInt128, KindUint128:
+		return ""
+	}
+	named, ok := types.Unalias(t).(*types.Named)
+	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != vcvaluePath || named.Obj().Name() == "Object" {
+		return ""
+	}
+	return "is vcvalue." + named.Obj().Name() + ", which has no storage form"
+}
+
+// textForm reports whether t is written as its text, and why not when it
+// has only half of the pair: a type with MarshalText alone is written as
+// text and read back by its kind, which fails; one with UnmarshalText
+// alone is written by its kind and read back as text.
+func textForm(t types.Type) (bool, string) {
+	marshals := hasMethod(t, "MarshalText") || hasMethod(types.NewPointer(t), "MarshalText")
+	unmarshals := hasMethod(types.NewPointer(t), "UnmarshalText")
+	switch {
+	case marshals && unmarshals:
+		return true, ""
+	case marshals:
+		return false, "has MarshalText but no UnmarshalText, so a storage blob would write it as text and could not read it back"
+	case unmarshals:
+		return false, "has UnmarshalText but no MarshalText, so a storage blob would write it by its kind and read it back as text"
+	}
+	return false, ""
+}
+
+// notStorableKey says why a map key has no storage form: vcffi takes an
+// integer, a string, bytes (a byte slice or array, a 128-bit integer) or a
+// type with MarshalText and UnmarshalText.
+func notStorableKey(k types.Type) string {
+	if kind, _ := valueKind(k); kind == KindInt128 || kind == KindUint128 {
+		return ""
+	}
+	if text, reason := textForm(k); text {
+		return ""
+	} else if reason != "" {
+		return "has a map key that " + reason
+	}
+	switch u := k.Underlying().(type) {
+	case *types.Basic:
+		if u.Info()&(types.IsInteger|types.IsString) != 0 {
+			return ""
+		}
+	case *types.Slice, *types.Array:
+		var elem types.Type
+		if s, ok := u.(*types.Slice); ok {
+			elem = s.Elem()
+		} else {
+			elem = u.(*types.Array).Elem()
+		}
+		if b, ok := elem.Underlying().(*types.Basic); ok && b.Kind() == types.Byte {
+			return ""
+		}
+	}
+	return "has a map key that is not an integer, a string, bytes or text, which a storage blob cannot key a map by"
 }
 
 // valueBaseName is the plaintext type's bare name: User for User, *pb.Individual, crm.Contact.
