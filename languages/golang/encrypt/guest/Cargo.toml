@@ -82,6 +82,33 @@ recipher = "=0.3.1"
 base16ct = { version = "0.2.0", features = ["alloc"] }
 base64ct = { version = "1.7", features = ["alloc"] }
 
+# TEMPORARY: vitaminc from cipherstash/vitaminc#526 (head c226edf, stacked on
+# #520), which adds the storage profile for kept values (Rust
+# `vitaminc_aead_frame::storage`, Go `vcffi.MarshalStorage`). Both are
+# unreleased. Every vitaminc crate this build resolves at 0.8 is patched to
+# the one git revision, so no type is duplicated between a crates.io and a
+# git copy. The repository root's Cargo.toml and the other Go guest carry the same
+# block, and languages/golang/go.mod pins vcffi and vcvalue to the same
+# commit. Replace all of them with the vitaminc release that ships #520/#526.
+# (The 0.5 copies cipherstash-client pulls in are a separate semver line and
+# are not patched.)
+[patch.crates-io]
+vitaminc = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-aead-derive = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-aead-frame = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-context = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-normalize = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-ore = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-protected-derive = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-random = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-random-derives = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+vitaminc-traits = { git = "https://github.com/cipherstash/vitaminc", rev = "c226edfeaf436883018cbabe3f709860b269eca9" }
+
 [profile.release]
 # Smaller .wasm; the guest is IO-bound on the FFI copy and the ZeroKMS round
 # trip, not on codegen.

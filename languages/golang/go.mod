@@ -2,9 +2,12 @@ module github.com/cipherstash/stack/languages/golang
 
 go 1.26.10
 
+// TEMPORARY: vcffi and vcvalue at cipherstash/vitaminc#526 (head c226edf),
+// unreleased, for the storage profile (vcffi.MarshalStorage). The Rust
+// workspaces patch vitaminc to the same commit. Replace with the release.
 require (
-	github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261017042657-ca2298d3e7e8
-	github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261017042657-ca2298d3e7e8
+	github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261025114513-c226edfeaf43
+	github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261025114513-c226edfeaf43
 	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/oauth2 v0.37.0
 )
