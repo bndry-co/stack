@@ -100,10 +100,10 @@ impl JsonTextError {
 /// # Ok::<(), JsonTextError>(())
 /// ```
 pub fn parse_text(text: &[u8]) -> Result<Value, JsonTextError> {
-    let mut parser = Parser { text, at: 0 };
+    let mut parser = Parser { text, rest: text };
     let mut value = parser.value(MAX_DEPTH)?;
     parser.skip_whitespace();
-    if parser.at != text.len() {
+    if !parser.rest.is_empty() {
         super::wipe_value(&mut value);
         return Err(parser.syntax());
     }
@@ -142,45 +142,49 @@ impl std::io::Write for Counter {
 /// parser reads, the other reads too.
 const MAX_DEPTH: usize = 127;
 
+/// The parser's place: the whole text, for reporting a position, and the
+/// part not read yet. It moves by re-slicing `rest`, never by index
+/// arithmetic.
 struct Parser<'t> {
     text: &'t [u8],
-    at: usize,
+    rest: &'t [u8],
 }
 
-impl Parser<'_> {
-    /// The line and column of the byte at `at`, from 1, as a syntax error.
+impl<'t> Parser<'t> {
+    /// A syntax error at the first byte not read.
     fn syntax(&self) -> JsonTextError {
-        let (line, column) = self.place(self.at);
+        self.syntax_at(self.rest)
+    }
+
+    /// A syntax error at the first byte of `at`, a tail of the text.
+    fn syntax_at(&self, at: &[u8]) -> JsonTextError {
+        let (line, column) = self.place(at);
         JsonTextError::Syntax { line, column }
     }
 
-    fn place(&self, at: usize) -> (usize, usize) {
-        let before = &self.text[..at.min(self.text.len())];
+    /// The line and column, from 1, of the first byte of `at`, a tail of
+    /// the text (the end, for an empty one).
+    fn place(&self, at: &[u8]) -> (usize, usize) {
+        let before = &self.text[..self.text.len() - at.len()];
         let line = before.iter().filter(|&&b| b == b'\n').count() + 1;
-        let start = before
-            .iter()
-            .rposition(|&b| b == b'\n')
-            .map_or(0, |n| n + 1);
-        (line, before.len() - start + 1)
+        let column = before.iter().rev().take_while(|&&b| b != b'\n').count() + 1;
+        (line, column)
     }
 
     fn peek(&self) -> Option<u8> {
-        self.text.get(self.at).copied()
+        self.rest.first().copied()
     }
 
-    fn skip_whitespace(&mut self) {
-        while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r')) {
-            self.at += 1;
+    /// Step past the next byte, which the caller has peeked.
+    fn bump(&mut self) {
+        if let [_, tail @ ..] = self.rest {
+            self.rest = tail;
         }
     }
 
-    /// Consume `byte`, or refuse.
-    fn expect(&mut self, byte: u8) -> Result<(), JsonTextError> {
-        if self.peek() == Some(byte) {
-            self.at += 1;
-            Ok(())
-        } else {
-            Err(self.syntax())
+    fn skip_whitespace(&mut self) {
+        while let [b' ' | b'\t' | b'\n' | b'\r', tail @ ..] = self.rest {
+            self.rest = tail;
         }
     }
 
@@ -200,11 +204,12 @@ impl Parser<'_> {
     }
 
     fn literal(&mut self, word: &[u8], value: Value) -> Result<Value, JsonTextError> {
-        if self.text[self.at..].starts_with(word) {
-            self.at += word.len();
-            Ok(value)
-        } else {
-            Err(self.syntax())
+        match self.rest.strip_prefix(word) {
+            Some(tail) => {
+                self.rest = tail;
+                Ok(value)
+            }
+            None => Err(self.syntax()),
         }
     }
 
@@ -213,8 +218,34 @@ impl Parser<'_> {
         let Some(inner) = depth.checked_sub(1) else {
             return Err(self.syntax());
         };
-        self.at += 1;
+        self.bump();
         Ok(inner)
+    }
+
+    /// After a container's member: a comma, or `close` to end it.
+    fn next_or_close(&mut self, close: u8) -> Result<bool, JsonTextError> {
+        self.skip_whitespace();
+        match self.peek() {
+            Some(b',') => {
+                self.bump();
+                Ok(true)
+            }
+            Some(byte) if byte == close => {
+                self.bump();
+                Ok(false)
+            }
+            _ => Err(self.syntax()),
+        }
+    }
+
+    /// Whether the container is empty, consuming its `close` if so.
+    fn empty(&mut self, close: u8) -> bool {
+        self.skip_whitespace();
+        if self.peek() == Some(close) {
+            self.bump();
+            return true;
+        }
+        false
     }
 
     fn array(&mut self, depth: usize) -> Result<Value, JsonTextError> {
@@ -232,21 +263,13 @@ impl Parser<'_> {
     }
 
     fn items(&mut self, depth: usize, items: &mut Vec<Value>) -> Result<(), JsonTextError> {
-        self.skip_whitespace();
-        if self.peek() == Some(b']') {
-            self.at += 1;
+        if self.empty(b']') {
             return Ok(());
         }
         loop {
             push_wiping(items, self.value(depth)?);
-            self.skip_whitespace();
-            match self.peek() {
-                Some(b',') => self.at += 1,
-                Some(b']') => {
-                    self.at += 1;
-                    return Ok(());
-                }
-                _ => return Err(self.syntax()),
+            if !self.next_or_close(b']')? {
+                return Ok(());
             }
         }
     }
@@ -270,9 +293,7 @@ impl Parser<'_> {
         depth: usize,
         members: &mut Map<String, Value>,
     ) -> Result<(), JsonTextError> {
-        self.skip_whitespace();
-        if self.peek() == Some(b'}') {
-            self.at += 1;
+        if self.empty(b'}') {
             return Ok(());
         }
         loop {
@@ -280,19 +301,22 @@ impl Parser<'_> {
             if self.peek() != Some(b'"') {
                 return Err(self.syntax());
             }
+            let name = self.rest;
             let mut key = self.string()?;
             if members.contains_key(&key) {
                 key.zeroize();
                 // The place of the name's closing quote, as serde_json
-                // reports it.
-                let (line, column) = self.place(self.at - 1);
+                // reports it: the last byte the name took.
+                let quote = &name[name.len() - self.rest.len() - 1..];
+                let (line, column) = self.place(quote);
                 return Err(JsonTextError::DuplicateKey { line, column });
             }
             self.skip_whitespace();
-            if let Err(error) = self.expect(b':') {
+            if self.peek() != Some(b':') {
                 key.zeroize();
-                return Err(error);
+                return Err(self.syntax());
             }
+            self.bump();
             match self.value(depth) {
                 Ok(value) => {
                     let _ = members.insert(key, value);
@@ -302,14 +326,8 @@ impl Parser<'_> {
                     return Err(error);
                 }
             }
-            self.skip_whitespace();
-            match self.peek() {
-                Some(b',') => self.at += 1,
-                Some(b'}') => {
-                    self.at += 1;
-                    return Ok(());
-                }
-                _ => return Err(self.syntax()),
+            if !self.next_or_close(b'}')? {
+                return Ok(());
             }
         }
     }
@@ -318,17 +336,8 @@ impl Parser<'_> {
     /// than its raw text, so the buffer is sized to that before anything is
     /// written and never grows; on a refusal it is wiped.
     fn string(&mut self) -> Result<String, JsonTextError> {
-        self.at += 1;
-        let raw = self.text[self.at..]
-            .iter()
-            .scan(false, |escaped, &b| {
-                let end = b == b'"' && !*escaped;
-                *escaped = !*escaped && b == b'\\';
-                Some(end)
-            })
-            .position(|end| end)
-            .unwrap_or(self.text.len() - self.at);
-        let mut out = String::with_capacity(raw);
+        self.bump();
+        let mut out = String::with_capacity(raw_len(self.rest));
         match self.decode(&mut out) {
             Ok(()) => Ok(out),
             Err(error) => {
@@ -341,25 +350,23 @@ impl Parser<'_> {
     fn decode(&mut self, out: &mut String) -> Result<(), JsonTextError> {
         loop {
             // A run of plain bytes, copied as one checked UTF-8 slice.
-            let run = self.text[self.at..]
+            let run = self
+                .rest
                 .iter()
                 .take_while(|&&b| b != b'"' && b != b'\\' && b >= 0x20)
                 .count();
-            let plain = std::str::from_utf8(&self.text[self.at..self.at + run]).map_err(|e| {
-                self.at += e.valid_up_to();
-                self.syntax()
-            })?;
+            let (plain, tail) = self.rest.split_at(run);
+            let plain = std::str::from_utf8(plain).map_err(|_| self.syntax())?;
             out.push_str(plain);
-            self.at += run;
+            self.rest = tail;
             match self.peek() {
                 Some(b'"') => {
-                    self.at += 1;
+                    self.bump();
                     return Ok(());
                 }
                 Some(b'\\') => {
-                    self.at += 1;
-                    let c = self.escape()?;
-                    out.push(c);
+                    self.bump();
+                    out.push(self.escape()?);
                 }
                 // A control character, or the end of the text.
                 _ => return Err(self.syntax()),
@@ -379,12 +386,12 @@ impl Parser<'_> {
             Some(b'r') => '\r',
             Some(b't') => '\t',
             Some(b'u') => {
-                self.at += 1;
+                self.bump();
                 return self.unicode();
             }
             _ => return Err(self.syntax()),
         };
-        self.at += 1;
+        self.bump();
         Ok(c)
     }
 
@@ -393,10 +400,10 @@ impl Parser<'_> {
     fn unicode(&mut self) -> Result<char, JsonTextError> {
         let high = self.hex4()?;
         let code = if (0xD800..0xDC00).contains(&high) {
-            if !self.text[self.at..].starts_with(b"\\u") {
+            let Some(tail) = self.rest.strip_prefix(b"\\u") else {
                 return Err(self.syntax());
-            }
-            self.at += 2;
+            };
+            self.rest = tail;
             let low = self.hex4()?;
             if !(0xDC00..0xE000).contains(&low) {
                 return Err(self.syntax());
@@ -409,10 +416,9 @@ impl Parser<'_> {
     }
 
     fn hex4(&mut self) -> Result<u32, JsonTextError> {
-        let digits = self
-            .text
-            .get(self.at..self.at + 4)
-            .ok_or_else(|| self.syntax())?;
+        let Some((digits, tail)) = self.rest.split_first_chunk::<4>() else {
+            return Err(self.syntax());
+        };
         let mut code = 0;
         for &d in digits {
             let Some(v) = char::from(d).to_digit(16) else {
@@ -420,7 +426,7 @@ impl Parser<'_> {
             };
             code = code * 16 + v;
         }
-        self.at += 4;
+        self.rest = tail;
         Ok(code)
     }
 
@@ -429,38 +435,39 @@ impl Parser<'_> {
     /// fraction or an exponent is the nearest binary64 (std's parser,
     /// correctly rounded, as serde_json's `float_roundtrip` is).
     fn number(&mut self) -> Result<Value, JsonTextError> {
-        let start = self.at;
+        let start = self.rest;
         let negative = self.peek() == Some(b'-');
         if negative {
-            self.at += 1;
+            self.bump();
         }
         match self.peek() {
-            Some(b'0') => self.at += 1,
+            Some(b'0') => self.bump(),
             Some(b'1'..=b'9') => self.digits(),
             _ => return Err(self.syntax()),
         }
         let mut float = false;
         if self.peek() == Some(b'.') {
-            self.at += 1;
+            self.bump();
             self.some_digits()?;
             float = true;
         }
         if matches!(self.peek(), Some(b'e' | b'E')) {
-            self.at += 1;
+            self.bump();
             if matches!(self.peek(), Some(b'+' | b'-')) {
-                self.at += 1;
+                self.bump();
             }
             self.some_digits()?;
             float = true;
         }
+        let token = &start[..start.len() - self.rest.len()];
         // ASCII by the grammar just read.
-        let token = std::str::from_utf8(&self.text[start..self.at]).map_err(|_| self.syntax())?;
+        let token = std::str::from_utf8(token).map_err(|_| self.syntax_at(start))?;
         let number = if float {
             token
                 .parse::<f64>()
                 .ok()
                 .and_then(Number::from_f64)
-                .ok_or_else(|| self.syntax())?
+                .ok_or_else(|| self.syntax_at(start))?
         } else if !negative {
             Number::from(
                 token
@@ -473,7 +480,7 @@ impl Parser<'_> {
                 .map_err(|_| JsonTextError::IntegerRange)?
             {
                 // serde_json reads `-0` as the float negative zero.
-                0 => Number::from_f64(-0.0).ok_or_else(|| self.syntax())?,
+                0 => Number::from_f64(-0.0).ok_or_else(|| self.syntax_at(start))?,
                 n => Number::from(n),
             }
         };
@@ -481,8 +488,8 @@ impl Parser<'_> {
     }
 
     fn digits(&mut self) {
-        while matches!(self.peek(), Some(b'0'..=b'9')) {
-            self.at += 1;
+        while let [b'0'..=b'9', tail @ ..] = self.rest {
+            self.rest = tail;
         }
     }
 
@@ -496,12 +503,26 @@ impl Parser<'_> {
     }
 }
 
+/// The length of a string's raw text, from after its opening quote to
+/// before its closing one (or to the end, when it has none): an escaped
+/// quote does not end it.
+fn raw_len(rest: &[u8]) -> usize {
+    let mut escaped = false;
+    rest.iter()
+        .take_while(|&&b| {
+            let end = b == b'"' && !escaped;
+            escaped = !escaped && b == b'\\';
+            !end
+        })
+        .count()
+}
+
 /// Push onto `items`, wiping the old buffer when it is replaced by a larger
 /// one: the values it held were moved, but their bytes (a number, the
 /// pointer and length of a string) stay in the freed block otherwise.
 fn push_wiping(items: &mut Vec<Value>, value: Value) {
     if items.len() == items.capacity() {
-        let mut grown = Vec::with_capacity((items.capacity() * 2).max(4));
+        let mut grown = Vec::with_capacity(items.capacity().saturating_mul(2).max(4));
         grown.append(items);
         items.spare_capacity_mut().zeroize();
         *items = grown;
@@ -723,6 +744,8 @@ mod tests {
             b"{\"a\":1,}",
             b"{1:1}",
             b"{\"a\":1 \"b\":2}",
+            b"[1}",
+            b"{\"a\":1]",
             b"[",
             b"{",
             b"{\"a\":",
@@ -766,6 +789,36 @@ mod tests {
         let text = to_text(&value).unwrap();
         assert_eq!(text.len(), text.capacity(), "sized before it is written");
         assert_eq!(text, serde_json::to_vec(&value).unwrap());
+    }
+
+    #[test]
+    fn a_string_is_decoded_into_a_buffer_its_raw_length() {
+        // The buffer is sized once, to the raw text between the quotes, so
+        // it never grows: an escaped quote does not end the count.
+        for (text, raw) in [
+            (&br#""abc""#[..], 3),
+            (br#""a\"b\\""#, 6),
+            (br#""\u00e9x""#, 7),
+            (br#""""#, 0),
+        ] {
+            let Value::String(decoded) = parse_text(text).unwrap() else {
+                panic!("a string")
+            };
+            assert_eq!(decoded.capacity(), raw, "{}", String::from_utf8_lossy(text));
+        }
+        assert_eq!(raw_len(b"ab"), 2, "an unterminated string runs to the end");
+    }
+
+    #[test]
+    fn an_array_grows_by_doubling_from_four() {
+        let mut items = Vec::new();
+        let mut capacities = Vec::new();
+        for n in 0..9 {
+            push_wiping(&mut items, json!(n));
+            capacities.push(items.capacity());
+        }
+        assert_eq!(capacities, [4, 4, 4, 4, 8, 8, 8, 8, 16]);
+        assert_eq!(items, (0..9).map(|n| json!(n)).collect::<Vec<_>>());
     }
 
     mod differential {

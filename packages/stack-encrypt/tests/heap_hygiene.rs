@@ -322,6 +322,25 @@ fn verify_leaves_no_plaintext_on_the_heap() {
     });
 }
 
+/// A JSON document a binding hands over is parsed by the engine's own
+/// parser and held in a `JsonPlaintext`, which wipes it when it drops: the
+/// marker in a key, in a string with an escape (decoded, not borrowed) and
+/// past 128 bytes leaves no freed block. A refused document wipes what was
+/// built.
+#[test]
+fn a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap() {
+    let mark = marked("doc");
+    let pad = "x".repeat(160);
+    let document = format!(r#"{{"{mark}": ["{mark}\n{pad}", 1.5], "n": "{mark}"}}"#);
+    let refused = format!(r#"{{"{mark}": "{mark}\n", "{mark}": 1}}"#);
+    let (document, refused) = (frame(document.as_str()), frame(refused.as_str()));
+    watched("read_json", || {
+        let parsed = stack_encrypt::dynamic::read_json(&document).expect("a document");
+        drop(parsed);
+        assert!(stack_encrypt::dynamic::read_json(&refused).is_err());
+    });
+}
+
 /// The spy itself: a plain `String` holding the marker, freed while
 /// watched, fails the watch. Without this a spy that saw nothing would pass
 /// every test above.

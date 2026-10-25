@@ -116,17 +116,6 @@ exclude_re = [
   # A document always has a root, so its terms are never empty: `false` is
   # the value `is_empty` returns. The `true` replacement is still caught.
   'stack-encrypt/src/json/derive\.rs:\d+:\d+: replace JsonTerms::is_empty -> bool with false$',
-  # JSON text at the boundary. The strict visitor's `expecting` writes only
-  # the "expected ..." half of a serde error's message, and `classify` reads
-  # nothing of a message but the duplicate-member marker, so writing
-  # nothing refuses the same text with the same error. Its `visit_unit`
-  # returns `Value::Null`, which is `Value::default()`.
-  'stack-encrypt/src/json/text\.rs:\d+:\d+: replace <impl Visitor<\x27de> for StrictVisitor>::(expecting -> fmt::Result|visit_unit -> Result<Value, E>) with Ok\(Default::default\(\)\)$',
-  # `JsonPlaintext`'s `Drop` wipes the document as it is freed: no safe code
-  # can read the value once it is dropped, so no test can tell the wipe from
-  # none. What it runs, `wipe_value`, is pinned by
-  # `wipe_value_leaves_no_plaintext_in_the_value`.
-  'stack-encrypt/src/dynamic/json\.rs:\d+:\d+: replace <impl Drop for JsonPlaintext>::drop with \(\)$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is
