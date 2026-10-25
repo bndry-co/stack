@@ -64,11 +64,12 @@ pub(crate) const MAX_DEPTH: usize = 127;
 /// returns.
 ///
 /// A document with a wider array or object is refused when it is sealed,
-/// and a path naming a position past this, or a wildcard bound past it, is
-/// refused when its subtree key is derived. No stored document has a node
-/// there, so the refusal loses no answer: a position reaches the server only
-/// inside a token, so without the refusal the read would find nothing,
-/// where the caller asked for something no document can hold.
+/// and a path naming a position past this is refused when its subtree key
+/// is derived. No stored document has a node there, so the refusal loses no
+/// answer: a position reaches the server only inside a token, so without
+/// the refusal the read would find nothing, where the caller asked for
+/// something no document can hold. A wildcard's bound is not held to this:
+/// the token cap ([`MAX_READ_TOKENS`]) is far lower and refuses first.
 const MAX_ORDINAL: u32 = i32::MAX.unsigned_abs();
 
 /// `n` as an ordinal, or [`TermError::JsonTooWide`] past [`MAX_ORDINAL`].
@@ -1778,7 +1779,9 @@ fn subtree_key_for(
     path: &JsonPath,
     bound: u32,
 ) -> Result<JsonSubtreeKey, TermError> {
-    let bound = fit_ordinal(bound)?;
+    // The bound is not checked against PostgreSQL's integer: a path with no
+    // wildcard never uses it, and with one the token cap refuses any bound
+    // of MAX_READ_TOKENS or more first, naming the bound in its help.
     let segments = path.segments();
     // No sealed document has a node deeper than this, and the expansion
     // recurses once per step.
@@ -1920,11 +1923,12 @@ impl<K> KeysetCipher<'_, K> {
     ///
     /// # Errors
     ///
-    /// [`TermError::JsonTooWide`] for a path naming an array position, or
-    /// a `bound`, past 2³¹ − 1: no stored document has an element there.
+    /// [`TermError::JsonTooWide`] for a path naming an array position past
+    /// 2³¹ − 1: no stored document has an element there.
     /// [`TermError::JsonTooDeep`] for a path deeper than any document the
     /// index seals. [`TermError::JsonWildcardTooWide`] for a path whose
-    /// wildcards would expand past 8,192 tokens at `bound`.
+    /// wildcards would expand past 8,192 tokens at `bound`; a path with no
+    /// wildcard takes any `bound`, since it uses none.
     pub fn json_subtree_key_with_bound<'c>(
         &self,
         path: &JsonPath,
@@ -2275,9 +2279,15 @@ mod tests {
             assert!(
                 matches!(
                     key_for(&JsonOptions::default(), "$.a[*]", 2_147_483_648),
-                    Err(TermError::JsonTooWide)
+                    Err(TermError::JsonWildcardTooWide)
                 ),
-                "a bound past PostgreSQL's integer"
+                "a bound past PostgreSQL's integer is past the token cap first"
+            );
+            let unused = key_for(&JsonOptions::default(), "$.a.b", u32::MAX).unwrap();
+            assert_eq!(
+                unused.reads.len(),
+                1,
+                "a path with no wildcard uses no bound, so any bound is taken"
             );
         }
     }
