@@ -474,6 +474,37 @@ mod given_the_rows_of_a_read {
         assertions::wrong_entry(open_value(&cipher, a.open(rows)).await, NEXT);
     }
 
+    /// The one substitution only the consecutive-position rule catches
+    /// (design decision 8): a read of `$.nested.list[0]` answered with the
+    /// element itself (5) and then the other element's `x` (8) in place of
+    /// its own (6), carrying 6's self tag. Every element's `x` shares one
+    /// selector, the label is `x` either way, the depth and the parent's
+    /// child count agree, and the forged self tag matches; the row's
+    /// authenticated position, 8 where 6 is due, is the one thing that
+    /// refuses it. Opened, it would read `{"x": 2}` for `{"x": 1}`.
+    #[tokio::test]
+    async fn another_elements_child_in_place_of_the_nodes_own_is_refused_by_its_position() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let first = key(&cipher, "$.nested.list[0]").await;
+        let honest = walk(&doc, &first);
+        assert_eq!(
+            honest.iter().map(|n| n.ordinal()).collect::<Vec<_>>(),
+            [5, 6],
+            "the element and its x"
+        );
+        assert_eq!(
+            open_value(&cipher, first.open(honest)).await.unwrap(),
+            json!({"x": 1})
+        );
+        let own_x = serde_json::to_value(doc.node(6).unwrap()).unwrap()["x"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let swapped = with_x(vec![row(&doc, 5, Some(0)), row(&doc, 8, Some(1))], 1, own_x);
+        assertions::wrong_entry(open_value(&cipher, first.open(swapped)).await, NEXT);
+    }
+
     #[tokio::test]
     async fn the_sealed_root_among_read_rows_is_refused() {
         let (cipher, _) = cipher().await;
