@@ -10,13 +10,13 @@
 --! Stack Encrypt's JSON index writes. It shares no wire shape and no SQL with
 --! the SteVec surface. Four jsonb-backed domains (none over another domain,
 --! so the native-jsonb firewall in blockers.sql attaches):
---!   - public.{{prefix}}_json_search       — storage: an EQL envelope `{v, i, h, sv, q}`.
---!   - public.{{prefix}}_json_entry — one `sv` element (returned by `->`
---!                                        and the subtree read).
+--!   - public.{{prefix}}_json_search — storage: an EQL envelope `{v, i, h, sv, q}`.
+--!   - public.{{prefix}}_json_entry  — one `sv` element (returned by `->`
+--!                                    and the subtree read).
 --!   - {{prefix}}.query_json         — a containment needle: the element-nested
---!                                        projection of the needle's selectors.
+--!                                    projection of the needle's selectors.
 --!   - {{prefix}}.query_json_leaf    — an ordering operand at a path: a
---!                                        selector and a leaf ordering term.
+--!                                    selector and a leaf ordering term.
 --!
 --! The design is `docs/plans/2026-10-17-json-tree-index.md`
 --! at the repository root. The document's per-entry fields:
