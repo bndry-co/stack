@@ -105,6 +105,7 @@ type genField struct {
 	queries    []queryMethod // the field's query methods, one for each operator
 	fieldType  string        // "EmailField"
 	pathType   string        // the type with its package path, for model checks
+	jsonPaths  []jsonPath    // a document field's ordered paths, each with its accessor
 }
 
 // definedScalar reports whether the field's type is a named type over a
@@ -708,7 +709,7 @@ func (r *reader) buildFields(c *collected) error {
 			return fieldErr(typeName, cf.goName, "two fields write the name %q: %s and %s", name, prev, cf.goName)
 		}
 		seen[name] = cf.goName
-		field := Field{Name: name, GoName: cf.goName, GoType: r.goType(cf.typ), Verb: t.Verb, Indexes: t.Indexes, EQLType: t.EQLType, Identity: t.Identity}
+		field := Field{Name: name, GoName: cf.goName, GoType: r.goType(cf.typ), Verb: t.Verb, Indexes: t.Indexes, EQLType: t.EQLType, TargetOptions: t.EQLOptions, Identity: t.Identity}
 		if t.Omit {
 			field.Verb = VerbOmit
 		}
@@ -759,6 +760,11 @@ func (r *reader) buildFields(c *collected) error {
 			if eqlType == nil {
 				if len(r.eql) == 0 {
 					return fieldErr(typeName, cf.goName, "EQL types are not available yet; this build of the engine produces none")
+				}
+				for _, known := range r.eql {
+					if EQLGoName(known.Name) == field.EQLType && known.Name != field.EQLType {
+						return fieldErr(typeName, cf.goName, "encrypt_into names the EQL type as the engine does, %s; eql.%s is its Go type", known.Name, field.EQLType)
+					}
 				}
 				return fieldErr(typeName, cf.goName, "the engine has no EQL type %s", field.EQLType)
 			}
@@ -953,6 +959,9 @@ func valueKind(t types.Type) (Kind, bool) {
 		}
 		if path == "time" && name == "Time" {
 			return KindTimestamp, true
+		}
+		if path == "encoding/json" && name == "RawMessage" {
+			return KindJSON, true
 		}
 		if path != encryptPath && path != vcvaluePath {
 			continue

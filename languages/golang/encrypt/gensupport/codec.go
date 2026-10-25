@@ -26,7 +26,7 @@ type Output struct {
 	Match      encrypt.MatchTerm
 	Ore        encrypt.OreTerm
 	Ope        encrypt.OpeTerm
-	JSON       encrypt.JSONTerm
+	JSON       encrypt.JSONTerm //nolint:staticcheck // the deprecated output, kept so a declaration naming it fails into a Go type
 	EQL        []byte
 }
 

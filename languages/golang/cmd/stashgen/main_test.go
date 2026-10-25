@@ -276,3 +276,69 @@ func TestModelFlagsRepeat(t *testing.T) {
 		t.Fatalf("String = %q", got)
 	}
 }
+
+// A json.RawMessage field stored as an encrypted JSON document, against the
+// embedded engine with the EQL types: the generated entry has the
+// document's methods and an accessor per ordered path, and every refusal
+// names the field before anything is written.
+func TestRunGeneratesEncryptedJSONFields(t *testing.T) {
+	checker, err := encrypt.NewChecker(context.Background())
+	if err != nil {
+		t.Skip(err)
+	}
+	_ = checker.Close()
+	source := func(fields string) string {
+		return "package users\n\nimport \"encoding/json\"\n\nvar _ json.RawMessage\n\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n" + fields + "\n}\n"
+	}
+	generate := func(fields string) (string, string, int) {
+		dir := writeModule(t, map[string]string{"model.go": source(fields)})
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"-type", "Customer"}, dir, &stdout, &stderr, stashgen.GuestEngine)
+		written, _ := os.ReadFile(filepath.Join(dir, "customer_stash.go"))
+		return string(written), stderr.String(), code
+	}
+	written, stderr, code := generate("\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJson(ordered=$.age;$.visits[*].at,sealed_root=false)\"`\n\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=EncryptedJson,null=sql\"`")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		"Profile eql.EncryptedJSON",
+		"Prefs   *eql.EncryptedJSON",
+		`EncryptInto("profile", gensupport.JSON, "EncryptedJson").`,
+		`Options("profile", gensupport.TargetOptions{SealedRoot: gensupport.Ptr(false), Ordered: []string{"$.age", "$.visits[*].at"}})`,
+		"func (f ProfileField) Contains(ctx context.Context, c *encrypt.Cipher, needle json.RawMessage) (eql.EncryptedJSONQuery, error)",
+		"func (f ProfileField) Subtree(ctx context.Context, c *encrypt.Cipher, path string, opts encrypt.JSONReadOptions) (encrypt.JSONRead[eql.EncryptedJSONEntry], error)",
+		"Age      ProfileFieldPath // $.age",
+		"VisitsAt ProfileFieldPath // $.visits[*].at",
+		"func (p ProfileFieldPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi json.RawMessage) (encrypt.JSONRange[eql.EncryptedJSONLeafQuery], error)",
+	} {
+		if !strings.Contains(written, want) {
+			t.Errorf("the generated file lacks %q", want)
+		}
+	}
+	if strings.Contains(written, "PrefsFieldAt") {
+		t.Error("Prefs orders no path, and got an At")
+	}
+	for _, c := range []struct{ name, fields, want string }{
+		{"a sealed null", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=EncryptedJson,null=sealed\"`", "Customer.Prefs"},
+		{"a nil document that does not say null=sql", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=EncryptedJson\"`", "null=sql"},
+		{"a position in an ordered path", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJson(ordered=$.scores[2])\"`", "the engine refuses the declaration"},
+		{"a quoted key in a tag", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJson(ordered=$[\\\"a b\\\"])\"`", "not a plain JSONPath"},
+		{"an unknown option", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJson(bound=3)\"`", "no option \"bound\""},
+		{"the Go name in the tag", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJSON\"`", "as the engine does, EncryptedJson"},
+		{"two paths, one accessor", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJson(ordered=$.a_b;$.aB)\"`", "both name the accessor At.AB"},
+		{"a document with no target", "\tProfile json.RawMessage `stash:\"profile,encrypt\"`", "the engine refuses the declaration"},
+		{"a string into a document", "\tProfile string `stash:\"profile,encrypt_into=EncryptedJson\"`", "EncryptedJson seals a json"},
+		{"options on a type that takes none", "\tEmail string `stash:\"email,encrypt_into=TextEq(ordered=$.a)\"`", "the engine refuses the declaration"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			written, stderr, code := generate(c.fields)
+			if code != 1 || written != "" {
+				t.Fatalf("exit %d, wrote %d bytes\n%s", code, len(written), stderr)
+			}
+			if !strings.Contains(stderr, c.want) {
+				t.Fatalf("stderr = %q, want %q", stderr, c.want)
+			}
+		})
+	}
+}

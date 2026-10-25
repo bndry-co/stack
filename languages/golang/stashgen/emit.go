@@ -263,6 +263,8 @@ func kindConst(k record.Kind) string {
 		return "String"
 	case record.Bytes:
 		return "Bytes"
+	case record.JSON:
+		return "JSON"
 	}
 	return "Untyped"
 }
@@ -295,8 +297,9 @@ func (w *writer) declaration(f *genFile) {
 		}
 	}
 	for i, fld := range fields {
+		last := i == len(fields)-1
 		end := "."
-		if i == len(fields)-1 && fld.Identity == "" && fld.Null == NotNull {
+		if last && fld.Identity == "" && fld.Null == NotNull && fld.TargetOptions == nil {
 			end = ""
 		}
 		switch fld.Verb {
@@ -312,6 +315,13 @@ func (w *writer) declaration(f *genFile) {
 				kind = "gensupport." + kindConst(wire)
 			}
 			w.p("\tEncryptInto(%q, %s, %q)%s", fld.Name, kind, fld.EQLType, end)
+			if fld.TargetOptions != nil {
+				end = "."
+				if last && fld.Identity == "" && fld.Null == NotNull {
+					end = ""
+				}
+				w.p("\tOptions(%q, %s)%s", fld.Name, targetOptionsExpr(fld.TargetOptions), end)
+			}
 		case VerbEncryptIndex, VerbIndex:
 			call := "EncryptIndex"
 			if fld.Verb == VerbIndex {
@@ -338,6 +348,23 @@ func (w *writer) declaration(f *genFile) {
 			w.p("\tNull(%q, %s)%s", fld.Name, nullExpr(fld.Null), end)
 		}
 	}
+}
+
+// targetOptionsExpr is an EQL type's options as a gensupport.TargetOptions
+// literal.
+func targetOptionsExpr(o *record.TargetOptions) string {
+	var parts []string
+	if o.SealedRoot != nil {
+		parts = append(parts, fmt.Sprintf("SealedRoot: gensupport.Ptr(%t)", *o.SealedRoot))
+	}
+	if o.Ordered != nil {
+		quoted := make([]string, len(o.Ordered))
+		for i, p := range o.Ordered {
+			quoted[i] = fmt.Sprintf("%q", p)
+		}
+		parts = append(parts, "Ordered: []string{"+strings.Join(quoted, ", ")+"}")
+	}
+	return "gensupport.TargetOptions{" + strings.Join(parts, ", ") + "}"
 }
 
 // nullExpr is a null mode's constant in gensupport.
@@ -638,11 +665,19 @@ func (w *writer) fieldEntries(f *genFile) {
 	}
 	w.p("}{")
 	for _, g := range sealed {
+		if g.isJSON() {
+			w.p("\t%s: new%s(gensupport.NewField[%s](%s, %q)),", g.GoName, g.fieldType, g.valueExpr, f.declVar, g.Name)
+			continue
+		}
 		w.p("\t%s: %s{gensupport.NewField[%s](%s, %q)},", g.GoName, g.fieldType, g.valueExpr, f.declVar, g.Name)
 	}
 	w.p("}")
 	for _, g := range sealed {
 		w.nl()
+		if g.isJSON() {
+			w.jsonEntry(g)
+			continue
+		}
 		w.p("type %s struct {", g.fieldType)
 		w.p("\tfield gensupport.Field[%s]", g.valueExpr)
 		w.p("}")
@@ -716,6 +751,14 @@ func planQueries(f *genFile) error {
 	for i := range f.fields {
 		g := &f.fields[i]
 		g.queries = nil
+		if g.isJSON() {
+			// A document's operators have methods of their own: see
+			// jsonEntry.
+			if err := planJSON(f, g); err != nil {
+				return err
+			}
+			continue
+		}
 		for _, op := range g.operators {
 			q, err := queryFor(g, op)
 			if err != nil {
@@ -926,4 +969,196 @@ func joinNames(names []string) string {
 		return names[0]
 	}
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// isJSON reports whether the field is stored as an EncryptedJSON document:
+// a json.RawMessage sealed into an EQL type.
+func (g genField) isJSON() bool {
+	return g.Verb == VerbEncryptInto && g.GoType.Kind == KindJSON
+}
+
+// jsonOperators are the operators a document field answers, and what each
+// is a method of.
+var jsonOperators = map[string]bool{
+	"contains": true, "contained_by": true, "eq_at": true, "selector": true,
+	"subtree": true, "children": true, "child_count": true,
+	"lt_at": true, "lte_at": true, "gt_at": true, "gte_at": true, "between_at": true,
+}
+
+// planJSON checks a document field's operators against the methods the
+// generator writes for them, and names each ordered path's accessor.
+func planJSON(f *genFile, g *genField) error {
+	for _, op := range g.operators {
+		if !jsonOperators[op.Name] {
+			return fieldErr(f.typeName, g.GoName, "the engine answers %s on %s, which the generator has no method for", op.Name, g.EQLType)
+		}
+	}
+	g.jsonPaths = nil
+	seen := map[string]string{}
+	if g.TargetOptions != nil {
+		for _, path := range g.TargetOptions.Ordered {
+			name, err := jsonPathName(path)
+			if err != nil {
+				return fieldErr(f.typeName, g.GoName, "%v", err)
+			}
+			if prior, ok := seen[name]; ok {
+				return fieldErr(f.typeName, g.GoName, "the ordered paths %s and %s both name the accessor At.%s; order one of them only", prior, path, name)
+			}
+			seen[name] = path
+			g.jsonPaths = append(g.jsonPaths, jsonPath{name: name, path: path})
+		}
+	}
+	f.imports.add("encoding/json", "json")
+	return nil
+}
+
+// jsonPathName is an ordered path's accessor name: its keys in Go case,
+// array steps dropped. $.age is Age, $.visits[*].at is VisitsAt, $ is Root.
+func jsonPathName(path string) (string, error) {
+	var b strings.Builder
+	for _, step := range strings.FieldsFunc(strings.TrimPrefix(path, "$"), func(r rune) bool { return r == '.' || r == '[' || r == ']' }) {
+		if step == "*" || strings.Trim(step, "0123456789") == "" {
+			continue
+		}
+		for _, word := range strings.Split(step, "_") {
+			if word != "" {
+				b.WriteString(strings.ToUpper(word[:1]) + word[1:])
+			}
+		}
+	}
+	name := b.String()
+	if name == "" {
+		name = "Root"
+	}
+	if !isIdent(name) || name[0] < 'A' || name[0] > 'Z' {
+		return "", fmt.Errorf("the ordered path %s has no Go accessor name: a key starts with a digit", path)
+	}
+	return name, nil
+}
+
+// jsonPath is one ordered path's accessor on a document field's entry.
+type jsonPath struct {
+	name string // "Age"
+	path string // "$.age"
+}
+
+// jsonEntry writes a document field's Fields entry: its query methods, a
+// method for each read, and an accessor under At for each ordered path,
+// whose methods are the orderings there.
+func (w *writer) jsonEntry(g genField) {
+	answered := map[string]bool{}
+	for _, op := range g.operators {
+		answered[op.Name] = true
+	}
+	eqlName := strings.TrimPrefix(g.outputType, "eql.")
+	needle := g.queryType
+	leaf := "eql." + eqlName + "LeafQuery"
+	entry := "eql." + eqlName + "Entry"
+	ordered := len(g.jsonPaths) > 0 && answered["lt_at"]
+	field := "gensupport.Field[" + g.valueExpr + "]"
+
+	w.p("type %s struct {", g.fieldType)
+	w.p("\tfield %s", field)
+	if ordered {
+		w.p("\t// At has one accessor per path the field orders, whose methods")
+		w.p("\t// are the orderings there.")
+		w.p("\tAt %sAt", g.fieldType)
+	}
+	w.p("}")
+	w.nl()
+	w.p("func new%s(f %s) %s {", g.fieldType, field, g.fieldType)
+	if ordered {
+		w.p("\treturn %s{field: f, At: %sAt{", g.fieldType, g.fieldType)
+		for _, p := range g.jsonPaths {
+			w.p("\t\t%s: %sPath{field: f, path: %q},", p.name, g.fieldType, p.path)
+		}
+		w.p("\t}}")
+	} else {
+		w.p("\treturn %s{field: f}", g.fieldType)
+	}
+	w.p("}")
+	w.nl()
+	w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.valueExpr, g.outputType)
+	w.sealedOutput(g, "f.field.Encrypt(ctx, c, v)")
+	w.p("}")
+	recv := "func (f " + g.fieldType + ") "
+	if answered["contains"] {
+		w.nl()
+		w.b.WriteString(wrapComment("Contains derives the query for documents that contain needle, a JSON value: col @> query. Each array element of the needle must sit inside one element of the document's array.", 80))
+		w.p("%sContains(ctx context.Context, c *encrypt.Cipher, needle json.RawMessage) (%s, error) {", recv, needle)
+		w.p("\treturn gensupport.JSONQuery[%s](ctx, f.field, c, \"contains\", needle)", needle)
+		w.p("}")
+	}
+	if answered["contained_by"] {
+		w.nl()
+		w.b.WriteString(wrapComment("ContainedBy derives the query for documents contained by needle, a JSON value: col <@ query.", 80))
+		w.p("%sContainedBy(ctx context.Context, c *encrypt.Cipher, needle json.RawMessage) (%s, error) {", recv, needle)
+		w.p("\treturn gensupport.JSONQuery[%s](ctx, f.field, c, \"contained_by\", needle)", needle)
+		w.p("}")
+	}
+	if answered["eq_at"] {
+		w.nl()
+		w.b.WriteString(wrapComment("EqAt derives the query for documents holding the scalar v at path: col @> query. A wildcard step matches when any element holds it; a position ([2]) is refused, since the stored selector reads every position as the wildcard.", 80))
+		w.p("%sEqAt(ctx context.Context, c *encrypt.Cipher, path string, v json.RawMessage) (%s, error) {", recv, needle)
+		w.p("\treturn gensupport.JSONQueryAt[%s](ctx, f.field, c, \"eq_at\", path, v)", needle)
+		w.p("}")
+	}
+	if answered["selector"] {
+		w.nl()
+		w.b.WriteString(wrapComment("Selector prepares `->` at path: bind Selector() as col -> $1::text, and open the entries it returns with Open. A position ([2]) is refused; read one with Subtree.", 80))
+		w.p("%sSelector(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONSelection[%s], error) {", recv, entry)
+		w.p("\treturn gensupport.JSONSelect[%s](ctx, f.field, c, path)", entry)
+		w.p("}")
+	}
+	if answered["subtree"] {
+		w.nl()
+		w.b.WriteString(wrapComment("Subtree prepares a read of the value at path: bind Tokens() as eql_v4.json_tree_subtree(col, $1::text[], budget), and open the rows it returns with Open or OpenOne.", 80))
+		w.p("%sSubtree(ctx context.Context, c *encrypt.Cipher, path string, opts encrypt.JSONReadOptions) (encrypt.JSONRead[%s], error) {", recv, entry)
+		w.p("\treturn gensupport.JSONSubtree[%s](ctx, f.field, c, path, opts)", entry)
+		w.p("}")
+	}
+	if answered["children"] {
+		w.nl()
+		w.b.WriteString(wrapComment("Children derives the token of the node at path, a path with no wildcard, which eql_v4.json_tree_children(col, $1::text) takes. Its rows are encrypted entries one level down.", 80))
+		w.p("%sChildren(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONToken, error) {", recv)
+		w.p("\treturn gensupport.JSONNodeToken(ctx, f.field, c, \"children\", path)")
+		w.p("}")
+	}
+	if answered["child_count"] {
+		w.nl()
+		w.b.WriteString(wrapComment("ChildCount derives the token of the node at path, which eql_v4.json_tree_child_count(col, $1::text) takes: zero for a scalar or an empty container, NULL where the row has no node there or for the sealed root.", 80))
+		w.p("%sChildCount(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONToken, error) {", recv)
+		w.p("\treturn gensupport.JSONNodeToken(ctx, f.field, c, \"child_count\", path)")
+		w.p("}")
+	}
+	if !ordered {
+		return
+	}
+	w.nl()
+	w.p("type %sAt struct {", g.fieldType)
+	for _, p := range g.jsonPaths {
+		w.p("\t%s %sPath // %s", p.name, g.fieldType, p.path)
+	}
+	w.p("}")
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%sPath is one ordered path of %s: its orderings compare the first value `->` extracts there, by the leaf's ordering term. Numbers order as float64, so integers past 2^53 can tie; text orders case- and accent-folded.", g.fieldType, g.GoName), 80))
+	w.p("type %sPath struct {", g.fieldType)
+	w.p("\tfield %s", field)
+	w.p("\tpath  string")
+	w.p("}")
+	for _, op := range []struct{ name, method string }{{"lt_at", "Lt"}, {"lte_at", "Lte"}, {"gt_at", "Gt"}, {"gte_at", "Gte"}} {
+		if !answered[op.name] {
+			continue
+		}
+		w.nl()
+		w.p("func (p %sPath) %s(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (%s, error) {", g.fieldType, op.method, leaf)
+		w.p("\treturn gensupport.JSONQueryAt[%s](ctx, p.field, c, %q, p.path, v)", leaf, op.name)
+		w.p("}")
+	}
+	if answered["between_at"] {
+		w.nl()
+		w.p("func (p %sPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi json.RawMessage) (encrypt.JSONRange[%s], error) {", g.fieldType, leaf)
+		w.p("\treturn gensupport.JSONBetweenAt[%s](ctx, p.field, c, p.path, lo, hi)", leaf)
+		w.p("}")
+	}
 }

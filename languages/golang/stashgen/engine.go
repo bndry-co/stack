@@ -250,6 +250,7 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s is stored under a table and a column, and the context %q has %d segments, not one", f.EQLType, d.Context, len(plan.Context))}
 			}
 			rf.Target = f.EQLType
+			rf.TargetOptions = f.TargetOptions
 		case VerbEncrypt, VerbEncryptIndex:
 			rf.Outputs = append(rf.Outputs, record.Ciphertext)
 		}
@@ -281,7 +282,7 @@ var outputOfIndex = map[IndexName]record.Output{
 // no entry in outputOfIndex, so no tag asks for it.
 var indexOfOutput = map[record.Output]IndexName{
 	record.Equality: IndexEquality, record.Match: IndexMatch, record.Ore: IndexOre, record.Ope: IndexOpe,
-	record.OreBlock: IndexOreBlock,
+	record.OreBlock: IndexOreBlock, record.JSONIndex: IndexJSON,
 }
 
 // wireKind is the record kind of a Go type: the same mapping the emitter
@@ -330,6 +331,8 @@ func wireKind(t GoType) record.Kind {
 		return record.Timestamp
 	case KindDecimal:
 		return record.Decimal
+	case KindJSON:
+		return record.JSON
 	}
 	return record.Untyped
 }
@@ -360,6 +363,8 @@ func kindOfWire(k record.Kind) Kind {
 		return KindTimestamp
 	case record.Decimal:
 		return KindDecimal
+	case record.JSON:
+		return KindJSON
 	}
 	return KindOther
 }

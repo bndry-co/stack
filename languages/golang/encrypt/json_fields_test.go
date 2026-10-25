@@ -1,0 +1,133 @@
+package encrypt_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
+)
+
+// Generated code for json.RawMessage fields stored as EncryptedJson:
+// testusers.Customer's Profile, ordered at $.age and $.visits[*].at, and its
+// optional Prefs.
+
+func rawPtr(s string) *json.RawMessage {
+	r := json.RawMessage(s)
+	return &r
+}
+
+// sameJSON reports whether two JSON texts hold the same value: the
+// document is sealed as values, so its text is not promised back byte for
+// byte.
+func sameJSON(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	var x, y any
+	if err := json.Unmarshal(a, &x); err != nil {
+		t.Fatalf("%s: %v", a, err)
+	}
+	if err := json.Unmarshal(b, &y); err != nil {
+		t.Fatalf("%s: %v", b, err)
+	}
+	return reflect.DeepEqual(x, y)
+}
+
+func TestACustomersDocumentsRoundTrip(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	in := []testusers.Customer{
+		{ID: 1, Profile: json.RawMessage(`{"name":"Alice","age":34,"visits":[{"at":3},{"at":1}]}`), Prefs: rawPtr(`{"theme":"dark"}`)},
+		{ID: 2, Profile: json.RawMessage(`[1,2,3]`)},
+		{ID: 3, Profile: json.RawMessage(`null`), Prefs: rawPtr(`null`)},
+	}
+	encrypted, err := testusers.EncryptCustomer(ctx, c.DefaultKeyset(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encrypted[1].Prefs != nil || encrypted[2].Prefs == nil {
+		t.Fatalf("a nil document is SQL NULL, a JSON null is a document: %v %v", encrypted[1].Prefs, encrypted[2].Prefs)
+	}
+	if s := encrypted[0].String(); strings.Contains(s, "Alice") {
+		t.Fatalf("String shows the document: %s", s)
+	}
+	back, err := testusers.DecryptCustomer(ctx, c, encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range in {
+		if back[i].ID != in[i].ID || !sameJSON(t, back[i].Profile, in[i].Profile) {
+			t.Fatalf("row %d: %s", i, back[i].Profile)
+		}
+		if (back[i].Prefs == nil) != (in[i].Prefs == nil) || (in[i].Prefs != nil && !sameJSON(t, *back[i].Prefs, *in[i].Prefs)) {
+			t.Fatalf("row %d prefs: %v", i, back[i].Prefs)
+		}
+	}
+	// Empty bytes are not a document: a required field takes JSON.
+	if _, err := testusers.EncryptCustomer(ctx, c.DefaultKeyset(), []testusers.Customer{{ID: 4}}); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("an empty document: %v", err)
+	}
+}
+
+func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	f := testusers.CustomerFields.Profile
+	contains, err := f.Contains(ctx, cipher, json.RawMessage(`{"name":"Alice"}`))
+	if err != nil || len(contains) == 0 {
+		t.Fatalf("Contains: %v", err)
+	}
+	if v, err := contains.Value(); err != nil || !strings.Contains(v.(string), `"sv"`) {
+		t.Fatalf("Contains binds as JSON: %v %v", v, err)
+	}
+	if _, err := f.ContainedBy(ctx, cipher, json.RawMessage(`{"name":"Alice","age":34}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.EqAt(ctx, cipher, "$.name", json.RawMessage(`"Alice"`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.At.Age.Lt(ctx, cipher, json.RawMessage(`40`)); err != nil {
+		t.Fatal(err)
+	}
+	rng, err := f.At.VisitsAt.Between(ctx, cipher, json.RawMessage(`1`), json.RawMessage(`2`))
+	if err != nil || len(rng.Low) == 0 || len(rng.High) == 0 {
+		t.Fatalf("Between: %+v %v", rng, err)
+	}
+	sel, err := f.Selector(ctx, cipher, "$.name")
+	if err != nil || sel.Selector() == "" {
+		t.Fatalf("Selector: %v", err)
+	}
+	read, err := f.Subtree(ctx, cipher, "$.visits[*]", encrypt.JSONReadOptions{WildcardBound: 2})
+	if err != nil || len(read.Tokens()) != 3 {
+		t.Fatalf("Subtree: %v %v", read.Tokens(), err)
+	}
+	if v, err := read.Tokens().Value(); err != nil || !strings.HasPrefix(v.(string), `{"`) {
+		t.Fatalf("Tokens bind as a text[] literal: %v %v", v, err)
+	}
+	if _, err := f.Children(ctx, cipher, "$.visits"); err != nil {
+		t.Fatal(err)
+	}
+	// What the engine refuses: an ordering on a value no ordering takes, a
+	// container at a path, a position in a selector, a wildcard where one
+	// node is named. Each is a returned error naming no value.
+	for name, err := range map[string]error{
+		"bool ordering": func() error { _, err := f.At.Age.Gt(ctx, cipher, json.RawMessage(`true`)); return err }(),
+		"container eq":  func() error { _, err := f.EqAt(ctx, cipher, "$.name", json.RawMessage(`{"secret":1}`)); return err }(),
+		"position":      func() error { _, err := f.Selector(ctx, cipher, "$.visits[1].at"); return err }(),
+		"wildcard node": func() error { _, err := f.ChildCount(ctx, cipher, "$.visits[*]"); return err }(),
+		"not JSON":      func() error { _, err := f.Contains(ctx, cipher, json.RawMessage(`{"secret"`)); return err }(),
+	} {
+		if err == nil || strings.Contains(err.Error(), "secret") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// Prefs orders no path: its entry has no At, and the engine answers no
+	// ordering on it.
+	if _, ok := reflect.TypeOf(testusers.CustomerFields.Prefs).FieldByName("At"); ok {
+		t.Fatal("Prefs has an At")
+	}
+}

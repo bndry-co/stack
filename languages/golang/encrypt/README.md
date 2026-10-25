@@ -576,7 +576,7 @@ the installer disables these domains, and the `Ord` types are the ones to
 use. Text whose fold is longer than 1023 bytes, or ends in NUL, has no block
 ORE term and is refused, stored or queried.
 
-The rest of the catalog (ordered dates, timestamps and decimals, JSON) is listed in
+The rest of the catalog (ordered dates, timestamps and decimals, the v3 JSON types) is listed in
 `eql.Types` with the reason it is not produced yet, and `stashgen` refuses it
 with that reason. The guest builds the value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the
@@ -590,6 +590,34 @@ wasm:guest:build:eql` builds that guest beside the other. A cipher extended
 with a tenant part refuses a struct with an `encrypt_into` field: an EQL
 value is stored under a table and a column, and the extended label has no
 column.
+
+### Encrypted JSON documents
+
+`EncryptedJson` stores a whole JSON document in one `public.eql_v4_json_tree`
+column, from a `json.RawMessage` field (`stash:"profile,encrypt_into=EncryptedJson(ordered=$.age)"`;
+see the stashgen README). One entry per node is encrypted, so the database
+can test containment, equality and ordering at a path, return one node with
+`->`, and walk a subtree, without decrypting:
+
+```go
+q, err := users.Fields.Profile.Contains(ctx, cipher, json.RawMessage(`{"plan":"pro"}`))
+rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE profile @> $1::eql_v4.query_json_tree`, q)
+
+read, err := users.Fields.Profile.Subtree(ctx, cipher, "$.visits[*].at", encrypt.JSONReadOptions{})
+// SELECT e FROM users, eql_v4.json_tree_subtree(profile, $1::text[], 64) AS e WHERE id = $2
+// with read.Tokens() as $1; collect each row's entries, then:
+values, err := read.Open(ctx, entriesPerRow)
+```
+
+A selection or read opens rows only as answers to the request that prepared
+it: the engine derives the selector or the read again from the field, the
+path and the cipher's keyset, and refuses a row that is not one it asked
+for. It does not prove the database returned every row, or rows of the
+database row you meant. `encrypt.JSONTokens` binds as a `text[]` literal,
+and a selector or token as `text`; cast each parameter, as above, so
+PostgreSQL picks EQL's operator and not `jsonb`'s. Numbers order as `float64`,
+so integers past 2^53 can tie at an ordered path; containment and `EqAt`
+compare them exactly.
 
 ## Building
 

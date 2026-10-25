@@ -74,7 +74,8 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"notes,encrypt"` | seal the field, with no index |
 | `stash:"email,encrypt,index=equality;match"` | seal the field, and derive each index beside it |
 | `stash:"score,index=ore"` | derive the index alone; no ciphertext is stored, so `Decrypt` leaves the field at its zero value |
-| `stash:"attrs,index=json"` | refused in this build: the engine does not derive the `json` index yet |
+| `stash:"profile,encrypt_into=EncryptedJson(ordered=$.age)"` | on a `json.RawMessage`: store the field as an encrypted JSON document; see "Encrypted JSON documents" |
+| `stash:"attrs,index=json"` | refused: a JSON document is stored with `encrypt_into=EncryptedJson`, not as an index beside a ciphertext |
 | `stash:"id,passthrough"` | store the field as it is |
 | `stash:"tenant,context_field"` | the field's value is the context of every other field in the struct, in place of a `context=` tag; stored as it is |
 | `stash:"-"` | leave the field out |
@@ -108,7 +109,33 @@ An index takes its options in parentheses after its name, separated by commas: `
 This build refuses an index with options: a query term is derived with the default options only, so a stored term with other options would never match one.
 These words are the same as the Rust API's words for the same behaviour, with two that only Go has.
 `opaque` seals the whole struct as one `bytes` field holding a storage blob (see "What crosses the binding").
-`json` names the JSON index, which the Rust API does not declare yet; this build refuses it.
+`json` names the JSON index, which a field reaches only through `encrypt_into=EncryptedJson`.
+
+### Encrypted JSON documents
+
+A `json.RawMessage` field with `encrypt_into=EncryptedJson` is stored as one encrypted JSON document, an `eql.EncryptedJSON` in a `public.eql_v4_json_tree` column.
+The field holds the document's JSON text; the engine parses it, so an object that names a member twice, an integer outside the 64-bit range and text that is not JSON are refused with `encrypt.ErrEncoding`.
+Values come back as JSON text holding the same values; key order and the spelling of numbers are not kept.
+A `*json.RawMessage` field is optional and must say `null=sql`: a document has no fixed length to hide a missing one behind. A non-nil pointer to `null` is a stored JSON `null`.
+
+The type takes options in parentheses: `ordered=` names the paths whose numbers and strings carry an ordering term, separated by `;`, and `sealed_root=false` turns off the sealed root (on by default).
+`encrypt_into=EncryptedJson(ordered=$.age;$.visits[*].at)` orders two paths.
+A path in a tag is plain JSONPath: `$`, then `.key` steps of letters, digits and underscores, and `[n]` or `[*]` steps; an ordered path names no position. The engine checks every path when `stashgen` runs.
+
+The field's `Fields` entry has a method per operation:
+
+| Method | Returns | SQL |
+|---|---|---|
+| `Contains(ctx, c, needle)`, `ContainedBy(ctx, c, needle)` | `eql.EncryptedJSONQuery` | `col @> $1::eql_v4.query_json_tree`, `col <@ $1::eql_v4.query_json_tree` |
+| `EqAt(ctx, c, path, v)` | `eql.EncryptedJSONQuery` | `col @> $1::eql_v4.query_json_tree` |
+| `At.Age.Lt(ctx, c, v)`, `Lte`, `Gt`, `Gte`, `Between` | `eql.EncryptedJSONLeafQuery` | `(col -> $sel::text) < $1::eql_v4.query_json_tree_leaf` |
+| `Selector(ctx, c, path)` | `encrypt.JSONSelection`: `Selector()` and `Open` | `col -> $1::text` |
+| `Subtree(ctx, c, path, opts)` | `encrypt.JSONRead`: `Tokens()`, `Open` and `OpenOne` | `eql_v4.json_tree_subtree(col, $1::text[], 64)` |
+| `Children(ctx, c, path)`, `ChildCount(ctx, c, path)` | `encrypt.JSONToken` | `eql_v4.json_tree_children(col, $1::text)`, `eql_v4.json_tree_child_count(col, $1::text)` |
+
+`At` has one accessor per ordered path, named for its keys (`$.visits[*].at` is `At.VisitsAt`); two paths with one name stop `stashgen`.
+The needle and the values are `json.RawMessage`: write the JSON you mean, such as `json.RawMessage(`+"`"+`{"active":true}`+"`"+`)`.
+A position in a path is refused for `EqAt` and `Selector`, whose selector reads every position as the wildcard; read a position with `Subtree`.
 
 ### Optional fields
 

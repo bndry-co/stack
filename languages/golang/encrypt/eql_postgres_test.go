@@ -148,6 +148,10 @@ func TestEQLTypesRoundTripAndQueryInPostgres(t *testing.T) {
 					ds[i] = d
 				}
 				runEQLType(h, gensupport.Decimal, ds, nil)
+			case "json":
+				// A document has operators of its own, not one query per
+				// index: TestJSONDocumentsQueryAndReadInPostgres runs them.
+				return
 			default:
 				t.Fatalf("no plaintexts for wire kind %q: add a case so %s is tested", typ.Plaintext, typ.Name)
 			}

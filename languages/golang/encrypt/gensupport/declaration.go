@@ -48,6 +48,9 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
+	// JSON is a json.RawMessage field stored as an EncryptedJSON document:
+	// it crosses as its JSON text, which the engine parses.
+	JSON Kind = "json"
 )
 
 // OpaqueField is the one field of an opaque declaration: the whole struct,
@@ -78,6 +81,19 @@ type field struct {
 	indexes  []encrypt.Index
 	eqlType  string
 	null     NullMode
+	options  *TargetOptions
+}
+
+// TargetOptions are the options an EncryptInto field gives its EQL type:
+// for EncryptedJson, the JSON index's. The engine checks them when the
+// declaration is first used (stashgen asked it when the file was written).
+type TargetOptions struct {
+	// SealedRoot says whether the document's root is sealed; nil is the
+	// default, sealed.
+	SealedRoot *bool
+	// Ordered are the JSONPath paths whose number and string leaves carry
+	// an ordering term.
+	Ordered []string
 }
 
 // NullMode is how a sealed field declared over a pointer (*T) stores nil:
@@ -168,6 +184,28 @@ func (d Declaration) Index(name string, kind Kind, indexes ...encrypt.Index) Dec
 // beside it, and the stored field holds the value as it is.
 func (d Declaration) EncryptInto(name string, kind Kind, eqlType string) Declaration {
 	return d.add(field{name: name, kind: kind, verb: verbEncryptInto, eqlType: eqlType})
+}
+
+// Options gives the named EncryptInto field's EQL type its options: the
+// `encrypt_into=EncryptedJson(ordered=...)` tag.
+func (d Declaration) Options(name string, options TargetOptions) Declaration {
+	if d.err != nil {
+		return d
+	}
+	for i := range d.fields {
+		if d.fields[i].name != name {
+			continue
+		}
+		if d.fields[i].verb != verbEncryptInto {
+			d.err = fmt.Errorf("gensupport: Options(%q): only an EncryptInto field's EQL type takes options", name)
+			return d
+		}
+		d.fields = slices.Clone(d.fields)
+		d.fields[i].options = &options
+		return d
+	}
+	d.err = fmt.Errorf("gensupport: Options(%q): no such field", name)
+	return d
 }
 
 // Null says how the named field, declared over a pointer, stores nil. The
@@ -293,6 +331,9 @@ func (d Declaration) plan() (*record.Plan, error) {
 			// is the engine's to say, at the first call (stashgen asked it
 			// when the file was written).
 			rf.Target = f.eqlType
+			if f.options != nil {
+				rf.TargetOptions = &record.TargetOptions{SealedRoot: f.options.SealedRoot, Ordered: slices.Clone(f.options.Ordered)}
+			}
 		case verbEncrypt:
 			rf.Outputs = []record.Output{record.Ciphertext}
 		case verbEncryptIndex:
@@ -320,3 +361,7 @@ func (d Declaration) plan() (*record.Plan, error) {
 var termOutputs = map[record.Output]struct{}{
 	record.Equality: {}, record.Match: {}, record.Ore: {}, record.Ope: {},
 }
+
+// Ptr is a pointer to v: what a generated TargetOptions literal spells an
+// option set to false with.
+func Ptr[T any](v T) *T { return &v }

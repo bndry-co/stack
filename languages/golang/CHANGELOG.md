@@ -12,6 +12,19 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **Encrypted JSON documents with `stashgen`** (#1351, #1352). A
+  `json.RawMessage` field tagged `encrypt_into=EncryptedJson` (options:
+  `ordered=$.a;$.b[*].c`, `sealed_root=false`) is stored as an
+  `eql.EncryptedJSON` in a `public.eql_v4_json_tree` column; a
+  `*json.RawMessage` field takes `null=sql`. Its `Fields` entry has
+  `Contains`, `ContainedBy`, `EqAt`, `Selector`, `Subtree`, `Children` and
+  `ChildCount`, and `At.<Path>` per ordered path with `Lt`, `Lte`, `Gt`,
+  `Gte` and `Between`. `encrypt.JSONSelection` and `encrypt.JSONRead` open
+  the rows `->` and `eql_v4.json_tree_subtree` return against the request
+  that prepared them; `encrypt.JSONSelector`, `JSONToken` and `JSONTokens`
+  bind as `text` and `text[]`. `gensupport.JSON`, `TargetOptions`,
+  `Declaration.Options` and the `JSON*` helpers are the generated code's.
+
 - **Query and read an encrypted JSON document, at the record level**
   (#1350, #1352). `Cipher.QueryTerm` derives a document field's operands:
   `QueryTerm.Encoding` says what the term holds, and `QueryTerm.Text`
