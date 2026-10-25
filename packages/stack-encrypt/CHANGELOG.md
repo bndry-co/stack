@@ -37,9 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parent's path and its own label (the key holds the keyset's index-key
   PRF and the column's context to derive it), a row that does not follow
   the one before it in the document or whose parent is not among the
-  rows, and a row whose self tag is not the one the client recomputes
-  (unauthenticated, so a consistency check). Each refusal is the new
-  `Error::JsonWrongEntry`. Not checked, by design: which row of the column
+  rows, a row whose self tag is not the one the client recomputes
+  (unauthenticated, so a consistency check), an entry returned twice, and
+  rows of two documents. Each refusal is the new `Error::JsonWrongEntry`.
+  Not checked, by design: which row of the column
   an entry comes from (ADR 0010), which element a node at a selector sits
   under, and whether the database withheld rows. `JsonOptions::sealed_root`,
   on by default, makes the root entry the whole document and chains the

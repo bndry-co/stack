@@ -655,7 +655,7 @@ async fn subtree_rows_the_server_repeats_or_lines_up_are_refused() {
         cipher
             .decrypt_as::<Vec<Value>, JsonSubtree>(repeated, aead())
             .await,
-        Err(Error::OpenedType { .. })
+        Err(Error::JsonWrongEntry { .. })
     ));
 
     // A wide document of one-member objects: its objects, returned as rows

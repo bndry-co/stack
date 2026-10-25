@@ -444,13 +444,18 @@ impl JsonSubtreeKey {
     /// tag of the token its label derives under its parent's. The self tags
     /// are not authenticated: matching them catches a corrupted row or a
     /// server that walked wrongly, and the selector, the position and the
-    /// label are what bind a row to its place.
+    /// label are what bind a row to its place. The rows must also be of
+    /// distinct entries of one document: an entry returned twice, or rows
+    /// carrying two headers, are refused the same way.
     ///
     /// Not covered, by design: which row of the column the entries come
     /// from (ADR 0010), and which element a node at the path's selector
     /// sits under, since every element of an array shares its selector: a
     /// read of `$.items[1].price` can be answered with `$.items[0].price`
-    /// of the same row.
+    /// of the same row. Nor whether the database left whole nodes out: a
+    /// read answered with no rows opens as no node, and a wildcard read
+    /// with some elements' rows left out, its probe's included, opens to
+    /// the rest.
     pub fn open(&self, rows: Vec<JsonNode>) -> JsonSubtree {
         JsonSubtree::keyed(rows, self.clone())
     }

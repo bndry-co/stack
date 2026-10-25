@@ -1338,16 +1338,19 @@ fn open_subtree<'a, K>(
     nodes.sort_by_key(|n| n.j);
     // A read returns each entry once. Two rows at one ordinal are the
     // server repeating an entry, which would let it line up one container
-    // as many times as it likes.
+    // as many times as it likes: an honest database never returns one, so
+    // it is the wrong entry, not a shape the target refuses.
     if nodes.windows(2).any(|pair| pair[0].j == pair[1].j) {
-        return Pending::failed(cipher, shape("rows of distinct entries"));
+        return Pending::failed(cipher, wrong("rows of distinct entries"));
     }
     let Some(first) = nodes.first() else {
         return Pending::ready(cipher, Ok(Vec::new()));
     };
     let header = first.header.clone();
+    // A read is of one row, so its rows carry one header. Rows of two
+    // documents are not the answer to it.
     if nodes.iter().any(|n| n.header != header) {
-        return Pending::failed(cipher, shape("rows of one document"));
+        return Pending::failed(cipher, wrong("rows of one document"));
     }
     let (request, aad) = match retrieval(&header, context) {
         Ok(parts) => parts,

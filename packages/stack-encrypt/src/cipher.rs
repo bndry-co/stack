@@ -178,8 +178,9 @@ pub enum Error {
     /// or the sealed root in place of a node, or a subtree walk returned a
     /// row that is not where the walk's key says its rows are (a node of
     /// another path, a row out of its place in the document, a row whose
-    /// parent is not among the rows, or rows that stop before a node's
-    /// subtree is complete). Refused by the client, which
+    /// parent is not among the rows, rows that stop before a node's
+    /// subtree is complete, one entry returned twice, or rows of two
+    /// documents). Refused by the client, which
     /// derived the path's selector itself; see
     /// [`JsonSelector::open`](crate::json::JsonSelector::open) and
     /// [`JsonSubtreeKey::open`](crate::json::JsonSubtreeKey::open).

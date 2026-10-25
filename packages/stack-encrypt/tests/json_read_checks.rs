@@ -334,6 +334,45 @@ mod given_the_rows_of_a_read {
     }
 
     #[tokio::test]
+    async fn an_entry_returned_twice_is_refused_before_any_key_is_retrieved() {
+        let (cipher, retrieved) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let nested = key(&cipher, "$.nested").await;
+        // nested's rows with its first member, `deep` (3), returned twice:
+        // a genuine entry at its own position, which would let the database
+        // line one container up as often as it likes. An honest database
+        // never returns one, so it is the wrong entry, not a shape.
+        let mut rows = walk(&doc, &nested);
+        rows.insert(2, rows[1].clone());
+        assertions::wrong_entry(
+            open_value(&cipher, nested.open(rows)).await,
+            "rows of distinct entries",
+        );
+        assert_eq!(
+            retrieved.load(Ordering::SeqCst),
+            0,
+            "the refusal retrieved no key"
+        );
+    }
+
+    #[tokio::test]
+    async fn rows_of_two_documents_are_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let other = seal(&cipher, &fixture()).await;
+        let xs = key(&cipher, "$.nested.list[*].x").await;
+        // The first x (6) from this row and the second (8) from another,
+        // each with its own row's header. Either row's answer alone opens
+        // (ADR 0010), but a read is of one row, and its rows of two are not
+        // the answer to it.
+        let rows = vec![walk(&doc, &xs)[0].clone(), walk(&other, &xs)[1].clone()];
+        assertions::wrong_entry(
+            open_list(&cipher, xs.open(rows)).await,
+            "rows of one document",
+        );
+    }
+
+    #[tokio::test]
     async fn a_child_with_a_forged_self_tag_is_refused() {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &fixture()).await;
