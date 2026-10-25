@@ -184,9 +184,11 @@ fn document_types(out: &mut String) {
             let what = match domain.role {
                 DocumentRole::Stored | DocumentRole::Query => continue,
                 DocumentRole::LeafQuery => {
-                    "the ordering operand at a path, compared with an entry `->` extracts"
+                    "ordering operand at a path, compared with an entry `->` extracts"
                 }
-                DocumentRole::Entry => "one node of a document, as `->` and the walks return it",
+                DocumentRole::Entry => {
+                    "entry: one node of a document, as `->` and the walks return it"
+                }
             };
             let go = go_name(domain.name);
             let _ = write!(
@@ -253,6 +255,12 @@ mod tests {
         assert_eq!(go_name("EncryptedJson"), "EncryptedJSON");
         assert_eq!(go_name("EncryptedJsonLeafQuery"), "EncryptedJSONLeafQuery");
         assert_eq!(go_name("Jsonify"), "Jsonify", "a word, not a prefix");
+        assert_eq!(
+            go_name("Jsonécrit"),
+            "Jsonécrit",
+            "the next character, not byte"
+        );
+        assert_eq!(go_name("JsonÉcrit"), "JSONÉcrit");
     }
 
     #[test]

@@ -10,7 +10,8 @@
 //!   `i64::MIN ..= u64::MAX` is refused ([`JsonTextError::IntegerRange`])
 //!   rather than read as the nearest `f64`, which would seal a different
 //!   number than the text names. A literal with a fraction or an exponent
-//!   is the nearest binary64 (serde_json's `float_roundtrip` parser), so
+//!   is the nearest binary64 (correctly rounded, as serde_json's
+//!   `float_roundtrip` parser reads it), so
 //!   `1e400` is refused as not JSON this engine reads, and `0.1` is the
 //!   double nearest to it.
 //! - **An object names each member once.** A repeated key is refused
@@ -19,7 +20,8 @@
 //!   first) and the sealed document would depend on which ran.
 //! - **Text is valid Unicode**: invalid UTF-8 and an unpaired surrogate
 //!   escape (`"\ud800"`) are refused as not JSON.
-//! - **Nesting** is limited by the parser (128 levels) and by the index
+//! - **Nesting** is limited by the parser (127 levels of containers,
+//!   serde_json's limit) and by the index
 //!   ([`TermError::JsonTooDeep`](crate::sem::TermError::JsonTooDeep)).
 //!
 //! What comes back out ([`to_text`]) is JSON text serde_json writes:
@@ -31,10 +33,8 @@
 //! Every error names a class and, for a syntax error, a line and column,
 //! and never a byte of the text.
 
-use std::fmt;
-
-use serde::de::{DeserializeSeed, Deserializer, Error as _, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Number, Value};
+use zeroize::Zeroize;
 
 /// Why JSON text was refused at the boundary. Each says what kind of
 /// mistake it was and where, never what the text held.
@@ -76,11 +76,14 @@ impl JsonTextError {
     }
 }
 
-/// The marker a duplicate key is raised with inside the parse, told apart
-/// from serde_json's own errors by its text, which nothing else writes.
-const DUPLICATE: &str = "\u{0}stack-encrypt: duplicate member";
-
 /// Parse a document from UTF-8 JSON text by the rules in the module docs.
+///
+/// The parser is the engine's own, not serde_json's deserializer, so that
+/// no heap block it frees holds plaintext: each string is decoded into a
+/// buffer sized for it before it is read, so it never grows; a container's
+/// buffer is wiped before it is replaced by a larger one; numbers are read
+/// from the text in place; and on a refusal the part of the document built
+/// so far is wiped ([`wipe_value`](super::wipe_value)) before it drops.
 ///
 /// # Errors
 ///
@@ -97,162 +100,413 @@ const DUPLICATE: &str = "\u{0}stack-encrypt: duplicate member";
 /// # Ok::<(), JsonTextError>(())
 /// ```
 pub fn parse_text(text: &[u8]) -> Result<Value, JsonTextError> {
-    check_integers(text)?;
-    let mut de = serde_json::Deserializer::from_slice(text);
-    let value = Strict.deserialize(&mut de).map_err(classify)?;
-    de.end().map_err(classify)?;
+    let mut parser = Parser { text, at: 0 };
+    let mut value = parser.value(MAX_DEPTH)?;
+    parser.skip_whitespace();
+    if parser.at != text.len() {
+        super::wipe_value(&mut value);
+        return Err(parser.syntax());
+    }
     Ok(value)
 }
 
-/// The document as JSON text: what opening returns to a binding.
+/// The document as JSON text: what opening returns to a binding. The
+/// buffer is sized from the text's length before it is written, so it is
+/// never reallocated and no freed block holds part of it.
 ///
 /// # Errors
 ///
 /// None in practice: every `Value` serializes. The `Result` is serde_json's.
 pub fn to_text(value: &Value) -> Result<Vec<u8>, serde_json::Error> {
-    serde_json::to_vec(value)
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value)?;
+    let mut text = Vec::with_capacity(counter.0);
+    serde_json::to_writer(&mut text, value)?;
+    Ok(text)
 }
 
-fn classify(error: serde_json::Error) -> JsonTextError {
-    let (line, column) = (error.line(), error.column());
-    if error.to_string().starts_with(DUPLICATE) {
-        JsonTextError::DuplicateKey { line, column }
-    } else {
+/// A writer that counts the bytes it is given and keeps none.
+struct Counter(usize);
+
+impl std::io::Write for Counter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// How deep containers nest: serde_json's limit, so a document either
+/// parser reads, the other reads too.
+const MAX_DEPTH: usize = 127;
+
+struct Parser<'t> {
+    text: &'t [u8],
+    at: usize,
+}
+
+impl Parser<'_> {
+    /// The line and column of the byte at `at`, from 1, as a syntax error.
+    fn syntax(&self) -> JsonTextError {
+        let (line, column) = self.place(self.at);
         JsonTextError::Syntax { line, column }
     }
-}
 
-/// Refuse an integer literal serde_json would read as the nearest `f64`:
-/// one outside `i64::MIN ..= u64::MAX`. A lexical scan, outside strings,
-/// of each number token with no fraction or exponent. Syntax errors are
-/// left to the parser.
-fn check_integers(text: &[u8]) -> Result<(), JsonTextError> {
-    let mut rest = text;
-    while let Some((&first, after_first)) = rest.split_first() {
-        rest = match first {
-            b'"' => after_string(after_first),
-            b'-' | b'0'..=b'9' => {
-                // The token is the first byte and every number byte after it.
-                let more = after_first
-                    .iter()
-                    .take_while(|b| matches!(b, b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-'))
-                    .count();
-                check_integer(&rest[..=more])?;
-                &after_first[more..]
-            }
-            _ => after_first,
+    fn place(&self, at: usize) -> (usize, usize) {
+        let before = &self.text[..at.min(self.text.len())];
+        let line = before.iter().filter(|&&b| b == b'\n').count() + 1;
+        let start = before
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |n| n + 1);
+        (line, before.len() - start + 1)
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.text.get(self.at).copied()
+    }
+
+    fn skip_whitespace(&mut self) {
+        while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            self.at += 1;
+        }
+    }
+
+    /// Consume `byte`, or refuse.
+    fn expect(&mut self, byte: u8) -> Result<(), JsonTextError> {
+        if self.peek() == Some(byte) {
+            self.at += 1;
+            Ok(())
+        } else {
+            Err(self.syntax())
+        }
+    }
+
+    /// One value, after any whitespace, nested at most `depth` more levels.
+    fn value(&mut self, depth: usize) -> Result<Value, JsonTextError> {
+        self.skip_whitespace();
+        match self.peek() {
+            Some(b'{') => self.object(depth),
+            Some(b'[') => self.array(depth),
+            Some(b'"') => self.string().map(Value::String),
+            Some(b'-' | b'0'..=b'9') => self.number(),
+            Some(b't') => self.literal(b"true", Value::Bool(true)),
+            Some(b'f') => self.literal(b"false", Value::Bool(false)),
+            Some(b'n') => self.literal(b"null", Value::Null),
+            _ => Err(self.syntax()),
+        }
+    }
+
+    fn literal(&mut self, word: &[u8], value: Value) -> Result<Value, JsonTextError> {
+        if self.text[self.at..].starts_with(word) {
+            self.at += word.len();
+            Ok(value)
+        } else {
+            Err(self.syntax())
+        }
+    }
+
+    /// A container's opening byte, consumed, at one level less depth.
+    fn open(&mut self, depth: usize) -> Result<usize, JsonTextError> {
+        let Some(inner) = depth.checked_sub(1) else {
+            return Err(self.syntax());
         };
-    }
-    Ok(())
-}
-
-/// The text after a string whose opening quote is already consumed. An
-/// escape takes the next byte with it, so `\"` does not end the string; an
-/// unterminated string runs to the end, for the parser to refuse.
-fn after_string(mut rest: &[u8]) -> &[u8] {
-    loop {
-        rest = match rest {
-            [b'"', after @ ..] => return after,
-            [b'\\', _, after @ ..] | [_, after @ ..] => after,
-            [] => return rest,
-        };
-    }
-}
-
-/// Refuse one number token that is an integer literal out of range. A
-/// token with a fraction or an exponent is a float; a malformed one is the
-/// parser's.
-fn check_integer(token: &[u8]) -> Result<(), JsonTextError> {
-    if token.iter().any(|b| matches!(b, b'.' | b'e' | b'E')) {
-        return Ok(());
-    }
-    let (negative, digits) = match token.split_first() {
-        Some((b'-', digits)) => (true, digits),
-        _ => (false, token),
-    };
-    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
-        return Ok(());
-    }
-    // ASCII digits by the check above, so always UTF-8.
-    let Ok(text) = std::str::from_utf8(token) else {
-        return Ok(());
-    };
-    let fits = if negative {
-        text.parse::<i64>().is_ok()
-    } else {
-        text.parse::<u64>().is_ok()
-    };
-    if fits {
-        Ok(())
-    } else {
-        Err(JsonTextError::IntegerRange)
-    }
-}
-
-/// A `Value`, refusing an object that names a member twice.
-struct Strict;
-
-impl<'de> DeserializeSeed<'de> for Strict {
-    type Value = Value;
-    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
-        d.deserialize_any(StrictVisitor)
-    }
-}
-
-struct StrictVisitor;
-
-impl<'de> Visitor<'de> for StrictVisitor {
-    type Value = Value;
-
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a JSON value")
+        self.at += 1;
+        Ok(inner)
     }
 
-    fn visit_bool<E>(self, v: bool) -> Result<Value, E> {
-        Ok(Value::Bool(v))
-    }
-
-    fn visit_i64<E>(self, v: i64) -> Result<Value, E> {
-        Ok(Value::Number(v.into()))
-    }
-
-    fn visit_u64<E>(self, v: u64) -> Result<Value, E> {
-        Ok(Value::Number(v.into()))
-    }
-
-    fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Value, E> {
-        Number::from_f64(v)
-            .map(Value::Number)
-            .ok_or_else(|| E::custom("a number that is not finite"))
-    }
-
-    fn visit_str<E>(self, v: &str) -> Result<Value, E> {
-        Ok(Value::String(v.to_owned()))
-    }
-
-    fn visit_unit<E>(self) -> Result<Value, E> {
-        Ok(Value::Null)
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+    fn array(&mut self, depth: usize) -> Result<Value, JsonTextError> {
+        let inner = self.open(depth)?;
         let mut items = Vec::new();
-        while let Some(item) = seq.next_element_seed(Strict)? {
-            items.push(item);
+        let result = self.items(inner, &mut items);
+        let mut value = Value::Array(items);
+        match result {
+            Ok(()) => Ok(value),
+            Err(error) => {
+                super::wipe_value(&mut value);
+                Err(error)
+            }
         }
-        Ok(Value::Array(items))
     }
 
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
-        let mut members = Map::new();
-        while let Some(key) = map.next_key::<String>()? {
-            if members.contains_key(&key) {
-                return Err(A::Error::custom(DUPLICATE));
-            }
-            let value = map.next_value_seed(Strict)?;
-            let _ = members.insert(key, value);
+    fn items(&mut self, depth: usize, items: &mut Vec<Value>) -> Result<(), JsonTextError> {
+        self.skip_whitespace();
+        if self.peek() == Some(b']') {
+            self.at += 1;
+            return Ok(());
         }
-        Ok(Value::Object(members))
+        loop {
+            push_wiping(items, self.value(depth)?);
+            self.skip_whitespace();
+            match self.peek() {
+                Some(b',') => self.at += 1,
+                Some(b']') => {
+                    self.at += 1;
+                    return Ok(());
+                }
+                _ => return Err(self.syntax()),
+            }
+        }
     }
+
+    fn object(&mut self, depth: usize) -> Result<Value, JsonTextError> {
+        let inner = self.open(depth)?;
+        let mut members = Map::new();
+        let result = self.members(inner, &mut members);
+        let mut value = Value::Object(members);
+        match result {
+            Ok(()) => Ok(value),
+            Err(error) => {
+                super::wipe_value(&mut value);
+                Err(error)
+            }
+        }
+    }
+
+    fn members(
+        &mut self,
+        depth: usize,
+        members: &mut Map<String, Value>,
+    ) -> Result<(), JsonTextError> {
+        self.skip_whitespace();
+        if self.peek() == Some(b'}') {
+            self.at += 1;
+            return Ok(());
+        }
+        loop {
+            self.skip_whitespace();
+            if self.peek() != Some(b'"') {
+                return Err(self.syntax());
+            }
+            let mut key = self.string()?;
+            if members.contains_key(&key) {
+                key.zeroize();
+                // The place of the name's closing quote, as serde_json
+                // reports it.
+                let (line, column) = self.place(self.at - 1);
+                return Err(JsonTextError::DuplicateKey { line, column });
+            }
+            self.skip_whitespace();
+            if let Err(error) = self.expect(b':') {
+                key.zeroize();
+                return Err(error);
+            }
+            match self.value(depth) {
+                Ok(value) => {
+                    let _ = members.insert(key, value);
+                }
+                Err(error) => {
+                    key.zeroize();
+                    return Err(error);
+                }
+            }
+            self.skip_whitespace();
+            match self.peek() {
+                Some(b',') => self.at += 1,
+                Some(b'}') => {
+                    self.at += 1;
+                    return Ok(());
+                }
+                _ => return Err(self.syntax()),
+            }
+        }
+    }
+
+    /// A string, from its opening quote. Its decoded text is never longer
+    /// than its raw text, so the buffer is sized to that before anything is
+    /// written and never grows; on a refusal it is wiped.
+    fn string(&mut self) -> Result<String, JsonTextError> {
+        self.at += 1;
+        let raw = self.text[self.at..]
+            .iter()
+            .scan(false, |escaped, &b| {
+                let end = b == b'"' && !*escaped;
+                *escaped = !*escaped && b == b'\\';
+                Some(end)
+            })
+            .position(|end| end)
+            .unwrap_or(self.text.len() - self.at);
+        let mut out = String::with_capacity(raw);
+        match self.decode(&mut out) {
+            Ok(()) => Ok(out),
+            Err(error) => {
+                out.zeroize();
+                Err(error)
+            }
+        }
+    }
+
+    fn decode(&mut self, out: &mut String) -> Result<(), JsonTextError> {
+        loop {
+            // A run of plain bytes, copied as one checked UTF-8 slice.
+            let run = self.text[self.at..]
+                .iter()
+                .take_while(|&&b| b != b'"' && b != b'\\' && b >= 0x20)
+                .count();
+            let plain = std::str::from_utf8(&self.text[self.at..self.at + run]).map_err(|e| {
+                self.at += e.valid_up_to();
+                self.syntax()
+            })?;
+            out.push_str(plain);
+            self.at += run;
+            match self.peek() {
+                Some(b'"') => {
+                    self.at += 1;
+                    return Ok(());
+                }
+                Some(b'\\') => {
+                    self.at += 1;
+                    let c = self.escape()?;
+                    out.push(c);
+                }
+                // A control character, or the end of the text.
+                _ => return Err(self.syntax()),
+            }
+        }
+    }
+
+    /// The character an escape names, after its backslash.
+    fn escape(&mut self) -> Result<char, JsonTextError> {
+        let c = match self.peek() {
+            Some(b'"') => '"',
+            Some(b'\\') => '\\',
+            Some(b'/') => '/',
+            Some(b'b') => '\u{8}',
+            Some(b'f') => '\u{c}',
+            Some(b'n') => '\n',
+            Some(b'r') => '\r',
+            Some(b't') => '\t',
+            Some(b'u') => {
+                self.at += 1;
+                return self.unicode();
+            }
+            _ => return Err(self.syntax()),
+        };
+        self.at += 1;
+        Ok(c)
+    }
+
+    /// `\uXXXX`, after its `u`: one code point, or a surrogate pair. An
+    /// unpaired surrogate is refused.
+    fn unicode(&mut self) -> Result<char, JsonTextError> {
+        let high = self.hex4()?;
+        let code = if (0xD800..0xDC00).contains(&high) {
+            if !self.text[self.at..].starts_with(b"\\u") {
+                return Err(self.syntax());
+            }
+            self.at += 2;
+            let low = self.hex4()?;
+            if !(0xDC00..0xE000).contains(&low) {
+                return Err(self.syntax());
+            }
+            0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)
+        } else {
+            high
+        };
+        char::from_u32(code).ok_or_else(|| self.syntax())
+    }
+
+    fn hex4(&mut self) -> Result<u32, JsonTextError> {
+        let digits = self
+            .text
+            .get(self.at..self.at + 4)
+            .ok_or_else(|| self.syntax())?;
+        let mut code = 0;
+        for &d in digits {
+            let Some(v) = char::from(d).to_digit(16) else {
+                return Err(self.syntax());
+            };
+            code = code * 16 + v;
+        }
+        self.at += 4;
+        Ok(code)
+    }
+
+    /// A number, read from the text in place: an integer literal is a
+    /// signed or unsigned 64-bit integer or refused, and one with a
+    /// fraction or an exponent is the nearest binary64 (std's parser,
+    /// correctly rounded, as serde_json's `float_roundtrip` is).
+    fn number(&mut self) -> Result<Value, JsonTextError> {
+        let start = self.at;
+        let negative = self.peek() == Some(b'-');
+        if negative {
+            self.at += 1;
+        }
+        match self.peek() {
+            Some(b'0') => self.at += 1,
+            Some(b'1'..=b'9') => self.digits(),
+            _ => return Err(self.syntax()),
+        }
+        let mut float = false;
+        if self.peek() == Some(b'.') {
+            self.at += 1;
+            self.some_digits()?;
+            float = true;
+        }
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            self.at += 1;
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                self.at += 1;
+            }
+            self.some_digits()?;
+            float = true;
+        }
+        // ASCII by the grammar just read.
+        let token = std::str::from_utf8(&self.text[start..self.at]).map_err(|_| self.syntax())?;
+        let number = if float {
+            token
+                .parse::<f64>()
+                .ok()
+                .and_then(Number::from_f64)
+                .ok_or_else(|| self.syntax())?
+        } else if !negative {
+            Number::from(
+                token
+                    .parse::<u64>()
+                    .map_err(|_| JsonTextError::IntegerRange)?,
+            )
+        } else {
+            match token
+                .parse::<i64>()
+                .map_err(|_| JsonTextError::IntegerRange)?
+            {
+                // serde_json reads `-0` as the float negative zero.
+                0 => Number::from_f64(-0.0).ok_or_else(|| self.syntax())?,
+                n => Number::from(n),
+            }
+        };
+        Ok(Value::Number(number))
+    }
+
+    fn digits(&mut self) {
+        while matches!(self.peek(), Some(b'0'..=b'9')) {
+            self.at += 1;
+        }
+    }
+
+    /// At least one digit.
+    fn some_digits(&mut self) -> Result<(), JsonTextError> {
+        if !matches!(self.peek(), Some(b'0'..=b'9')) {
+            return Err(self.syntax());
+        }
+        self.digits();
+        Ok(())
+    }
+}
+
+/// Push onto `items`, wiping the old buffer when it is replaced by a larger
+/// one: the values it held were moved, but their bytes (a number, the
+/// pointer and length of a string) stay in the freed block otherwise.
+fn push_wiping(items: &mut Vec<Value>, value: Value) {
+    if items.len() == items.capacity() {
+        let mut grown = Vec::with_capacity((items.capacity() * 2).max(4));
+        grown.append(items);
+        items.spare_capacity_mut().zeroize();
+        *items = grown;
+    }
+    items.push(value);
 }
 
 #[cfg(test)]
@@ -369,5 +623,201 @@ mod tests {
         let value = parse_text(br#"{"b": 1.0, "a": [0.1, -0.0]}"#).unwrap();
         let text = to_text(&value).unwrap();
         assert_eq!(parse_text(&text).unwrap(), value);
+    }
+
+    #[test]
+    fn escapes_and_unicode_decode_as_serde_json_reads_them() {
+        let text = r#"["\"\\\/\b\f\n\r\t", "\u00e9\u4e2d", "\ud83d\ude00", "é中😀", "a\u0000b"]"#
+            .as_bytes();
+        assert_eq!(
+            parse_text(text).unwrap(),
+            serde_json::from_slice::<Value>(text).unwrap()
+        );
+        for bad in [
+            &br#""\ud800""#[..],
+            br#""\ud800A""#,
+            br#""\udc00""#,
+            br#""\x""#,
+            br#""\u12""#,
+            br#""\u12g4""#,
+            b"\"a\nb\"",
+            b"\"\x01\"",
+            b"\"\\",
+        ] {
+            assert!(
+                matches!(parse_text(bad), Err(JsonTextError::Syntax { .. })),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn numbers_read_as_serde_json_reads_them() {
+        for text in [
+            &b"0"[..],
+            b"-0",
+            b"-0.0",
+            b"1.5e3",
+            b"1E-2",
+            b"2e+2",
+            b"0.1",
+            b"-9223372036854775808",
+            b"18446744073709551615",
+            b"123456789012345678.5",
+            b"5e-324",
+            b"1e-400",
+        ] {
+            let ours = parse_text(text).unwrap();
+            let theirs: Value = serde_json::from_slice(text).unwrap();
+            assert_eq!(ours, theirs, "{}", String::from_utf8_lossy(text));
+            assert_eq!(
+                ours.as_f64().map(f64::to_bits),
+                theirs.as_f64().map(f64::to_bits),
+                "{}",
+                String::from_utf8_lossy(text)
+            );
+        }
+        for bad in [
+            &b"01"[..],
+            b"-",
+            b"1.",
+            b".5",
+            b"1e",
+            b"1e+",
+            b"+1",
+            b"0x1",
+            b"--1",
+            b"1.e2",
+        ] {
+            assert!(
+                matches!(parse_text(bad), Err(JsonTextError::Syntax { .. })),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nesting_stops_at_serde_jsons_limit() {
+        let deep = |n: usize| [vec![b'['; n], vec![b']'; n]].concat();
+        assert!(parse_text(&deep(127)).is_ok());
+        assert!(serde_json::from_slice::<Value>(&deep(127)).is_ok());
+        assert!(matches!(
+            parse_text(&deep(128)),
+            Err(JsonTextError::Syntax { .. })
+        ));
+        assert!(serde_json::from_slice::<Value>(&deep(128)).is_err());
+        let objects = |n: usize| [b"{\"a\":".repeat(n), b"1".to_vec(), vec![b'}'; n]].concat();
+        assert!(parse_text(&objects(127)).is_ok());
+        assert!(parse_text(&objects(128)).is_err());
+    }
+
+    #[test]
+    fn literals_and_structure_are_strict() {
+        for bad in [
+            &b"tru"[..],
+            b"nul",
+            b"falsey",
+            b"[1,]",
+            b"[1 2]",
+            b"{\"a\" 1}",
+            b"{\"a\":1,}",
+            b"{1:1}",
+            b"{\"a\":1 \"b\":2}",
+            b"[",
+            b"{",
+            b"{\"a\":",
+            b"]",
+        ] {
+            assert!(
+                matches!(parse_text(bad), Err(JsonTextError::Syntax { .. })),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            parse_text(b" \t\r\n[ true , false , null ] ").unwrap(),
+            json!([true, false, null])
+        );
+        assert_eq!(parse_text(b"{ }").unwrap(), json!({}));
+        assert_eq!(parse_text(b"[ ]").unwrap(), json!([]));
+    }
+
+    #[test]
+    fn a_syntax_error_names_its_line_and_column() {
+        assert_eq!(
+            parse_text(b"[1,\n  x]"),
+            Err(JsonTextError::Syntax { line: 2, column: 3 })
+        );
+        assert_eq!(
+            parse_text(b"?"),
+            Err(JsonTextError::Syntax { line: 1, column: 1 })
+        );
+    }
+
+    #[test]
+    fn long_arrays_grow_and_keep_their_order() {
+        let many: Vec<u32> = (0..100).collect();
+        let text = serde_json::to_vec(&many).unwrap();
+        assert_eq!(parse_text(&text).unwrap(), json!(many));
+    }
+
+    #[test]
+    fn to_text_writes_exactly_its_length() {
+        let value = json!({"name": "Alice \"A\" \u{e9}", "n": [1.5, -2, 18446744073709551615u64]});
+        let text = to_text(&value).unwrap();
+        assert_eq!(text.len(), text.capacity(), "sized before it is written");
+        assert_eq!(text, serde_json::to_vec(&value).unwrap());
+    }
+
+    mod differential {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn document() -> impl Strategy<Value = Value> {
+            let leaf = prop_oneof![
+                Just(Value::Null),
+                any::<bool>().prop_map(Value::Bool),
+                any::<i64>().prop_map(|n| json!(n)),
+                any::<u64>().prop_map(|n| json!(n)),
+                any::<f64>()
+                    .prop_filter("finite", |f| f.is_finite())
+                    .prop_map(|f| json!(f)),
+                any::<String>().prop_map(Value::String),
+            ];
+            leaf.prop_recursive(4, 32, 6, |inner| {
+                prop_oneof![
+                    prop::collection::vec(inner.clone(), 0..6).prop_map(Value::Array),
+                    prop::collection::btree_map(any::<String>(), inner, 0..6)
+                        .prop_map(|m| Value::Object(m.into_iter().collect())),
+                ]
+            })
+        }
+
+        proptest! {
+            /// Every document serde_json writes, compact or pretty, reads
+            /// back to the same value, numbers to the same bits.
+            #[test]
+            fn reads_what_serde_json_writes(value in document()) {
+                for text in [serde_json::to_vec(&value).unwrap(), serde_json::to_vec_pretty(&value).unwrap()] {
+                    prop_assert_eq!(&parse_text(&text).unwrap(), &value);
+                }
+            }
+
+            /// Over text near JSON: whatever this parser reads, serde_json
+            /// reads to the same value; whatever serde_json reads and this
+            /// one refuses is a repeated member or an integer out of range.
+            #[test]
+            fn agrees_with_serde_json_on_arbitrary_text(text in r#"[\[\]{}",:0-9eE.+\- tfrunlasa\\\\u]{0,24}"#) {
+                let ours = parse_text(text.as_bytes());
+                let theirs = serde_json::from_slice::<Value>(text.as_bytes());
+                match (ours, theirs) {
+                    (Ok(ours), Ok(theirs)) => prop_assert_eq!(ours, theirs),
+                    (Ok(ours), Err(_)) => prop_assert!(false, "read {} that serde_json refuses", ours),
+                    (Err(JsonTextError::Syntax { .. }), Ok(theirs)) => {
+                        prop_assert!(false, "refused {:?} that serde_json reads as {}", text, theirs)
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }

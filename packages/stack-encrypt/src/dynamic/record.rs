@@ -1421,7 +1421,7 @@ enum TargetWire {
 #[serde(deny_unknown_fields)]
 struct ConfiguredTarget {
     name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     options: Option<super::term::JsonWire>,
 }
 
@@ -2390,6 +2390,17 @@ fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
     if let Some(declared) = field.field_type {
         if !declared.holds(value.kind()) {
             return Err(misfit(Reason::FieldType));
+        }
+    }
+    // A document is read by the engine's rules here, before any key, so a
+    // check refuses what encrypt refuses, and no resolver has to.
+    if field.field_type == Some(ValueKind::Json) {
+        if let Err(error) = super::read_json(value) {
+            return Err(Error::Target(TargetError::Json {
+                name: field.name.clone(),
+                target: field.target().unwrap_or_default().to_owned(),
+                reason: error.code(),
+            }));
         }
     }
     // A target field's value is sealed by the type's own plan, which
@@ -6637,6 +6648,28 @@ mod tests {
                 &FakeEql,
             ));
             assert_eq!(error.reason(), Some(Reason::TargetOptions), "{error}");
+            // A present `"options"` holds an object: a null is refused,
+            // never read as no options.
+            for target in [TEXT_EQ, "EncryptedJson"] {
+                let error = refused(plan_with(
+                    obj(vec![(
+                        "email",
+                        obj(vec![
+                            ("context", label("email")),
+                            (
+                                "target",
+                                obj(vec![("name", s(target)), ("options", Tree::Null)]),
+                            ),
+                        ]),
+                    )]),
+                    &FakeEql,
+                ));
+                assert_eq!(
+                    error.reason(),
+                    Some(Reason::InvalidTarget),
+                    "{target}: {error}"
+                );
+            }
             let error = refused(plan_with(
                 obj(vec![(
                     "email",
@@ -6676,6 +6709,38 @@ mod tests {
                 entries.last_mut().unwrap().1 = s("sql");
             }
             assert!(plan_with(obj(vec![("profile", spec)]), &FakeEql).is_ok());
+        }
+
+        /// A document that is not one by the engine's rules is refused by
+        /// the check, before any key, with the code encrypt gives it.
+        #[test]
+        fn the_check_reads_a_document_by_the_engines_rules() {
+            let mut spec = target_spec(label("profile"), "EncryptedJson");
+            if let Tree::Object(entries) = &mut spec {
+                entries.push(("null".to_string(), s("sql")));
+            }
+            let plan = plan_with(obj(vec![("profile", spec)]), &FakeEql).unwrap();
+            for (text, code) in [
+                (r#"{"secret": 1, "secret": 2}"#, "json_duplicate_key"),
+                (r#"{"secret""#, "json_syntax"),
+                ("18446744073709551616", "json_integer_range"),
+            ] {
+                let error = check_source(obj(vec![("profile", s(text))]), &plan).unwrap_err();
+                let Error::Target(TargetError::Json {
+                    name,
+                    target,
+                    reason,
+                }) = &error
+                else {
+                    panic!("{text}: {error}");
+                };
+                assert_eq!(
+                    (name.as_str(), target.as_str(), *reason),
+                    ("profile", "EncryptedJson", code)
+                );
+                assert!(!error.to_string().contains("secret"), "{error}");
+            }
+            assert!(check_source(obj(vec![("profile", s(r#"{"a": [1, null]}"#))]), &plan).is_ok());
         }
 
         #[tokio::test]

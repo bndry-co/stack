@@ -5,6 +5,7 @@ import (
 	"go/types"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"golang.org/x/tools/go/packages"
@@ -167,7 +168,7 @@ func EQLGoName(name string) string {
 		}
 		after := rest[at+4:]
 		out.WriteString(rest[:at])
-		if after == "" || unicode.IsUpper(rune(after[0])) {
+		if next, _ := utf8.DecodeRuneInString(after); after == "" || unicode.IsUpper(next) {
 			out.WriteString("JSON")
 		} else {
 			out.WriteString("Json")

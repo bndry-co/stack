@@ -201,6 +201,15 @@ pub enum TargetError {
         /// The type's name.
         name: &'static str,
     },
+    /// The type stores a JSON document, which is queried by operator
+    /// (`contains`, `eq_at`, an ordering at a path, a read) from named
+    /// inputs, not from one plaintext: Stack Encrypt derives those
+    /// operands itself (`stack_encrypt::dynamic::query_term`).
+    #[error("{name} is queried by a JSON operator, not by one plaintext")]
+    DocumentQuery {
+        /// The type's name.
+        name: &'static str,
+    },
     /// A query asked through an index the type does not carry
     /// ([`Target::indexes`]), so it has no term to derive.
     #[error("{name} carries no {index} index, so no query is answered through it")]
@@ -490,6 +499,9 @@ pub fn query<'a, K: 'static>(
         return Err(error);
     }
     carries(target, index)?;
+    if document(name).is_some() {
+        return Err(TargetError::DocumentQuery { name: target.name });
+    }
     let column = Identifier::from_label(context)?;
     query_named(name, index, keyset, column, plaintext)
 }

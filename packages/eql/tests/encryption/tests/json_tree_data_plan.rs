@@ -334,3 +334,52 @@ async fn text_that_is_not_a_document_is_refused_before_any_key() {
         "no key was requested"
     );
 }
+
+/// A document is queried by a JSON operator, which the engine derives
+/// from named inputs; eql-bindings' one-plaintext query refuses it by
+/// name rather than falling through its generated dispatch.
+#[tokio::test]
+async fn a_document_has_no_one_plaintext_query() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let label: Label = "users/profile".parse().unwrap();
+    let error = eql_targets::query(
+        "EncryptedJson",
+        &stack_encrypt::target::IndexSpec::Json(JsonOptions::default()),
+        &keyset,
+        &label,
+        frame("{}"),
+    )
+    .err()
+    .expect("refused");
+    assert!(
+        matches!(
+            error,
+            eql_targets::TargetError::DocumentQuery {
+                name: "EncryptedJson"
+            }
+        ),
+        "{error}"
+    );
+}
+
+/// Which targets take the JSON index's options is decided twice: the
+/// engine gives them to a target whose descriptor carries the `json`
+/// index, and eql-bindings seals a target of a document family with them
+/// and refuses them on any other. The two must name the same producible
+/// targets, or a write the engine configures is one eql-bindings refuses.
+#[tokio::test]
+async fn the_engine_and_the_table_agree_on_which_targets_take_json_options() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let label: Label = "users/profile".parse().unwrap();
+    let options = dynamic::TargetOptions::Json(JsonOptions::default());
+    for target in eql_targets::targets().iter().filter(|t| t.producible) {
+        let engine = target.indexes.contains(&"json");
+        let refused = matches!(
+            eql_targets::encrypt_with(target.name, Some(&options), &keyset, &label, frame(true)),
+            Err(eql_targets::TargetError::Options { .. })
+        );
+        assert_eq!(engine, !refused, "{}", target.name);
+    }
+}

@@ -1,6 +1,7 @@
 package encrypt_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -72,11 +73,13 @@ func TestJSONDocumentsRoundTripThroughTheGuest(t *testing.T) {
 		if !ok {
 			t.Fatalf("row %d opened as %T, not bytes", i, row["profile"])
 		}
-		var got, want any
-		if err := json.Unmarshal(text, &got); err != nil {
+		// Numbers are compared as their text (UseNumber), so an integer
+		// past 2^53 that came back as the nearest float would differ.
+		got, err := decodeNumbers(text)
+		if err != nil {
 			t.Fatalf("row %d: %v", i, err)
 		}
-		_ = json.Unmarshal([]byte(jsonDocuments[i]), &want)
+		want, _ := decodeNumbers([]byte(jsonDocuments[i]))
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("row %d: opened %s, want %s", i, text, jsonDocuments[i])
 		}
@@ -104,4 +107,13 @@ func TestJSONTextThatIsNotADocumentIsErrEncoding(t *testing.T) {
 			t.Fatalf("%s: the error holds the text: %v", text, err)
 		}
 	}
+}
+
+// decodeNumbers decodes JSON text with each number kept as its text.
+func decodeNumbers(text []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(text))
+	dec.UseNumber()
+	var v any
+	err := dec.Decode(&v)
+	return v, err
 }
