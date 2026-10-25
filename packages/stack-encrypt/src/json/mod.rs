@@ -464,7 +464,11 @@ impl JsonDocument {
     /// `jsonb_object_agg`, which keeps the last value of a repeated key).
     pub fn find(&self, token: &Tag) -> Option<(usize, &JsonEntry)> {
         let x = derive::self_tag(&self.header.iv, token);
-        self.entries.iter().enumerate().rev().find(|(_, e)| e.x == x)
+        self.entries
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, e)| e.x == x)
     }
 
     /// The children of the node whose token is `token`, as the server
