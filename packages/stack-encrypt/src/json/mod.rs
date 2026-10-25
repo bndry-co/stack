@@ -457,9 +457,14 @@ impl JsonDocument {
     /// The entry whose self tag is `token`'s, as the server finds the node
     /// a token names: its ordinal and the entry. `None` for a token that
     /// names no node of this document.
+    ///
+    /// Where several entries carry the tag, which no sealing produces, the
+    /// last of them, as the server's index keeps it
+    /// (`eql_v4_internal.json_tree_index` builds it with
+    /// `jsonb_object_agg`, which keeps the last value of a repeated key).
     pub fn find(&self, token: &Tag) -> Option<(usize, &JsonEntry)> {
         let x = derive::self_tag(&self.header.iv, token);
-        self.entries.iter().enumerate().find(|(_, e)| e.x == x)
+        self.entries.iter().enumerate().rev().find(|(_, e)| e.x == x)
     }
 
     /// The children of the node whose token is `token`, as the server
@@ -482,10 +487,13 @@ impl JsonDocument {
         let most = u32::try_from(self.entries.len()).unwrap_or(u32::MAX);
         for o in 0..most {
             let tag = derive::parent_tag(iv, token, o);
+            // The last entry carrying the tag, as the server's index keeps
+            // it ([`find`](Self::find)).
             let Some((j, entry)) = self
                 .entries
                 .iter()
                 .enumerate()
+                .rev()
                 .find(|(_, e)| e.p.as_ref() == Some(&tag))
             else {
                 break;

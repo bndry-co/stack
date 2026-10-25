@@ -627,6 +627,40 @@ mod given_a_read_of_one_node {
     }
 }
 
+/// The in-crate model of the SQL reads finds what the SQL finds where a
+/// document repeats a tag, which no sealing produces: the server's index
+/// keeps the last entry carrying it (`jsonb_object_agg` keeps the last
+/// value of a repeated key), so the model's `find` and `children` do too.
+#[tokio::test]
+async fn the_model_keeps_the_last_entry_carrying_a_tag_as_the_sql_index_does() {
+    let (cipher, _) = cipher().await;
+    let doc = seal_with(&cipher, &fixture(), &open_root()).await;
+    let root = key_with(&cipher, "$", &open_root()).await;
+    let hello = key_with(&cipher, "$.hello", &open_root()).await;
+    // `hello` (1) appended again at the end: its self tag and parent tag
+    // now name two entries, 1 and 10.
+    let mut wire = serde_json::to_value(&doc).unwrap();
+    let sv = wire["sv"].as_array_mut().unwrap();
+    let copy = sv[1].clone();
+    sv.push(copy);
+    let forged: JsonDocument = serde_json::from_value(wire).unwrap();
+    assert_eq!(
+        forged.find(&hello.token_bytes()[0]).map(|(j, _)| j),
+        Some(10),
+        "the last entry with the self tag"
+    );
+    let children: Vec<usize> = forged
+        .children(&root.token_bytes()[0])
+        .iter()
+        .map(|(j, _, _)| *j)
+        .collect();
+    assert_eq!(children.len(), 3, "the root's three members");
+    assert!(
+        children.contains(&10) && !children.contains(&1),
+        "the last entry with the parent tag: {children:?}"
+    );
+}
+
 /// The self tag the stored node at `key`'s only token carries, as the
 /// database could write it on any entry: it holds the token and the `iv`.
 fn x_of(doc: &JsonDocument, key: &JsonSubtreeKey) -> String {
