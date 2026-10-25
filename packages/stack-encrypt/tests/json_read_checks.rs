@@ -439,6 +439,53 @@ mod given_the_rows_of_a_walk_without_gates {
     }
 
     #[tokio::test]
+    async fn a_subtree_cut_short_is_refused_as_the_wrong_entry() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let nested = key(&cipher, "$.nested").await;
+        // The last row is the second element's `x` (8): without it the
+        // element says it has a member the rows do not hold.
+        let mut rows = walk(&doc, &nested);
+        assert_eq!(rows.pop().map(|n| n.ordinal()), Some(8), "x, the last row");
+        let refused = open_value(&cipher, nested.open(rows)).await;
+        assertions::wrong_entry(refused, NEXT);
+    }
+
+    #[tokio::test]
+    async fn a_leading_element_left_out_is_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &json!({"arr": [10, 20, 30]})).await;
+        let arr = key(&cipher, "$.arr").await;
+        assert!(arr.gates().is_empty(), "a chain head's token");
+        // The walk does not return the node it starts from, so nothing
+        // before the first row bounds where the rows begin. Leaving out the
+        // first element would open as `[20, 30]`, every element moved down
+        // one position.
+        let rows = walk(&doc, &arr);
+        let first = rows[0].ordinal();
+        let rows: Vec<JsonNode> = rows.into_iter().filter(|n| n.ordinal() != first).collect();
+        assertions::wrong_entry(open_value(&cipher, arr.open(rows.clone())).await, CHILD);
+        assertions::wrong_entry(open_list(&cipher, arr.open(rows)).await, CHILD);
+    }
+
+    #[tokio::test]
+    async fn trailing_children_left_out_are_not_detected_by_a_walk_without_gates() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &json!({"arr": [10, 20, 30]})).await;
+        let arr = key(&cipher, "$.arr").await;
+        // What the design leaves open until the walk returns the node it
+        // starts from (#1356): the node's child count is in the node's own
+        // entry, so the rows cannot say how many children follow the last
+        // one returned. The database withholding the last element opens as
+        // the shorter array. A member left out of an object is the same,
+        // wherever it sits, since nothing the client holds ranks the keys.
+        let mut rows = walk(&doc, &arr);
+        rows.pop();
+        let opened = open_value(&cipher, arr.open(rows)).await;
+        assert_eq!(opened.unwrap(), json!([10, 20]), "the elements before it");
+    }
+
+    #[tokio::test]
     async fn rows_with_no_reported_depth_are_placed_by_the_document() {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &fixture()).await;
@@ -514,6 +561,20 @@ mod given_the_rows_of_a_gated_walk {
         let xs = key(&cipher, "$.nested.list[*].x").await;
         let refused = open_list(&cipher, xs.open(vec![row(&doc, 6, Some(1))])).await;
         assertions::wrong_entry(refused, REACHED);
+    }
+
+    #[tokio::test]
+    async fn a_subtree_cut_short_is_refused_as_the_wrong_entry() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let second = key(&cipher, "$.nested.list[1]").await;
+        // The element (7) says it has one member, and the database leaves
+        // that member (8) out: the same dropped row as a gap, at the end of
+        // the rows instead of between two of them.
+        let mut rows = walk(&doc, &second);
+        assert_eq!(rows.pop().map(|n| n.ordinal()), Some(8), "x, the last row");
+        let refused = open_value(&cipher, second.open(rows)).await;
+        assertions::wrong_entry(refused, "the next node of the walked subtree");
     }
 
     #[tokio::test]

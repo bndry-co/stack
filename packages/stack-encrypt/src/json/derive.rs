@@ -1382,7 +1382,8 @@ fn open_subtree<'a, K>(
 /// last step is one. Without gates, the rows are the children of the
 /// path's node and their subtrees, side by side: each child carries the
 /// selector of the path extended by its label, at depth `1`, right after
-/// the subtree before it.
+/// the subtree before it, and an element at the position after the
+/// elements before it, from `0`.
 fn place(
     rows: Vec<Row>,
     key: &JsonSubtreeKey,
@@ -1399,8 +1400,19 @@ fn place(
         let (bytes, depth) = if below {
             let bytes = child_selector_bytes(&at, &top.node.label)
                 .ok_or_else(|| wrong("a child of the walked node"))?;
+            // The walk does not return the node it starts from, so no row
+            // bounds where the children begin; an element's position does.
+            // The children of an array are its elements from `0`, so the
+            // `n`th row at depth 1 must be element `n`: a database that
+            // leaves out the first element would otherwise move every
+            // element down a position. A member's place is a keyed rank
+            // the client does not hold, so a member left out, and the last
+            // children of either, are still the database's word.
+            let out_of_place =
+                matches!(top.node.label, Label::Index(i) if i != forest.len() as u64);
             if top.d.is_some_and(|d| d != 1)
                 || next.is_some_and(|j| j != top.j)
+                || out_of_place
                 || key.selectors.of(bytes.clone())? != top.s
             {
                 return Err(wrong("a child of the walked node"));
@@ -1471,7 +1483,9 @@ fn child_selector_bytes(parent: &Protected<Vec<u8>>, label: &Label) -> Option<Pr
 /// is one level below `node`, which sits `d` levels below the walk's start;
 /// and that it carries the selector of `node`'s path, whose selector bytes
 /// are `bytes`, extended by its own label. A sealed root among the rows is
-/// not a node of any walk.
+/// not a node of any walk. Rows that end before `node`'s authenticated
+/// child count is met are refused like a gap: the walk returns a node's
+/// whole subtree, so the database left the next node out.
 ///
 /// The rows are consecutive entries of one sealed document, placed by its
 /// authenticated child counts, so they nest no deeper than the document
@@ -1492,9 +1506,13 @@ fn rebuild_walked(
         return Err(shape("a JSON document no deeper than the index seals"));
     }
     let child = |rest: &mut dyn Iterator<Item = Row>, cursor: &mut u64| {
+        // The walk returns a node's whole subtree and stops at no budget
+        // short of it (the SQL falls back to the sealed root instead), so
+        // rows that run out before a child count is met are a row left out
+        // at the end, the same refusal as one left out in the middle.
         let row = rest
             .next()
-            .ok_or_else(|| shape("a complete JSON subtree"))?;
+            .ok_or_else(|| wrong("the next node of the walked subtree"))?;
         let child_bytes = child_selector_bytes(bytes, &row.node.label)
             .ok_or_else(|| wrong("the next node of the walked subtree"))?;
         if row.j != *cursor
