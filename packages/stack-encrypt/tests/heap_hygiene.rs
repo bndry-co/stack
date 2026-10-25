@@ -424,14 +424,43 @@ fn a_json_operators_input_leaves_no_plaintext_on_the_heap() {
 fn a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap() {
     let mark = marked("doc");
     let pad = "x".repeat(160);
-    let document = format!(r#"{{"{mark}": ["{mark}\n{pad}", 1.5], "n": "{mark}"}}"#);
-    let refused = format!(r#"{{"{mark}": "{mark}\n", "{mark}": 1}}"#);
+    let document = joined(&[
+        r#"{""#,
+        &mark,
+        r#"": [""#,
+        &mark,
+        r"\n",
+        &pad,
+        r#"", 1.5], "n": ""#,
+        &mark,
+        r#""}"#,
+    ]);
+    let refused = joined(&[
+        r#"{""#,
+        &mark,
+        r#"": ""#,
+        &mark,
+        r#"\n", ""#,
+        &mark,
+        r#"": 1}"#,
+    ]);
     let (document, refused) = (frame(document.as_str()), frame(refused.as_str()));
     watched("read_json", || {
         let parsed = stack_encrypt::dynamic::read_json(&document).expect("a document");
         drop(parsed);
         assert!(stack_encrypt::dynamic::read_json(&refused).is_err());
     });
+}
+
+/// `parts` joined into a string sized for them before it is written, so
+/// building a marked input frees no marked block that a later allocation
+/// could reuse and a watch then find.
+fn joined(parts: &[&str]) -> String {
+    let mut out = String::with_capacity(parts.iter().map(|p| p.len()).sum());
+    for part in parts {
+        out.push_str(part);
+    }
+    out
 }
 
 /// The spy itself: a plain `String` holding the marker, freed while
