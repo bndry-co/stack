@@ -214,6 +214,17 @@ func TestRunAsksTheEmbeddedEngine(t *testing.T) {
 	if !strings.Contains(stderr.String(), "User.Age") || !strings.Contains(stderr.String(), "TextEq seals a string, and int64 is int") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
+	// A document type is refused by what is missing, not by a kind
+	// mismatch no Go type could fix.
+	document := strings.Replace(userSource, "Email string   `stash:\"email,encrypt_into=TextEq\"`", "Profile []byte `stash:\"profile,encrypt_into=EncryptedJson\"`", 1)
+	dir = writeModule(t, map[string]string{"model.go": document})
+	stderr.Reset()
+	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 1 {
+		t.Fatalf("exit %d, want 1\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "User.Profile") || !strings.Contains(stderr.String(), "EncryptedJson seals a json document, and stashgen does not generate a field of it yet") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
 	// A context of two segments leaves an EQL field no column: refused by
 	// name, before the engine is asked, and nothing written.
 	deep := strings.Replace(userSource, "context=users", "context=app/users", 1)
@@ -260,7 +271,10 @@ func TestEQLGoNameAgreesWithTheGeneratedPackage(t *testing.T) {
 		t.Fatal("the rule renamed nothing: the Json family is spelled JSON")
 	}
 	if stashgen.EQLGoName("Json") != "JSON" || stashgen.EQLGoName("TextEq") != "TextEq" || stashgen.EQLGoName("SteVecQuery") != "SteVecQuery" ||
-		stashgen.EQLGoName("EncryptedJsonLeafQuery") != "EncryptedJSONLeafQuery" || stashgen.EQLGoName("Jsonify") != "Jsonify" {
+		stashgen.EQLGoName("EncryptedJsonLeafQuery") != "EncryptedJSONLeafQuery" || stashgen.EQLGoName("Jsonify") != "Jsonify" ||
+		// A letter after the word is read as a character, as Rust reads it,
+		// not as its first byte.
+		stashgen.EQLGoName("Jsonécrit") != "Jsonécrit" || stashgen.EQLGoName("JsonÉcrit") != "JSONÉcrit" {
 		t.Fatal("the one rule: the word Json is JSON, every other name is itself")
 	}
 }

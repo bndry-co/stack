@@ -241,6 +241,47 @@ fn a_text_target_leaves_no_plaintext_on_the_heap() {
     }
 }
 
+/// A JSON document at the engine's boundary: the parser a binding's text
+/// goes through (`json::parse_text`), with the marker in a string that has
+/// escapes (decoded, not borrowed), as a key, and past 128 bytes; a refused
+/// document, whose part built so far is wiped; and the text an opened
+/// document goes back as (`dynamic::json_frame`), written into a buffer
+/// that never reallocates.
+///
+/// The seal and open themselves are the JSON index's
+/// (`stack_encrypt::json`), which is not held to this rule yet: its path
+/// derivation frees key and leaf plaintext unwiped, so they are not
+/// watched here.
+#[test]
+fn a_document_leaves_no_plaintext_on_the_heap_at_the_boundary() {
+    let mark = marked("doc");
+    let document = format!(
+        r#"{{"note": "{mark}\n\"quoted\"", "{mark}": [1.5, "{mark}{pad}"], "n": 12345678901234567}}"#,
+        pad = "x".repeat(160)
+    );
+    let value = watched("parse_text", || {
+        stack_encrypt::json::parse_text(document.as_bytes()).unwrap()
+    });
+    watched("json_frame", || {
+        let frame = stack_encrypt::dynamic::json_frame(&value).unwrap();
+        drop(frame);
+    });
+    watched("wipe_value", || {
+        let mut value = value;
+        stack_encrypt::json::wipe_value(&mut value);
+    });
+    for refused in [
+        format!(r#"{{"a": "{mark}\n", "b": ["{mark}"], "a": 1}}"#),
+        format!(r#"["{mark}\n", {{"{mark}": [true, "{mark}"#),
+        format!(r#"{{"{mark}": "{mark}", "x": 99999999999999999999}}"#),
+    ] {
+        watched("parse_text refusal", || {
+            assert!(stack_encrypt::json::parse_text(refused.as_bytes()).is_err());
+        });
+    }
+    drop(document);
+}
+
 /// The spy itself: a plain `String` holding the marker, freed while
 /// watched, fails the watch.
 #[test]
