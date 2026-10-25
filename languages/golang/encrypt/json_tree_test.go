@@ -148,11 +148,11 @@ func TestJSONOperatorsDeriveTaggedTerms(t *testing.T) {
 		input                obj
 		parts                int
 	}{
-		{"contains", "eql", "eql_v4.query_json_tree", obj{{Key: "json", Value: []byte(`{"age":34}`)}}, 1},
-		{"contained_by", "eql", "eql_v4.query_json_tree", obj{{Key: "json", Value: `{"age":34}`}}, 1},
-		{"eq_at", "eql", "eql_v4.query_json_tree", obj{{Key: "path", Value: "$.name"}, {Key: "json", Value: []byte(`"Alice"`)}}, 1},
-		{"lt_at", "eql", "eql_v4.query_json_tree_leaf", obj{{Key: "path", Value: "$.age"}, {Key: "json", Value: []byte(`40`)}}, 1},
-		{"between_at", "eql", "eql_v4.query_json_tree_leaf", obj{{Key: "path", Value: "$.age"}, {Key: "low", Value: []byte(`18`)}, {Key: "high", Value: []byte(`40`)}}, 2},
+		{"contains", "eql", "eql_v4.query_json", obj{{Key: "json", Value: []byte(`{"age":34}`)}}, 1},
+		{"contained_by", "eql", "eql_v4.query_json", obj{{Key: "json", Value: `{"age":34}`}}, 1},
+		{"eq_at", "eql", "eql_v4.query_json", obj{{Key: "path", Value: "$.name"}, {Key: "json", Value: []byte(`"Alice"`)}}, 1},
+		{"lt_at", "eql", "eql_v4.query_json_leaf", obj{{Key: "path", Value: "$.age"}, {Key: "json", Value: []byte(`40`)}}, 1},
+		{"between_at", "eql", "eql_v4.query_json_leaf", obj{{Key: "path", Value: "$.age"}, {Key: "low", Value: []byte(`18`)}, {Key: "high", Value: []byte(`40`)}}, 2},
 		{"selector", "text", "text", obj{{Key: "path", Value: "$.name"}}, 1},
 		{"subtree", "text_array", "text[]", obj{{Key: "path", Value: "$.visits[*]"}, {Key: "wildcard_bound", Value: uint32(3)}}, 4},
 		{"children", "text", "text", obj{{Key: "path", Value: "$.visits"}}, 1},

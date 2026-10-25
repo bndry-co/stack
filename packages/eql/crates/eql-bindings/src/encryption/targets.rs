@@ -143,8 +143,8 @@ impl Target {
     }
 
     /// The PostgreSQL domain of the type's ordering operand at a path, for
-    /// a type that stores a JSON document (`EncryptedJson`:
-    /// `eql_v4.query_json_tree_leaf`); `None` for every other type. Stack
+    /// a type that stores a JSON document (`JsonSearch`:
+    /// `eql_v4.query_json_leaf`); `None` for every other type. Stack
     /// Encrypt binds an ordering at a path as it
     /// (`TargetDescriptor::with_leaf_query_sql_domain`).
     pub fn leaf_query_sql_domain(&self) -> Option<&'static str> {

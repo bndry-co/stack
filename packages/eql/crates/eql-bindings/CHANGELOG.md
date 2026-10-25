@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Target::leaf_query_sql_domain`** (`targets` feature, #1350): the
   domain a document type's ordering at a path binds as,
-  `eql_v4.query_json_tree_leaf` for `EncryptedJson` and `None` for every
+  `eql_v4.query_json_leaf` for `JsonSearch` and `None` for every
   other type, which a resolver hands Stack Encrypt
   (`TargetDescriptor::with_leaf_query_sql_domain`).
 
-- **`EncryptedJson`, the `json_tree` document, by name** (`targets`
+- **`JsonSearch`, the `json_tree` document, by name** (`targets`
 - **`JsonSearch`, the `json_tree` document, by name** (`targets`
   feature, #1348, #1349). The target table has a row for it, generated
   from the catalog's document family (`eql_domains::DOCUMENT_FAMILIES`):

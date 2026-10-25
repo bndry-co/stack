@@ -278,7 +278,7 @@ where
 
 /// Open the rows a read of a document field returned
 /// ([`dynamic::json_open`]): a codec-encoded list per database row of the
-/// entries the SQL returned (`public.eql_v4_json_tree_entry` JSON, text or
+/// entries the SQL returned (`public.eql_v4_json_entry` JSON, text or
 /// bytes), the plan, the field's name and the codec-encoded read request
 /// (`{"operation": "selector" | "subtree", "path", "wildcard_bound"?}`) in;
 /// a codec-encoded list per row of JSON texts (bytes) out, which is
