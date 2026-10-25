@@ -1775,7 +1775,7 @@ mod given_generated_documents {
     /// proptest's defaults, which read `PROPTEST_CASES` and
     /// `PROPTEST_RNG_SEED`, with this suite's own default for each one left
     /// unset.
-    fn config() -> Config {
+    pub(super) fn config() -> Config {
         let mut config = Config::default();
         if std::env::var_os("PROPTEST_CASES").is_none() {
             config.cases = DEFAULT_CASES;
@@ -2175,6 +2175,127 @@ mod given_generated_documents {
                 .map(|_| strategy.new_tree(&mut runner).unwrap().current())
                 .collect();
             assertions::covers_every_feature(&docs);
+        }
+    }
+}
+
+mod given_a_float_at_full_precision {
+    //! A number leaf is stored as its shortest round-trip text and parsed
+    //! back when it opens: from the sealed root's document text, or from
+    //! the node's own entry. Only serde_json's `float_roundtrip` parser
+    //! promises the nearest `f64` to that text; without it a value can come
+    //! back one unit in the last place off (#1364). Each case seals a
+    //! document holding the number and reads it back every way the column
+    //! hands it out, comparing bit patterns.
+
+    use proptest::prelude::*;
+    use proptest::test_runner::TestRunner;
+
+    use super::*;
+
+    /// The value a property test found coming back as
+    /// `-926809.5051008085` (#1364).
+    const FOUND: f64 = -926_809.505_100_808_3;
+
+    /// The document a case seals: the number as an array element under a
+    /// key, so a walk under `$.list` and the extracted element both reach
+    /// it. Its entries, by ordinal: `$`, `$.list`, `$.list[0]`.
+    fn document(f: f64) -> Value {
+        json!({"list": [f]})
+    }
+
+    /// The number back out of each way of reading it, named.
+    async fn read_back(cipher: &Cipher, f: f64) -> Vec<(&'static str, Value)> {
+        let value = document(f);
+        let sealed = seal(cipher, &value).await;
+        let entries = seal_with(cipher, &value, &open_root()).await;
+        let key = subtree_key(cipher, "$.list", JsonOptions::default())
+            .await
+            .unwrap();
+        let rows = subtree_nodes(&sealed, key.token_bytes());
+        let element = sealed.node(2).unwrap();
+        vec![
+            (
+                "the document, from the sealed root",
+                open(cipher, sealed).await.unwrap()["list"][0].take(),
+            ),
+            (
+                "the document, from its entries",
+                open(cipher, entries).await.unwrap()["list"][0].take(),
+            ),
+            (
+                "the extracted element, as `->` returns it",
+                cipher
+                    .decrypt_as::<Value, JsonNode>(element, aead())
+                    .await
+                    .unwrap(),
+            ),
+            (
+                "the walk under $.list",
+                cipher
+                    .decrypt_as::<Value, JsonSubtree>(key.open(rows), aead())
+                    .await
+                    .unwrap()[0]
+                    .take(),
+            ),
+        ]
+    }
+
+    /// The bit pattern of `value` as an `f64`, or `None` for a value that
+    /// is not a number.
+    fn bits(value: &Value) -> Option<u64> {
+        value.as_f64().map(f64::to_bits)
+    }
+
+    #[tokio::test]
+    async fn reads_back_the_value_that_came_back_one_ulp_off() {
+        let Scenario { cipher, .. } = scenario().await;
+        let wrong: Vec<String> = read_back(&cipher, FOUND)
+            .await
+            .into_iter()
+            .filter(|(_, back)| bits(back) != Some(FOUND.to_bits()))
+            .map(|(how, back)| format!("{how} read back {back}"))
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "every read should give back {FOUND:?}: {wrong:#?}"
+        );
+    }
+
+    /// Any finite `f64` reads back bit for bit, every way. The cases run
+    /// under the generated-documents suite's configuration: its fixed seed
+    /// and case count, each overridden by `PROPTEST_RNG_SEED` and
+    /// `PROPTEST_CASES`, and its regressions file.
+    #[test]
+    fn reads_back_any_finite_f64_bit_for_bit() {
+        let config = given_generated_documents::config();
+        let replay = format!(
+            "seed {seed}, {cases} cases; replay with PROPTEST_RNG_SEED={seed} PROPTEST_CASES={cases}",
+            seed = config.rng_seed,
+            cases = config.cases
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let Scenario { cipher, .. } = runtime.block_on(scenario());
+        let finite = proptest::num::f64::ANY.prop_filter("a finite f64", |f| f.is_finite());
+        let mut runner = TestRunner::new(config);
+        let outcome = runner.run(&finite, |f| {
+            for (how, back) in runtime.block_on(read_back(&cipher, f)) {
+                prop_assert_eq!(
+                    bits(&back),
+                    Some(f.to_bits()),
+                    "{} should read back {:?}, read back {}",
+                    how,
+                    f,
+                    back
+                );
+            }
+            Ok(())
+        });
+        if let Err(error) = outcome {
+            panic!("json_index full-precision floats: {replay}\n{error}");
         }
     }
 }
