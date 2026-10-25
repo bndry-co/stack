@@ -128,10 +128,6 @@ fn children(row: &RowLeakage) -> Vec<Vec<usize>> {
 // At rest
 // =============================================================================
 
-// =============================================================================
-// At rest
-// =============================================================================
-
 fn selectors_all_distinct(l: &mut Leakage, _: &mut TestRng) {
     let mut fresh = Fresh::new();
     for row in &mut l.rows {
@@ -205,6 +201,43 @@ fn entry_count_padded(l: &mut Leakage, _: &mut TestRng) {
             ordering: None,
         });
     }
+}
+
+/// Every node below depth one hangs off its grandparent instead of its
+/// parent: the shape a token's walk links is not the document's.
+fn parents_lifted(l: &mut Leakage, _: &mut TestRng) {
+    for row in &mut l.rows {
+        let parents: Vec<Option<usize>> = row.entries.iter().map(|e| e.parent).collect();
+        for entry in &mut row.entries {
+            if let Some(grandparent) = entry.parent.and_then(|p| parents[p]) {
+                entry.parent = Some(grandparent);
+            }
+        }
+    }
+}
+
+/// An array's elements sit at their positions reversed under its token,
+/// so an element's ordinal is not its index.
+fn element_ordinals_reversed(l: &mut Leakage, _: &mut TestRng) {
+    for row in &mut l.rows {
+        for siblings in children(row) {
+            let elements: Vec<usize> = siblings
+                .into_iter()
+                .filter(|&k| matches!(row.entries[k].step, Step::Element(_)))
+                .collect();
+            let n = elements.len() as u64;
+            for k in elements {
+                if let Step::Element(i) = row.entries[k].step {
+                    row.entries[k].step = Step::Element(n - 1 - i);
+                }
+            }
+        }
+    }
+}
+
+/// A key tag of another length than the key service's.
+fn key_tag_shortened(l: &mut Leakage, _: &mut TestRng) {
+    l.key_tag_len = 16;
 }
 
 fn order_random_permutation(l: &mut Leakage, rng: &mut TestRng) {
@@ -532,6 +565,16 @@ fn extraction_selector_fresh(l: &mut Leakage, _: &mut TestRng) {
     }
 }
 
+/// An ordering bound's selector unrelated to the stored one of its path.
+fn order_selector_fresh(l: &mut Leakage, _: &mut TestRng) {
+    let mut fresh = Fresh::new();
+    for query in &mut l.queries {
+        if let QueryLeakage::Order { selector, .. } = query {
+            *selector = fresh.next();
+        }
+    }
+}
+
 /// A query that repeats an earlier one sends unrelated terms: queries are
 /// not deterministic.
 fn queries_nondeterministic(l: &mut Leakage, _: &mut TestRng) {
@@ -829,6 +872,8 @@ mutants!(
     selectors_per_row_only => "EntryLeakage::selector (\"the same in every row\")",
     positions_in_selectors => "EntryLeakage::selector (\"Array elements share their array's selector\")",
     entry_count_padded => "RowLeakage::entries (\"the number of entries\")",
+    parents_lifted => "EntryLeakage::parent (each node's parent, which a token's walk links)",
+    element_ordinals_reversed => "EntryLeakage::step (\"an element's index is the ordinal it is found at\")",
     order_random_permutation => "RowLeakage::entries (the stored order)",
     members_unsorted => "RowLeakage::entries (\"an object's members in the byte order of their key names\")",
     parent_tag_on_every_entry => "EntryLeakage::has_parent_tag",
@@ -853,7 +898,9 @@ mutants!(
     sealed_flag_flipped => "RowLeakage::sealed_root",
     data_key_shared => "RowLeakage::data_key (\"the data key's identifier (unique to the row)\")",
     keyset_per_row => "RowLeakage::keyset (\"the keyset the data key was minted under\")",
+    key_tag_shortened => "Leakage::key_tag_len (the header's key tag, a column constant)",
     extraction_selector_fresh => "QueryLeakage::Extract (\"The selector of the path asked\")",
+    order_selector_fresh => "QueryLeakage::Order::selector (\"The path's selector\")",
     queries_nondeterministic => "every query term is a function of the query (\"Tokens are column-wide and do not expire\")",
     tokens_per_row => "ReadLeak::hits in every row (\"find that node in any row\")",
     tokens_find_nothing => "ReadLeak::hits (a token finds its node, through its self tag x)",
