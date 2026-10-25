@@ -790,15 +790,16 @@ mod given_generated_documents_in_postgres {
         run("->", |scenario, case| {
             scenario.store(&case.docs);
             let keyset = scenario.cipher.default_keyset();
-            let selectors: Vec<String> = paths
+            // Each `->` answer opens only under the selector it was asked
+            // for, so the derived selectors are kept beside their text.
+            let asked: Vec<JsonSelector> = paths
                 .iter()
                 .map(|steps| {
                     let path = JsonPath::parse(&format!("$.{}", steps.join("."))).unwrap();
-                    wait(&scenario.runtime, keyset.json_selector(&path, column()))
-                        .unwrap()
-                        .to_string()
+                    wait(&scenario.runtime, keyset.json_selector(&path, column())).unwrap()
                 })
                 .collect();
+            let selectors: Vec<String> = asked.iter().map(ToString::to_string).collect();
             let keys: Vec<String> = paths
                 .iter()
                 .map(|steps| format!("{{{}}}", steps.join(",")))
@@ -817,7 +818,8 @@ mod given_generated_documents_in_postgres {
             let mut held: Vec<String> = Vec::new();
             let mut at: Vec<(String, i32)> = Vec::new();
             for row in rows {
-                let path = format!("$.{}", paths[row.get::<_, i64>(0) as usize - 1].join("."));
+                let i = row.get::<_, i64>(0) as usize - 1;
+                let path = format!("$.{}", paths[i].join("."));
                 let id: i32 = row.get(1);
                 let want: Option<String> = row.get(2);
                 let kind: Option<String> = row.get(3);
@@ -837,7 +839,10 @@ mod given_generated_documents_in_postgres {
                     let entry: JsonTreeEntry = serde_json::from_str(&got).unwrap();
                     let value = wait(
                         &scenario.runtime,
-                        scenario.cipher.decrypt_as::<Value, _>(entry, column()),
+                        scenario.cipher.decrypt_as::<Value, _>(
+                            JsonTreeExtracted::from_selector(&asked[i], entry),
+                            column(),
+                        ),
                     )
                     .map_err(|e| {
                         TestCaseError::fail(format!(
