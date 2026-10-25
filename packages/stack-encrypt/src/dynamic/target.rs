@@ -212,7 +212,7 @@ impl TargetDescriptor {
 
 /// The options a plan field gives the EQL type it names: the options of
 /// the index the type carries. A target that stores a JSON document
-/// (`EncryptedJson`) carries the JSON index and takes its options, the
+/// (`JsonSearch`) carries the JSON index and takes its options, the
 /// sealed root and the ordered paths; no other target takes any today.
 ///
 /// The plan resolves them once, when it is built ([`Plan::new_with`]):

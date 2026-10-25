@@ -117,7 +117,7 @@ type Field struct {
 	Null Null
 	// TargetOptions are the options the field gives its Target: those of
 	// the index the target carries. A target that stores a JSON document
-	// (EncryptedJson) takes the JSON index's; nil runs a target under its
+	// (JsonSearch) takes the JSON index's; nil runs a target under its
 	// defaults, and no other target takes any.
 	TargetOptions *TargetOptions
 }

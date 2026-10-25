@@ -249,7 +249,7 @@ mod tests {
                 "DoubleOrdOre",
                 "DoubleOrd",
                 "DoubleOrdOpe",
-                "EncryptedJson"
+                "JsonSearch"
             ],
             "the engine's producible types, in catalog order"
         );

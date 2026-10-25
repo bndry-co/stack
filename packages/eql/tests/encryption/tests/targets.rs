@@ -657,7 +657,7 @@ mod the_table {
                 "DoubleOrdOre",
                 "DoubleOrd",
                 "DoubleOrdOpe",
-                "EncryptedJson"
+                "JsonSearch"
             ],
         );
         for row in targets::targets().iter().filter(|t| !t.producible) {

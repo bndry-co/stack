@@ -14,13 +14,13 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
-// An encrypted JSON document (the EQL type EncryptedJson) through the guest
+// An encrypted JSON document (the EQL type JsonSearch) through the guest
 // that holds the EQL types: a field of kind json names the target with the
 // JSON index's options, crosses as its JSON text, and opens back to it.
 
 func jsonPlan() *record.Plan {
 	return &record.Plan{Context: []string{"users"}, Fields: []record.Field{{
-		Name: "profile", Kind: record.JSON, Target: "EncryptedJson", Null: record.SQLNull,
+		Name: "profile", Kind: record.JSON, Target: "JsonSearch", Null: record.SQLNull,
 		TargetOptions: &record.TargetOptions{Ordered: []string{"$.age"}},
 	}}}
 }
@@ -59,7 +59,7 @@ func TestJSONDocumentsRoundTripThroughTheGuest(t *testing.T) {
 			t.Fatalf("row %d: stored %+v", i, stored)
 		}
 		// The value scans and binds as the generated EQL type.
-		var col eql.EncryptedJSON
+		var col eql.JSONSearch
 		if err := col.Scan(s["profile"].EQL); err != nil {
 			t.Fatalf("row %d: Scan: %v", i, err)
 		}
