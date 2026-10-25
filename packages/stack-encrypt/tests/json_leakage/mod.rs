@@ -66,7 +66,7 @@
 //!
 //! - **The positive control.** The simulator, run from the full profile, is
 //!   told from the real scheme by no distinguisher, on the handcrafted
-//!   columns and on 48 random ones. If this fails, the real scheme reveals
+//!   columns and on 256 random ones. If this fails, the real scheme reveals
 //!   something `L` does not state: that is a finding against the page (or
 //!   against the code), and the failure names the distinguisher and prints
 //!   both features.

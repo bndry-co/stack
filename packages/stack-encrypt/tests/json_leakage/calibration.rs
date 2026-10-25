@@ -106,14 +106,15 @@ mod given_the_full_profile {
         }
     }
 
-    /// The positive control on random columns. Deterministic: the runner's
-    /// own generator is seeded, and so is every simulation.
+    /// The positive control on 256 random columns, about three seconds.
+    /// Deterministic: the runner's own generator is seeded, and so is every
+    /// simulation.
     #[test]
     fn no_distinguisher_separates_random_worlds() {
         let runtime = runtime();
         let cipher = runtime.block_on(stack_cipher());
         let config = Config {
-            cases: 48,
+            cases: 256,
             failure_persistence: None,
             rng_algorithm: RngAlgorithm::ChaCha,
             ..Config::default()

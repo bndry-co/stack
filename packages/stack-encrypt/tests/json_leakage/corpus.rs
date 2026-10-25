@@ -124,6 +124,43 @@ fn names() -> World {
     }
 }
 
+/// A column that orders numbers of both signs and many magnitudes, so the
+/// terms' shared prefixes (sign, then exponent) have something to show; two
+/// integers past 2^53 that round to one `f64`, so one term under two value
+/// selectors; and leaves at the ordered path that carry no term (a null, a
+/// boolean, an empty object, an array, which holds its own leaf below the
+/// ordered path).
+fn numbers() -> World {
+    World {
+        name: "ordered numbers",
+        column: Column {
+            sealed_root: true,
+            ordered: ordered(&["$.v"]),
+        },
+        docs: vec![
+            json!({"v": 1}),
+            json!({"v": -2}),
+            json!({"v": 3}),
+            json!({"v": 9_007_199_254_740_993u64}),
+            json!({"v": 9_007_199_254_740_992u64}),
+            json!({"v": 2.5}),
+            json!({"v": 1e300}),
+            json!({"v": -1e300}),
+            json!({"v": 0.001}),
+            json!({"v": null}),
+            json!({"v": true}),
+            json!({"v": {}}),
+            json!({"v": [3]}),
+        ],
+        queries: vec![
+            Query::Order("$.v".into(), json!(0)),
+            Query::Order("$.v".into(), json!(9_007_199_254_740_992u64)),
+            Query::Order("$.v".into(), json!(-1)),
+            Query::subtree("$.v"),
+        ],
+    }
+}
+
 /// A column with three wide top-level objects, each read whole, so that
 /// whether members' ordinals follow their keys' order is decidable rather
 /// than a coin toss (see `distinguishers::member_ordinals_follow_key_order`).
@@ -158,8 +195,8 @@ fn wide() -> World {
     }
 }
 
-/// The handcrafted worlds: the shapes under each root option, and a column
-/// of ordered strings.
+/// The handcrafted worlds: the shapes under each root option, a column of
+/// ordered strings, one of ordered numbers, and one of wide objects.
 pub fn handcrafted() -> Vec<World> {
     vec![
         World {
@@ -181,6 +218,7 @@ pub fn handcrafted() -> Vec<World> {
             queries: shape_queries(false),
         },
         names(),
+        numbers(),
         wide(),
     ]
 }
@@ -191,12 +229,26 @@ pub fn handcrafted() -> Vec<World> {
 
 const KEYS: &[&str] = &["a", "b", "c", "list", "n", "name", "tags", "zz"];
 
+/// The strings the random columns hold: short, sharing prefixes, and some
+/// that fold to one another (`"X"` and `"x"`, `"é"` and `"e"`) or are wider
+/// in bytes than in characters.
+const STRINGS: &[&str] = &["x", "yy", "x", "zzz", "ab", "", "X", "é", "e", "Ab"];
+
 fn leaf() -> impl Strategy<Value = Value> {
     prop_oneof![
-        Just(Value::Null),
-        any::<bool>().prop_map(Value::Bool),
-        (-3i64..6).prop_map(Value::from),
-        prop::sample::select(vec!["x", "yy", "x", "zzz", "ab", ""]).prop_map(Value::from),
+        1 => Just(Value::Null),
+        1 => any::<bool>().prop_map(Value::Bool),
+        4 => (-3i64..6).prop_map(Value::from),
+        // Past 2^53, where two integers can round to one f64 and so share
+        // an ordering term while their value selectors differ; and floats.
+        1 => prop::sample::select(vec![
+            json!(9_007_199_254_740_992u64),
+            json!(9_007_199_254_740_993u64),
+            json!(2.5),
+            json!(-0.5),
+            json!(1e300),
+        ]),
+        4 => prop::sample::select(STRINGS).prop_map(Value::from),
     ]
 }
 
@@ -223,37 +275,92 @@ fn value() -> impl Strategy<Value = Value> {
     })
 }
 
-/// Every value under the key `n` made a number, since the random columns
-/// order `$.n` and `$.list[*].n` and a world orders one kind of leaf.
-fn numberize(value: Value) -> Value {
-    match value {
-        Value::Object(map) => Value::Object(
-            map.into_iter()
-                .map(|(k, v)| {
-                    let v = if k == "n" && !v.is_number() {
-                        Value::from(i64::try_from(v.to_string().len() % 7).unwrap())
-                    } else {
-                        numberize(v)
-                    };
-                    (k, v)
+/// Which kind of leaf a random column orders: a world orders one (see
+/// [`super::profile::Ids::ordering_ranks`]).
+#[derive(Clone, Copy, Debug)]
+enum Ordered {
+    /// `$.n` and `$.list[*].n`.
+    Numbers,
+    /// `$.name` and `$.tags[*]`.
+    Strings,
+}
+
+impl Ordered {
+    fn paths(self) -> Vec<JsonPath> {
+        match self {
+            Self::Numbers => ordered(&["$.n", "$.list[*].n"]),
+            Self::Strings => ordered(&["$.name", "$.tags[*]"]),
+        }
+    }
+
+    /// `value` with every leaf an ordered path could reach made the kind
+    /// this column orders: a string under the key `n` a number, or a number
+    /// under the key `name` or directly in an array under `tags` a string.
+    /// Everything else stays, `null`s, booleans and containers at the
+    /// ordered paths included, which carry no term.
+    fn fix(self, value: Value) -> Value {
+        let to_number = |v: &Value| Value::from(i64::try_from(v.to_string().len() % 7).unwrap());
+        let to_string = |v: &Value| Value::from(STRINGS[v.to_string().len() % STRINGS.len()]);
+        match (self, value) {
+            (_, Value::Object(map)) => Value::Object(
+                map.into_iter()
+                    .map(|(k, v)| {
+                        let v = match (self, k.as_str(), v) {
+                            (Self::Numbers, "n", v) if v.is_string() => to_number(&v),
+                            (Self::Strings, "name", v) if v.is_number() => to_string(&v),
+                            (Self::Strings, "tags", Value::Array(items)) => Value::Array(
+                                items
+                                    .into_iter()
+                                    .map(|item| {
+                                        if item.is_number() {
+                                            to_string(&item)
+                                        } else {
+                                            self.fix(item)
+                                        }
+                                    })
+                                    .collect(),
+                            ),
+                            (_, _, v) => self.fix(v),
+                        };
+                        (k, v)
+                    })
+                    .collect(),
+            ),
+            (_, Value::Array(items)) => {
+                Value::Array(items.into_iter().map(|item| self.fix(item)).collect())
+            }
+            (_, other) => other,
+        }
+    }
+
+    /// An ordering bound of this kind at one of this kind's paths.
+    fn query(self) -> BoxedStrategy<Query> {
+        match self {
+            Self::Numbers => (prop::sample::select(vec!["$.n", "$.list[*].n"]), leaf())
+                .prop_filter_map("a number bound", |(p, v)| {
+                    v.is_number().then(|| Query::Order(p.into(), v))
                 })
-                .collect(),
-        ),
-        Value::Array(items) => Value::Array(items.into_iter().map(numberize).collect()),
-        other => other,
+                .boxed(),
+            Self::Strings => (
+                prop::sample::select(vec!["$.name", "$.tags[*]"]),
+                prop::sample::select(STRINGS),
+            )
+                .prop_map(|(p, v)| Query::Order(p.into(), Value::from(v)))
+                .boxed(),
+        }
     }
 }
 
-fn document() -> impl Strategy<Value = Value> {
+fn document(kind: Ordered) -> impl Strategy<Value = Value> {
     prop_oneof![
         8 => object(value(), 0..5),
         1 => prop::collection::vec(value(), 0..3).prop_map(Value::Array),
         1 => leaf(),
     ]
-    .prop_map(numberize)
+    .prop_map(move |v| kind.fix(v))
 }
 
-fn query() -> impl Strategy<Value = Query> {
+fn query(kind: Ordered) -> impl Strategy<Value = Query> {
     let subtree = vec![
         "$",
         "$.a",
@@ -294,31 +401,34 @@ fn query() -> impl Strategy<Value = Query> {
             prop::collection::vec(leaf(), 1..3).prop_map(Value::Array),
             object(prop::collection::vec(object(leaf(), 1..2), 1..2).prop_map(Value::Array), 1..2),
         ]
-        .prop_map(|v| Query::Contains(numberize(v))),
+        .prop_map(move |v| Query::Contains(kind.fix(v))),
         1 => (prop::sample::select(vec!["$.a", "$.tags[0]", "$.list[*].b"]),
               prop_oneof![(-3i64..6).prop_map(Value::from), prop::sample::select(vec!["x", "ab"]).prop_map(Value::from)])
             .prop_map(|(p, v)| Query::Equals(p.into(), v)),
-        1 => (prop::sample::select(vec!["$.n", "$.list[*].n"]), -3i64..6)
-            .prop_map(|(p, v)| Query::Order(p.into(), Value::from(v))),
+        1 => kind.query(),
     ]
 }
 
-/// A random column: a root option, two to six documents, and four to ten
-/// queries, some of which repeat.
+/// A random column: a root option, the kind of leaf it orders, two to six
+/// documents, and four to ten queries, some of which repeat.
 pub fn random_world() -> impl Strategy<Value = World> {
-    any::<bool>().prop_flat_map(|sealed_root| {
-        (
-            prop::collection::vec(document(), 2..7),
-            prop::collection::vec(query(), 4..11),
-        )
-            .prop_map(move |(docs, queries)| World {
-                name: "random",
-                column: Column {
-                    sealed_root,
-                    ordered: ordered(&["$.n", "$.list[*].n"]),
-                },
-                docs,
-                queries,
-            })
-    })
+    (
+        any::<bool>(),
+        prop_oneof![Just(Ordered::Numbers), Just(Ordered::Strings)],
+    )
+        .prop_flat_map(|(sealed_root, kind)| {
+            (
+                prop::collection::vec(document(kind), 2..7),
+                prop::collection::vec(query(kind), 4..11),
+            )
+                .prop_map(move |(docs, queries)| World {
+                    name: "random",
+                    column: Column {
+                        sealed_root,
+                        ordered: kind.paths(),
+                    },
+                    docs,
+                    queries,
+                })
+        })
 }
