@@ -117,9 +117,12 @@ zerokms-protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
-# The JSON index's executable leakage profile (`tests/json_leakage`): random
-# columns for its positive control, and the seeded generator its simulator
-# draws from. Already in the workspace graph (stack-auth, stack-guest-abi).
+# The generated containment property in tests/json_index.rs, and the JSON
+# index's executable leakage profile (`tests/json_leakage`): random columns
+# for its positive control, and the seeded generator its simulator draws
+# from. Default features off, as stack-guest-abi takes it: `std` carries the
+# failure persistence and the ChaCha RNG the runs are seeded with, and
+# nothing else is needed.
 proptest = { version = "1.7", default-features = false, features = ["std"] }
 
 # The derive diagnostics are recorded with every feature on, as `test:unit`
