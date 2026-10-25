@@ -11,7 +11,7 @@ use stack_kms::FakeDataKeySource;
 use super::corpus::{handcrafted, random_world, World};
 use super::distinguishers::{self, walk_positions};
 use super::mutants;
-use super::observe::ObservedWorld;
+use super::observe::{ObservedQuery, ObservedWorld};
 use super::profile::{flatten, leak, Clauses, Column, KeyOrder, Leakage, Query, StringOrder};
 use super::{real, simulator};
 use crate::common::stack_cipher;
@@ -460,6 +460,40 @@ mod the_harness {
         let mut most: Vec<usize> = (0..64).collect();
         most.retain(|&i| i != 1);
         assert_eq!(price[2], (most, true, Some(true)));
+    }
+
+    /// `distinguishers::cross_kind_equalities` can fire: it is empty on the
+    /// real scheme, and a world in which one read's token is a stored
+    /// selector, which every feature naming each kind on its own would miss,
+    /// is told apart by it. No mutant can state that world, since the
+    /// profile names each kind in a space of its own; this is the clause's
+    /// check.
+    #[test]
+    fn cross_kind_equalities_see_a_token_that_is_a_selector() {
+        let runtime = runtime();
+        let cipher = runtime.block_on(stack_cipher());
+        let world = &handcrafted()[0];
+        let mut observed = real_world(&runtime, &cipher, world);
+        assert!(
+            distinguishers::cross_kind_equalities(&observed).is_empty(),
+            "no value is shared across kinds in the real scheme: {:?}",
+            distinguishers::cross_kind_equalities(&observed)
+        );
+        let selector = observed.rows[0].entries[1].s;
+        let read = observed
+            .queries
+            .iter_mut()
+            .find_map(|q| match q {
+                ObservedQuery::Subtree { tokens, .. } => Some(tokens),
+                _ => None,
+            })
+            .expect("the corpus sends a subtree read");
+        read[0] = selector;
+        assert_eq!(
+            distinguishers::cross_kind_equalities(&observed),
+            [("s", "token")].into_iter().collect(),
+            "a token equal to a stored selector is seen"
+        );
     }
 
     /// The page's claim that the stored order reveals each row's shape holds

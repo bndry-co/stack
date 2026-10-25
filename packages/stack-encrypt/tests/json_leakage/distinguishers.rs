@@ -54,6 +54,7 @@ registry!(
     selector_pattern_across_rows,
     parent_tag_equalities,
     self_tag_equalities,
+    cross_kind_equalities,
     headers,
     projections,
     value_selector_partitions,
@@ -288,6 +289,76 @@ pub fn self_tag_equalities(world: &ObservedWorld) -> Vec<(TagAt, TagAt)> {
         })
         .collect();
     out.sort_unstable();
+    out
+}
+
+/// Which kinds of value share a value with another kind, anywhere in the
+/// world: the sixteen-byte ones (a selector `s`, stored or sent, a value
+/// selector `vs`, a token, a keyset, an `iv`) with each other, and an
+/// eight-byte tag (`x`, `p`) with the first eight bytes of any of them.
+/// Every other feature names each kind in its own space, so a token equal
+/// to its path's selector, or a value selector equal to a selector, would
+/// leave them all unchanged; the database would see it. Expected empty:
+/// each kind is a keyed hash or a PRF output in a domain of its own, or
+/// random. Equalities within a kind are the other features' business, and
+/// `self_tag_equalities` compares `x` with `p`.
+pub fn cross_kind_equalities(world: &ObservedWorld) -> BTreeSet<(&'static str, &'static str)> {
+    let mut wide: HashMap<Tag16, BTreeSet<&'static str>> = HashMap::new();
+    let mut add = |kind: &'static str, value: Tag16| {
+        let _ = wide.entry(value).or_default().insert(kind);
+    };
+    fn add_group(group: &ObservedGroup, add: &mut dyn FnMut(&'static str, Tag16)) {
+        let mut pairs = Vec::new();
+        pairs_of(group, &mut pairs);
+        for (s, vs) in pairs {
+            add("s", s);
+            add("vs", vs);
+        }
+    }
+    for row in &world.rows {
+        add("keyset", row.header.keyset);
+        add("iv", row.header.iv);
+        for entry in &row.entries {
+            add("s", entry.s);
+        }
+        add_group(&row.q, &mut add);
+    }
+    for query in &world.queries {
+        match query {
+            ObservedQuery::Extract { s } | ObservedQuery::Order { s, .. } => add("s", *s),
+            ObservedQuery::Subtree { tokens, .. } => tokens.iter().for_each(|t| add("token", *t)),
+            ObservedQuery::Contains { needle, alt } => {
+                add_group(needle, &mut add);
+                if let Some(alt) = alt {
+                    add_group(alt, &mut add);
+                }
+            }
+            ObservedQuery::Equals { needle } => add_group(needle, &mut add),
+        }
+    }
+    let mut out = BTreeSet::new();
+    let mut fronts: HashMap<Tag8, BTreeSet<&'static str>> = HashMap::new();
+    for (value, kinds) in &wide {
+        for a in kinds {
+            for b in kinds {
+                if a < b {
+                    let _ = out.insert((*a, *b));
+                }
+            }
+        }
+        let mut front = Tag8::default();
+        front.copy_from_slice(&value[..8]);
+        fronts.entry(front).or_default().extend(kinds);
+    }
+    for row in &world.rows {
+        for entry in &row.entries {
+            for (kind, tag) in [("x", entry.x), ("p", entry.p)] {
+                for other in tag.and_then(|t| fronts.get(&t)).into_iter().flatten() {
+                    let _ = out.insert((kind, *other));
+                }
+            }
+        }
+    }
     out
 }
 
