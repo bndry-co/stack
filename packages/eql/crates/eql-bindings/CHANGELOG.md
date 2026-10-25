@@ -24,7 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and seals the document's JSON text through `v4::json_tree::JsonTree`
   under them; `decrypt` opens it back to its text. A value that is not a
   JSON document is `TargetError::Json`, options on a type that takes none
-  `TargetError::Options`. `v4::all()` lists `JsonTreeDocument` and
+  `TargetError::Options`, and a one-plaintext `query` of a document
+  `TargetError::DocumentQuery` (its operands are the engine's, by JSON
+  operator). `v4::all()` lists `JsonTreeDocument` and
   `v4::all_query()` lists `JsonTreeQuery` and `JsonTreeLeafQuery`.
 
 - **The EQL v4 `json_tree` family's types, `v4::json_tree`** (`stack-encrypt`

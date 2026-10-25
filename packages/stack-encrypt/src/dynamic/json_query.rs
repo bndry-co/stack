@@ -220,47 +220,60 @@ fn term(error: TermError) -> Error {
 
 /// Read and check an operator's input against the field's options.
 fn read_input(op: OpSpec, options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
-    Ok(match op {
-        OpSpec::Contains | OpSpec::ContainedBy => {
-            Input::Needle(read_frame::<NeedleInput>(input)?.json.parse()?)
-        }
-        OpSpec::EqAt => {
-            let at: AtInput = read_frame(input)?;
-            let path = selector_path(&at.path)?;
-            let value = at.json.parse()?;
-            if matches!(value.0, Value::Object(_) | Value::Array(_)) {
-                return Err(term(TermError::JsonValueNotScalar));
-            }
-            Input::At(path, value)
-        }
+    match op {
+        OpSpec::Contains | OpSpec::ContainedBy => Ok(Input::Needle(
+            read_frame::<NeedleInput>(input)?.json.parse()?,
+        )),
+        OpSpec::EqAt => read_eq_at(input),
         OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt => {
-            let at: AtInput = read_frame(input)?;
-            let path = ordered_path(options, &at.path)?;
-            let value = at.json.parse()?;
-            leaf(&value.0)?;
-            Input::At(path, value)
+            read_ordering(options, input)
         }
-        OpSpec::BetweenAt => {
-            let between: BetweenInput = read_frame(input)?;
-            let path = ordered_path(options, &between.path)?;
-            let (low, high) = (between.low.parse()?, between.high.parse()?);
-            leaf(&low.0)?;
-            leaf(&high.0)?;
-            Input::Between(path, low, high)
-        }
-        OpSpec::Selector => Input::Path(selector_path(&read_frame::<PathInput>(input)?.path)?),
-        OpSpec::Children | OpSpec::ChildCount => {
-            Input::Path(node_path(&read_frame::<PathInput>(input)?.path)?)
-        }
+        OpSpec::BetweenAt => read_between(options, input),
+        OpSpec::Selector => Ok(Input::Path(selector_path(
+            &read_frame::<PathInput>(input)?.path,
+        )?)),
+        OpSpec::Children | OpSpec::ChildCount => Ok(Input::Path(node_path(
+            &read_frame::<PathInput>(input)?.path,
+        )?)),
         OpSpec::Subtree => {
             let read: ReadInput = read_frame(input)?;
-            Input::Read(
+            Ok(Input::Read(
                 path(&read.path)?,
                 read.wildcard_bound.unwrap_or(JsonSubtreeKey::DEFAULT_BOUND),
-            )
+            ))
         }
-        _ => return Err(Error::Internal),
-    })
+        _ => Err(Error::Internal),
+    }
+}
+
+/// `eq_at`'s input: a scalar at a path read through a selector.
+fn read_eq_at(input: &ValueFrame) -> Result<Input, Error> {
+    let at: AtInput = read_frame(input)?;
+    let path = selector_path(&at.path)?;
+    let value = at.json.parse()?;
+    if matches!(value.0, Value::Object(_) | Value::Array(_)) {
+        return Err(term(TermError::JsonValueNotScalar));
+    }
+    Ok(Input::At(path, value))
+}
+
+/// An ordering's input: a leaf the index orders at an ordered path.
+fn read_ordering(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
+    let at: AtInput = read_frame(input)?;
+    let path = ordered_path(options, &at.path)?;
+    let value = at.json.parse()?;
+    leaf(&value.0)?;
+    Ok(Input::At(path, value))
+}
+
+/// `between_at`'s input: two leaves the index orders at an ordered path.
+fn read_between(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
+    let between: BetweenInput = read_frame(input)?;
+    let path = ordered_path(options, &between.path)?;
+    let (low, high) = (between.low.parse()?, between.high.parse()?);
+    leaf(&low.0)?;
+    leaf(&high.0)?;
+    Ok(Input::Between(path, low, high))
 }
 
 /// A path the index orders, which names no position.

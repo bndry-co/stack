@@ -2254,7 +2254,7 @@ func (v *EncryptedJSONQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// EncryptedJSONLeafQuery is the json_tree family's the ordering operand at a path, compared with an entry `->` extracts: the value eql_v4.query_json_tree_leaf holds.
+// EncryptedJSONLeafQuery is the json_tree family's ordering operand at a path, compared with an entry `->` extracts: the value eql_v4.query_json_tree_leaf holds.
 type EncryptedJSONLeafQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2277,7 +2277,7 @@ func (v *EncryptedJSONLeafQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// EncryptedJSONEntry is the json_tree family's one node of a document, as `->` and the walks return it: the value public.eql_v4_json_tree_entry holds.
+// EncryptedJSONEntry is the json_tree family's entry: one node of a document, as `->` and the walks return it: the value public.eql_v4_json_tree_entry holds.
 type EncryptedJSONEntry []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.

@@ -929,6 +929,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wipe_value_leaves_no_plaintext_in_the_value() {
+        let mut value =
+            serde_json::json!({"name": "Alice", "n": 34, "ok": true, "list": ["x", 1.5]});
+        wipe_value(&mut value);
+        assert_eq!(value, serde_json::json!({}), "the containers are emptied");
+        let mut text = serde_json::json!("secret");
+        wipe_value(&mut text);
+        assert_eq!(
+            text,
+            serde_json::json!(""),
+            "a string is overwritten and cleared"
+        );
+        let mut number = serde_json::json!(42);
+        wipe_value(&mut number);
+        assert_eq!(number, serde_json::json!(0));
+    }
+
+    #[test]
     fn the_header_round_trips_its_frozen_layout() {
         let header = JsonHeader::new(Uuid::from_u128(7), [9; 16], vec![1, 2, 3], true);
         let bytes = header.to_bytes();

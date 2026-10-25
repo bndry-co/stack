@@ -113,6 +113,13 @@ func TestEQLTypesRoundTripAndQueryInPostgres(t *testing.T) {
 		if !typ.Producible {
 			continue
 		}
+		// A document has operators of its own, not one query per index,
+		// so it is not run here or counted:
+		// TestJSONDocumentsQueryAndReadInPostgres runs it with the
+		// generated fields that store it.
+		if typ.Plaintext == "json" {
+			continue
+		}
 		covered++
 		t.Run(typ.Name, func(t *testing.T) {
 			h := eqlHarness{t: t, ctx: ctx, cipher: cipher, conn: conn, typ: typ}
@@ -148,10 +155,6 @@ func TestEQLTypesRoundTripAndQueryInPostgres(t *testing.T) {
 					ds[i] = d
 				}
 				runEQLType(h, gensupport.Decimal, ds, nil)
-			case "json":
-				// A document has operators of its own, not one query per
-				// index: TestJSONDocumentsQueryAndReadInPostgres runs them.
-				return
 			default:
 				t.Fatalf("no plaintexts for wire kind %q: add a case so %s is tested", typ.Plaintext, typ.Name)
 			}

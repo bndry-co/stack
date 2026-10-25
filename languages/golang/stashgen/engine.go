@@ -225,6 +225,10 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 				// intoKind takes every built-in integer except into a
 				// 128-bit kind, which gensupport does not convert to.
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and the built-in integer %s is not converted to it", f.EQLType, eqlType.wire, f.GoType)}
+			} else if eqlType.wire == record.JSON && f.GoType.Kind != KindJSON {
+				// A document's kind is no Go scalar's: name the Go types
+				// that carry one, not a kind mismatch.
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a json document: declare the field json.RawMessage, or *json.RawMessage with null=sql", f.EQLType)}
 			} else {
 				// The engine checks the kind too (se_plan_check refuses a
 				// "type" other than the EQL type's plaintext); saying it

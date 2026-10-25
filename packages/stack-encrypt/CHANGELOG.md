@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `encrypt(name, options: Option<&TargetOptions>, keyset, label,
   plaintext)`. A resolver implemented outside this crate adds the
   parameter; one that resolves no document type ignores it.
+- **`dynamic::ValueKind` gains `Json`, and `ValueKind::ALL` holds 21
+  kinds** (#1349). The enum is not `#[non_exhaustive]`, so an exhaustive
+  `match` on it, or a `[ValueKind; 20]` binding of `ALL`, stops compiling.
 
 ### Fixed
 
@@ -72,11 +75,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`Reason::JsonNeedsTarget`) and a sealed null on one. The document
   crosses as UTF-8 JSON text in a text or bytes leaf and opens back to
   its text in a bytes leaf (`dynamic::read_json`, `dynamic::json_frame`).
-  `json::parse_text` is the one parser: it refuses an object that names a
-  member twice and an integer literal outside `i64::MIN ..= u64::MAX`
-  (which serde_json would read as the nearest `f64`), as well as text
-  that is not JSON, each with a code (`JsonTextError::code`) and a
-  position, never a byte of the text. `TargetError::Json` carries the code
+  `json::parse_text` is the one parser, the engine's own (held to
+  serde_json's by a differential property test and the `fuzz:json-text`
+  target), so no heap block it frees holds the document: it refuses an
+  object that names a member twice and an integer literal outside
+  `i64::MIN ..= u64::MAX` (which serde_json would read as the nearest
+  `f64`), as well as text that is not JSON, each with a code
+  (`JsonTextError::code`) and a position, never a byte of the text.
+  `json::to_text` sizes its buffer before it writes. `check_source` reads
+  a document by these rules too, so a malformed one is refused before
+  any key, as `encrypt` refuses it. A present `"options": null` is
+  refused (`Reason::InvalidTarget`), not read as the defaults. `TargetError::Json` carries the code
   when a resolver refuses a document. `json::wipe_value` wipes a parsed
   document in place. `ValueKind::holds` says whether a value of one kind
   is a value of a declared one (`json` holds text and bytes).

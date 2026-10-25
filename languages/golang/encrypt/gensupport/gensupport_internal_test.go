@@ -307,6 +307,27 @@ func TestDecryptErrorsHoldNoPlaintext(t *testing.T) {
 	if _, err := opaqueBytes(struct{ C chan int }{make(chan int)}); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Errorf("opaqueBytes chan: %v", err)
 	}
+	// A field a blob lacks (one added to the struct since the row was
+	// sealed) reads as its zero value, as the generated `vc:",default"`
+	// tags say; a field the struct no longer has is skipped.
+	old := mustStorage(t, struct {
+		N    uint32 `vc:"n,default"`
+		Gone string `vc:"gone,default"`
+	}{N: 7, Gone: "x"})
+	var grown struct {
+		N   uint32 `vc:"n,default"`
+		New string `vc:"new,default"`
+	}
+	if err := Opaque(Values{OpaqueField: old}, &grown); err != nil || grown.N != 7 || grown.New != "" {
+		t.Fatalf("a grown struct read %+v, %v", grown, err)
+	}
+	// A blob of a later storage version is encrypt.ErrStorageVersion, which
+	// needs no import of vitaminc's bindings to check.
+	later := append([]byte(nil), old...)
+	later[3]++
+	if err := Opaque(Values{OpaqueField: later}, &grown); !errors.Is(err, encrypt.ErrStorageVersion) || !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a later version: %v", err)
+	}
 	// The storage profile writes a float by its bits: NaN and the
 	// infinities, which encoding/json refused, are values like any other.
 	blob, err := opaqueBytes(struct{ F float64 }{math.NaN()})
