@@ -637,9 +637,12 @@ $$;
 --! within a token, in document order. A token that names no node yields no
 --! row, and nothing in a row is linkable to anything without its token.
 --! The client sends one token for a path with no wildcard, and for a
---! wildcard one per position below its bound and a probe at the bound; the
---! server cannot tell a probe from any other token. Wanting a whole array
---! is a read of the array's path, which sends the array's own token.
+--! wildcard one per position below its bound and a probe at the bound. The
+--! server treats a probe like any other token, but can pick it out: it is
+--! the last token of its level, the token count gives the bound away, and
+--! a hit on it carries the element's selector rather than the leaf's.
+--! Wanting a whole array is a read of the array's path, which sends the
+--! array's own token.
 --!
 --! **The budget.** A read returns about two hundred characters per entry,
 --! where a sealed root holds the whole document in one ciphertext of about
