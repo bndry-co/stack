@@ -200,6 +200,15 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Changed
 
+- **vitaminc's Go bindings from cipherstash/vitaminc#526 (temporary).**
+  `vcffi` and `vcvalue` move to an unreleased commit, for the storage
+  profile (`vcffi.MarshalStorage`). One encoding changes with them: a nil
+  pointer to a fixed-width value (`(*int64)(nil)`) is written as a typed
+  null where it was written as a null. The engine reads a typed null as a
+  null, and generated code passes an untyped nil for a nil pointer, so
+  this only shows in the bytes a hand-built `record.Source` or query input
+  sends. The pin returns to a vitaminc release before this module is
+  tagged.
 - **An EQL v4 block ORE term is one hex string.** The `ob` of a value
   encrypted into an `_ord_ore` or `text_search_ore` EQL type is
   `"ob": "0202…"`, where it was a one-element array, and the EQL v4 bundle
