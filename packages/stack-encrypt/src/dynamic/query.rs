@@ -121,8 +121,9 @@ pub enum OpSpec {
     Matches,
     /// `"contains"`: [`op::Contains`](crate::op::Contains), a stored
     /// document containing a JSON needle (`@>`). Answered by the JSON index
-    /// of a field that stores a document; see [`json_query`](super::json_query)
-    /// for the inputs and operands of this and the operators below.
+    /// of a field that stores a document. The inputs of this and the
+    /// operators below are named by [`OpSpec::input`]; [`query_term`]
+    /// derives their operands and [`json_open`] opens their reads.
     Contains,
     /// `"contained_by"`: [`op::ContainedBy`](crate::op::ContainedBy), a
     /// stored document contained by a JSON needle (`<@`).
@@ -213,7 +214,7 @@ impl OpSpec {
 
     /// Whether the JSON index answers this operator: the document
     /// operators, whose input is an object of named JSON inputs
-    /// ([`json_query`](super::json_query)).
+    /// ([`OpSpec::input`]).
     pub fn is_json(self) -> bool {
         matches!(
             self,
