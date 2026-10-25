@@ -63,30 +63,32 @@ The test was run unchanged on the merge of #1363 into #1362 (`848940081`). The f
 
 The "before" column is the profile at `9a7ca372c`; the "after" column is the port at `839c0f6fd` (with `fa26cb540`, which only speeds one distinguisher up). A clause is a field of the profile's output, or a switch in `Clauses`.
 
+A "(none)" in the before column means the old profile had no such clause, for one of two reasons, and the row says which: *no such thing* (the old format had nothing to state: `x`, the hit rule as a rule, probes) or *a gap in the old profile* (the old format disclosed it and the old test did not model it, so no distinguisher could see it: string folding, whose corpus was lower-case ASCII, and the budget, which the old `json_tree_subtree` also had). The second kind is the method's limit: the calibration proves the page accounts for everything the distinguishers measure, not everything the database sees, and a clause both omit is invisible to it. Each new distinguisher is a way of finding one.
+
 | clause | before (`9a7ca372c`) | after (port) | what changed and why |
 |---|---|---|---|
 | `EntryLeakage::selector` | which paths, how many nodes at each, equal across rows, elements share their array's | same | unchanged |
 | `EntryLeakage::parent` | each node's parent, used to place the chain | same | unchanged |
 | `EntryLeakage::step` | `Root`, `Member`, `Element(i)`: decides the ordinal, and in the old chain the token too | `Root`, `Member`, `Element(i)`: decides the ordinal (the `o` of the parent tag) only | the token rule moved to `rule` |
-| `EntryLeakage::rule` | (none) | `Member` or `Element` for every entry that chains, `None` for the root and sealed-root top-level entries | new: the database tests each reached node against the member rule then the element rule, and learns which. Beyond the page as #1363 published it; this branch adds it |
+| `EntryLeakage::rule` | (none: no such thing) | `Member` or `Element` for every entry that chains, `None` for the root and sealed-root top-level entries | new: the database tests each reached node against the member rule then the element rule, and learns which. Beyond the page as #1363 published it; this branch adds it |
 | `EntryLeakage::head` | the head token an entry is (top-level fields under the sealed root, the root otherwise) | removed | a head is now named only inside a token name (`TokenName::head`); nothing at rest refers to it |
 | `EntryLeakage::has_parent_tag` | absent on the root and, under the sealed root, the top-level fields | same | unchanged |
-| `EntryLeakage::self_tag` | (none) | a fresh opaque name per entry | new: `x` on every entry. A fresh name per entry states that it is distinct within a row and unlinkable across rows; where a sent token links an entry the simulator writes its real self tag instead |
+| `EntryLeakage::self_tag` | (none: no such thing) | a fresh opaque name per entry | new: `x` on every entry. A fresh name per entry states that it is distinct within a row and unlinkable across rows; where a sent token links an entry the simulator writes its real self tag instead |
 | `EntryLeakage::ciphertext_len` | AEAD overhead (29 bytes) + kind, child count, label, scalar | same | unchanged: `x` sits beside the ciphertext. It adds a fixed 12 base64 characters per entry, 19 with its key in compact JSON (`,"x":"…"`), 21 in PostgreSQL's `jsonb` text (`, "x": "…"`); #1363 measured +9.8% on a nested document and +9.4% on a flat one |
 | `EntryLeakage::ordering` / `OrderingLeak::class` | equal values share a class, ordered by `ordering_ranks`; strings ordered by their bytes | equal values share a class; strings ordered by their folded encoding (Unicode 16 NFC, case and accents folded) | the code always folded; the old corpus held only lower-case ASCII, where the two agree. The page now says "folded", and the corpus holds `"Carol"`/`"carol"` and `"ál"`/`"al"` |
 | `OrderingLeak::len` | **beyond the page**: 65 bytes for a number, `8 × (len + 1) + 1` for a string | on the page: 65 for a number, `8 × (n + 1) + 1` for a string of folded length `n` | #1363's page states it; it now counts the folded length |
 | `Clauses::ordering_term_length` | on/off switch for the beyond-the-page length | removed | on the page now; its mutant (`ordering_term_length_constant`) still checks it |
 | `Clauses::key_order` | a reading: UTF-8 byte order vs jsonb's length-first order | same | the page now says "byte order of their key names' UTF-8 encodings"; the reading test stays to keep that sentence load-bearing |
-| `Clauses::string_order` | (none) | a reading: folded vs raw bytes | new, with a test that the raw-bytes reading is told apart |
-| `Clauses::hit_rule` | (none) | on/off switch for the member-or-element rule | new, the one clause beyond the page as #1363 published it |
+| `Clauses::string_order` | (none: a gap in the old profile) | a reading: folded vs raw bytes | new, with a test that the raw-bytes reading is told apart |
+| `Clauses::hit_rule` | (none: no such thing) | on/off switch for the member-or-element rule | new, the one clause beyond the page as #1363 published it |
 | `RowLeakage::{sealed_root, keyset, data_key, entries, projection}` | header flag, keyset, data key unique to the row, entries in depth-first order with members in UTF-8 key order, projection `q` | same | unchanged. `data_key` also names the `iv` that salts every `p` and `x` in the row |
 | `GroupLeakage::{pairs, elements}` | `{s, vs}` pairs in walk order, nested by array element | same | unchanged |
 | `QueryLeakage::Extract` | the selector of the path asked | same | unchanged |
 | `QueryLeakage::Subtree` | `token: TokenName{head, positions}` (one head token, chained through leading array positions), `gates` (`Selector(s)` or `Slot(n, s)`, positions in the clear), `reach` (every descendant of the token's node, in every row), `named` | `reads: Vec<ReadLeak>` and `budget` | rewritten. See the next three rows |
 | `ReadLeak::token` | (one per read, see above) | `TokenName{head, steps}`, each step `Member(s)` or `Element(s, i)`: one per concrete path, in the order the client sends them | the list is what the database receives; its length gives the bound away, its order places each token |
-| `ReadLeak::probe` | (none) | whether the token is a probe | new; the database is not told, and can tell (see findings) |
+| `ReadLeak::probe` | (none: no such thing) | whether the token is a probe | new; the database is not told, and can tell (see findings) |
 | `ReadLeak::hits` / `ReadLeak::reach` | `reach`: descendants of the head's node; `named`: what the gates reached | `hits`: the entry the token names in each row, if any; `reach`: every descendant of it that chains from it, in each row | a token now names exactly its node; nothing above it. Under the sealed root the root's token reaches nothing below the root |
-| `QueryLeakage::Subtree::budget` | (none) | the `budget` argument | new; the fallback to the root entry is computed from it and the walk, so the database learns nothing new from it |
+| `QueryLeakage::Subtree::budget` | (none: a gap in the old profile; the old read had a budget too) | the `budget` argument | new; the fallback to the root entry is computed from it and the walk, so the database learns nothing new from it |
 | `QueryLeakage::{Contains, Equals, Order}` | needle projection with `alt`; equality needle; selector and the bound's ordering term | same | unchanged |
 | `Leakage::{key_tag_len, ordering_ranks}` | the key tag's length, the order of every ordering class | same | unchanged |
 
