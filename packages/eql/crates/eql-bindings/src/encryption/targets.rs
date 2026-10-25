@@ -47,11 +47,11 @@
 //! |---|---|
 //! | `name` | The type's name, one across Rust, TypeScript and Go: the catalog struct identifier. The data plan's target form names this. (Go spells the `Json` family's types `JSON`; that rename is the Go generator's.) |
 //! | `family` | The catalog family, lower case: `text`, `integer`, `json`, … |
-//! | `suffix` | What a query can do, as the plan's table of suffixes spells it: `""` (stored and read only), `Eq`, `Ord`, `OrdOpe`, `OrdOre`, `Match`, `Search`, `SearchOre`; `Search` for the SteVec document. |
+//! | `suffix` | What a query can do, as the plan's table of suffixes spells it: `""` (stored and read only), `Eq`, `Ord`, `OrdOpe`, `OrdOre`, `Match`, `Search`, `SearchOre`; `""` too for a document family's stored type, whose queries are the JSON index's operators. |
 //! | `plaintext` | The vitaminc [`ValueKind`] name the type is produced from — the same names a plan field's `"type"` key uses — or `null` while the family's plaintext encoding for the stack-encrypt producer profile is unspecified. |
 //! | `sql_domain` | The schema-qualified PostgreSQL domain the stored value inhabits. |
-//! | `indexes` | The indexes the type carries, by the engine's `IndexSpec::key()` names: `eq`, `match`, `ore`, `ope`, and `json` for the SteVec document. A query may ask a field typed with this target for exactly these. |
-//! | `query` | The query twin's type name (`TextEqQuery`, `SteVecQuery`), or `null` for a storage-only type, which answers no query. |
+//! | `indexes` | The indexes the type carries, by the engine's `IndexSpec::key()` names: `eq`, `match`, `ore`, `ope`, and `json` for a document family's stored type. A query may ask a field typed with this target for exactly these. |
+//! | `query` | The query twin's type name (`TextEqQuery`, `EncryptedJsonQuery`), or `null` for a storage-only type, which answers no query. |
 //! | `query_sql_domain` | The query twin's PostgreSQL domain, `null` likewise. |
 //! | `producible` | Whether the engine can produce this type today. [`encrypt`] and [`query`] refuse a type that is not, and a generator should too. |
 //! | `reason` | Why not, when `producible` is `false`; `null` when it is. |

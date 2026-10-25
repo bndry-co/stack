@@ -280,8 +280,8 @@ mod tests {
         }
         assert!(out.contains(
             "Name: \"EncryptedJson\", GoName: \"EncryptedJSON\", Family: \"json_tree\", Suffix: \"\", \
-             Plaintext: \"json\", SQLDomain: \"public.eql_v4_json_tree\", Indexes: []string{\"json\"}, \
-             Query: \"EncryptedJsonQuery\", QuerySQLDomain: \"eql_v4.query_json_tree\", Producible: true"
+             Plaintext: \"json\", SQLDomain: \"public.eql_v4_json_search\", Indexes: []string{\"json\"}, \
+             Query: \"EncryptedJsonQuery\", QuerySQLDomain: \"eql_v4.query_json\", Producible: true"
         ));
     }
 
@@ -310,11 +310,10 @@ mod tests {
                 );
             }
         }
-        // The one query type two rows share (text_ord and text_ord_ope
-        // have distinct names; the SteVec needle belongs to one document),
-        // so no type is declared twice.
+        // No type is declared twice, and the SteVec document, EQL v3 only,
+        // has no v4 type.
         assert_eq!(out.matches("\ntype JSON []byte\n").count(), 1);
-        assert_eq!(out.matches("\ntype SteVecQuery []byte\n").count(), 1);
+        assert!(!out.contains("SteVec"));
         // TextEq is producible and says so; Json is not and says why.
         assert!(out.contains("// TextEq is the EQL type stored in public.eql_v4_text_eq"));
         assert!(out.contains("Producible: true, Reason: \"\""));

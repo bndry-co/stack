@@ -1,6 +1,6 @@
 # What an encrypted JSON tree reveals
 
-`public.eql_v4_json_tree` (EQL v4) stores a JSON document so that PostgreSQL can answer containment, path extraction, ordering at chosen paths and subtree reads without the key. Every value, key name and container sits inside an AES-256-GCM ciphertext under the document's data key, and nothing on this page shows the text of one. What the database can see is **structure**, and a great deal of it: which paths a row has and how many times, the order the nodes are stored in, which (path, value) pairs repeat across rows, and lengths. Each item below is what one query capability or one storage choice costs. Read this before you put a column on it, and decide the two options at the end with it in mind.
+`public.eql_v4_json_search` (EQL v4) stores a JSON document so that PostgreSQL can answer containment, path extraction, ordering at chosen paths and subtree reads without the key. Every value, key name and container sits inside an AES-256-GCM ciphertext under the document's data key, and nothing on this page shows the text of one. What the database can see is **structure**, and a great deal of it: which paths a row has and how many times, the order the nodes are stored in, which (path, value) pairs repeat across rows, and lengths. Each item below is what one query capability or one storage choice costs. Read this before you put a column on it, and decide the two options at the end with it in mind.
 
 ## On this page
 

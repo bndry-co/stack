@@ -58,9 +58,8 @@ var Types = []Type{
 	{Name: "DoubleOrdOre", GoName: "DoubleOrdOre", Family: "double", Suffix: "OrdOre", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ore", Indexes: []string{"ore_block"}, Query: "DoubleOrdOreQuery", QuerySQLDomain: "eql_v4.query_double_ord_ore", Producible: true, Reason: ""},
 	{Name: "DoubleOrd", GoName: "DoubleOrd", Family: "double", Suffix: "Ord", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord", Indexes: []string{"ope"}, Query: "DoubleOrdQuery", QuerySQLDomain: "eql_v4.query_double_ord", Producible: true, Reason: ""},
 	{Name: "DoubleOrdOpe", GoName: "DoubleOrdOpe", Family: "double", Suffix: "OrdOpe", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ope", Indexes: []string{"ope"}, Query: "DoubleOrdOpeQuery", QuerySQLDomain: "eql_v4.query_double_ord_ope", Producible: true, Reason: ""},
-	{Name: "SteVecDocument", GoName: "SteVecDocument", Family: "json", Suffix: "Search", Plaintext: "", SQLDomain: "public.eql_v4_json_search", Indexes: []string{"json"}, Query: "SteVecQuery", QuerySQLDomain: "eql_v4.query_json", Producible: false, Reason: "the JSON index is a new operation in the engine (#1060)"},
 	{Name: "Json", GoName: "JSON", Family: "json", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_json", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided"},
-	{Name: "EncryptedJson", GoName: "EncryptedJSON", Family: "json_tree", Suffix: "", Plaintext: "json", SQLDomain: "public.eql_v4_json_tree", Indexes: []string{"json"}, Query: "EncryptedJsonQuery", QuerySQLDomain: "eql_v4.query_json_tree", Producible: true, Reason: ""},
+	{Name: "EncryptedJson", GoName: "EncryptedJSON", Family: "json_tree", Suffix: "", Plaintext: "json", SQLDomain: "public.eql_v4_json_search", Indexes: []string{"json"}, Query: "EncryptedJsonQuery", QuerySQLDomain: "eql_v4.query_json", Producible: true, Reason: ""},
 }
 
 // Integer is the EQL type stored in public.eql_v4_integer: the integer family with no index.
@@ -2136,53 +2135,6 @@ func (v *DoubleOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SteVecDocument is the EQL type stored in public.eql_v4_json_search: the json family with the json index.
-// The engine cannot produce it yet: the JSON index is a new operation in the engine (#1060).
-type SteVecDocument []byte
-
-// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
-func (v SteVecDocument) Value() (driver.Value, error) {
-	return value(v)
-}
-
-// Scan reads a public.eql_v4_json_search column.
-func (v *SteVecDocument) Scan(src any) error {
-	return scan((*[]byte)(v), src, "SteVecDocument")
-}
-
-// MarshalJSON is the EQL value as the JSON it is, or null when empty.
-func (v SteVecDocument) MarshalJSON() ([]byte, error) {
-	return marshal(v, "SteVecDocument")
-}
-
-// UnmarshalJSON reads the EQL value from JSON, as it is.
-func (v *SteVecDocument) UnmarshalJSON(b []byte) error {
-	return unmarshal((*[]byte)(v), b)
-}
-
-// SteVecQuery is the query value for SteVecDocument: the operand eql_v4.query_json takes.
-type SteVecQuery []byte
-
-// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
-func (v SteVecQuery) Value() (driver.Value, error) {
-	return value(v)
-}
-
-// Scan reads a eql_v4.query_json column.
-func (v *SteVecQuery) Scan(src any) error {
-	return scan((*[]byte)(v), src, "SteVecQuery")
-}
-
-// MarshalJSON is the EQL value as the JSON it is, or null when empty.
-func (v SteVecQuery) MarshalJSON() ([]byte, error) {
-	return marshal(v, "SteVecQuery")
-}
-
-// UnmarshalJSON reads the EQL value from JSON, as it is.
-func (v *SteVecQuery) UnmarshalJSON(b []byte) error {
-	return unmarshal((*[]byte)(v), b)
-}
-
 // JSON is the EQL type stored in public.eql_v4_json: the json family with no index.
 // The engine cannot produce it yet: a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided.
 type JSON []byte
@@ -2207,7 +2159,7 @@ func (v *JSON) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// EncryptedJSON is the EQL type stored in public.eql_v4_json_tree: the json_tree family with the json index.
+// EncryptedJSON is the EQL type stored in public.eql_v4_json_search: the json_tree family with the json index.
 // The engine produces it from a json.
 type EncryptedJSON []byte
 
@@ -2216,7 +2168,7 @@ func (v EncryptedJSON) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v4_json_tree column.
+// Scan reads a public.eql_v4_json_search column.
 func (v *EncryptedJSON) Scan(src any) error {
 	return scan((*[]byte)(v), src, "EncryptedJSON")
 }
@@ -2231,7 +2183,7 @@ func (v *EncryptedJSON) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// EncryptedJSONQuery is the query value for EncryptedJSON: the operand eql_v4.query_json_tree takes.
+// EncryptedJSONQuery is the query value for EncryptedJSON: the operand eql_v4.query_json takes.
 type EncryptedJSONQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2239,7 +2191,7 @@ func (v EncryptedJSONQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v4.query_json_tree column.
+// Scan reads a eql_v4.query_json column.
 func (v *EncryptedJSONQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "EncryptedJSONQuery")
 }
@@ -2254,7 +2206,7 @@ func (v *EncryptedJSONQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// EncryptedJSONLeafQuery is the json_tree family's ordering operand at a path, compared with an entry `->` extracts: the value eql_v4.query_json_tree_leaf holds.
+// EncryptedJSONLeafQuery is the json_tree family's ordering operand at a path, compared with an entry `->` extracts: the value eql_v4.query_json_leaf holds.
 type EncryptedJSONLeafQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2262,7 +2214,7 @@ func (v EncryptedJSONLeafQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v4.query_json_tree_leaf column.
+// Scan reads a eql_v4.query_json_leaf column.
 func (v *EncryptedJSONLeafQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "EncryptedJSONLeafQuery")
 }
@@ -2277,7 +2229,7 @@ func (v *EncryptedJSONLeafQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// EncryptedJSONEntry is the json_tree family's entry: one node of a document, as `->` and the walks return it: the value public.eql_v4_json_tree_entry holds.
+// EncryptedJSONEntry is the json_tree family's entry: one node of a document, as `->` and the walks return it: the value public.eql_v4_json_entry holds.
 type EncryptedJSONEntry []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2285,7 +2237,7 @@ func (v EncryptedJSONEntry) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v4_json_tree_entry column.
+// Scan reads a public.eql_v4_json_entry column.
 func (v *EncryptedJSONEntry) Scan(src any) error {
 	return scan((*[]byte)(v), src, "EncryptedJSONEntry")
 }

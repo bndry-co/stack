@@ -5,7 +5,7 @@
 //! A data-plan field names the target `EncryptedJson`, declares the `json`
 //! type, and hands its document over as JSON text. The engine parses it by
 //! one set of rules, lays it out with the JSON index under the field's
-//! options, and stores the `public.eql_v4_json_tree` value; opening gives
+//! options, and stores the `public.eql_v4_json_search` value; opening gives
 //! the document's text back. Here:
 //!
 //! - a batch of documents seals in one key request and opens to the same

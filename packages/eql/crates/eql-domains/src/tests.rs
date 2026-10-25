@@ -1666,7 +1666,7 @@ mod document_families {
     fn json_tree_is_the_encrypted_json_target() {
         let stored = JSON_TREE.domain(DocumentRole::Stored).unwrap();
         assert_eq!(stored.name, "EncryptedJson");
-        assert_eq!(stored.sql_domain, "public.eql_v4_json_tree");
+        assert_eq!(stored.sql_domain, "public.eql_v4_json_search");
         assert_eq!(JSON_TREE.plaintext, "json");
         assert_eq!(JSON_TREE.index, "json");
     }

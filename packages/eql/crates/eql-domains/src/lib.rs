@@ -618,7 +618,7 @@ impl DocumentFamily {
 /// with exact containment, equality and ordering at paths, `->` extraction
 /// and subtree walks (`docs/plans/2026-10-17-json-tree-index.md`). The
 /// stored type is named for its role, `EncryptedJson`, over the SQL domain
-/// `public.eql_v4_json_tree`; the Rust struct keeps its family name.
+/// `public.eql_v4_json_search`; the Rust struct keeps its family name.
 pub const JSON_TREE: DocumentFamily = DocumentFamily {
     name: "json_tree",
     plaintext: "json",
@@ -628,25 +628,25 @@ pub const JSON_TREE: DocumentFamily = DocumentFamily {
             role: DocumentRole::Stored,
             name: "EncryptedJson",
             rust: "JsonTreeDocument",
-            sql_domain: "public.eql_v4_json_tree",
+            sql_domain: "public.eql_v4_json_search",
         },
         DocumentDomain {
             role: DocumentRole::Query,
             name: "EncryptedJsonQuery",
             rust: "JsonTreeQuery",
-            sql_domain: "eql_v4.query_json_tree",
+            sql_domain: "eql_v4.query_json",
         },
         DocumentDomain {
             role: DocumentRole::LeafQuery,
             name: "EncryptedJsonLeafQuery",
             rust: "JsonTreeLeafQuery",
-            sql_domain: "eql_v4.query_json_tree_leaf",
+            sql_domain: "eql_v4.query_json_leaf",
         },
         DocumentDomain {
             role: DocumentRole::Entry,
             name: "EncryptedJsonEntry",
             rust: "JsonTreeEntry",
-            sql_domain: "public.eql_v4_json_tree_entry",
+            sql_domain: "public.eql_v4_json_entry",
         },
     ],
 };
