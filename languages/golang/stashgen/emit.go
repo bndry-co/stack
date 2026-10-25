@@ -66,7 +66,7 @@ func (w *writer) header(f *genFile) {
 	w.b.WriteString(f.imports.block())
 	w.nl()
 	w.p("// Stops compiling when the library does not accept this version of generated file.")
-	w.p("const _ = gensupport.GeneratedVersion1")
+	w.p("const _ = gensupport.GeneratedVersion2")
 	for _, n := range f.notices {
 		w.nl()
 		w.b.WriteString(wrapComment(n, 80))
@@ -175,11 +175,12 @@ func (w *writer) opaqueShape(f *genFile) {
 	}
 	w.nl()
 	w.p("// The opaque value as it crosses the binding: one storage blob of the")
-	w.p("// struct's fields, by their declared names. The json names read a value")
-	w.p("// an earlier release sealed as a JSON document.")
+	w.p("// struct's fields, by their declared names. A field a blob lacks (one")
+	w.p("// added since it was sealed) reads as its zero value. The json names read")
+	w.p("// a value an earlier release sealed as a JSON document.")
 	w.p("type %s struct {", f.opaqueShape)
 	for _, g := range f.opaque {
-		w.p("\t%s %s `vc:%q json:%q`", g.GoName, g.typeExpr, g.Name, g.Name)
+		w.p("\t%s %s `vc:%q json:%q`", g.GoName, g.typeExpr, g.Name+",default", g.Name)
 	}
 	w.p("}")
 }
