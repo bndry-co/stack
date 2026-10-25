@@ -243,10 +243,15 @@ fn a_text_target_leaves_no_plaintext_on_the_heap() {
 
 /// A JSON document at the engine's boundary: the parser a binding's text
 /// goes through (`json::parse_text`), with the marker in a string that has
-/// escapes (decoded, not borrowed), as a key, and past 128 bytes; a refused
-/// document, whose part built so far is wiped; and the text an opened
-/// document goes back as (`dynamic::json_frame`), written into a buffer
-/// that never reallocates.
+/// escapes (decoded into its own buffer, not borrowed) and past 128 bytes;
+/// a refused string, whose buffer is wiped; and the text an opened document
+/// goes back as (`dynamic::json_frame`), written into a buffer that never
+/// reallocates.
+///
+/// The documents are strings: this binary's tests share one process, and a
+/// container's buffer (a `Vec` or a `BTreeMap` node) has unused slots that
+/// can hold another test's freed bytes. stack-encrypt's `heap_hygiene`,
+/// run one test to a process, holds containers to the same rule.
 ///
 /// The seal and open themselves are the JSON index's
 /// (`stack_encrypt::json`), which is not held to this rule yet: its path
@@ -255,10 +260,8 @@ fn a_text_target_leaves_no_plaintext_on_the_heap() {
 #[test]
 fn a_document_leaves_no_plaintext_on_the_heap_at_the_boundary() {
     let mark = marked("doc");
-    let document = format!(
-        r#"{{"note": "{mark}\n\"quoted\"", "{mark}": [1.5, "{mark}{pad}"], "n": 12345678901234567}}"#,
-        pad = "x".repeat(160)
-    );
+    let pad = "x".repeat(160);
+    let document = joined(&[r#"""#, &mark, r#"\n\"quoted\" "#, &pad, r#"""#]);
     let value = watched("parse_text", || {
         stack_encrypt::json::parse_text(document.as_bytes()).unwrap()
     });
@@ -271,15 +274,25 @@ fn a_document_leaves_no_plaintext_on_the_heap_at_the_boundary() {
         stack_encrypt::json::wipe_value(&mut value);
     });
     for refused in [
-        format!(r#"{{"a": "{mark}\n", "b": ["{mark}"], "a": 1}}"#),
-        format!(r#"["{mark}\n", {{"{mark}": [true, "{mark}"#),
-        format!(r#"{{"{mark}": "{mark}", "x": 99999999999999999999}}"#),
+        joined(&[r#"""#, &mark, r#"\n\x""#]),
+        joined(&[r#"""#, &mark, r#"\n"#, &pad]),
     ] {
         watched("parse_text refusal", || {
             assert!(stack_encrypt::json::parse_text(refused.as_bytes()).is_err());
         });
     }
     drop(document);
+}
+
+/// `parts` joined into a string sized for them before it is written, so
+/// building a marked input frees no marked block that a later allocation
+/// could reuse and a watch then find.
+fn joined(parts: &[&str]) -> String {
+    let mut out = String::with_capacity(parts.iter().map(|p| p.len()).sum());
+    for part in parts {
+        out.push_str(part);
+    }
+    out
 }
 
 /// The spy itself: a plain `String` holding the marker, freed while

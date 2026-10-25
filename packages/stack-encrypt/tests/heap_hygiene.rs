@@ -390,23 +390,27 @@ fn a_json_operators_input_leaves_no_plaintext_on_the_heap() {
     .unwrap();
     let mark = marked("needle");
     let pad = "x".repeat(160);
-    let needle = format!(r#"{{"{mark}": ["{mark}\n{pad}"]}}"#);
-    let at = format!(r#""{mark}\n""#);
+    let needle = joined(&[r#"{""#, &mark, r#"": [""#, &mark, r"\n", &pad, r#""]}"#]);
+    let at = joined(&[r#"""#, &mark, r#"\n""#]);
+    // Framed by the test's own writer, which leaves no copy behind, so a
+    // block the watch sees is the engine's.
     let inputs = [
-        (OpSpec::Contains, serde_json::json!({"json": needle})),
+        (
+            OpSpec::Contains,
+            object(vec![("json", frame(needle.as_str()))]),
+        ),
         (
             OpSpec::EqAt,
-            serde_json::json!({"path": "$.name", "json": at}),
+            object(vec![
+                ("path", frame("$.name")),
+                ("json", frame(at.as_str())),
+            ]),
         ),
         (
             OpSpec::GtAt,
-            serde_json::json!({"path": "$.age", "json": at}),
+            object(vec![("path", frame("$.age")), ("json", frame(at.as_str()))]),
         ),
-    ]
-    .map(|(op, input)| {
-        let bytes = stack_encrypt::dynamic::frame::serde::to_vec(&input).unwrap();
-        (op, ValueFrame::from_bytes(&bytes).unwrap())
-    });
+    ];
     for (operator, input) in &inputs {
         watched(&format!("check_query ({operator:?})"), || {
             stack_encrypt::dynamic::check_query(&plan, "profile", *operator, input, &Documents)
@@ -424,14 +428,43 @@ fn a_json_operators_input_leaves_no_plaintext_on_the_heap() {
 fn a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap() {
     let mark = marked("doc");
     let pad = "x".repeat(160);
-    let document = format!(r#"{{"{mark}": ["{mark}\n{pad}", 1.5], "n": "{mark}"}}"#);
-    let refused = format!(r#"{{"{mark}": "{mark}\n", "{mark}": 1}}"#);
+    let document = joined(&[
+        r#"{""#,
+        &mark,
+        r#"": [""#,
+        &mark,
+        r"\n",
+        &pad,
+        r#"", 1.5], "n": ""#,
+        &mark,
+        r#""}"#,
+    ]);
+    let refused = joined(&[
+        r#"{""#,
+        &mark,
+        r#"": ""#,
+        &mark,
+        r#"\n", ""#,
+        &mark,
+        r#"": 1}"#,
+    ]);
     let (document, refused) = (frame(document.as_str()), frame(refused.as_str()));
     watched("read_json", || {
         let parsed = stack_encrypt::dynamic::read_json(&document).expect("a document");
         drop(parsed);
         assert!(stack_encrypt::dynamic::read_json(&refused).is_err());
     });
+}
+
+/// `parts` joined into a string sized for them before it is written, so
+/// building a marked input frees no marked block that a later allocation
+/// could reuse and a watch then find.
+fn joined(parts: &[&str]) -> String {
+    let mut out = String::with_capacity(parts.iter().map(|p| p.len()).sum());
+    for part in parts {
+        out.push_str(part);
+    }
+    out
 }
 
 /// The spy itself: a plain `String` holding the marker, freed while
