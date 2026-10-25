@@ -127,6 +127,12 @@ exclude_re = [
   # none. What it runs, `wipe_value`, is pinned by
   # `wipe_value_leaves_no_plaintext_in_the_value`.
   'stack-encrypt/src/dynamic/json\.rs:\d+:\d+: replace <impl Drop for JsonPlaintext>::drop with \(\)$',
+  # The same two for a JSON operator's input: `Parsed`'s Drop wipes a
+  # document no safe code can read once dropped, and the `JsonText`
+  # visitor's `expecting` writes a message `read_frame` discards for its
+  # fixed `Reason::JsonInput`.
+  'stack-encrypt/src/dynamic/json_query\.rs:\d+:\d+: replace <impl Drop for Parsed>::drop with \(\)$',
+  'stack-encrypt/src/dynamic/json_query\.rs:\d+:\d+: replace <impl Deserialize<\x27de> for JsonText>::deserialize::<impl Visitor<\x27_> for V>::expecting -> std::fmt::Result with Ok\(Default::default\(\)\)$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is

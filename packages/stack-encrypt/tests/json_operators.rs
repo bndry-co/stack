@@ -276,6 +276,23 @@ async fn every_operator_derives_its_tagged_operand() {
         assert_eq!(term.domain(), Some("eql_v4.query_json_tree"), "{operator}");
         assert!(needle(&term).is_object(), "{operator}");
     }
+    // Equality at a path is a containment needle, the shape `contains`
+    // derives; an ordering at the same path is a leaf operand, another.
+    let keys = |v: &Value| -> Vec<String> { v.as_object().unwrap().keys().cloned().collect() };
+    let at_age = json!({"path": "$.age", "json": "40"});
+    let contains = needle(
+        &term(
+            &keyset,
+            &plan,
+            "contains",
+            json!({"json": r#"{"age": 40}"#}),
+        )
+        .await,
+    );
+    let eq = needle(&term(&keyset, &plan, "eq_at", at_age.clone()).await);
+    let lt = needle(&term(&keyset, &plan, "lt_at", at_age).await);
+    assert_eq!(keys(&eq), keys(&contains), "eq_at is a needle: {eq}");
+    assert_ne!(keys(&lt), keys(&eq), "an ordering is a leaf operand: {lt}");
     for operator in ["lt_at", "lte_at", "gt_at", "gte_at"] {
         let term = term(
             &keyset,
@@ -329,6 +346,12 @@ async fn every_operator_derives_its_tagged_operand() {
 
     let children = term(&keyset, &plan, "children", json!({"path": "$.visits"})).await;
     let count = term(&keyset, &plan, "child_count", json!({"path": "$.visits"})).await;
+    let selector = term(&keyset, &plan, "selector", json!({"path": "$.visits"})).await;
+    assert_ne!(
+        children.operand(),
+        selector.operand(),
+        "a node's token is not its selector"
+    );
     assert_eq!(
         children.operand(),
         count.operand(),
