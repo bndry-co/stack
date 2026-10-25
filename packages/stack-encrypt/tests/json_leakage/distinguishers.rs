@@ -1008,10 +1008,10 @@ pub fn member_ordinals_follow_key_order(world: &ObservedWorld) -> Option<bool> {
 
 /// Which subtree reads' tokens the database can derive from which others':
 /// `(i, j)` when a token sent by query `j` is one the walks from query
-/// `i`'s tokens derive in some row, or is a child token of one of `i`'s by
-/// the member rule under any selector the column holds, or by the element
-/// rule at an index below 4 (a bound on what the harness tries, not on what
-/// the database can). The page: a token's holder can "derive the tokens of
+/// `i`'s tokens derive in some row, or is a child token of one of `i`'s
+/// tokens that finds a node somewhere, by the member rule under any
+/// selector the column holds, or by the element rule at an index below 4
+/// (bounds on what the harness tries, not on what the database can). The page: a token's holder can "derive the tokens of
 /// the nodes beneath". Catches tokens that are not chained (a token
 /// unrelated to its path's) as well as tokens chained where the profile
 /// says they are not.
@@ -1030,7 +1030,14 @@ pub fn token_derivability(world: &ObservedWorld) -> BTreeSet<(usize, usize)> {
             .flatten()
             .flat_map(|(_, hits)| hits.iter().filter_map(|h| h.token))
             .collect();
-        for t in tokens {
+        // From the tokens that find a node in some row: one that names
+        // nothing anywhere (most of a wildcard's positions, on short arrays)
+        // derives only the tokens of paths no row has.
+        let found: BTreeSet<usize> = walks[q]
+            .iter()
+            .flat_map(|row| row.iter().map(|(k, _)| *k))
+            .collect();
+        for t in found.into_iter().map(|k| &tokens[k]) {
             for s in &selectors {
                 let _ = derived.insert(member_token(t, s));
                 for o in 0..4 {
