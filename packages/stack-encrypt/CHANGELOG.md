@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A float in a JSON index document opens to the value that was sealed**
+  (#1364). A number leaf is stored as its shortest round-trip text and
+  parsed back when its entry or the sealed root opens, and serde_json's
+  default float parser can land one unit in the last place off the `f64`
+  that text names: `-926809.5051008083` opened as `-926809.5051008085`,
+  through `JsonDocument`, `JsonNode` and `JsonSubtree` alike. The crate now
+  builds serde_json with `float_roundtrip`, whose parser returns the
+  nearest `f64`. The trade is slower float parsing and slightly more code.
+  Cargo unifies features, so every serde_json parse in a program that links
+  this crate (the caller's own included) uses that parser. Integers and
+  short decimals were never affected, and the read side derives no term
+  from the value it parses.
+
 ### Added
 
 - **A JSON index, `target::Json`** (`docs/plans/2026-10-17-json-tree-index.md`,

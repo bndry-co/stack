@@ -72,7 +72,14 @@ ore-rs = { workspace = true }
 # can act) and gives its structured fields as a `serde_json` map through
 # `ErrorPayload`. Both are already in the graph through stack-kms.
 miette = { workspace = true }
-serde_json = { workspace = true }
+# `float_roundtrip`: the JSON index stores a number leaf as its shortest
+# round-trip text and parses it back when the entry or the sealed root
+# opens (`json::derive::decode_node`, `json::plain::PlainJson::parse`).
+# serde_json's default float parser is fast and can land one unit in the
+# last place off the `f64` that text names; this one returns the nearest
+# `f64`, so the value opens to the one sealed (#1364). It costs slower
+# float parsing and a little more code, and nothing new is compiled.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
