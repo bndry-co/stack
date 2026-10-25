@@ -130,7 +130,19 @@ pub enum StringOrder {
     Bytes,
 }
 
-/// The clauses of the profile that are on or off as a whole, and the two
+/// What a number's ordering term tells equal by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumberOrder {
+    /// The page: equality "is as a 64-bit float", so two integers past
+    /// 2^53 that round to one float share a term (the term is derived from
+    /// `as_f64`).
+    Float,
+    /// Every distinct number its own term, as a reader could take "equal
+    /// values carry equal terms" to mean.
+    Exact,
+}
+
+/// The clauses of the profile that are on or off as a whole, and the
 /// readings the page could leave open. The default is what the code needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Clauses {
@@ -139,6 +151,8 @@ pub struct Clauses {
     pub key_order: KeyOrder,
     /// How a string's ordering term orders.
     pub string_order: StringOrder,
+    /// What a number's ordering term tells equal by.
+    pub number_order: NumberOrder,
     /// **Added to the page by #1362.** The rule a node's token takes under
     /// its parent's, member or element, which the database learns for every
     /// node a walk reaches: it tests the member rule against the hit's self
@@ -156,6 +170,7 @@ impl Default for Clauses {
         Self {
             key_order: KeyOrder::Utf8Bytes,
             string_order: StringOrder::Folded,
+            number_order: NumberOrder::Float,
             hit_rule: true,
         }
     }
@@ -449,7 +464,8 @@ pub struct Leakage {
     /// bound's "place in the order of the stored values at every ordered
     /// path" ("leaves at two ordered paths compare with each other too, and
     /// two ordered paths holding equal values carry equal terms"; "within
-    /// each kind the order is the values'").
+    /// each kind the order is the values'"). A number's equality "is as a
+    /// 64-bit float".
     pub ordering_ranks: Vec<usize>,
     /// How the two kinds' terms compare ([`KindOrder`]).
     pub kind_order: KindOrder,
@@ -499,7 +515,10 @@ impl<T: Hash + Eq> Interner<T> {
 /// derived from `as_f64`); strings by their order encoding's bytes.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum OrderKey {
-    Number(u64),
+    /// The `f64`'s bits, and under [`NumberOrder::Exact`] an integer's own
+    /// value beside them, which keeps integers that round to one float
+    /// apart.
+    Number(u64, Option<i128>),
     String(Vec<u8>),
 }
 
@@ -509,7 +528,7 @@ impl OrderKey {
     /// string's marker and folded text as [`Ids::ordering`] keeps them.
     fn encoding(&self) -> Vec<u8> {
         match self {
-            Self::Number(bits) => vitaminc_ore::order(
+            Self::Number(bits, _) => vitaminc_ore::order(
                 vitaminc_ore::OrderTarget::F64,
                 None,
                 vitaminc_ore::Physical::Float(vitaminc_ore::Float::F64(f64::from_bits(*bits))),
@@ -588,7 +607,14 @@ impl Ids {
                     f != 0.0 || f.is_sign_positive(),
                     "the corpus has no -0.0, whose term the page does not describe"
                 );
-                OrderKey::Number(f.to_bits())
+                let exact = match self.clauses.number_order {
+                    NumberOrder::Float => None,
+                    NumberOrder::Exact => n
+                        .as_i64()
+                        .map(i128::from)
+                        .or_else(|| n.as_u64().map(i128::from)),
+                };
+                OrderKey::Number(f.to_bits(), exact)
             }
             Value::String(s) => OrderKey::String(match self.clauses.string_order {
                 // The marker, then the folded text: the order encoding.
@@ -643,9 +669,9 @@ impl Ids {
             .collect();
         order.sort_by(
             |&a, &b| match (&self.ordering_keys[a], &self.ordering_keys[b]) {
-                (OrderKey::Number(x), OrderKey::Number(y)) => {
-                    f64::from_bits(*x).total_cmp(&f64::from_bits(*y))
-                }
+                (OrderKey::Number(x, i), OrderKey::Number(y, j)) => f64::from_bits(*x)
+                    .total_cmp(&f64::from_bits(*y))
+                    .then(i.cmp(j)),
                 (OrderKey::String(x), OrderKey::String(y)) => x.cmp(y),
                 _ => unreachable!("one kind"),
             },

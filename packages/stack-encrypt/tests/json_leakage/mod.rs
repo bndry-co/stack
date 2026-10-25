@@ -76,9 +76,10 @@
 //!   [`profile::Clauses::as_published_in_1363`] turns it off, and a test
 //!   holds that the result is then told from the real scheme, by the
 //!   distinguisher that names it and the three its absence breaks.
-//! - **Two readings.** The page states the key order (UTF-8 byte order)
-//!   and that strings order folded; a profile read the other way on either
-//!   is told from the real scheme, so both sentences are load-bearing.
+//! - **Three readings.** The page states the key order (UTF-8 byte order),
+//!   that strings order folded, and that a number's equality under its term
+//!   is as a 64-bit float; a profile read the other way on any of them is
+//!   told from the real scheme, so each sentence is load-bearing.
 //! - **The calibration.** Each mutant profile drops one clause. The test
 //!   expects some distinguisher to tell each mutant's world from the real
 //!   one, and prints a table of which (run with `--no-capture`). A mutant

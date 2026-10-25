@@ -15,8 +15,8 @@ use super::distinguishers::{self, walk_positions};
 use super::mutants;
 use super::observe::{ObservedQuery, ObservedWorld};
 use super::profile::{
-    flatten, leak, Clauses, Column, KeyOrder, KindOrder, Leakage, OrderKind, Placement, Query,
-    QueryLeakage, StringOrder,
+    flatten, leak, Clauses, Column, KeyOrder, KindOrder, Leakage, NumberOrder, OrderKind,
+    Placement, Query, QueryLeakage, StringOrder,
 };
 use super::{real, simulator};
 use crate::common::stack_cipher;
@@ -266,6 +266,38 @@ mod given_strings_ordered_by_their_bytes {
                 "folding shows in {expected}: {fired:?}"
             );
         }
+    }
+}
+
+mod given_integers_ordered_exactly {
+    use super::*;
+
+    /// The page says a number's equality under its term "is as a 64-bit
+    /// float": 9007199254740992 and 9007199254740993 round to one float and
+    /// share a term. Read as every distinct number its own term, the profile
+    /// is told from the real scheme on the column that holds both.
+    #[test]
+    fn the_ordering_terms_tell_it_apart() {
+        let runtime = runtime();
+        let cipher = runtime.block_on(stack_cipher());
+        let clauses = Clauses {
+            number_order: NumberOrder::Exact,
+            ..Clauses::default()
+        };
+        let world = handcrafted()
+            .into_iter()
+            .find(|w| w.name == "numbers and strings at one ordered path")
+            .expect("the corpus has it");
+        let real = real_world(&runtime, &cipher, &world);
+        let leakage = leak(&world.column, clauses, &world.docs, &world.queries);
+        let fired: Vec<&str> = separating(&features(&real), &leakage, &mut rng())
+            .into_iter()
+            .map(|(n, _, _)| n)
+            .collect();
+        assert!(
+            fired.contains(&"ordering_term_order"),
+            "two integers that round to one float share a term: {fired:?}"
+        );
     }
 }
 
