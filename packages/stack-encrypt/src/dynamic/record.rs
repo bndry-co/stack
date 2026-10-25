@@ -147,7 +147,7 @@ use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 
 use super::term::{IndexWire, JsonWire, MatchWire};
-use super::{ValueFrame, ValueKind};
+use super::{TargetOptions, ValueFrame, ValueKind};
 use vitaminc_aead::frame::{Frame, FrameWriter};
 use vitaminc_aead::plaintext::{Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::{DecodeError, Encrypt};
@@ -273,6 +273,7 @@ pub struct FieldPlan {
     extension: Vec<ContextPiece<'static>>,
     outputs: Vec<Output>,
     target: Option<String>,
+    target_options: Option<TargetOptions>,
     field_type: Option<ValueKind>,
     null: Option<NullMode>,
 }
@@ -329,6 +330,7 @@ impl FieldPlan {
             extension,
             outputs,
             target: None,
+            target_options: None,
             field_type: None,
             null: None,
         })
@@ -365,9 +367,30 @@ impl FieldPlan {
             extension,
             outputs: Vec::new(),
             target: Some(target),
+            target_options: None,
             field_type: None,
             null: None,
         })
+    }
+
+    /// Give the field's target its options: the options of the index the
+    /// target carries, such as a JSON document's sealed root and ordered
+    /// paths. Whether the target takes them is decided when the plan is
+    /// built ([`Plan::new_with`]), against the resolver; a target that
+    /// carries the JSON index and is given none takes the index's
+    /// defaults. Options on a field with no target are refused there too.
+    #[must_use]
+    pub fn with_target_options(mut self, options: TargetOptions) -> Self {
+        self.target_options = Some(options);
+        self
+    }
+
+    /// The options the field's target runs under: the ones given, or for a
+    /// target that carries the JSON index and was given none, the index's
+    /// defaults, once the plan is built. `None` for a target that takes
+    /// none, and for a field with no target.
+    pub fn target_options(&self) -> Option<&TargetOptions> {
+        self.target_options.as_ref()
     }
 
     /// Declare the type of this field's values.
@@ -744,6 +767,31 @@ impl Plan {
                 (None, Some(kind)) => field.field_type = Some(kind),
                 _ => {}
             }
+            // A target takes the options of the index it carries, the JSON
+            // index's alone today. Defaults are filled in here, once, so
+            // every write, query and read of the field runs under one
+            // resolved definition.
+            let carries_json = descriptor
+                .indexes
+                .iter()
+                .any(|index| index == IndexSpec::Json(Default::default()).key());
+            field.target_options = match (field.target_options.take(), carries_json) {
+                (None, false) => None,
+                (None, true) => Some(TargetOptions::Json(Default::default())),
+                (Some(TargetOptions::Json(options)), true) => {
+                    options.check().map_err(|_| Error::Plan {
+                        field: Some(field.name.clone()),
+                        reason: Reason::InvalidTarget,
+                    })?;
+                    Some(TargetOptions::Json(options))
+                }
+                (Some(_), false) => {
+                    return Err(Error::Plan {
+                        field: Some(field.name.clone()),
+                        reason: Reason::TargetOptions,
+                    })
+                }
+            };
             // A null has an equality term and no other, so a sealed null
             // needs a type whose terms are equality's alone.
             if field.null == Some(NullMode::Sealed)
@@ -856,6 +904,14 @@ impl Plan {
             }
             if let Some(reason) = field.null_refusal() {
                 return Err(refuse(reason));
+            }
+            // A JSON document is stored through a target that stores one;
+            // a target's options belong to a target.
+            if !field.is_target() && field.field_type == Some(ValueKind::Json) {
+                return Err(refuse(Reason::JsonNeedsTarget));
+            }
+            if !field.is_target() && field.target_options.is_some() {
+                return Err(refuse(Reason::TargetOptions));
             }
             // An indexed field declares its type: every value's term derives
             // from the one declared kind, never from whatever tag each value
@@ -1055,6 +1111,20 @@ pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
 /// target field needs a column for its label, so it is refused under a
 /// context field ([`TargetError::ContextField`]).
 ///
+/// `"target"` may instead be an object of the name and the options of the
+/// index the type carries: a type that stores a JSON document
+/// (`EncryptedJson`) takes the JSON index's options object, as the
+/// `{"json": ...}` output spells it, and no other type takes any.
+///
+/// ```text
+/// "target": { "name": "EncryptedJson",
+///             "options": { "sealed_root": <bool>, "ordered": [<path>, ...] } }
+/// ```
+///
+/// Such a field declares the `"json"` type (or leaves it to the target),
+/// hands each document over as UTF-8 JSON text, and stores a null as SQL
+/// `NULL` (`"null": "sql"`): a document has no length to pad.
+///
 /// `<index>` is an index in its wire form, which is its key — `"eq"`,
 /// `"match"`, `"ore"` or `"ope"` — save for a match index with options other
 /// than the defaults, which is a one-entry object mapping `"match"` to them:
@@ -1169,7 +1239,13 @@ pub fn plan_with(frame: &[u8], resolver: &(impl TargetResolver + ?Sized)) -> Res
         let context = super::context::non_empty(spec.context.0).map_err(|e| e.in_field(&name))?;
         let field = match spec.what {
             What::Outputs(outputs) => FieldPlan::new(name, context, outputs)?,
-            What::Target(target) => FieldPlan::with_target(name, context, target)?,
+            What::Target(target, options) => {
+                let field = FieldPlan::with_target(name, context, target)?;
+                match options {
+                    Some(options) => field.with_target_options(options),
+                    None => field,
+                }
+            }
         };
         let field = match spec.field_type {
             Some(KindName(field_type)) => field.with_type(field_type)?,
@@ -1291,7 +1367,7 @@ struct FieldSpec {
 
 enum What {
     Outputs(Vec<Output>),
-    Target(String),
+    Target(String, Option<TargetOptions>),
 }
 
 #[derive(Deserialize)]
@@ -1301,7 +1377,7 @@ struct FieldSpecWire {
     #[serde(default, deserialize_with = "present")]
     outputs: Option<Vec<OutputWire>>,
     #[serde(default, deserialize_with = "present")]
-    target: Option<String>,
+    target: Option<TargetWire>,
     #[serde(default, deserialize_with = "present", rename = "type")]
     field_type: Option<KindName>,
     #[serde(default, deserialize_with = "present")]
@@ -1314,7 +1390,10 @@ impl TryFrom<FieldSpecWire> for FieldSpec {
     fn try_from(wire: FieldSpecWire) -> Result<Self, Reason> {
         let what = match (wire.outputs, wire.target) {
             (Some(outputs), None) => What::Outputs(outputs.into_iter().map(Output::from).collect()),
-            (None, Some(target)) => What::Target(target),
+            (None, Some(TargetWire::Name(target))) => What::Target(target, None),
+            (None, Some(TargetWire::Configured(ConfiguredTarget { name, options }))) => {
+                What::Target(name, options.map(|options| TargetOptions::Json(options.0)))
+            }
             (Some(_), Some(_)) => return Err(Reason::OutputsWithTarget),
             (None, None) => return Err(Reason::MissingOutputs),
         };
@@ -1325,6 +1404,25 @@ impl TryFrom<FieldSpecWire> for FieldSpec {
             null: wire.null,
         })
     }
+}
+
+/// A field's `"target"`: the target's name, which runs it under its
+/// defaults, or an object of its name and its options, which are the
+/// options of the index the target carries (the JSON index's options
+/// object, as an output spells it).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TargetWire {
+    Name(String),
+    Configured(ConfiguredTarget),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfiguredTarget {
+    name: String,
+    #[serde(default)]
+    options: Option<super::term::JsonWire>,
 }
 
 /// Absent is `None`. Present, a value must be of its kind: a null is
@@ -1560,7 +1658,7 @@ pub fn encrypt_with<'a, K: 'static>(
             let name = field.target().unwrap_or_default();
             pendings.push(
                 resolver
-                    .encrypt(name, cipher, field.label(), value)
+                    .encrypt(name, field.target_options(), cipher, field.label(), value)
                     .map_err(|error| Error::Target(name_target(error, &field.name)))?,
             );
             count += 1;
@@ -1747,6 +1845,11 @@ fn name_target(error: TargetError, field: &str) -> TargetError {
             found,
         },
         TargetError::Stored { target, reason, .. } => TargetError::Stored {
+            name: field.to_owned(),
+            target,
+            reason,
+        },
+        TargetError::Json { target, reason, .. } => TargetError::Json {
             name: field.to_owned(),
             target,
             reason,
@@ -2285,7 +2388,7 @@ fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
         reason,
     };
     if let Some(declared) = field.field_type {
-        if value.kind() != Some(declared) {
+        if !declared.holds(value.kind()) {
             return Err(misfit(Reason::FieldType));
         }
     }
@@ -2465,7 +2568,7 @@ fn open_record(
         // opens as a plain null, as every frame carries one.
         let null = field.null.is_some() && value.is_null();
         if let Some(kind) = field.kind.filter(|_| !null) {
-            if value.kind() != Some(kind) {
+            if !kind.holds(value.kind()) {
                 return Err(crate::PlanError::FieldType {
                     field: field.name.clone(),
                     expected: kind.name(),
@@ -2593,7 +2696,7 @@ fn record_row(mut row: Vec<(String, StackCipherText)>, plan: &Plan) -> Result<St
                     passthrough_value(&payload).ok_or_else(|| misfit(Reason::NotPassthrough))?;
                 if field
                     .field_type
-                    .is_some_and(|kind| value.kind() != Some(kind))
+                    .is_some_and(|kind| !kind.holds(value.kind()))
                 {
                     return Err(misfit(Reason::FieldType));
                 }
@@ -6269,6 +6372,18 @@ mod tests {
                         None,
                     ),
                     TargetDescriptor::new(
+                        "EncryptedJson",
+                        "json_tree",
+                        "",
+                        Some(ValueKind::Json),
+                        "public.eql_v4_json_tree",
+                        vec!["json".to_string()],
+                        Some("EncryptedJsonQuery".to_string()),
+                        Some("eql_v4.query_json_tree".to_string()),
+                        true,
+                        None,
+                    ),
+                    TargetDescriptor::new(
                         "TextOrdOre",
                         "text",
                         "OrdOre",
@@ -6286,6 +6401,7 @@ mod tests {
             fn encrypt<'a, K: 'static>(
                 &self,
                 name: &str,
+                _: Option<&crate::dynamic::TargetOptions>,
                 keyset: &'a KeysetCipher<'_, K>,
                 label: &Label,
                 plaintext: ValueFrame,
@@ -6429,6 +6545,137 @@ mod tests {
                 .expect("fits")
                 .await
                 .expect("seals"))
+        }
+
+        /// A target that stores a JSON document takes the JSON index's
+        /// options, in a `{"name", "options"}` target; given none, it runs
+        /// under the index's defaults, resolved when the plan is built.
+        #[test]
+        fn a_json_target_takes_the_index_options_and_defaults_them() {
+            use crate::dynamic::TargetOptions;
+            use crate::json::{JsonOptions, JsonPath};
+            let bare = plan_with(
+                obj(vec![(
+                    "profile",
+                    target_spec(label("profile"), "EncryptedJson"),
+                )]),
+                &FakeEql,
+            )
+            .expect("a bare JSON target");
+            let field = &bare.fields()[0];
+            assert_eq!(
+                field.field_type(),
+                Some(ValueKind::Json),
+                "the target's kind"
+            );
+            assert_eq!(
+                field.target_options(),
+                Some(&TargetOptions::Json(JsonOptions::default()))
+            );
+            let configured = |options: Tree| {
+                plan_with(
+                    obj(vec![(
+                        "profile",
+                        obj(vec![
+                            ("context", label("profile")),
+                            (
+                                "target",
+                                obj(vec![("name", s("EncryptedJson")), ("options", options)]),
+                            ),
+                        ]),
+                    )]),
+                    &FakeEql,
+                )
+            };
+            let plan = configured(obj(vec![
+                ("sealed_root", Tree::Bool(false)),
+                (
+                    "ordered",
+                    Tree::Array(vec![s("$.salary"), s("$.visits[*].at")]),
+                ),
+            ]))
+            .expect("configured");
+            let Some(TargetOptions::Json(options)) = plan.fields()[0].target_options() else {
+                panic!("JSON options");
+            };
+            assert!(!options.sealed_root);
+            assert!(options.orders(&JsonPath::parse("$.salary").unwrap()));
+            assert!(options.orders(&JsonPath::parse("$.visits[3].at").unwrap()));
+            for (options, reason) in [
+                (
+                    obj(vec![("sealed", Tree::Bool(true))]),
+                    Reason::InvalidTarget,
+                ),
+                (
+                    obj(vec![("ordered", Tree::Array(vec![s("$.scores[2]")]))]),
+                    Reason::InvalidTarget,
+                ),
+                (
+                    obj(vec![("ordered", Tree::Array(vec![s("not a path")]))]),
+                    Reason::InvalidTarget,
+                ),
+            ] {
+                let error = refused(configured(options));
+                assert_eq!(error.reason(), Some(reason), "{error}");
+                assert_eq!(error.field(), Some("profile"));
+            }
+        }
+
+        #[test]
+        fn options_on_a_target_that_takes_none_are_refused() {
+            let error = refused(plan_with(
+                obj(vec![(
+                    "email",
+                    obj(vec![
+                        ("context", label("email")),
+                        (
+                            "target",
+                            obj(vec![("name", s(TEXT_EQ)), ("options", obj(vec![]))]),
+                        ),
+                    ]),
+                )]),
+                &FakeEql,
+            ));
+            assert_eq!(error.reason(), Some(Reason::TargetOptions), "{error}");
+            let error = refused(plan_with(
+                obj(vec![(
+                    "email",
+                    obj(vec![
+                        ("context", label("email")),
+                        (
+                            "target",
+                            obj(vec![("name", s(TEXT_EQ)), ("version", Tree::UInt32(1))]),
+                        ),
+                    ]),
+                )]),
+                &FakeEql,
+            ));
+            assert_eq!(
+                error.reason(),
+                Some(Reason::InvalidTarget),
+                "an unknown key: {error}"
+            );
+        }
+
+        /// A `json` field names a target that stores the document; a JSON
+        /// document has no length to pad, so it stores a null as SQL NULL.
+        #[test]
+        fn a_json_field_needs_a_document_target_and_sql_nulls() {
+            let error = refused(plan_with(
+                obj(vec![("profile", typed(label("profile"), &["c"], "json"))]),
+                &FakeEql,
+            ));
+            assert_eq!(error.reason(), Some(Reason::JsonNeedsTarget), "{error}");
+            let mut spec = target_spec(label("profile"), "EncryptedJson");
+            if let Tree::Object(entries) = &mut spec {
+                entries.push(("null".to_string(), s("sealed")));
+            }
+            let error = refused(plan_with(obj(vec![("profile", spec.clone())]), &FakeEql));
+            assert_eq!(error.reason(), Some(Reason::SealedNullIndex), "{error}");
+            if let Tree::Object(entries) = &mut spec {
+                entries.last_mut().unwrap().1 = s("sql");
+            }
+            assert!(plan_with(obj(vec![("profile", spec)]), &FakeEql).is_ok());
         }
 
         #[tokio::test]

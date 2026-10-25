@@ -553,6 +553,109 @@ pub const CATALOG: &[DomainFamily] = &[
     INTEGER, SMALLINT, BIGINT, DATE, TIMESTAMP, NUMERIC, TEXT, BOOLEAN, REAL, DOUBLE, JSON,
 ];
 
+/// The role a domain of a [`DocumentFamily`] plays: the column type, the
+/// two query operands, or the entry the SQL returns from a document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentRole {
+    /// The stored document: the column type, and the target a data plan
+    /// names.
+    Stored,
+    /// The containment needle, which equality at a path also builds.
+    Query,
+    /// The ordering operand at a path.
+    LeafQuery,
+    /// One node, as `->` and the walks return it.
+    Entry,
+}
+
+/// One domain of a [`DocumentFamily`]: its role, its type name across
+/// languages, the hand-written Rust struct that carries it, and its
+/// PostgreSQL domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocumentDomain {
+    /// What the domain is for.
+    pub role: DocumentRole,
+    /// The type's name across languages: what a data plan names as a
+    /// target, and what eql-codegen derives the Go name from
+    /// (`EncryptedJson` is `eql.EncryptedJSON`). A contract identifier,
+    /// not the Rust struct's name.
+    pub name: &'static str,
+    /// The hand-written Rust struct in `eql_bindings::v4::<family>`.
+    pub rust: &'static str,
+    /// The schema-qualified PostgreSQL domain.
+    pub sql_domain: &'static str,
+}
+
+/// A family whose payloads are structured documents: their SQL is
+/// hand-written (`src/v3/json_tree/`, under `-- ONLY EQL VERSION: 4`) and so
+/// are their Rust bodies, so the scalar materializers never see them. The
+/// catalog lists them so the target table, the v4 inventories and the Go
+/// types are generated from one place, like every other family. EQL v4
+/// only: Stack Encrypt is the one producer, and EQL v3 has none of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocumentFamily {
+    /// The family name: `json_tree`, the SQL directory and the target
+    /// table's `family`.
+    pub name: &'static str,
+    /// The plaintext kind the stored type is produced from, by the
+    /// engine's `ValueKind` name: `json`, UTF-8 JSON text.
+    pub plaintext: &'static str,
+    /// The engine index the stored type carries, by its
+    /// `IndexSpec::key()`: `json`.
+    pub index: &'static str,
+    /// The domains, the stored one first.
+    pub domains: &'static [DocumentDomain],
+}
+
+impl DocumentFamily {
+    /// The domain playing `role`.
+    pub fn domain(&self, role: DocumentRole) -> Option<&'static DocumentDomain> {
+        self.domains.iter().find(|d| d.role == role)
+    }
+}
+
+/// `json_tree`: an encrypted JSON document stored as one entry per node,
+/// with exact containment, equality and ordering at paths, `->` extraction
+/// and subtree walks (`docs/plans/2026-10-17-json-tree-index.md`). The
+/// stored type is named for its role, `EncryptedJson`, over the SQL domain
+/// `public.eql_v4_json_tree`; the Rust struct keeps its family name.
+pub const JSON_TREE: DocumentFamily = DocumentFamily {
+    name: "json_tree",
+    plaintext: "json",
+    index: "json",
+    domains: &[
+        DocumentDomain {
+            role: DocumentRole::Stored,
+            name: "EncryptedJson",
+            rust: "JsonTreeDocument",
+            sql_domain: "public.eql_v4_json_tree",
+        },
+        DocumentDomain {
+            role: DocumentRole::Query,
+            name: "EncryptedJsonQuery",
+            rust: "JsonTreeQuery",
+            sql_domain: "eql_v4.query_json_tree",
+        },
+        DocumentDomain {
+            role: DocumentRole::LeafQuery,
+            name: "EncryptedJsonLeafQuery",
+            rust: "JsonTreeLeafQuery",
+            sql_domain: "eql_v4.query_json_tree_leaf",
+        },
+        DocumentDomain {
+            role: DocumentRole::Entry,
+            name: "EncryptedJsonEntry",
+            rust: "JsonTreeEntry",
+            sql_domain: "public.eql_v4_json_tree_entry",
+        },
+    ],
+};
+
+/// The document families, in order. Separate from [`CATALOG`], which the
+/// scalar SQL and binding materializers iterate: these families have no
+/// generated SQL or struct bodies, and exist in EQL v4 only.
+pub const DOCUMENT_FAMILIES: &[DocumentFamily] = &[JSON_TREE];
+
 /// The scalar (flat) families of `CATALOG`, in order — everything except the
 /// mixed `json` family (which is non-scalar because it carries SteVec domains).
 /// The DRY entry point for the ~9 scalar-only consumers (`list-types`, the

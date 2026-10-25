@@ -38,6 +38,8 @@
 //!   is the same bytes (ADR-0007). The one step that stays dynamic is
 //!   dispatching a value whose type is known only at run time to the typed
 //!   term operation, which [`IndexSpec`]'s `Index` impls do.
+//! * [`read_json`] and [`json_frame`] — a `json` field's document, from
+//!   the JSON text a binding hands over and back to it.
 //! * [`TargetResolver`] — the EQL types a build holds, installed by the host
 //!   that links them, so a plan field may name one as its target and the
 //!   lowering runs that type's own plan in the same request; [`NoTargets`]
@@ -86,6 +88,7 @@
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
+mod json;
 mod kind;
 mod query;
 pub mod record;
@@ -98,6 +101,7 @@ mod value_frame;
 use std::fmt;
 
 pub use context::{borrowed, context};
+pub use json::{json_frame, read_json, JsonPlaintext, JsonValueError};
 /// The value kinds, the type a plan field declares in its `"type"` key. A
 /// kind's names are frozen wire format; see [`admits`] and [`read`] for what
 /// a kind means to this engine.
@@ -107,7 +111,7 @@ pub use query::{
     OperatorEntry, QueryTerm,
 };
 pub use record::{FieldPlan, NullMode, Output, Plan};
-pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
+pub use target::{NoTargets, TargetDescriptor, TargetError, TargetOptions, TargetResolver};
 pub use term::{term, TermBytes};
 pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
 
@@ -535,18 +539,29 @@ reasons! {
         DuplicateOutput => "duplicate_output", "an output is named twice";
         /// A field names `"passthrough"` beside another output.
         PassthroughWithOutputs => "passthrough_with_outputs", r#""passthrough" beside another output"#;
-        /// `"target"` is not a non-empty string.
-        InvalidTarget => "invalid_target", r#""target" is not a non-empty string"#;
+        /// `"target"` is not a non-empty string, nor an object of a
+        /// non-empty `"name"` and the target's `"options"`; or the options
+        /// do not parse as the target's (an unknown option, a path that is
+        /// not one, an ordered path naming a position).
+        InvalidTarget => "invalid_target", r#""target" is not a non-empty string or a {"name", "options"} object the target reads"#;
         /// `"type"` is not a string naming a value type.
         UnknownType => "unknown_type", r#""type" does not name a value type"#;
         /// The field's declared type has no such index: match on an integer,
         /// equality or an order index on a boolean, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
-        /// The field declares the JSON index, which a data plan names but
-        /// cannot run yet: the engine's typed path produces a JSON
-        /// document, and the binding's half, a document plaintext and its
-        /// EQL target, is not written.
-        JsonIndexPending => "json_index_pending", "the JSON index has no data-plan form yet";
+        /// The field declares the JSON index as an output. A data plan
+        /// reaches the JSON index through a target that stores a document
+        /// (`EncryptedJson`, with the `json` type), whose options are the
+        /// index's; the index is not an output of its own.
+        JsonIndexPending => "json_index_pending", "the JSON index is reached through a target that stores a document, not as an output";
+        /// The field declares the `json` type and names no target: a JSON
+        /// document is stored through a target that stores one
+        /// (`EncryptedJson`).
+        JsonNeedsTarget => "json_needs_target", r#"a "json" field names a target that stores a document"#;
+        /// The field gives its target options the target does not take: a
+        /// target takes the options of the index it carries, and this one
+        /// carries none that has any.
+        TargetOptions => "target_options", "the target takes no options";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";
         /// The plan has no field of the name asked for.

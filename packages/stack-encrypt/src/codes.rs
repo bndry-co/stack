@@ -249,6 +249,11 @@ mod tests {
                 target: target(),
                 reason: "not JSON".into(),
             },
+            TargetError::Json { .. } => TargetError::Json {
+                name: name(),
+                target: target(),
+                reason: "json_duplicate_key",
+            },
             TargetError::Other(_) => TargetError::Other(Box::new(std::io::Error::other("boom"))),
         ]));
         errors

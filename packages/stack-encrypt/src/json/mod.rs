@@ -122,12 +122,25 @@ mod derive;
 mod path;
 mod plain;
 mod query;
+mod text;
 
 pub use derive::JsonTerms;
 pub use path::{JsonPath, JsonPathError, Segment};
 pub use query::{
     AtPathTerms, JsonLeafQuery, JsonProjection, JsonQuery, JsonSelector, JsonSubtreeKey,
 };
+pub use text::{parse_text, to_text, JsonTextError};
+
+/// Wipe a JSON value's plaintext in place: every string (object keys too)
+/// is overwritten, every number set to zero and every boolean to `false`,
+/// and the containers emptied. For a binding that holds a document it
+/// parsed ([`parse_text`]) or opened, once it is done with it: a
+/// `serde_json::Value` has no `Zeroize` of its own. Numbers and booleans
+/// are overwritten best-effort, as [`Zeroize`](zeroize::Zeroize) on the
+/// engine's own JSON plaintext does.
+pub fn wipe_value(value: &mut serde_json::Value) {
+    plain::wipe(value);
+}
 
 pub(crate) use derive::{seal_pending, terms_pending};
 

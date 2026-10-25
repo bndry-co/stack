@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`TargetResolver::encrypt` takes the field's target options** (#1349):
+  `encrypt(name, options: Option<&TargetOptions>, keyset, label,
+  plaintext)`. A resolver implemented outside this crate adds the
+  parameter; one that resolves no document type ignores it.
+
 ### Fixed
 
 - **A float in a JSON index document opens to the value that was sealed**
@@ -23,6 +30,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the value it parses.
 
 ### Added
+
+- **A JSON document through a data plan** (#1349). A plan field may
+  declare the new `json` value kind and name a target that stores a
+  document, `EncryptedJson`, with the JSON index's options:
+  `"target": {"name": "EncryptedJson", "options": {"sealed_root": true,
+  "ordered": ["$.age"]}}`, or the bare name for the defaults. The plan
+  resolves the options once when it is built (`FieldPlan::target_options`,
+  `TargetOptions::Json`), so writes, queries and reads of the field run
+  under one definition, and refuses options on a target that takes none
+  (`Reason::TargetOptions`), a `json` field with no target
+  (`Reason::JsonNeedsTarget`) and a sealed null on one. The document
+  crosses as UTF-8 JSON text in a text or bytes leaf and opens back to
+  its text in a bytes leaf (`dynamic::read_json`, `dynamic::json_frame`).
+  `json::parse_text` is the one parser: it refuses an object that names a
+  member twice and an integer literal outside `i64::MIN ..= u64::MAX`
+  (which serde_json would read as the nearest `f64`), as well as text
+  that is not JSON, each with a code (`JsonTextError::code`) and a
+  position, never a byte of the text. `TargetError::Json` carries the code
+  when a resolver refuses a document. `json::wipe_value` wipes a parsed
+  document in place. `ValueKind::holds` says whether a value of one kind
+  is a value of a declared one (`json` holds text and bytes).
 
 - **A JSON index, `target::Json`** (`docs/plans/2026-10-17-json-tree-index.md`,
   ADR-0009). An `Index<serde_json::Value>` whose stored form,

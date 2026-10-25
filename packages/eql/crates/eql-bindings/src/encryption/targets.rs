@@ -88,7 +88,8 @@
 use std::fmt;
 
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{TargetOptions, ValueFrame, ValueKind};
+use stack_encrypt::json::JsonOptions;
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::target::{ExpectedContext, IndexSpec};
 use stack_encrypt::{
@@ -232,6 +233,25 @@ pub enum TargetError {
         /// passthrough value, which no kind holds.
         found: Option<ValueKind>,
     },
+    /// The value is not a JSON document by the engine's rules, for a type
+    /// that stores one ([`stack_encrypt::json::parse_text`]). `code` is the
+    /// engine's code for what was wrong, never a byte of the value.
+    #[error("{target} stores a JSON document, and the value is not one: {source}")]
+    Json {
+        /// The type the value was handed to.
+        target: &'static str,
+        /// What was wrong.
+        #[source]
+        source: stack_encrypt::dynamic::JsonValueError,
+    },
+    /// Options were given to a type that takes none: a type takes the
+    /// options of the index it carries, and only a type that stores a
+    /// JSON document carries one with options.
+    #[error("{name} takes no options")]
+    Options {
+        /// The type's name.
+        name: &'static str,
+    },
     /// The stored bytes do not parse as the type: not JSON, not this
     /// domain's shape, or another EQL version.
     #[error("stored value is not a {target}: {source}")]
@@ -315,8 +335,40 @@ pub fn encrypt<'a, K: 'static>(
     context: &Label,
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+    encrypt_with(name, None, keyset, context, plaintext)
+}
+
+/// [`encrypt`], under the options the plan gives the field
+/// ([`TargetOptions`]): a type that stores a JSON document
+/// (`EncryptedJson`) seals under the JSON index's options, the defaults
+/// when `options` is `None`. Every other type takes none.
+///
+/// # Errors
+///
+/// As [`encrypt`], [`TargetError::Options`] for options a type does not
+/// take, and [`TargetError::Json`] for a value that is not a JSON document
+/// by the engine's rules, for a type that stores one.
+pub fn encrypt_with<'a, K: 'static>(
+    name: &str,
+    options: Option<&TargetOptions>,
+    keyset: &'a KeysetCipher<'_, K>,
+    context: &Label,
+    plaintext: ValueFrame,
+) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
     let column = Identifier::from_label(context)?;
+    if let Some(document) = document(name) {
+        let options = match options {
+            None => JsonOptions::default(),
+            Some(options) => options.json().cloned().ok_or(TargetError::Options {
+                name: document.name,
+            })?,
+        };
+        return encrypt_document(document.name, &options, keyset, column, &plaintext);
+    }
+    if let Some(target) = options.and(target(name)) {
+        return Err(TargetError::Options { name: target.name });
+    }
     encrypt_named(name, keyset, column, plaintext)
 }
 
@@ -338,7 +390,74 @@ pub fn decrypt<'a, K: 'static>(
 ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
     producible(name)?;
     let column = Identifier::from_label(context)?;
+    if let Some(document) = document(name) {
+        return decrypt_document(document.name, opener.into(), column, stored);
+    }
     decrypt_named(name, opener.into(), column, stored)
+}
+
+/// The stored domain of a document family (`eql-domains`'
+/// `DOCUMENT_FAMILIES`), when `name` is one's target: a type the generated
+/// dispatch has no arm for, whose plan is the JSON index's, under options.
+fn document(name: &str) -> Option<&'static Target> {
+    target(name).filter(|target| crate::v4::targets::DOCUMENT_FAMILIES.contains(&target.family))
+}
+
+/// Seal one `EncryptedJson` value: the document the field's text holds,
+/// parsed by the engine's rules, laid out by the JSON index under
+/// `options`, under the column. The parsed document is wiped when this
+/// returns; the pending has taken what it seals.
+fn encrypt_document<'a, K: 'static>(
+    name: &'static str,
+    options: &JsonOptions,
+    keyset: &'a KeysetCipher<'_, K>,
+    column: NonEmpty<Identifier>,
+    plaintext: &ValueFrame,
+) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+    let document =
+        stack_encrypt::dynamic::read_json(plaintext).map_err(|source| TargetError::Json {
+            target: name,
+            source,
+        })?;
+    Ok(keyset
+        .run(
+            stack_encrypt::target::Layout::<serde_json::Value>::encryption::<K>(
+                &crate::v4::json_tree::JsonTree::new(options.clone()),
+            ),
+            document.value(),
+            column,
+        )
+        .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))
+}
+
+/// Open one stored `EncryptedJson` value to the document's text, checking
+/// it was stored under the column.
+fn decrypt_document<'a, K: 'static>(
+    name: &'static str,
+    opener: Opener<'a, K>,
+    column: NonEmpty<Identifier>,
+    stored: &[u8],
+) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+    use crate::v4::json_tree::JsonTreeDocument;
+    let value: JsonTreeDocument =
+        serde_json::from_slice(stored).map_err(|source| TargetError::Stored {
+            target: name,
+            source,
+        })?;
+    let expected: ExpectedContext<Identifier> = column.into();
+    Ok(match opener {
+        Opener::Client(cipher) => {
+            cipher.decrypt_as::<serde_json::Value, JsonTreeDocument>(value, expected)
+        }
+        Opener::Keyset(keyset) => {
+            keyset.decrypt_as::<serde_json::Value, JsonTreeDocument>(value, expected)
+        }
+    }
+    .try_map(|mut document| {
+        let frame = stack_encrypt::dynamic::json_frame(&document);
+        stack_encrypt::json::wipe_value(&mut document);
+        frame
+    }))
 }
 
 /// Run the named type's query twin for one plaintext: the operand that

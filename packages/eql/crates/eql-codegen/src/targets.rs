@@ -187,11 +187,45 @@ pub(crate) struct Row {
     /// The operators the type answers in the typed query chain: none
     /// unless it is producible and has a query twin ([`answers_for_indexes`]).
     pub(crate) answers: Vec<Answer>,
+    /// A document family's stored type (`eql_domains::DOCUMENT_FAMILIES`):
+    /// its plan is the JSON index's under the field's options, so the
+    /// generated dispatch has no arm for it and
+    /// `encryption::targets` runs it by hand.
+    pub(crate) document: bool,
 }
 
-/// Every row, in catalog order: one per stored domain.
+/// Every row, in catalog order: one per stored domain, then one per
+/// document family's stored domain.
 pub(crate) fn rows() -> Vec<Row> {
-    stored_payload_domains().map(|(f, d)| row(f, d)).collect()
+    stored_payload_domains()
+        .map(|(f, d)| row(f, d))
+        .chain(eql_domains::DOCUMENT_FAMILIES.iter().map(document_row))
+        .collect()
+}
+
+/// A document family's row: its stored type, produced from the family's
+/// plaintext kind, carrying its index, with its containment needle as the
+/// query twin. Producible: `encryption::targets` runs it by hand.
+fn document_row(family: &'static eql_domains::DocumentFamily) -> Row {
+    use eql_domains::DocumentRole;
+    let stored = family
+        .domain(DocumentRole::Stored)
+        .expect("a document family has a stored domain");
+    Row {
+        name: stored.name.to_owned(),
+        family: family.name,
+        suffix: String::new(),
+        plaintext: Some(family.plaintext),
+        sql_domain: stored.sql_domain.to_owned(),
+        indexes: vec![family.index],
+        query: family
+            .domain(DocumentRole::Query)
+            .map(|query| (query.name.to_owned(), query.sql_domain.to_owned())),
+        projections: Vec::new(),
+        reason: None,
+        answers: Vec::new(),
+        document: true,
+    }
 }
 
 /// The PascalCase of a bare domain name — `TextOrdOre` is family `text`,
@@ -284,6 +318,7 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
         },
         reason,
         answers,
+        document: false,
     }
 }
 
@@ -413,7 +448,17 @@ fn render_targets_from(rows: &[Row]) -> String {
 
     // One arm per producible type. The plaintext Rust type is the family's;
     // a producible family always has one, since a derive names it.
-    let producible: Vec<&Row> = rows.iter().filter(|r| r.reason.is_none()).collect();
+    // A document family's type is run by hand, under the field's options.
+    let producible: Vec<&Row> = rows
+        .iter()
+        .filter(|r| r.reason.is_none() && !r.document)
+        .collect();
+    let mut document_families: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.document)
+        .map(|r| r.family)
+        .collect();
+    document_families.dedup();
     let arm = |r: &Row, strukt: &str| {
         let name = &r.name;
         let module = format_ident!("{}", r.family);
@@ -541,6 +586,12 @@ fn render_targets_from(rows: &[Row]) -> String {
         pub const TARGETS: &[Target] = &[
             #entries
         ];
+
+        /// The families whose stored type stores a document
+        /// (`eql-domains::DOCUMENT_FAMILIES`): the dispatch below has no
+        /// arm for them, and `crate::encryption::targets` runs their types
+        /// under the field's options.
+        pub(crate) const DOCUMENT_FAMILIES: &[&str] = &[#(#document_families),*];
 
         /// Run the named type's own encryption plan for one field, or refuse
         /// the name: the type is not producible (`TargetError::Unproducible`)
@@ -918,7 +969,9 @@ mod tests {
     fn a_producible_type_with_a_twin_answers_what_its_indexes_answer() {
         for row in rows() {
             let answers: Vec<&str> = row.answers.iter().map(|a| a.name()).collect();
-            if row.reason.is_some() || row.query.is_none() {
+            // A document's operators are the JSON index's, answered in
+            // the typed chain by the engine's own document target.
+            if row.reason.is_some() || row.query.is_none() || row.document {
                 assert!(answers.is_empty(), "{}: answers nothing", row.name);
                 continue;
             }

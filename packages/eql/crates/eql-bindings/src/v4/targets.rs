@@ -630,7 +630,24 @@ pub const TARGETS: &[Target] = &[
             "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided",
         ),
     },
+    Target {
+        name: "EncryptedJson",
+        family: "json_tree",
+        suffix: "",
+        plaintext: Some("json"),
+        sql_domain: "public.eql_v4_json_tree",
+        indexes: &["json"],
+        query: Some("EncryptedJsonQuery"),
+        query_sql_domain: Some("eql_v4.query_json_tree"),
+        producible: true,
+        reason: None,
+    },
 ];
+/// The families whose stored type stores a document
+/// (`eql-domains::DOCUMENT_FAMILIES`): the dispatch below has no
+/// arm for them, and `crate::encryption::targets` runs their types
+/// under the field's options.
+pub(crate) const DOCUMENT_FAMILIES: &[&str] = &["json_tree"];
 /// Run the named type's own encryption plan for one field, or refuse
 /// the name: the type is not producible (`TargetError::Unproducible`)
 /// or does not exist (`TargetError::Unknown`).

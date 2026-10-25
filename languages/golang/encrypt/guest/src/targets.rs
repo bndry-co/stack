@@ -58,11 +58,13 @@ impl TargetResolver for EqlTargets {
     fn encrypt<'a, K: 'static>(
         &self,
         name: &str,
+        options: Option<&stack_encrypt::dynamic::TargetOptions>,
         keyset: &'a stack_encrypt::KeysetCipher<'_, K>,
         label: &stack_encrypt::Label,
         plaintext: stack_encrypt::dynamic::ValueFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_bindings::encryption::targets::encrypt(name, keyset, label, plaintext).map_err(convert)
+        eql_bindings::encryption::targets::encrypt_with(name, options, keyset, label, plaintext)
+            .map_err(convert)
     }
 
     fn decrypt<'a, K: 'static>(
@@ -142,6 +144,13 @@ fn convert(error: eql_bindings::encryption::targets::TargetError) -> TargetError
             target: target.to_owned(),
             expected: Some(expected),
             found,
+        },
+        // The engine's code for what was wrong with the document, never
+        // the document.
+        Eql::Json { target, source } => TargetError::Json {
+            name: String::new(),
+            target: target.to_owned(),
+            reason: source.code(),
         },
         // The parser's kind and position, never its message: serde_json
         // quotes the input it refused, and the input is stored ciphertext.
@@ -239,7 +248,8 @@ mod tests {
                 "DoubleEq",
                 "DoubleOrdOre",
                 "DoubleOrd",
-                "DoubleOrdOpe"
+                "DoubleOrdOpe",
+                "EncryptedJson"
             ],
             "the engine's producible types, in catalog order"
         );

@@ -1,0 +1,5 @@
+---
+"@cipherstash/eql": minor
+---
+
+**The `json_tree` family is in the EQL catalog, and a data plan can produce `public.eql_v4_json_tree` by name: the target `EncryptedJson`.** A language SDK names it in a plan field with the `json` type, gives it the JSON index's options (`{"name": "EncryptedJson", "options": {"sealed_root": true, "ordered": ["$.age"]}}`, or the bare name for the defaults), and hands each document over as UTF-8 JSON text; the `eql-bindings` crate's by-name dispatch (`encryption::targets::encrypt_with`, `decrypt`) seals it through the same JSON index layout typed Rust uses and opens it back to its text. The text is parsed by Stack Encrypt's rules, before any key is requested: an object that names a member twice, an integer literal outside the 64-bit range, and text that is not JSON are refused (`TargetError::Json`, with a code and never a byte of the text). The catalog lists the family once (`eql_domains::DOCUMENT_FAMILIES`), so the target table, `v4::all()` / `v4::all_query()` and the Go types (`eql.EncryptedJSON`, `EncryptedJSONQuery`, `EncryptedJSONLeafQuery`, `EncryptedJSONEntry`) are generated from it. No SQL changes.

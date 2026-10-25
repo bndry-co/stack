@@ -476,8 +476,25 @@ mod the_table {
 
     #[test]
     fn names_every_stored_catalog_domain_in_order() {
-        let table = targets::targets();
+        let all = targets::targets();
         let expected = stored_domains();
+        // The document families' stored types follow the catalog's, one
+        // each, named as their contract names, with their plaintext kind,
+        // their index and their needle.
+        let (table, documents) = all.split_at(expected.len());
+        assert_eq!(documents.len(), eql_domains::DOCUMENT_FAMILIES.len());
+        for (row, family) in documents.iter().zip(eql_domains::DOCUMENT_FAMILIES) {
+            let stored = family.domain(eql_domains::DocumentRole::Stored).unwrap();
+            let query = family.domain(eql_domains::DocumentRole::Query).unwrap();
+            assert_eq!(row.name, stored.name);
+            assert_eq!(row.family, family.name);
+            assert_eq!(row.sql_domain, stored.sql_domain);
+            assert_eq!(row.plaintext, Some(family.plaintext));
+            assert_eq!(row.indexes, [family.index]);
+            assert_eq!(row.query, Some(query.name));
+            assert_eq!(row.query_sql_domain, Some(query.sql_domain));
+            assert!(row.producible && row.reason.is_none());
+        }
         assert_eq!(
             table.iter().map(|t| t.name).collect::<Vec<_>>(),
             expected
@@ -660,7 +677,8 @@ mod the_table {
                 "DoubleEq",
                 "DoubleOrdOre",
                 "DoubleOrd",
-                "DoubleOrdOpe"
+                "DoubleOrdOpe",
+                "EncryptedJson"
             ],
         );
         for row in targets::targets().iter().filter(|t| !t.producible) {

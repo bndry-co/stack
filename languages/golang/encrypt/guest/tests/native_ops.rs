@@ -1412,7 +1412,8 @@ fn targets_lists_what_the_build_holds() {
             "DoubleEq",
             "DoubleOrdOre",
             "DoubleOrd",
-            "DoubleOrdOpe"
+            "DoubleOrdOpe",
+            "EncryptedJson"
         ],
         "the engine's producible types, in catalog order"
     );
