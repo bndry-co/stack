@@ -18,6 +18,15 @@ PR #1362 turns that page into a test, in `packages/stack-encrypt/tests/json_leak
 
 #1362 was written against the format as it stood before #1363. #1363 changed the format. This note records what the port of the test found, and how the leakage changed.
 
+## The net, first
+
+The tables below grow from the old profile to the new one: more clauses, more distinguishers, more mutants. That measures the test, not the scheme. A longer profile means more of what the database sees is written down and held by a test. Measured as leakage, the format after #1363 discloses less, and less where it matters:
+
+- A read no longer sends any token above the node it asks for. Before, a read of `$.profile.address.city` sent `$.profile`'s token, a capability over that whole field in every row of the column, for the life of the column. Now it sends the leaf's token and nothing that covers a node above it. The `ancestor_links` distinguisher exists to hold this.
+- The gates are gone. Each key step and array position below the head used to reach the server in the clear, as a selector or `#n:selector`.
+
+What is new is small. The self tag `x` is a fresh unlinkable name per entry that at rest says only that entries are distinct, which the entry count already said; a token the client sends links it, as a token always linked the parent tag. The member-or-element rule and the element index at the nodes a walk reaches were already disclosed by the gated walk's ordinals and `#n:` gates, but the page had not said so, and now does. A wildcard read's token count, bound and probes are a smaller form of what the plaintext gates showed. The last two sections set each item out.
+
 ## The two formats, briefly
 
 Terms used below: a **selector** `s` is a keyed hash of a node's path, the same in every row. A **token** is a 16-byte secret for one node that lets the database find that node and walk the nodes beneath it. A **parent tag** `p` on an entry is `H8("p" ‖ iv ‖ t(parent) ‖ LE32(o))`: eight bytes derived from the parent's token, the child's **ordinal** `o` (its index if it is an array element, a keyed rank if it is an object member) and the row's random `iv`. The database enumerates a node's children by computing the parent tag of ordinals 0, 1, 2, … until one is missing.
