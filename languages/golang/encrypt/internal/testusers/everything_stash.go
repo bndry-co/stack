@@ -13,7 +13,7 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion1
+const _ = gensupport.GeneratedVersion2
 
 // Everything prints its sealed fields in the clear: it has no String or
 // LogValue method. Write them, or run stashgen with -redact.
@@ -66,37 +66,38 @@ type everythingShape struct {
 }
 
 // The opaque value as it crosses the binding: one storage blob of the
-// struct's fields, by their declared names. The json names read a value
-// an earlier release sealed as a JSON document.
+// struct's fields, by their declared names. A field a blob lacks (one
+// added since it was sealed) reads as its zero value. The json names read
+// a value an earlier release sealed as a JSON document.
 type everythingOpaque struct {
-	S      string            `vc:"s" json:"s"`
-	E      Email             `vc:"e" json:"e"`
-	Bo     bool              `vc:"bo" json:"bo"`
-	I8     int8              `vc:"i8" json:"i8"`
-	I      int               `vc:"i" json:"i"`
-	U64    uint64            `vc:"u64" json:"u64"`
-	F32    float32           `vc:"f32" json:"f32"`
-	F64    float64           `vc:"f64" json:"f64"`
-	By     []byte            `vc:"by" json:"by"`
-	Bl     Blob              `vc:"bl" json:"bl"`
-	Sc     Score             `vc:"sc" json:"sc"`
-	Tags   []string          `vc:"tags" json:"tags"`
-	Ints   []int             `vc:"ints" json:"ints"`
-	F32s   []float32         `vc:"f32s" json:"f32s"`
-	St     Status            `vc:"st" json:"st"`
-	D      time.Duration     `vc:"d" json:"d"`
-	Emails []Email           `vc:"emails" json:"emails"`
-	Counts map[string]int    `vc:"counts" json:"counts"`
-	Labels map[string]string `vc:"labels" json:"labels"`
-	ByKey  map[int]string    `vc:"by_key" json:"by_key"`
-	In     Inner             `vc:"in" json:"in"`
-	Ins    []Inner           `vc:"ins" json:"ins"`
-	P      *string           `vc:"p" json:"p"`
-	PI     *Inner            `vc:"pi" json:"pi"`
-	T      time.Time         `vc:"t" json:"t"`
-	N      sql.NullTime      `vc:"n" json:"n"`
-	Nested [][]byte          `vc:"nested" json:"nested"`
-	Arr    [2]uint8          `vc:"arr" json:"arr"`
+	S      string            `vc:"s,default" json:"s"`
+	E      Email             `vc:"e,default" json:"e"`
+	Bo     bool              `vc:"bo,default" json:"bo"`
+	I8     int8              `vc:"i8,default" json:"i8"`
+	I      int               `vc:"i,default" json:"i"`
+	U64    uint64            `vc:"u64,default" json:"u64"`
+	F32    float32           `vc:"f32,default" json:"f32"`
+	F64    float64           `vc:"f64,default" json:"f64"`
+	By     []byte            `vc:"by,default" json:"by"`
+	Bl     Blob              `vc:"bl,default" json:"bl"`
+	Sc     Score             `vc:"sc,default" json:"sc"`
+	Tags   []string          `vc:"tags,default" json:"tags"`
+	Ints   []int             `vc:"ints,default" json:"ints"`
+	F32s   []float32         `vc:"f32s,default" json:"f32s"`
+	St     Status            `vc:"st,default" json:"st"`
+	D      time.Duration     `vc:"d,default" json:"d"`
+	Emails []Email           `vc:"emails,default" json:"emails"`
+	Counts map[string]int    `vc:"counts,default" json:"counts"`
+	Labels map[string]string `vc:"labels,default" json:"labels"`
+	ByKey  map[int]string    `vc:"by_key,default" json:"by_key"`
+	In     Inner             `vc:"in,default" json:"in"`
+	Ins    []Inner           `vc:"ins,default" json:"ins"`
+	P      *string           `vc:"p,default" json:"p"`
+	PI     *Inner            `vc:"pi,default" json:"pi"`
+	T      time.Time         `vc:"t,default" json:"t"`
+	N      sql.NullTime      `vc:"n,default" json:"n"`
+	Nested [][]byte          `vc:"nested,default" json:"nested"`
+	Arr    [2]uint8          `vc:"arr,default" json:"arr"`
 }
 
 var everythingDeclaration = gensupport.DeclareOpaque("everything")

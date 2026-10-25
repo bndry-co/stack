@@ -127,51 +127,66 @@ fn classify(error: serde_json::Error) -> JsonTextError {
 /// of each number token with no fraction or exponent. Syntax errors are
 /// left to the parser.
 fn check_integers(text: &[u8]) -> Result<(), JsonTextError> {
-    let mut i = 0;
-    while i < text.len() {
-        match text[i] {
-            b'"' => {
-                i += 1;
-                while i < text.len() && text[i] != b'"' {
-                    // An escape takes the next byte with it, so `\"` does
-                    // not end the string.
-                    i += if text[i] == b'\\' { 2 } else { 1 };
-                }
-                i += 1;
-            }
+    let mut rest = text;
+    while let Some((&first, after_first)) = rest.split_first() {
+        rest = match first {
+            b'"' => after_string(after_first),
             b'-' | b'0'..=b'9' => {
-                let start = i;
-                i += 1;
-                while i < text.len()
-                    && matches!(text[i], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')
-                {
-                    i += 1;
-                }
-                let token = &text[start..i];
-                if token.iter().any(|b| matches!(b, b'.' | b'e' | b'E')) {
-                    continue;
-                }
-                // ASCII by construction; a malformed token is the parser's.
-                let Ok(token) = std::str::from_utf8(token) else {
-                    continue;
-                };
-                let digits = token.strip_prefix('-').unwrap_or(token);
-                if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-                    continue;
-                }
-                let fits = if token.starts_with('-') {
-                    token.parse::<i64>().is_ok()
-                } else {
-                    token.parse::<u64>().is_ok()
-                };
-                if !fits {
-                    return Err(JsonTextError::IntegerRange);
-                }
+                // The token is the first byte and every number byte after it.
+                let more = after_first
+                    .iter()
+                    .take_while(|b| matches!(b, b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-'))
+                    .count();
+                check_integer(&rest[..=more])?;
+                &after_first[more..]
             }
-            _ => i += 1,
-        }
+            _ => after_first,
+        };
     }
     Ok(())
+}
+
+/// The text after a string whose opening quote is already consumed. An
+/// escape takes the next byte with it, so `\"` does not end the string; an
+/// unterminated string runs to the end, for the parser to refuse.
+fn after_string(mut rest: &[u8]) -> &[u8] {
+    loop {
+        rest = match rest {
+            [b'"', after @ ..] => return after,
+            [b'\\', _, after @ ..] | [_, after @ ..] => after,
+            [] => return rest,
+        };
+    }
+}
+
+/// Refuse one number token that is an integer literal out of range. A
+/// token with a fraction or an exponent is a float; a malformed one is the
+/// parser's.
+fn check_integer(token: &[u8]) -> Result<(), JsonTextError> {
+    if token.iter().any(|b| matches!(b, b'.' | b'e' | b'E')) {
+        return Ok(());
+    }
+    let (negative, digits) = match token.split_first() {
+        Some((b'-', digits)) => (true, digits),
+        _ => (false, token),
+    };
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return Ok(());
+    }
+    // ASCII digits by the check above, so always UTF-8.
+    let Ok(text) = std::str::from_utf8(token) else {
+        return Ok(());
+    };
+    let fits = if negative {
+        text.parse::<i64>().is_ok()
+    } else {
+        text.parse::<u64>().is_ok()
+    };
+    if fits {
+        Ok(())
+    } else {
+        Err(JsonTextError::IntegerRange)
+    }
 }
 
 /// A `Value`, refusing an object that names a member twice.
@@ -215,20 +230,8 @@ impl<'de> Visitor<'de> for StrictVisitor {
         Ok(Value::String(v.to_owned()))
     }
 
-    fn visit_string<E>(self, v: String) -> Result<Value, E> {
-        Ok(Value::String(v))
-    }
-
     fn visit_unit<E>(self) -> Result<Value, E> {
         Ok(Value::Null)
-    }
-
-    fn visit_none<E>(self) -> Result<Value, E> {
-        Ok(Value::Null)
-    }
-
-    fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
-        Strict.deserialize(d)
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
@@ -295,6 +298,28 @@ mod tests {
             parse_text(b"18446744073709551616.0").unwrap(),
             json!(1.8446744073709552e19)
         );
+    }
+
+    #[test]
+    fn a_long_number_inside_a_string_is_text_and_one_after_it_is_checked() {
+        // Thirty digits: any suffix of them is out of range too, so a scan
+        // that left the string early would refuse it.
+        let text = br#"["123456789012345678901234567890", "\\", 99999999999999999999]"#;
+        assert_eq!(parse_text(text), Err(JsonTextError::IntegerRange));
+        assert_eq!(
+            parse_text(br#"["123456789012345678901234567890", "\\"]"#).unwrap(),
+            json!(["123456789012345678901234567890", "\\"])
+        );
+    }
+
+    #[test]
+    fn an_unterminated_string_or_a_lone_sign_is_the_parsers_to_refuse() {
+        for text in [&b"\"abc"[..], b"\"ab\\", b"-", b"[1-2]", b"--1"] {
+            assert!(
+                matches!(parse_text(text), Err(JsonTextError::Syntax { .. })),
+                "{text:?}"
+            );
+        }
     }
 
     #[test]

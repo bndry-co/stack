@@ -388,10 +388,10 @@ func (c *RecordsCodec[P, R]) Decrypt(ctx context.Context, d encrypt.Decrypter, r
 func opaqueBytes(fields any) ([]byte, error) {
 	encoded, err := vcffi.MarshalStorage(fields)
 	if err != nil {
-		// Not wrapped: the reason is the kind of value and where, and a
-		// value is never quoted, but the opaque struct is plaintext and
-		// nothing here needs more than the class.
-		return nil, fmt.Errorf("%w: the opaque value cannot be written as a storage blob (a type the storage profile has no form for, a repeated map key, or text that is not UTF-8)", encrypt.ErrEncoding)
+		// vcffi's error names a type or a kind (no storage form, a string
+		// that is not UTF-8, a repeated key, nesting too deep), never a
+		// value, so it is wrapped: errors.Is reads vcffi.ErrUnwritable.
+		return nil, fmt.Errorf("%w: the opaque value cannot be written as a storage blob: %w", encrypt.ErrEncoding, err)
 	}
 	return encoded, nil
 }
@@ -418,7 +418,7 @@ func Opaque[T any](vals Values, out *T) error {
 		if err := vcffi.UnmarshalStorage(encoded, out); err != nil {
 			// The vcffi error names the kind found and where, never the
 			// value; it is wrapped so errors.Is reads its class
-			// (vcffi.ErrUnsupportedVersion for a blob a later release
+			// (encrypt.ErrStorageVersion for a blob a later release
 			// wrote, say).
 			return fmt.Errorf("gensupport: %w: the opaque value does not read into a %T: %w", encrypt.ErrEncoding, *out, err)
 		}
