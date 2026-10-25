@@ -423,6 +423,13 @@ fn ordering_term_length_constant(l: &mut Leakage, _: &mut TestRng) {
     }
 }
 
+/// The terms show their order and lengths and no shared prefix beyond what
+/// those force: what the page would say without "the term also shows how
+/// long that common prefix is".
+fn ordering_prefixes_hidden(l: &mut Leakage, _: &mut TestRng) {
+    l.ordering_prefixes.clear();
+}
+
 /// A member's ordinal is its place in the stored (key) order rather than a
 /// keyed rank: what the chain would be without decision 11.
 fn member_ranks_follow_key_order(l: &mut Leakage, _: &mut TestRng) {
@@ -840,6 +847,7 @@ mutants!(
     ordering_terms_all_distinct => "OrderingLeak::class (\"which rows hold equal values\")",
     ordering_term_length_constant => "OrderingLeak::len (\"Its length is the leaf's length\")",
     ordering_terms_per_path => "OrderingLeak::class across paths (\"two ordered paths holding equal values carry equal terms\")",
+    ordering_prefixes_hidden => "Leakage::ordering_prefixes (\"the term also shows how long that common prefix is\")",
     member_ranks_follow_key_order => "EntryLeakage::step (a member's ordinal is its keyed rank)",
     hit_rule_uniform => "EntryLeakage::rule (the member or element rule a walk's hit matches; added to the page by #1362)",
     sealed_flag_flipped => "RowLeakage::sealed_root",

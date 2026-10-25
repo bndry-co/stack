@@ -38,7 +38,9 @@
 //! - [`simulator`] builds a world in the wire form from a
 //!   [`profile::Leakage`] and randomness, with no plaintext and no key:
 //!   random bytes for every name, random ciphertexts of the stated length,
-//!   ordering terms laid out in the stated order, and the chain programmed
+//!   ordering terms with CLLW's layout under a key of its own, over codes
+//!   that have the stated order, lengths and shared prefixes and nothing
+//!   else of the values, and the chain programmed
 //!   with the real hash where the profile says a query's token links it:
 //!   the self tag `x` of each node a token names, and below it every parent
 //!   tag and self tag the token reaches.
@@ -129,6 +131,18 @@
 //! their bytes, where the code (and the page) fold case and accents; the
 //! corpus now holds folded names, and the reading test holds the sentence.
 //!
+//! The profile also left out, until review, a disclosure the page states:
+//! the ordering terms' shared prefixes. A CLLW OPE term spends a byte per
+//! plaintext bit, so two terms agree to within one up to the first bit their
+//! values' encodings differ in, and the database reads that bit off the
+//! stored terms exactly; for numbers it is their signs and binary exponents.
+//! The profile had called it "not an exact function of the plaintexts"
+//! (true of the byte prefix, which carries move, and not of the bit), and
+//! its simulator drew terms with no prefix structure, so nothing could see
+//! the omission. It is a clause now ([`profile::Leakage::ordering_prefixes`],
+//! [`distinguishers::ordering_term_prefixes`], the mutant
+//! `ordering_prefixes_hidden`), and the page says bits, not bytes.
+//!
 //! Where the page is vague and `L` is as precise as the code forces, the
 //! clause says so: a member's ordinal under a token (its keyed rank), the
 //! needle's `alt` ([`profile::QueryLeakage::Contains`]), and the fixed
@@ -195,12 +209,22 @@
 //!
 //! # Out of reach
 //!
-//! - **The inside of an ordering term.** CLLW OPE terms share leading bytes
-//!   when the encoded values do (the page says so), with a carry that can
-//!   move a byte by one. The simulator reproduces a term's presence, length,
-//!   equality and order, not its prefix structure, and no distinguisher
-//!   looks at it: the prefix a pair of terms shares is not an exact function
-//!   of the plaintexts, so it is a statistical question.
+//! - **The carries inside an ordering term.** A CLLW OPE term's bytes before
+//!   the first bit two values differ in agree to within one, a carry from
+//!   the right that depends on the key. Where the terms part is exact and
+//!   is in the profile ([`profile::Leakage::ordering_prefixes`],
+//!   [`distinguishers::ordering_term_prefixes`]); which shared bytes differ
+//!   by one is not a function of the plaintexts, and no distinguisher reads
+//!   it.
+//! - **A path ordered over numbers and strings both.** The profile refuses
+//!   such a column ([`profile::Ids::ordering_ranks`]), and the page does not
+//!   say what it shows. Measured on this crate: a number's term and a
+//!   string's are under different keys (the order space's salt names its
+//!   domain), so how one compares with the other is set by the column's key
+//!   and the two values' leading bits, not by any order between a number
+//!   and a string. In the column measured every string sorted below every
+//!   number, and a bound of either kind compares with the stored terms of
+//!   both. Stating it needs the page to say it first.
 //! - **The keyed member rank as a permutation.** Under a token, a member's
 //!   ordinal is a keyed rank. Its relation to the stored (key) order is a
 //!   random permutation, decidable exactly only where enough wide objects sit

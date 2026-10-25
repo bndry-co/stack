@@ -75,6 +75,7 @@ registry!(
     extraction_matches,
     containment_matches,
     ordering_term_order,
+    ordering_term_prefixes,
     ordering_term_lengths,
     ordering_matches,
 );
@@ -1249,6 +1250,47 @@ pub fn ordering_term_order(world: &ObservedWorld) -> (Vec<Vec<Option<usize>>>, V
             })
             .collect(),
     )
+}
+
+/// For every two distinct ordering terms in the world, stored and sent, by
+/// their ranks in byte order, how many leading plaintext bits their values'
+/// encodings share, read off the terms alone. A CLLW OPE term is a carry
+/// byte, then one byte per plaintext bit: a keyed function of the bits
+/// before it, plus the bit at weight 128, plus a carry of zero or one from
+/// the byte to its right. So two terms differ by at most one, modulo 256, at
+/// every byte before the first bit their plaintexts differ in, and by 127 to
+/// 129 at that byte; the count is the bytes before it (after the carry
+/// byte), or the shorter term's bit count when one encoding is a prefix of
+/// the other. Exact: no carry can make a shared bit's bytes differ by more
+/// than one, and none can bring a differing bit's within one. The page: the
+/// term "shows how long that common prefix is". Of a number, the first bit
+/// is its sign and the next eleven its exponent's, so this sorts numbers
+/// into signs and binary orders of magnitude without any bound sent.
+pub fn ordering_term_prefixes(world: &ObservedWorld) -> Vec<(usize, usize, usize)> {
+    let mut all: Vec<&[u8]> = world
+        .rows
+        .iter()
+        .flat_map(|r| r.entries.iter().filter_map(|e| e.op.as_deref()))
+        .collect();
+    all.extend(world.queries.iter().filter_map(|q| match q {
+        ObservedQuery::Order { op, .. } => Some(op.as_slice()),
+        _ => None,
+    }));
+    all.sort_unstable();
+    all.dedup();
+    let shared = |a: &[u8], b: &[u8]| {
+        let bits = a.len().min(b.len()).saturating_sub(1);
+        (1..=bits)
+            .find(|&k| !matches!(a[k].wrapping_sub(b[k]), 0 | 1 | 255))
+            .map_or(bits, |k| k - 1)
+    };
+    let mut out = Vec::new();
+    for (i, a) in all.iter().enumerate() {
+        for (j, b) in all.iter().enumerate().skip(i + 1) {
+            out.push((i, j, shared(a, b)));
+        }
+    }
+    out
 }
 
 /// Every ordering term's length, stored and sent.

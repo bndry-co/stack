@@ -4,9 +4,11 @@
 //! a stored row's `iv`, a token it was sent and the selectors it holds, and
 //! the simulator programs its random tags with them.
 //!
-//! These are the only functions of the real scheme the harness evaluates.
-//! Everything keyed (selectors, value selectors, head tokens, member ranks)
-//! stays on the client and is replaced by randomness in the simulator.
+//! These are the only functions of the real scheme the harness evaluates,
+//! with the layout of a CLLW OPE term ([`cllw_ope`]), which the simulator
+//! fills under a key of its own. Everything keyed (selectors, value
+//! selectors, head tokens, member ranks, the OPE key) stays on the client
+//! and is replaced by randomness in the simulator.
 //! `chain_is_the_crates_chain` (in `calibration.rs`) holds them to the
 //! crate's own walk, `JsonDocument::subtree`.
 
@@ -86,6 +88,32 @@ pub fn hit_token(
     }
     let element = element_token(parent, selector, ordinal);
     (self_tag(iv, &element) == *x).then_some((element, Rule::Element))
+}
+
+/// A CLLW OPE term over `bits` under `key`, with the structure
+/// `cllw_ore::encrypt_ope_bits` gives it: a leading carry byte, then one
+/// byte per bit, a keyed function of the bits before it plus the bit at
+/// weight 128, the sums carried from right to left. The keyed function is
+/// a stand-in (the real one is a keyed BLAKE3 under the column's key, which
+/// the database never sees); the layout is public, and it is what makes two
+/// terms agree to within one at every byte before the first bit their
+/// plaintexts differ in.
+pub fn cllw_ope(key: &[u8; 32], bits: &[bool]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bits.len() + 1);
+    out.push(0);
+    let mut prefix: Vec<u8> = Vec::with_capacity(bits.len());
+    for &bit in bits {
+        out.push(sha256(&[b"ope", key, &prefix])[0]);
+        prefix.push(u8::from(bit));
+    }
+    let mut carry = 0u16;
+    for (byte, &bit) in out[1..].iter_mut().rev().zip(bits.iter().rev()) {
+        let sum = u16::from(*byte) + (u16::from(bit) << 7) + carry;
+        *byte = sum as u8;
+        carry = sum >> 8;
+    }
+    out[0] = carry as u8;
+    out
 }
 
 /// The simulator's stand-in for the keyed member rank: any keyed function of

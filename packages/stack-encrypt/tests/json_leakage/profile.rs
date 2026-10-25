@@ -29,7 +29,7 @@
 //! `docs/plans/2026-10-25-json-tree-leakage-before-and-after.md` records
 //! what changed between the two.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 
 use serde_json::{Number, Value};
@@ -406,6 +406,21 @@ pub struct Leakage {
     /// two ordered paths compare with each other too, and two ordered paths
     /// holding equal values carry equal terms").
     pub ordering_ranks: Vec<usize>,
+    /// For each two classes next to each other in rank order, `(lower,
+    /// higher)`, how many leading bits their order encodings share: "two
+    /// values whose encodings share leading bits […] get terms that share
+    /// leading bytes, […] so the term also shows how long that common
+    /// prefix is". CLLW OPE writes one byte per bit, the PRF of the bits
+    /// before it plus the bit at weight 128, with a carry from the right, so
+    /// two terms agree to within one at every byte before the first bit
+    /// their encodings differ in, and differ by about 128 there
+    /// (`distinguishers::ordering_term_prefixes`). The common prefix of any
+    /// two classes is the least of the adjacent ones between them, so the
+    /// adjacent pairs are the whole clause. For a number the encoding is its
+    /// `f64`'s order encoding, so its first bit is the sign and the next
+    /// eleven the exponent's; for a string, the marker byte and then the
+    /// folded text.
+    pub ordering_prefixes: BTreeMap<(OrderClass, OrderClass), usize>,
 }
 
 // =============================================================================
@@ -437,6 +452,36 @@ impl<T: Hash + Eq> Interner<T> {
 enum OrderKey {
     Number(u64),
     String(Vec<u8>),
+}
+
+impl OrderKey {
+    /// The bytes the term is CLLW OPE over, one term byte per bit: a
+    /// number's `f64` order encoding (`vitaminc_ore::order` at `F64`), and a
+    /// string's marker and folded text as [`Ids::ordering`] keeps them.
+    fn encoding(&self) -> Vec<u8> {
+        match self {
+            Self::Number(bits) => vitaminc_ore::order(
+                vitaminc_ore::OrderTarget::F64,
+                None,
+                vitaminc_ore::Physical::Float(vitaminc_ore::Float::F64(f64::from_bits(*bits))),
+            )
+            .expect("a finite f64 has an order encoding")
+            .bytes()
+            .risky_ref()
+            .clone(),
+            Self::String(encoded) => encoded.clone(),
+        }
+    }
+}
+
+/// How many leading bits `a` and `b` share.
+fn common_bits(a: &[u8], b: &[u8]) -> usize {
+    a.iter()
+        .zip(b)
+        .position(|(x, y)| x != y)
+        .map_or(8 * a.len().min(b.len()), |k| {
+            8 * k + (a[k] ^ b[k]).leading_zeros() as usize
+        })
 }
 
 /// The names shared by [`l_store`] and [`l_query`]: one id space per kind of
@@ -553,6 +598,23 @@ impl Ids {
             ranks[class] = rank;
         }
         ranks
+    }
+
+    /// The leading bits each two classes next to each other in `ranks`'
+    /// order share ([`Leakage::ordering_prefixes`]).
+    pub fn ordering_prefixes(&self, ranks: &[usize]) -> BTreeMap<(OrderClass, OrderClass), usize> {
+        let mut by_rank: Vec<OrderClass> = (0..ranks.len()).collect();
+        by_rank.sort_by_key(|&class| ranks[class]);
+        by_rank
+            .windows(2)
+            .map(|pair| {
+                let shared = common_bits(
+                    &self.ordering_keys[pair[0]].encoding(),
+                    &self.ordering_keys[pair[1]].encoding(),
+                );
+                ((pair[0], pair[1]), shared)
+            })
+            .collect()
     }
 }
 
@@ -1052,10 +1114,12 @@ pub fn leak(column: &Column, clauses: Clauses, docs: &[Value], queries: &[Query]
         .iter()
         .map(|q| l_query(column, &mut ids, docs, q))
         .collect();
+    let ordering_ranks = ids.ordering_ranks();
     Leakage {
         key_tag_len: KEY_TAG_LEN,
         rows,
         queries,
-        ordering_ranks: ids.ordering_ranks(),
+        ordering_prefixes: ids.ordering_prefixes(&ordering_ranks),
+        ordering_ranks,
     }
 }

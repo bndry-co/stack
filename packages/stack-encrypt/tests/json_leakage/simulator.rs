@@ -7,8 +7,10 @@
 //! [`HeadId`](super::profile::HeadId), a self tag per
 //! [`SelfTagId`](super::profile::SelfTagId)), so equality patterns are
 //! exactly the profile's. Ciphertexts are random bytes of the stated length
-//! behind the frame's public version byte. Ordering terms are random bytes
-//! laid out so that byte order is the profile's rank order.
+//! behind the frame's public version byte. Ordering terms have CLLW OPE's
+//! public layout under a key the simulator draws, over codes built from the
+//! profile's ranks, lengths and shared prefixes, so they compare, repeat
+//! and share leading bytes exactly as the profile says.
 //!
 //! The chain is the one place the simulator evaluates the real scheme's
 //! public functions ([`super::chain`]): a token the database is sent has to
@@ -25,7 +27,7 @@
 //! Every other parent and self tag is random bytes, as a tag under a token
 //! the database never sees is to it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use base64ct::{Base64, Encoding};
 use proptest::prelude::RngCore;
@@ -33,10 +35,12 @@ use proptest::test_runner::TestRng;
 use serde_json::{json, Value};
 
 use super::chain::{
-    element_token, member_token, parent_tag, self_tag, simulated_rank, Rule, Tag16, Tag8,
+    cllw_ope, element_token, member_token, parent_tag, self_tag, simulated_rank, Rule, Tag16, Tag8,
 };
 use super::observe::QueryKind;
-use super::profile::{GroupLeakage, Leakage, QueryLeakage, RowLeakage, Step, TokenName, TokenStep};
+use super::profile::{
+    GroupLeakage, Leakage, OrderingLeak, QueryLeakage, RowLeakage, Step, TokenName, TokenStep,
+};
 
 /// The version byte `vitaminc-encrypt` writes at the front of every
 /// ciphertext: public framing, not leakage.
@@ -100,6 +104,7 @@ struct Simulator<'a> {
 /// `rng` alone.
 pub fn simulate(leakage: &Leakage, rng: &mut TestRng) -> (Vec<Value>, Vec<(QueryKind, Value)>) {
     let rank_key = random(rng);
+    let ordering = ordering_terms(leakage, &random(rng));
     let mut sim = Simulator {
         leakage,
         rng,
@@ -110,7 +115,7 @@ pub fn simulate(leakage: &Leakage, rng: &mut TestRng) -> (Vec<Value>, Vec<(Query
         ivs: Names::new(),
         self_tags: Names::new(),
         tags: HashMap::new(),
-        ordering: HashMap::new(),
+        ordering,
         rank_key,
     };
     let linked = sim.link();
@@ -122,6 +127,82 @@ pub fn simulate(leakage: &Leakage, rng: &mut TestRng) -> (Vec<Value>, Vec<(Query
         .collect();
     let queries = leakage.queries.iter().map(|q| sim.query(q)).collect();
     (rows, queries)
+}
+
+/// Every ordering class's term: a CLLW OPE term ([`cllw_ope`]) under `key`
+/// over a code of the class's bit length, the codes built in rank order from
+/// the profile's shared prefixes alone ([`successor`]). So the terms
+/// compare as the ranks do, are equal where the classes are, are as long as
+/// the profile says, and share leading bytes exactly as far as the profile
+/// says the values' encodings share leading bits.
+fn ordering_terms(leakage: &Leakage, key: &[u8; 32]) -> HashMap<usize, Vec<u8>> {
+    let mut bits: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut note = |op: &OrderingLeak| {
+        let _ = bits.insert(op.class, op.len - 1);
+    };
+    for row in &leakage.rows {
+        for op in row.entries.iter().filter_map(|e| e.ordering.as_ref()) {
+            note(op);
+        }
+    }
+    for query in &leakage.queries {
+        if let QueryLeakage::Order { bound, .. } = query {
+            note(bound);
+        }
+    }
+    let mut classes: Vec<usize> = bits.keys().copied().collect();
+    classes.sort_by_key(|&class| (leakage.ordering_ranks[class], class));
+    let mut terms = HashMap::new();
+    let mut previous: Option<(usize, Vec<bool>)> = None;
+    for class in classes {
+        let n = bits[&class];
+        let code = match &previous {
+            None => vec![false; n],
+            Some((below, code)) => successor(
+                code,
+                n,
+                leakage.ordering_prefixes.get(&(*below, class)).copied(),
+            ),
+        };
+        let _ = terms.insert(class, cllw_ope(key, &code));
+        previous = Some((class, code));
+    }
+    terms
+}
+
+/// The least `n`-bit code above `below` that shares `shared` leading bits
+/// with it. Codes built this way, in rank order from all zeros, share
+/// exactly the prefixes the profile states, which is what any set of real
+/// encodings does: at the bit where two neighbours part, the lower one has a
+/// zero, which is where the code puts its one. A profile that states no
+/// prefix (`None`, a mutant's) gets the latest branch that still sorts
+/// above `below`; one that states an impossible prefix gets the nearest
+/// branch before it, so a mutant's world still builds.
+fn successor(below: &[bool], n: usize, shared: Option<usize>) -> Vec<bool> {
+    let m = below.len();
+    let extends = match shared {
+        Some(l) => l >= m && m < n,
+        None => m < n,
+    };
+    if extends {
+        let mut code = below.to_vec();
+        code.resize(n, false);
+        return code;
+    }
+    let last = shared
+        .unwrap_or(n)
+        .min(n.saturating_sub(1))
+        .min(m.saturating_sub(1));
+    let mut code: Vec<bool> = match (0..=last).rev().find(|&i| !below[i]) {
+        Some(at) => {
+            let mut code = below[..at].to_vec();
+            code.push(true);
+            code
+        }
+        None => below[..n.min(m)].to_vec(),
+    };
+    code.resize(n, false);
+    code
 }
 
 impl Simulator<'_> {
@@ -150,21 +231,12 @@ impl Simulator<'_> {
         t
     }
 
-    /// An ordering term of `len` bytes for class `class`: a zero byte, the
-    /// class's rank big-endian, then random bytes, so byte order is rank
-    /// order and equal classes are equal terms.
-    fn ordering(&mut self, class: usize, len: usize) -> Vec<u8> {
-        if let Some(bytes) = self.ordering.get(&class) {
-            assert_eq!(bytes.len(), len, "one class, one length");
-            return bytes.clone();
-        }
-        assert!(len >= 5, "a term is long enough to carry its rank");
-        let rank = u32::try_from(self.leakage.ordering_ranks[class]).expect("a small world");
-        let mut bytes = vec![0];
-        bytes.extend_from_slice(&rank.to_be_bytes());
-        bytes.extend(random_vec(self.rng, len - 5));
-        let _ = self.ordering.insert(class, bytes.clone());
-        bytes
+    /// The ordering term of class `class`, `len` bytes long: built once for
+    /// every class by [`ordering_terms`].
+    fn ordering(&self, class: usize, len: usize) -> Vec<u8> {
+        let bytes = &self.ordering[&class];
+        assert_eq!(bytes.len(), len, "one class, one length");
+        bytes.clone()
     }
 
     fn group(&mut self, group: &GroupLeakage) -> Value {
