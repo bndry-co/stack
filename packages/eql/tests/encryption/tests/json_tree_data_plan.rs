@@ -772,7 +772,6 @@ async fn open(
     let rows = frame(&groups);
     let opened = dynamic::json_open(
         keyset,
-        Scope::Keyset(keyset.clone()),
         plan,
         "profile",
         request,
