@@ -12,6 +12,14 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **The EQL types for an encrypted JSON document** (#1348):
+  `eql.EncryptedJSON` (`public.eql_v4_json_tree`), its containment needle
+  `eql.EncryptedJSONQuery`, its ordering operand
+  `eql.EncryptedJSONLeafQuery` and its entry `eql.EncryptedJSONEntry`,
+  generated from the EQL catalog. A plan built by hand can store one now
+  (`record.JSON`, `record.Field.TargetOptions`); `stashgen` support
+  follows.
+
 - **Decimals, dates and timestamps take an order index (#1236).** An
   `encrypt.Decimal`, `encrypt.Date` or `time.Time` field takes `ore` and
   `ope`, and the generated code gives it `Lt`, `Lte`, `Gt`, `Gte` and

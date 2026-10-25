@@ -259,8 +259,9 @@ func TestEQLGoNameAgreesWithTheGeneratedPackage(t *testing.T) {
 	if renamed == 0 {
 		t.Fatal("the rule renamed nothing: the Json family is spelled JSON")
 	}
-	if stashgen.EQLGoName("Json") != "JSON" || stashgen.EQLGoName("TextEq") != "TextEq" || stashgen.EQLGoName("SteVecQuery") != "SteVecQuery" {
-		t.Fatal("the one rule: a Json prefix is JSON, every other name is itself")
+	if stashgen.EQLGoName("Json") != "JSON" || stashgen.EQLGoName("TextEq") != "TextEq" || stashgen.EQLGoName("SteVecQuery") != "SteVecQuery" ||
+		stashgen.EQLGoName("EncryptedJsonLeafQuery") != "EncryptedJSONLeafQuery" || stashgen.EQLGoName("Jsonify") != "Jsonify" {
+		t.Fatal("the one rule: the word Json is JSON, every other name is itself")
 	}
 }
 
