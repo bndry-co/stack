@@ -276,7 +276,7 @@ On a flat five-node document the proposal is about 8% larger: the two chain fiel
 | size of every subtree | yes, each path entry's ciphertext is its subtree | no, only leaf scalar lengths, as the v3 leaf entries already show |
 | parent and child relation | inferable from subtree sizes and cross-row co-occurrence | hidden at rest; sibling grouping (`p`) and element grouping (`g`) visible at rest as per-document random tags; linkable only with a token the query supplies |
 | shape equality across rows | selectors are column-deterministic, so yes | tags are salted by the document IV, so no, until a token is supplied |
-| which leaves sit in the same array element | no | yes, `g`. The one new leak, required for exact containment, and bounded to array elements |
+| which leaves sit in the same array element | yes, whenever elements are indexed: document order plus the per-element `a` flag, or position selectors outright (corrected 2026-10-25; this row first said no) | yes, `g`. Required for exact containment, and bounded to array elements |
 | equal values at two paths | hidden | hidden |
 | equal values in sibling elements | ciphertexts equal (selectors already equal) | ciphertexts differ |
 | key names | hashed into `s` | hashed into `s`; also encrypted in `c`; under a token the query supplied, testable by guessing until the label step is keyed (decision 11) |
