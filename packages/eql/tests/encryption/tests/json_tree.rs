@@ -2212,10 +2212,10 @@ fn postgres_reads_never_answer_wrongly_under_tampering() {
                                 ELSE eql_v4_internal.json_tree_element_token(t, s, $3) END)))
                        FROM (SELECT eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h') AS iv,
                                     decode($2::text, 'base64') AS t,
-                                    (eql_v4_internal.json_tree_by_self(doc::jsonb)
-                                      -> eql_v4_internal.json_tree_self_tag(eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64')) ->> 'j') AS j,
-                                    decode(eql_v4_internal.json_tree_by_self(doc::jsonb)
-                                      -> eql_v4_internal.json_tree_self_tag(eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64')) ->> 's', 'base64') AS s) AS q
+                                    ((SELECT nodes FROM eql_v4_internal.json_tree_index(doc::jsonb))
+                                      ->> eql_v4_internal.json_tree_self_tag(eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64'))) AS j,
+                                    decode(doc::jsonb -> 'sv' -> ((SELECT nodes FROM eql_v4_internal.json_tree_index(doc::jsonb))
+                                      ->> eql_v4_internal.json_tree_self_tag(eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64')))::integer ->> 's', 'base64') AS s) AS q
                      )::public.eql_v4_json_tree WHERE id = $5",
                     &[&from_key.tokens()[0], &to_key.tokens()[0], &width, &member, &id],
                 )

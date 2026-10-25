@@ -650,3 +650,52 @@ The owner settled the questions this section first left open, before implementat
 10. **Stacking.** The implementation stacks on this write-up's branch and its pull request targets it. #1345 conflicts with #1358 and merges first.
 
 **Implemented.** The client's reads, checks and the fallback are in `packages/stack-encrypt/src/json/derive.rs`; the key and its expansion in `derive.rs` and `query.rs`; the SQL in `packages/eql/src/v3/json_tree/functions.sql`. The stored form gains `x` and is otherwise unchanged; a sealed document grows by about a tenth in characters (+9.8% on the nested benchmark shape and +9.4% on the flat one, pinned in `packages/stack-encrypt/tests/json_properties.rs`). The derivations are pinned under the deterministic key source in `packages/stack-encrypt/tests/json_tree_vectors.rs`. The PostgreSQL oracle (`packages/eql/tests/encryption/tests/json_tree.rs`) holds every read with no wildcard to `jsonb_path_query_first` in strict mode, wildcard reads to `jsonb_path_query`, the child functions to `jsonb_object_keys` and `jsonb_array_length`, and every read of a randomly tampered row to either the right answer, a refusal, or one of the allowances of decision 8.
+
+### Implementation notes (2026-10-25): what the walk was paying for
+
+The benchmarks of the implementation (cipherstash/benches `report/JSON_TREE_DERIVABLE_TOKENS.md`, summarised on #1363) found the token-specific reads faster than the gated walk and everything that enumerates slower: whole-subtree reads +38 to +46%, a full walk of a 300-element array +78%, `json_tree_child_count` on a small node +59%, with the per-hit cost inside a walk (about 36 µs per member, 80 µs per element) well above what the hashes explain. Reading the plan found four costs, none of them in the format. All four are SQL-only and fixed in #1363; the stored document is unchanged.
+
+1. **A pinned `search_path` disabled inlining of every chain primitive.** The post-install step (`tasks/pin_search_path_v3.sql`) sets `search_path` on every EQL function that does not carry the `eql-inline-critical` marker or take a jsonb-domain argument, and the planner does not inline a SQL function with a `SET` clause. So `json_tree_h16`, `json_tree_le32`, `json_tree_parent_tag`, `json_tree_self_tag`, `json_tree_member_token`, `json_tree_element_token` and `json_tree_hit_token` each ran as a full SQL-function call, about ten microseconds, where the hashes inside cost under one. A level of the walk makes about fourteen such calls, and `EXPLAIN ANALYZE` put the recursive step at 160 µs per level on the 300-wide corpus. The gated walk paid the same way, which is why the derivation's cost was invisible in the first comparison. The seven now carry the marker; the step is 14 µs per level.
+
+2. **`json_tree_hit_token` could not inline even unpinned.** Its body held a `FROM` clause, which blocks inlining; rewritten without one it was still refused, twice: as a STRICT function whose body is a `CASE`, which the planner inlines only when every argument is provably non-null, and then because its arguments, in the recursive term, were the expression that locates a hit, which the planner had flattened into the call, and a function that uses an expensive argument more than once is not inlined. It is now not STRICT, and the walk derives a hit's token where it consumes it, in the probe beneath, from the hit's stored `s` and `x` read off the working table, which are plain columns. An `OFFSET 0` fence on the lateral subqueries also inlined it, but introduced a `Memoize` node keyed on the whole document, at 64 µs per row.
+
+3. **The maps copied every entry, and were built twice.** `json_tree_by_parent` and `json_tree_by_self` each aggregated `elem || {"j": …}` over `sv`, 0.55 ms per map on a 215-entry document, and every read built both; `json_tree_child_count` built them, then called `json_tree_children`, which built them again. One function, `json_tree_index`, now builds both maps as tag → position in one pass (0.14 ms), set-returning with the two maps as columns so the planner inlines it as an aggregate subquery of the caller's `LATERAL`, which is computed once: a scalar function the `doc` CTE named twice (`idx -> 'p'`, `idx -> 'x'`) was evaluated twice when the planner flattened the subquery. An entry is fetched as `sv -> j` only when it is returned.
+
+4. **Every reference to the argument decompressed the document.** The stored value is TOAST-compressed, and the `doc` CTE referenced `e::jsonb` five times (header, `sv`, metadata, entry count, index), each a decompression of the whole document, about 40 µs for a nested one: 0.2 ms of a 0.6 ms one-token read. Each read now takes `e::jsonb #> '{}'`, the identity path, into a MATERIALIZED CTE and reads that.
+
+Measured on the benchmark's own pass queries (500 documents per scenario, `id = ANY(…)`, in-server time per document, three interleaved repetitions, medians), the SQL as #1363 first had it against the bundle built from the tree, on the same rows on one cluster; every scenario returned identical rows from both:
+
+| read | gated walk (bench) | derivable, as benched | derivable, now | change |
+|---|--:|--:|--:|--:|
+| `read/first_name` | 0.06 ms | 0.10 ms | 0.11 ms | +8.9% |
+| `read/company.name` | 1.28 ms | 1.27 ms | 0.39 ms | -69.5% |
+| `read/user.contact.emergency_contact.name` | 1.76 ms | 1.27 ms | 0.37 ms | -70.5% |
+| `read/orders[2]` | 2.89 ms | 4.26 ms | 0.83 ms | -80.5% |
+| `read/orders[2].status` | 1.24 ms | 1.26 ms | 0.37 ms | -70.3% |
+| `read/company` | 1.36 ms | 2.06 ms | 0.49 ms | -76.2% |
+| `read/user` | 1.91 ms | 2.77 ms | 0.59 ms | -78.6% |
+| `read/orders (fallback)` | 5.60 ms | 8.64 ms | 0.84 ms | -90.3% |
+| `read/orders (walked)` | 16.76 ms | 24.03 ms | 3.57 ms | -85.1% |
+| `read/$ (sealed root)` | – | 1.26 ms | 0.39 ms | -69.1% |
+| `read/$ (root open)` | 20.01 ms | 28.21 ms | 4.20 ms | -85.1% |
+| `wildcard/orders[*].total N=8` | 4.62 ms | 2.41 ms | 0.60 ms | -75.0% |
+| `wildcard/orders[*].total N=64` | 4.47 ms | 1.79 ms | 0.50 ms | -71.9% |
+| `wildcard/orders[*].total N=256` | 4.61 ms | 2.81 ms | 0.66 ms | -76.5% |
+| `wildcard/orders[*].items[*].price N=8` | 16.06 ms | 3.57 ms | 0.95 ms | -73.3% |
+| `wildcard/orders[*].items[*].price N=64` | 16.30 ms | 25.03 ms | 4.08 ms | -83.7% |
+| `children/orders (nested)` | – | 1.35 ms | 0.42 ms | -68.6% |
+| `child_count/orders (nested)` | – | 2.39 ms | 0.31 ms | -87.1% |
+| `children/attrs` | 24.13 ms | 12.33 ms | 5.12 ms | -58.4% |
+| `child_count/attrs` | 24.47 ms | 14.27 ms | 1.20 ms | -91.6% |
+| `read/attrs (walked)` | 29.82 ms | 40.74 ms | 7.22 ms | -82.3% |
+| `children/list` | 24.45 ms | 12.59 ms | 5.08 ms | -59.7% |
+| `child_count/list` | 24.28 ms | 14.23 ms | 1.21 ms | -91.5% |
+| `read/list (walked)` | 30.16 ms | 55.61 ms | 8.22 ms | -85.2% |
+
+The gated-walk column is the benchmark's in-server figure for the same scenario, from a different run, and is there for orientation only. Every row the first comparison had as a regression against the gated walk is now faster than it. The `cipherstash/benches` harness measures `json_tree_by_parent` and `json_tree_by_self` as floors; both are gone, so its plan step must move to `json_tree_index` before the next full run.
+
+**For a future version of the format**, recorded here from the review of #1363 (none is in scope for this one):
+
+- *The sealed root's children enumerate from nothing.* The top-level entries carry no parent tag, because the format predates the root having a token, so `json_tree_children` at `$` returns no rows and `json_tree_child_count` returns NULL on the default layout, and a developer counts top-level fields by reading `$` and opening it. Chaining the heads from the root's token, `p = H("p" ‖ iv ‖ t($) ‖ LE32(o))`, makes the root enumerate like every other node and removes the special case.
+- *Withheld rows are not detected.* Nothing in a row says how many nodes a read should find, so a database that drops rows makes a node look absent, or shortens a wildcard read. This is an integrity property against a lying database, outside the current threat model (confidentiality against an honest-but-curious one); closing it needs an authenticated count, for instance the array's child count read beside a wildcard.
+- *The entries × tokens `LIMIT` and the token cap bound a lying database's own work.* Forged member tags can make a walk visit one subtree repeatedly; the client refuses the repeated positions, so only the database's work is at stake, and with the default sealed root and budget the read stops at `budget + 1` rows regardless. The `LIMIT` is the only bound when the budget is 0 or the root is open, and the token cap (`TermError::JsonWildcardTooWide`) scales it: a one-level wildcard with bound N sends N + 1 tokens and two levels send N² + N + 1, so a cap of 8,192 keeps every one-level read to 8,191 elements and two levels at the default bound of 64 (4,161 tokens), where 65,536 was never approached by any measurement (the largest read benchmarked sent 4,161).

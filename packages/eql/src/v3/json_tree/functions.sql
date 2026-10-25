@@ -33,6 +33,9 @@ AS $$
   SELECT substr(sha256(x), 1, 16)
 $$;
 
+COMMENT ON FUNCTION {{prefix}}_internal.json_tree_h16(bytea) IS
+  'eql-inline-critical: chain primitive of the JSON tree family, evaluated per probe and per hit of a walk; must stay inlinable (unpinned search_path)';
+
 --! @brief A 32-bit integer as four little-endian bytes.
 --! @internal
 --! @param n integer The integer, non-negative.
@@ -44,6 +47,9 @@ AS $$
   SELECT set_byte(set_byte(set_byte(set_byte('\x00000000'::bytea,
     0, n & 255), 1, (n >> 8) & 255), 2, (n >> 16) & 255), 3, (n >> 24) & 255)
 $$;
+
+COMMENT ON FUNCTION {{prefix}}_internal.json_tree_le32(integer) IS
+  'eql-inline-critical: chain primitive of the JSON tree family, evaluated per probe of a walk; must stay inlinable (unpinned search_path)';
 
 --! @brief The document's ZeroKMS `iv` from its header: the per-document salt
 --!        of every chain tag.
@@ -75,6 +81,9 @@ AS $$
   SELECT encode(substr({{prefix}}_internal.json_tree_h16('p'::bytea || iv || token || {{prefix}}_internal.json_tree_le32(o)), 1, 8), 'base64')
 $$;
 
+COMMENT ON FUNCTION {{prefix}}_internal.json_tree_parent_tag(bytea, bytea, integer) IS
+  'eql-inline-critical: the probe of the JSON tree walk, evaluated once per ordinal visited; must stay inlinable (unpinned search_path)';
+
 --! @brief The self tag of the node whose token is `token`: the first eight
 --!        bytes of `H("x" ‖ iv ‖ token)`. Every entry carries its own in
 --!        `x`, so the server finds the node a client-derived token names by
@@ -92,6 +101,9 @@ AS $$
   SELECT encode(substr({{prefix}}_internal.json_tree_h16('x'::bytea || iv || token), 1, 8), 'base64')
 $$;
 
+COMMENT ON FUNCTION {{prefix}}_internal.json_tree_self_tag(bytea, bytea) IS
+  'eql-inline-critical: the JSON tree walk evaluates it per token and per hit; must stay inlinable (unpinned search_path)';
+
 --! @brief The token of the object member whose selector is `s`, under the
 --!        object whose token is `token`: `H("t" ‖ token ‖ s)`. Column-wide
 --!        like every token, with no document salt, and with no ordinal, so a
@@ -107,6 +119,9 @@ CREATE FUNCTION {{prefix}}_internal.json_tree_member_token(token bytea, s bytea)
 AS $$
   SELECT {{prefix}}_internal.json_tree_h16('t'::bytea || token || s)
 $$;
+
+COMMENT ON FUNCTION {{prefix}}_internal.json_tree_member_token(bytea, bytea) IS
+  'eql-inline-critical: the JSON tree walk evaluates it per hit; must stay inlinable (unpinned search_path)';
 
 --! @brief The token of the array element at index `i`, whose selector is
 --!        `s`, under the array whose token is `token`:
@@ -125,14 +140,22 @@ AS $$
   SELECT {{prefix}}_internal.json_tree_h16('t'::bytea || token || s || {{prefix}}_internal.json_tree_le32(i))
 $$;
 
+COMMENT ON FUNCTION {{prefix}}_internal.json_tree_element_token(bytea, bytea, integer) IS
+  'eql-inline-critical: the JSON tree walk evaluates it per hit; must stay inlinable (unpinned search_path)';
+
 --! @brief The token of a child the walk found at ordinal `o` under the node
 --!        whose token is `token`: the member rule's if the child's self tag
 --!        `x` is that token's, else the element rule's if it is that one's,
 --!        else NULL. Nothing stored says whether a node is a member or an
 --!        element (its kind is inside `c`, and a selector does not say
 --!        whether its path ends in a key), so the self tag is what chooses.
---!        Up to four hashes, the element rule's only on a miss of the
---!        member rule's.
+--!        Three hashes on a member, six on an element: the chosen token is
+--!        derived twice, which is cheaper than the FROM clause that would
+--!        hold it, since a FROM clause stops the planner inlining the
+--!        function. Not STRICT for the same reason: a STRICT function whose
+--!        body is a CASE is inlined only where every argument is provably
+--!        non-null. The rules inside are STRICT, so a NULL argument makes
+--!        both comparisons NULL and the CASE NULL.
 --! @internal
 --! @param iv bytea The document's iv.
 --! @param token bytea The parent's token, sixteen bytes.
@@ -143,18 +166,18 @@ $$;
 --!         `x`, and the walk does not descend into it.
 CREATE FUNCTION {{prefix}}_internal.json_tree_hit_token(iv bytea, token bytea, s bytea, o integer, x text)
   RETURNS bytea
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
 AS $$
   SELECT CASE
-    WHEN {{prefix}}_internal.json_tree_self_tag(iv, member.t) = x THEN member.t
-    ELSE (
-      SELECT element.t
-      FROM (SELECT {{prefix}}_internal.json_tree_element_token(token, s, o) AS t) AS element
-      WHERE {{prefix}}_internal.json_tree_self_tag(iv, element.t) = x
-    )
+    WHEN {{prefix}}_internal.json_tree_self_tag(iv, {{prefix}}_internal.json_tree_member_token(token, s)) = x
+      THEN {{prefix}}_internal.json_tree_member_token(token, s)
+    WHEN {{prefix}}_internal.json_tree_self_tag(iv, {{prefix}}_internal.json_tree_element_token(token, s, o)) = x
+      THEN {{prefix}}_internal.json_tree_element_token(token, s, o)
   END
-  FROM (SELECT {{prefix}}_internal.json_tree_member_token(token, s) AS t) AS member
 $$;
+
+COMMENT ON FUNCTION {{prefix}}_internal.json_tree_hit_token(bytea, bytea, bytea, integer, text) IS
+  'eql-inline-critical: the JSON tree walk evaluates it per hit; must stay inlinable (unpinned search_path)';
 
 --! @brief Whether the document's root is sealed: its header's sealed-root
 --!        flag, bit 0 of the flags byte at offset 1 of the frozen layout.
@@ -188,44 +211,41 @@ $$;
 COMMENT ON FUNCTION {{prefix}}_internal.json_tree_ope_cllw(jsonb) IS
   'eql-inline-critical: raw-jsonb CLLW OPE extractor of the JSON tree family; must stay inlinable (unpinned search_path)';
 
---! @brief The chained entries of a document keyed by parent tag: one object
---!        whose keys are each entry's `p` and whose values are the entry
---!        with its ordinal `j` in `sv` added. A walk looks a child up by
---!        the tag it computes, `map -> tag`, instead of scanning `sv` for
---!        it, so the document is read once per walk and a probe costs one
---!        hash and one lookup, not a pass over the document.
+--! @brief The positions of a document's entries by tag: `map`, the parent
+--!        tag of every chained entry, and `nodes`, the self tag of every
+--!        entry, each mapped to the entry's ordinal `j` in `sv`. A read
+--!        finds the node a token names, and a walk each child it probes for,
+--!        by the tag it computes, `nodes ->> tag` or `map ->> tag`, so a
+--!        token or a probe costs one hash and one lookup, and the entry
+--!        itself is fetched as `sv -> j` only when it is used. One pass over
+--!        `sv` builds both maps. A map of the entries themselves, as the
+--!        walk first had, copied every entry to build and cost four times as
+--!        much as this on a document of two hundred entries, which was most
+--!        of a one-token read.
+--!
+--!        Set-returning, with the two maps as columns, and not STRICT, so
+--!        that the planner inlines it as a subquery of the caller's
+--!        `LATERAL`: an aggregate subquery is computed once, where a scalar
+--!        function the caller's subquery named twice (`idx -> 'p'`,
+--!        `idx -> 'x'`) was evaluated twice when the planner flattened that
+--!        subquery, and a STRICT set-returning function is not inlined at
+--!        all. The aggregate over no rows is one row of two `{}`, for a
+--!        NULL or empty `sv`.
 --! @internal
 --! @param val jsonb The document.
---! @return jsonb The map; `{}` for a document with no chained entry.
-CREATE FUNCTION {{prefix}}_internal.json_tree_by_parent(val jsonb)
-  RETURNS jsonb
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+--! @return TABLE(map jsonb, nodes jsonb) One row: `map` `{p: j, …}` and
+--!         `nodes` `{x: j, …}`, either `{}` when no entry carries that tag.
+CREATE FUNCTION {{prefix}}_internal.json_tree_index(val jsonb)
+  RETURNS TABLE(map jsonb, nodes jsonb)
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
 AS $$
-  SELECT COALESCE(
-    jsonb_object_agg(elem ->> 'p', elem || jsonb_build_object('j', ord - 1)),
-    '{}'::jsonb)
+  SELECT COALESCE(jsonb_object_agg(elem ->> 'p', ord - 1) FILTER (WHERE elem ? 'p'), '{}'::jsonb),
+         COALESCE(jsonb_object_agg(elem ->> 'x', ord - 1) FILTER (WHERE elem ? 'x'), '{}'::jsonb)
   FROM jsonb_array_elements(val -> 'sv') WITH ORDINALITY AS t(elem, ord)
-  WHERE elem ? 'p'
 $$;
 
---! @brief The entries of a document keyed by self tag: one object whose keys
---!        are each entry's `x` and whose values are the entry with its
---!        ordinal `j` in `sv` added. A read finds the node a token names by
---!        the tag it computes, `map -> tag`, so each token costs one hash and
---!        one lookup.
---! @internal
---! @param val jsonb The document.
---! @return jsonb The map; `{}` for a document with no entry.
-CREATE FUNCTION {{prefix}}_internal.json_tree_by_self(val jsonb)
-  RETURNS jsonb
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$
-  SELECT COALESCE(
-    jsonb_object_agg(elem ->> 'x', elem || jsonb_build_object('j', ord - 1)),
-    '{}'::jsonb)
-  FROM jsonb_array_elements(val -> 'sv') WITH ORDINALITY AS t(elem, ord)
-  WHERE elem ? 'x'
-$$;
+COMMENT ON FUNCTION {{prefix}}_internal.json_tree_index(jsonb) IS
+  'eql-inline-critical: the index every JSON tree read builds, inlined as a subquery so it is built once; must stay inlinable (unpinned search_path)';
 
 ------------------------------------------------------------------------------
 -- Envelope helpers
@@ -437,30 +457,51 @@ $$;
 --! The read, in every function below. Every node's token derives from its
 --! path alone, so the client sends the token of exactly the node it reads,
 --! and the server finds that node by its self tag,
---! `x = H("x" ‖ iv ‖ token)`, looked up in the document's self-tag map
---! ({{prefix}}_internal.json_tree_by_self). The node's children sit at the
---! dense ordinals `0, 1, 2, …` under it, and a child's parent tag is
---! `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`. So from a node's token the walk
---! probes ordinal 0, then 1, and so on, looking each tag up in the
---! document's parent map ({{prefix}}_internal.json_tree_by_parent), and
---! stops at the first miss. A hit's own token is the member rule's,
---! `H("t" ‖ t(parent) ‖ s)`, or the element rule's,
+--! `x = H("x" ‖ iv ‖ token)`, looked up in the document's index
+--! ({{prefix}}_internal.json_tree_index), which maps every entry's `x`, and
+--! every chained entry's `p`, to the entry's position in `sv`. The node's
+--! children sit at the dense ordinals `0, 1, 2, …` under it, and a child's
+--! parent tag is `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`. So from a node's
+--! token the walk probes ordinal 0, then 1, and so on, looking each tag up
+--! in the index, and stops at the first miss. A hit's own token is the
+--! member rule's, `H("t" ‖ t(parent) ‖ s)`, or the element rule's,
 --! `H("t" ‖ t(parent) ‖ s ‖ LE32(o))`, `s` being the hit's own selector:
 --! nothing stored says which, so the walk keeps whichever one's self tag is
 --! the hit's `x` ({{prefix}}_internal.json_tree_hit_token), and does not
 --! descend into a hit that matches neither. A subtree of `N` nodes
 --! therefore costs one self-tag lookup, about `2N` probes (`N` hits and a
---! miss for every node visited), each one SHA-256 and one map lookup, and
---! up to four SHA-256s per hit to choose its token. The maps and the header
---! fields are computed once per call, so the document is read once.
+--! miss for every node visited), each one SHA-256 and one lookup, and three
+--! to six SHA-256s per hit to choose its token. The index and the header
+--! fields are computed once per call, so the document is read once, and an
+--! entry is copied out of `sv` only when it is returned.
+--!
+--! **Inlining.** Every chain primitive above is evaluated per probe or per
+--! hit, so each carries the `eql-inline-critical` marker that keeps its
+--! search_path unpinned: the planner does not inline a function with a
+--! pinned search_path, and a probe then costs a full SQL-function call,
+--! about ten microseconds, against under one for the hashes it performs.
+--! For the same reason a hit's token is derived where it is consumed, in
+--! the probe beneath it, from the hit's stored `s` and `x` read off the
+--! working table: the planner inlines a function that uses an argument more
+--! than once only when that argument is a cheap expression, and the
+--! expression that locates a hit is not.
+--!
+--! **One decompression.** The stored document is TOAST-compressed, and
+--! every reference to the function's argument decompresses it again: the
+--! header, `sv`, the metadata, the entry count and the index each cost a
+--! decompression of the whole document, about forty microseconds for a
+--! nested document of two hundred entries, a third of a one-token read.
+--! So each read first takes `e::jsonb #> '{}'`, the identity path, into a
+--! MATERIALIZED CTE: the operator returns the decompressed document, and
+--! everything below reads that.
 --!
 --! **The bound.** A stored document is untrusted: its self tags and parent
 --! tags are not authenticated, so whoever holds a token can write entries
 --! of any shape under it. A probe `(t(parent), o)` finds at most one entry,
---! since the map keeps one entry per tag, and a miss adds no row. But a
---! member's token is a hash of its parent's token and its selector, not of
---! the probe, so two entries forged under one parent with one selector and
---! the member rule's self tag derive one token, and the walk visits the
+--! since the index keeps one position per tag, and a miss adds no row. But
+--! a member's token is a hash of its parent's token and its selector, not
+--! of the probe, so two entries forged under one parent with one selector
+--! and the member rule's self tag derive one token, and the walk visits the
 --! subtree beneath it once for each: forged level after level, the rows
 --! would double at every level. So each read reads its recursion through
 --! `LIMIT` the entry count times the number of tokens: a sealed document's
@@ -490,36 +531,47 @@ CREATE FUNCTION {{prefix}}.json_tree_children(e public.{{prefix}}_json_tree, tok
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   WITH RECURSIVE
+    -- The document, decompressed once (see "One decompression" above).
+    raw AS MATERIALIZED (SELECT e::jsonb #> '{}'::text[] AS d),
     doc AS MATERIALIZED (
-      SELECT {{prefix}}_internal.json_tree_iv(e::jsonb ->> 'h') AS iv,
-             {{prefix}}_internal.json_tree_by_parent(e::jsonb) AS map,
-             {{prefix}}_internal.json_tree_by_self(e::jsonb) AS nodes,
-             {{prefix}}.json_tree_meta(e::jsonb) AS meta,
-             jsonb_array_length(e::jsonb -> 'sv') AS entries,
+      SELECT {{prefix}}_internal.json_tree_iv(raw.d ->> 'h') AS iv,
+             raw.d -> 'sv' AS sv,
+             idx.map,
+             idx.nodes,
+             {{prefix}}.json_tree_meta(raw.d) AS meta,
+             jsonb_array_length(raw.d -> 'sv') AS entries,
              decode(token, 'base64') AS t
+      FROM raw
+      CROSS JOIN LATERAL {{prefix}}_internal.json_tree_index(raw.d) AS idx
     ),
-    -- One row per ordinal probed under the node, from 0 to the first miss.
-    probe(o, entry) AS (
-        SELECT 0, doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, doc.t, 0)
+    -- One row per ordinal probed under the node, from 0 to the first miss:
+    -- `j` the position in `sv` of the entry found there, NULL at the miss.
+    probe(o, j) AS (
+        SELECT 0, (doc.map ->> {{prefix}}_internal.json_tree_parent_tag(doc.iv, doc.t, 0))::integer
         FROM doc
-        WHERE doc.nodes -> {{prefix}}_internal.json_tree_self_tag(doc.iv, doc.t) IS NOT NULL
+        WHERE doc.nodes ? {{prefix}}_internal.json_tree_self_tag(doc.iv, doc.t)
       UNION ALL
-        SELECT p.o + 1, doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, doc.t, p.o + 1)
+        SELECT p.o + 1, (doc.map ->> {{prefix}}_internal.json_tree_parent_tag(doc.iv, doc.t, p.o + 1))::integer
         FROM probe AS p, doc
-        WHERE p.entry IS NOT NULL
+        WHERE p.j IS NOT NULL
     ),
     -- At most one row per entry and the miss (see "The bound" above).
     visited AS MATERIALIZED (
       SELECT p.* FROM probe AS p LIMIT (SELECT doc.entries + 1 FROM doc)
     )
-  SELECT (doc.meta || p.entry || '{"d": 1}'::jsonb)::public.{{prefix}}_json_tree_entry
+  SELECT (doc.meta || (doc.sv -> p.j) || jsonb_build_object('j', p.j, 'd', 1))::public.{{prefix}}_json_tree_entry
   FROM visited AS p, doc
-  WHERE p.entry IS NOT NULL
-  ORDER BY (p.entry ->> 'j')::integer
+  WHERE p.j IS NOT NULL
+  ORDER BY p.j
 $$;
 
 --! @brief How many children the node whose token is `token` has: the length
 --!        of an encrypted array, or the member count of an object.
+--!
+--! The same probes as {{prefix}}.json_tree_children, counted: the index is
+--! built once, where calling that function after finding the node would
+--! build it twice.
+--!
 --! @param e public.{{prefix}}_json_tree The stored document.
 --! @param token text The node's token, base64.
 --! @return integer The count; `0` for a scalar or an empty container; NULL
@@ -531,17 +583,41 @@ CREATE FUNCTION {{prefix}}.json_tree_child_count(e public.{{prefix}}_json_tree, 
   RETURNS integer
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
+  WITH RECURSIVE
+    -- The document, decompressed once (see "One decompression" above).
+    raw AS MATERIALIZED (SELECT e::jsonb #> '{}'::text[] AS d),
+    doc AS MATERIALIZED (
+      SELECT src.iv,
+             idx.map,
+             -- The position of the node the token names; NULL for none.
+             (idx.nodes ->> {{prefix}}_internal.json_tree_self_tag(src.iv, src.t))::integer AS node,
+             jsonb_array_length(src.d -> 'sv') AS entries,
+             {{prefix}}_internal.json_tree_sealed_root(src.d ->> 'h') AS sealed,
+             src.t
+      FROM (SELECT raw.d,
+                   {{prefix}}_internal.json_tree_iv(raw.d ->> 'h') AS iv,
+                   decode(token, 'base64') AS t
+            FROM raw) AS src
+      CROSS JOIN LATERAL {{prefix}}_internal.json_tree_index(src.d) AS idx
+    ),
+    probe(o, j) AS (
+        SELECT 0, (doc.map ->> {{prefix}}_internal.json_tree_parent_tag(doc.iv, doc.t, 0))::integer
+        FROM doc
+        WHERE doc.node IS NOT NULL AND NOT (doc.node = 0 AND doc.sealed)
+      UNION ALL
+        SELECT p.o + 1, (doc.map ->> {{prefix}}_internal.json_tree_parent_tag(doc.iv, doc.t, p.o + 1))::integer
+        FROM probe AS p, doc
+        WHERE p.j IS NOT NULL
+    ),
+    visited AS MATERIALIZED (
+      SELECT p.* FROM probe AS p LIMIT (SELECT doc.entries + 1 FROM doc)
+    )
   SELECT CASE
-    WHEN node.entry IS NULL THEN NULL
-    WHEN (node.entry ->> 'j')::integer = 0
-         AND {{prefix}}_internal.json_tree_sealed_root(e::jsonb ->> 'h') THEN NULL
-    ELSE (SELECT count(*)::integer FROM {{prefix}}.json_tree_children(e, token))
+    WHEN doc.node IS NULL THEN NULL
+    WHEN doc.node = 0 AND doc.sealed THEN NULL
+    ELSE (SELECT count(*)::integer FROM visited AS p WHERE p.j IS NOT NULL)
   END
-  FROM (
-    SELECT {{prefix}}_internal.json_tree_by_self(e::jsonb)
-             -> {{prefix}}_internal.json_tree_self_tag(
-                  {{prefix}}_internal.json_tree_iv(e::jsonb ->> 'h'), decode(token, 'base64')) AS entry
-  ) AS node
+  FROM doc
 $$;
 
 --! @brief The nodes the tokens name, each with everything beneath it, as
@@ -588,41 +664,52 @@ CREATE FUNCTION {{prefix}}.json_tree_subtree(e public.{{prefix}}_json_tree, toke
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   WITH RECURSIVE
+    -- The document, decompressed once (see "One decompression" above).
+    raw AS MATERIALIZED (SELECT e::jsonb #> '{}'::text[] AS d),
     doc AS MATERIALIZED (
-      SELECT {{prefix}}_internal.json_tree_iv(e::jsonb ->> 'h') AS iv,
-             {{prefix}}_internal.json_tree_by_parent(e::jsonb) AS map,
-             {{prefix}}_internal.json_tree_by_self(e::jsonb) AS nodes,
-             {{prefix}}.json_tree_meta(e::jsonb) AS meta,
-             e::jsonb -> 'sv' -> 0 AS root,
-             jsonb_array_length(e::jsonb -> 'sv') AS entries,
-             budget > 0 AND {{prefix}}_internal.json_tree_sealed_root(e::jsonb ->> 'h') AS capped
+      SELECT {{prefix}}_internal.json_tree_iv(raw.d ->> 'h') AS iv,
+             raw.d -> 'sv' AS sv,
+             idx.map,
+             idx.nodes,
+             {{prefix}}.json_tree_meta(raw.d) AS meta,
+             jsonb_array_length(raw.d -> 'sv') AS entries,
+             budget > 0 AND {{prefix}}_internal.json_tree_sealed_root(raw.d ->> 'h') AS capped
+      FROM raw
+      CROSS JOIN LATERAL {{prefix}}_internal.json_tree_index(raw.d) AS idx
     ),
     -- One row per node found: `k` the place in `tokens` of the token whose
     -- node it sits in, `depth` its depth below that node, `pt` and `o`
     -- where a hit sits, its parent's token and its ordinal (NULL for the
-    -- node a token named), and `t` its own token, NULL for a hit whose self
-    -- tag matches neither rule, which is returned and not descended into.
-    walk(k, depth, pt, o, entry, t) AS (
-        SELECT given.k, 0, NULL::bytea, NULL::integer, node.entry, given.t
+    -- node a token named), `j` its position in `sv` and `entry` the entry
+    -- there, and `t` the token the node was named by, NULL for a hit: a
+    -- hit's own token is derived where it is used, in the probe beneath it
+    -- (see "Inlining" above).
+    walk(k, depth, pt, o, j, entry, t) AS (
+        SELECT given.k, 0, NULL::bytea, NULL::integer, node.j, doc.sv -> node.j, given.t
         FROM doc
         CROSS JOIN LATERAL (
           SELECT g.ord AS k, decode(g.token, 'base64') AS t
           FROM unnest(tokens) WITH ORDINALITY AS g(token, ord)
         ) AS given
         CROSS JOIN LATERAL (
-          SELECT doc.nodes -> {{prefix}}_internal.json_tree_self_tag(doc.iv, given.t) AS entry
+          SELECT (doc.nodes ->> {{prefix}}_internal.json_tree_self_tag(doc.iv, given.t))::integer AS j
         ) AS node
-        WHERE node.entry IS NOT NULL
+        WHERE node.j IS NOT NULL
       UNION ALL
-        SELECT w.k, probe.depth, probe.pt, probe.o, hit.entry,
-               {{prefix}}_internal.json_tree_hit_token(
-                 doc.iv, probe.pt, decode(hit.entry ->> 's', 'base64'), probe.o, hit.entry ->> 'x')
+        SELECT w.k, probe.depth, probe.pt, probe.o, pos.j, doc.sv -> pos.j, NULL::bytea
         FROM walk AS w
         CROSS JOIN doc
         CROSS JOIN LATERAL (
-          -- Down: the first ordinal under a node with a token.
-          SELECT w.depth + 1 AS depth, w.t AS pt, 0 AS o
-          WHERE w.t IS NOT NULL
+          -- Down: the first ordinal under this node, by its token: the one
+          -- it was named by, else the one its own `s` and `x` derive. A hit
+          -- whose self tag matches neither rule has no token, and is
+          -- returned but not descended into.
+          SELECT w.depth + 1 AS depth, own.t AS pt, 0 AS o
+          FROM (
+            SELECT COALESCE(w.t, {{prefix}}_internal.json_tree_hit_token(
+                     doc.iv, w.pt, decode(w.entry ->> 's', 'base64'), w.o, w.entry ->> 'x')) AS t
+          ) AS own
+          WHERE own.t IS NOT NULL
           UNION ALL
           -- Across: the next ordinal under the same parent, from any hit,
           -- since a hit with no token of its own still has siblings.
@@ -630,9 +717,9 @@ AS $$
           WHERE w.depth > 0
         ) AS probe
         CROSS JOIN LATERAL (
-          SELECT doc.map -> {{prefix}}_internal.json_tree_parent_tag(doc.iv, probe.pt, probe.o) AS entry
-        ) AS hit
-        WHERE hit.entry IS NOT NULL
+          SELECT (doc.map ->> {{prefix}}_internal.json_tree_parent_tag(doc.iv, probe.pt, probe.o))::integer AS j
+        ) AS pos
+        WHERE pos.j IS NOT NULL
     ),
     -- At most one row per entry for each token (see "The bound" above),
     -- whatever the budget: a budget of 0, or an open root, leaves `found`
@@ -645,7 +732,7 @@ AS $$
     -- under it is complete. Uncapped, the limit is NULL: all that
     -- `visited` holds.
     found AS MATERIALIZED (
-      SELECT w.k, w.depth, w.entry
+      SELECT w.k, w.depth, w.j, w.entry
       FROM visited AS w
       LIMIT (SELECT CASE WHEN doc.capped THEN budget + 1 END FROM doc)
     ),
@@ -655,12 +742,12 @@ AS $$
   SELECT rows.entry
   FROM (
     SELECT 0::bigint AS k, 0 AS j,
-           (doc.meta || doc.root || '{"j": 0, "d": 0}'::jsonb)::public.{{prefix}}_json_tree_entry AS entry
+           (doc.meta || (doc.sv -> 0) || '{"j": 0, "d": 0}'::jsonb)::public.{{prefix}}_json_tree_entry AS entry
     FROM doc, over
     WHERE over.fallback
     UNION ALL
-    SELECT f.k, (f.entry ->> 'j')::integer,
-           (doc.meta || f.entry || jsonb_build_object('d', f.depth))::public.{{prefix}}_json_tree_entry
+    SELECT f.k, f.j,
+           (doc.meta || f.entry || jsonb_build_object('j', f.j, 'd', f.depth))::public.{{prefix}}_json_tree_entry
     FROM found AS f, doc, over
     WHERE NOT over.fallback
   ) AS rows
