@@ -62,6 +62,8 @@ pub struct ObservedRow {
     pub header: ObservedHeader,
     pub entries: Vec<ObservedEntry>,
     pub q: ObservedGroup,
+    /// Every key path inside `q` ([`key_paths`]).
+    pub q_fields: Vec<String>,
 }
 
 /// Which SQL surface a query term was sent to. The database knows which
@@ -110,6 +112,9 @@ pub enum ObservedQuery {
 pub struct ObservedWorld {
     pub rows: Vec<ObservedRow>,
     pub queries: Vec<ObservedQuery>,
+    /// Every key path inside each query term's wire form ([`key_paths`]),
+    /// which the parser above reads only in part.
+    pub query_fields: Vec<Vec<String>>,
 }
 
 impl ObservedWorld {
@@ -119,6 +124,7 @@ impl ObservedWorld {
         Self {
             rows: rows.iter().map(row).collect(),
             queries: queries.iter().map(|(kind, q)| query(*kind, q)).collect(),
+            query_fields: queries.iter().map(|(_, q)| key_paths(q)).collect(),
         }
     }
 }
@@ -134,6 +140,36 @@ fn b64_16(text: &Value) -> Tag16 {
 
 fn b64_8(text: &Value) -> Tag8 {
     b64(text).try_into().expect("an eight-byte tag")
+}
+
+/// Every key path in `value`, sorted: `k` for a key at the top, `k.j` below
+/// it, and `k[].j` below an array's elements. What a field the parser does
+/// not read would show in.
+pub fn key_paths(value: &Value) -> Vec<String> {
+    fn walk(value: &Value, at: &str, out: &mut std::collections::BTreeSet<String>) {
+        match value {
+            Value::Object(map) => {
+                for (key, child) in map {
+                    let path = if at.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{at}.{key}")
+                    };
+                    let _ = out.insert(path.clone());
+                    walk(child, &path, out);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    walk(item, &format!("{at}[]"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = std::collections::BTreeSet::new();
+    walk(value, "", &mut out);
+    out.into_iter().collect()
 }
 
 fn keys(value: &Value) -> Vec<String> {
@@ -212,6 +248,7 @@ fn row(value: &Value) -> ObservedRow {
             .map(entry)
             .collect(),
         q: group(&value["q"]),
+        q_fields: key_paths(&value["q"]),
     }
 }
 

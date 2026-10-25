@@ -43,6 +43,7 @@ macro_rules! registry {
 
 registry!(
     wire_fields,
+    term_fields,
     entry_counts,
     parent_tag_presence,
     ordering_term_presence,
@@ -128,6 +129,17 @@ pub fn wire_fields(world: &ObservedWorld) -> Vec<(Vec<String>, Vec<Vec<String>>)
             )
         })
         .collect()
+}
+
+/// Every key path inside each row's projection `q` and inside each query
+/// term as it is sent: catches a term field the profile does not account
+/// for, which the parser (`observe`) would otherwise drop unread, as
+/// [`wire_fields`] does for the rows and entries.
+pub fn term_fields(world: &ObservedWorld) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    (
+        world.rows.iter().map(|r| r.q_fields.clone()).collect(),
+        world.query_fields.clone(),
+    )
 }
 
 /// How many entries each row has: the node count.
