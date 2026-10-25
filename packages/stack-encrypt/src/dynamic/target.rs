@@ -657,6 +657,16 @@ mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
 
+    #[test]
+    fn json_options_are_read_back_as_given() {
+        let mut options = JsonOptions::new();
+        options.sealed_root = false;
+        let _ = options.ordered.insert("$.age".parse().unwrap());
+        let target = TargetOptions::Json(options.clone());
+        assert_eq!(target.json(), Some(&options));
+        assert_ne!(target.json(), Some(&JsonOptions::default()));
+    }
+
     fn text_eq() -> TargetDescriptor {
         TargetDescriptor::new(
             "TextEq",
