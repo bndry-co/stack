@@ -419,9 +419,9 @@ mod the_harness {
     /// so `N = 64`, at two), the probe is the last token at its level and
     /// finds the element where the path's other tokens find the leaf below
     /// it, and which tokens find a node says which elements hold the rest of
-    /// the path. `json_tree_subtree`'s comment that "the server cannot tell
-    /// a probe from any other token" is true of a token's bytes and of
-    /// nothing else.
+    /// the path. `json_tree_subtree`'s comment once said "the server
+    /// cannot tell a probe from any other token", which is true of a token's
+    /// bytes and of nothing else; #1363 corrected it.
     #[test]
     fn a_read_gives_away_its_bound_and_its_probes() {
         let runtime = runtime();
@@ -444,23 +444,36 @@ mod the_harness {
             ],
         };
         let observed = real_world(&runtime, &cipher, &world);
-        assert_eq!(distinguishers::token_counts(&observed), [65, 4161]);
+        assert_eq!(
+            distinguishers::token_counts(&observed),
+            [65, 4161],
+            "one wildcard level sends N + 1 tokens, two send N² + N + 1"
+        );
         // 4,161 is also one level at a bound of 4,160; which tokens find a
         // node (the 65th finds `$.items[0].tags[64]`'s absence, not an
         // item) is what tells the reading apart.
         assert_eq!(
             distinguishers::bound_recovery(&observed),
-            [vec![(1, 64)], vec![(1, 4160), (2, 64)]]
+            [vec![(1, 64)], vec![(1, 4160), (2, 64)]],
+            "the count alone gives the bound"
         );
         let price = &distinguishers::wildcard_positions(&observed)[0];
         let price = price.as_ref().expect("a wildcard read");
         // No items; three, the second without a price; seventy, the
         // second without a price, longer than the bound.
-        assert_eq!(price[0], (vec![], false, None));
-        assert_eq!(price[1], (vec![0, 2], false, None));
+        assert_eq!(price[0], (vec![], false, None), "no items, no hits");
+        assert_eq!(
+            price[1],
+            (vec![0, 2], false, None),
+            "three items, the second without a price"
+        );
         let mut most: Vec<usize> = (0..64).collect();
         most.retain(|&i| i != 1);
-        assert_eq!(price[2], (most, true, Some(true)));
+        assert_eq!(
+            price[2],
+            (most, true, Some(true)),
+            "seventy items: the probe finds the element, under another selector"
+        );
     }
 
     /// `distinguishers::cross_kind_equalities` can fire: it is empty on the

@@ -92,7 +92,10 @@
 //!   on a column whose rows vary, which is the page's claim that the stored
 //!   order reveals each row's shape; and on the real scheme a wildcard
 //!   read's token list gives its bound and its probes away
-//!   (`a_read_gives_away_its_bound_and_its_probes`).
+//!   (`a_read_gives_away_its_bound_and_its_probes`). Two features no mutant
+//!   can reach are shown to fire: `cross_kind_equalities` on a world whose
+//!   token is a stored selector, and `token_derivability` on a read of a
+//!   position past every row's array.
 //!
 //! # What the profile found
 //!
@@ -115,13 +118,13 @@
 //! Against the SQL's own comment, not the page:
 //!
 //! 2. **A probe is told from the other tokens.** `json_tree_subtree`'s
-//!    comment says "the server cannot tell a probe from any other token".
+//!    comment said "the server cannot tell a probe from any other token".
 //!    It cannot from the token's bytes, but the probe is the last token at
 //!    its level, the count gives the bound away (65 tokens is one level at
 //!    `N = 64` and nothing else), and a probe that finds something finds
 //!    the element, whose selector differs from the leaf the path's other
-//!    tokens find. `a_read_gives_away_its_bound_and_its_probes`. The leakage
-//!    page does not repeat the claim; the comment is left to #1363.
+//!    tokens find. `a_read_gives_away_its_bound_and_its_probes`. #1363
+//!    corrected the comment, which now says the server "can pick it out".
 //!
 //! The three findings against the page as it stood before #1363 (an
 //! ordering term's length, equal values at two ordered paths, UTF-8 byte
