@@ -221,6 +221,13 @@ func (p CustomerProfileFieldPath) Between(ctx context.Context, c *encrypt.Cipher
 	return gensupport.JSONBetweenAt[eql.EncryptedJSONLeafQuery](ctx, p.field, c, p.path, lo, hi)
 }
 
+// Selector prepares `->` at this path: the value an ordering here compares is
+// col -> Selector(), so bind it beside the ordering's operand, from the same
+// path.
+func (p CustomerProfileFieldPath) Selector(ctx context.Context, c *encrypt.Cipher) (encrypt.JSONSelection[eql.EncryptedJSONEntry], error) {
+	return gensupport.JSONSelect[eql.EncryptedJSONEntry](ctx, p.field, c, p.path)
+}
+
 type CustomerPrefsField struct {
 	field gensupport.Field[json.RawMessage]
 }

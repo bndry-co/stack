@@ -101,8 +101,14 @@ func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string
 // It is column-wide: the same path has the same selector in every row.
 type JSONSelector string
 
-// Value binds the selector as text.
-func (s JSONSelector) Value() (driver.Value, error) { return string(s), nil }
+// Value binds the selector as text. A zero JSONSelector (one never
+// prepared) is refused rather than bound as ”, which matches no row.
+func (s JSONSelector) Value() (driver.Value, error) {
+	if s == "" {
+		return nil, fmt.Errorf("%w: an empty JSONSelector: prepare one with the field's Selector", ErrEncoding)
+	}
+	return string(s), nil
+}
 
 // JSONToken is one node's token: what eql_v4.json_tree_children and
 // eql_v4.json_tree_child_count take. It binds as SQL text. A token is a
@@ -110,8 +116,14 @@ func (s JSONSelector) Value() (driver.Value, error) { return string(s), nil }
 // to the database for a query, and do not log it.
 type JSONToken string
 
-// Value binds the token as text.
-func (t JSONToken) Value() (driver.Value, error) { return string(t), nil }
+// Value binds the token as text. A zero JSONToken is refused, as a zero
+// JSONSelector is.
+func (t JSONToken) Value() (driver.Value, error) {
+	if t == "" {
+		return nil, fmt.Errorf("%w: an empty JSONToken: derive one with the field's Children or ChildCount", ErrEncoding)
+	}
+	return string(t), nil
+}
 
 // JSONTokens are a subtree read's tokens: what eql_v4.json_tree_subtree
 // takes. They bind as a PostgreSQL text[] literal; cast the parameter,
@@ -196,10 +208,16 @@ func (s JSONSelection[E]) Open(ctx context.Context, rows []*E) ([]JSONValue, err
 		return nil, fmt.Errorf("%w: a zero JSONSelection has no request to open against", ErrEncoding)
 	}
 	groups := make([][][]byte, len(rows))
+	entries := false
 	for i, row := range rows {
 		if row != nil {
 			groups[i] = [][]byte{[]byte(*row)}
+			entries = true
 		}
+	}
+	// No row has an entry: nothing to open, and no key to ask for.
+	if !entries {
+		return make([]JSONValue, len(rows)), nil
 	}
 	opened, err := s.cipher.JSONOpen(ctx, s.plan, s.field, vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: s.path}}, groups)
 	if err != nil {
@@ -207,8 +225,12 @@ func (s JSONSelection[E]) Open(ctx context.Context, rows []*E) ([]JSONValue, err
 	}
 	out := make([]JSONValue, len(opened))
 	for i, values := range opened {
-		if len(values) == 1 {
+		switch len(values) {
+		case 0:
+		case 1:
 			out[i] = JSONValue{Found: true, JSON: values[0]}
+		default:
+			return nil, fmt.Errorf("%w: se_json_open opened %d values for row %d of a selector read", ErrInternal, len(values), i)
 		}
 	}
 	return out, nil
@@ -225,14 +247,16 @@ type JSONRead[E ~[]byte] struct {
 	plan   *record.Plan
 	field  string
 	path   string
-	bound  uint32
+	// input is the subtree operator's input the tokens were derived from;
+	// opening sends it back as the read's request, unchanged.
+	input  vcvalue.Object
 	tokens JSONTokens
 }
 
-// NewJSONRead is a read prepared by [Cipher.QueryTerm]'s subtree operator.
-// For generated code.
-func NewJSONRead[E ~[]byte](c *Cipher, plan *record.Plan, field, path string, bound uint32, tokens []string) JSONRead[E] {
-	return JSONRead[E]{cipher: c, plan: plan, field: field, path: path, bound: bound, tokens: JSONTokens(tokens)}
+// NewJSONRead is a read prepared by [Cipher.QueryTerm]'s subtree operator
+// from input, its {"path", "wildcard_bound"?} object. For generated code.
+func NewJSONRead[E ~[]byte](c *Cipher, plan *record.Plan, field, path string, input vcvalue.Object, tokens []string) JSONRead[E] {
+	return JSONRead[E]{cipher: c, plan: plan, field: field, path: path, input: input, tokens: JSONTokens(tokens)}
 }
 
 // Tokens are the tokens to bind:
@@ -262,10 +286,7 @@ func (r JSONRead[E]) Open(ctx context.Context, rows [][]E) ([][]json.RawMessage,
 			groups[i][j] = []byte(entry)
 		}
 	}
-	request := vcvalue.Object{{Key: "operation", Value: "subtree"}, {Key: "path", Value: r.path}}
-	if r.bound != 0 {
-		request = append(request, vcvalue.Field{Key: "wildcard_bound", Value: r.bound})
-	}
+	request := append(vcvalue.Object{{Key: "operation", Value: "subtree"}}, r.input...)
 	opened, err := r.cipher.JSONOpen(ctx, r.plan, r.field, request, groups)
 	if err != nil {
 		return nil, err
@@ -285,6 +306,11 @@ func (r JSONRead[E]) Open(ctx context.Context, rows [][]E) ([][]json.RawMessage,
 // reaches more than one value (a wildcard) is [ErrEncoding]; open it with
 // [JSONRead.Open].
 func (r JSONRead[E]) OpenOne(ctx context.Context, rows []E) (JSONValue, error) {
+	// A wildcard reaches a value per element: refused before anything is
+	// opened, not only for the rows that happen to hold two.
+	if strings.Contains(r.path, "[*]") {
+		return JSONValue{}, fmt.Errorf("%w: OpenOne reads one value, and %s has a wildcard; open it with Open", ErrEncoding, r.path)
+	}
 	opened, err := r.Open(ctx, [][]E{rows})
 	if err != nil {
 		return JSONValue{}, err

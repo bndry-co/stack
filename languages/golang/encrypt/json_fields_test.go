@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
 )
 
@@ -81,7 +83,7 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 	if err != nil || len(contains) == 0 {
 		t.Fatalf("Contains: %v", err)
 	}
-	if v, err := contains.Value(); err != nil || !strings.Contains(v.(string), `"sv"`) {
+	if v, err := contains.Value(); err != nil || !strings.Contains(fmt.Sprint(v), `"sv"`) {
 		t.Fatalf("Contains binds as JSON: %v %v", v, err)
 	}
 	if _, err := f.ContainedBy(ctx, cipher, json.RawMessage(`{"name":"Alice","age":34}`)); err != nil {
@@ -105,11 +107,36 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 	if err != nil || len(read.Tokens()) != 3 {
 		t.Fatalf("Subtree: %v %v", read.Tokens(), err)
 	}
-	if v, err := read.Tokens().Value(); err != nil || !strings.HasPrefix(v.(string), `{"`) {
+	if v, err := read.Tokens().Value(); err != nil || !strings.HasPrefix(fmt.Sprint(v), `{"`) {
 		t.Fatalf("Tokens bind as a text[] literal: %v %v", v, err)
 	}
 	if _, err := f.Children(ctx, cipher, "$.visits"); err != nil {
 		t.Fatal(err)
+	}
+	// An ordered path's own selector is the field's at that path.
+	pathSel, err := f.At.VisitsAt.Selector(ctx, cipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fieldSel, _ := f.Selector(ctx, cipher, "$.visits[*].at"); pathSel.Selector() != fieldSel.Selector() {
+		t.Fatal("the accessor's selector is another path's")
+	}
+	// OpenOne refuses a wildcard read before anything is opened, whatever
+	// the rows hold; a zero selector or token binds nothing.
+	if _, err := read.OpenOne(ctx, nil); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("OpenOne on a wildcard read: %v", err)
+	}
+	if _, err := (encrypt.JSONSelector("")).Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a zero selector binds: %v", err)
+	}
+	if _, err := (encrypt.JSONToken("")).Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a zero token binds: %v", err)
+	}
+	// A selection over rows with no entry opens to no value without a
+	// request.
+	none, err := sel.Open(ctx, make([]*eql.EncryptedJSONEntry, 3))
+	if err != nil || len(none) != 3 || none[0].Found || none[2].Found {
+		t.Fatalf("an empty page: %+v %v", none, err)
 	}
 	// What the engine refuses: an ordering on a value no ordering takes, a
 	// container at a path, a position in a selector, a wildcard where one

@@ -6,16 +6,20 @@ import (
 	"fmt"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // The operators of a field stored as an EncryptedJSON document, for the
 // generated methods of its Fields entry. Each sends the operator's named
-// inputs, JSON values as their JSON text, and checks the engine answered
-// in the encoding the method returns.
+// inputs, JSON values as their JSON text ([]byte of the json.RawMessage),
+// and checks the engine answered in the encoding and with the number of
+// parts the method returns.
 
-// jsonTerm derives one JSON operator's term on the field.
-func (f Field[T]) jsonTerm(ctx context.Context, c *encrypt.Cipher, operator, encoding string, input vcvalue.Object) (encrypt.QueryTerm, error) {
+// jsonTerm derives one JSON operator's term on the field: an exact term in
+// encoding, of parts byte strings ("eql") or texts ("text"); parts 0 takes
+// any number of texts ("text_array").
+func (f Field[T]) jsonTerm(ctx context.Context, c *encrypt.Cipher, operator, encoding string, parts int, input vcvalue.Object) (encrypt.QueryTerm, error) {
 	if f.err != nil {
 		return encrypt.QueryTerm{}, f.err
 	}
@@ -26,21 +30,22 @@ func (f Field[T]) jsonTerm(ctx context.Context, c *encrypt.Cipher, operator, enc
 	if err != nil {
 		return encrypt.QueryTerm{}, err
 	}
-	if term.Encoding != encoding || term.Fidelity != "exact" {
-		return encrypt.QueryTerm{}, fmt.Errorf("gensupport: %s: %s came back as a %s %s term, not an exact %s one", f.name, operator, term.Fidelity, term.Encoding, encoding)
+	got := len(term.Terms)
+	if encoding == "text" || encoding == "text_array" {
+		got = len(term.Text)
+	}
+	if term.Encoding != encoding || term.Fidelity != record.Exact || (parts != 0 && got != parts) {
+		return encrypt.QueryTerm{}, fmt.Errorf("gensupport: %s: %s came back as a %s %s term of %d parts, not an exact %s one of %d", f.name, operator, term.Fidelity, term.Encoding, got, encoding, parts)
 	}
 	return term, nil
 }
 
-// jsonText is a JSON value as an input carries it: its text, as bytes.
-func jsonText(v json.RawMessage) []byte { return []byte(v) }
-
 // JSONQuery derives a containment operator's query on a JSON field
 // (contains, contained_by): the needle's projection, Q.
 func JSONQuery[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, operator string, needle json.RawMessage) (Q, error) {
-	term, err := f.jsonTerm(ctx, c, operator, "eql", vcvalue.Object{{Key: "json", Value: jsonText(needle)}})
-	if err != nil || len(term.Terms) != 1 {
-		return nil, oneTermErr(f.name, operator, err)
+	term, err := f.jsonTerm(ctx, c, operator, "eql", 1, vcvalue.Object{{Key: "json", Value: []byte(needle)}})
+	if err != nil {
+		return nil, err
 	}
 	return Q(term.Terms[0]), nil
 }
@@ -49,9 +54,9 @@ func JSONQuery[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cip
 // lte_at, gt_at, gte_at): Q is the needle for eq_at and the leaf operand
 // for the orderings.
 func JSONQueryAt[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, operator, path string, v json.RawMessage) (Q, error) {
-	term, err := f.jsonTerm(ctx, c, operator, "eql", vcvalue.Object{{Key: "path", Value: path}, {Key: "json", Value: jsonText(v)}})
-	if err != nil || len(term.Terms) != 1 {
-		return nil, oneTermErr(f.name, operator, err)
+	term, err := f.jsonTerm(ctx, c, operator, "eql", 1, vcvalue.Object{{Key: "path", Value: path}, {Key: "json", Value: []byte(v)}})
+	if err != nil {
+		return nil, err
 	}
 	return Q(term.Terms[0]), nil
 }
@@ -59,12 +64,9 @@ func JSONQueryAt[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.C
 // JSONBetweenAt derives between_at on a JSON field: the two leaf operands,
 // low then high, inclusive.
 func JSONBetweenAt[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, path string, lo, hi json.RawMessage) (encrypt.JSONRange[Q], error) {
-	term, err := f.jsonTerm(ctx, c, "between_at", "eql", vcvalue.Object{{Key: "path", Value: path}, {Key: "low", Value: jsonText(lo)}, {Key: "high", Value: jsonText(hi)}})
+	term, err := f.jsonTerm(ctx, c, "between_at", "eql", 2, vcvalue.Object{{Key: "path", Value: path}, {Key: "low", Value: []byte(lo)}, {Key: "high", Value: []byte(hi)}})
 	if err != nil {
 		return encrypt.JSONRange[Q]{}, err
-	}
-	if len(term.Terms) != 2 {
-		return encrypt.JSONRange[Q]{}, fmt.Errorf("gensupport: %s: between_at came back as %d terms, not 2", f.name, len(term.Terms))
 	}
 	return encrypt.JSONRange[Q]{Low: Q(term.Terms[0]), High: Q(term.Terms[1])}, nil
 }
@@ -72,10 +74,7 @@ func JSONBetweenAt[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt
 // JSONSelect prepares `->` at a path on a JSON field: the selector to
 // bind, and what opens the entries it returns. E is the field's entry type.
 func JSONSelect[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, path string) (encrypt.JSONSelection[E], error) {
-	term, err := f.jsonTerm(ctx, c, "selector", "text", vcvalue.Object{{Key: "path", Value: path}})
-	if err == nil && len(term.Text) != 1 {
-		err = fmt.Errorf("gensupport: %s: selector came back as %d texts, not 1", f.name, len(term.Text))
-	}
+	term, err := f.jsonTerm(ctx, c, "selector", "text", 1, vcvalue.Object{{Key: "path", Value: path}})
 	if err != nil {
 		return encrypt.JSONSelection[E]{}, err
 	}
@@ -83,36 +82,28 @@ func JSONSelect[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Ci
 }
 
 // JSONSubtree prepares a subtree read at a path on a JSON field: the
-// tokens to bind, and what opens the rows they return.
+// tokens to bind, and what opens the rows they return. The request is
+// built once, here, and the read keeps it: opening sends the engine the
+// same request the tokens were derived from.
 func JSONSubtree[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, path string, opts encrypt.JSONReadOptions) (encrypt.JSONRead[E], error) {
 	input := vcvalue.Object{{Key: "path", Value: path}}
 	if opts.WildcardBound != 0 {
 		input = append(input, vcvalue.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
 	}
-	term, err := f.jsonTerm(ctx, c, "subtree", "text_array", input)
+	term, err := f.jsonTerm(ctx, c, "subtree", "text_array", 0, input)
 	if err != nil {
 		return encrypt.JSONRead[E]{}, err
 	}
-	return encrypt.NewJSONRead[E](c, f.plan, f.name, path, opts.WildcardBound, term.Text), nil
+	return encrypt.NewJSONRead[E](c, f.plan, f.name, path, input, term.Text), nil
 }
 
 // JSONNodeToken derives the token of the node at a path with no wildcard
 // (children, child_count), which json_tree_children and
 // json_tree_child_count take.
 func JSONNodeToken[T any](ctx context.Context, f Field[T], c *encrypt.Cipher, operator, path string) (encrypt.JSONToken, error) {
-	term, err := f.jsonTerm(ctx, c, operator, "text", vcvalue.Object{{Key: "path", Value: path}})
-	if err == nil && len(term.Text) != 1 {
-		err = fmt.Errorf("gensupport: %s: %s came back as %d texts, not 1", f.name, operator, len(term.Text))
-	}
+	term, err := f.jsonTerm(ctx, c, operator, "text", 1, vcvalue.Object{{Key: "path", Value: path}})
 	if err != nil {
 		return "", err
 	}
 	return encrypt.JSONToken(term.Text[0]), nil
-}
-
-func oneTermErr(field, operator string, err error) error {
-	if err != nil {
-		return err
-	}
-	return fmt.Errorf("gensupport: %s: %s came back as other than one term", field, operator)
 }

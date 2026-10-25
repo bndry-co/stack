@@ -117,6 +117,7 @@ A `json.RawMessage` field with `encrypt_into=EncryptedJson` is stored as one enc
 The field holds the document's JSON text; the engine parses it, so an object that names a member twice, an integer outside the 64-bit range and text that is not JSON are refused with `encrypt.ErrEncoding`.
 Values come back as JSON text holding the same values; key order and the spelling of numbers are not kept.
 A `*json.RawMessage` field is optional and must say `null=sql`: a document has no fixed length to hide a missing one behind. A non-nil pointer to `null` is a stored JSON `null`.
+A `json.RawMessage` sealed any other way (`encrypt`, `index=equality`) is bytes, as any type defined over `[]byte` is.
 
 The type takes options in parentheses: `ordered=` names the paths whose numbers and strings carry an ordering term, separated by `;`, and `sealed_root=false` turns off the sealed root (on by default).
 `encrypt_into=EncryptedJson(ordered=$.age;$.visits[*].at)` orders two paths.
@@ -128,12 +129,14 @@ The field's `Fields` entry has a method per operation:
 |---|---|---|
 | `Contains(ctx, c, needle)`, `ContainedBy(ctx, c, needle)` | `eql.EncryptedJSONQuery` | `col @> $1::eql_v4.query_json_tree`, `col <@ $1::eql_v4.query_json_tree` |
 | `EqAt(ctx, c, path, v)` | `eql.EncryptedJSONQuery` | `col @> $1::eql_v4.query_json_tree` |
-| `At.Age.Lt(ctx, c, v)`, `Lte`, `Gt`, `Gte`, `Between` | `eql.EncryptedJSONLeafQuery` | `(col -> $sel::text) < $1::eql_v4.query_json_tree_leaf` |
+| `At.Age.Lt(ctx, c, v)`, `Lte`, `Gt`, `Gte`, `Between` | `eql.EncryptedJSONLeafQuery` | `(col -> $sel::text) < $1::eql_v4.query_json_tree_leaf`, `$sel` from `At.Age.Selector(ctx, c)` |
 | `Selector(ctx, c, path)` | `encrypt.JSONSelection`: `Selector()` and `Open` | `col -> $1::text` |
 | `Subtree(ctx, c, path, opts)` | `encrypt.JSONRead`: `Tokens()`, `Open` and `OpenOne` | `eql_v4.json_tree_subtree(col, $1::text[], 64)` |
 | `Children(ctx, c, path)`, `ChildCount(ctx, c, path)` | `encrypt.JSONToken` | `eql_v4.json_tree_children(col, $1::text)`, `eql_v4.json_tree_child_count(col, $1::text)` |
 
-`At` has one accessor per ordered path, named for its keys (`$.visits[*].at` is `At.VisitsAt`); two paths with one name stop `stashgen`.
+`At` has one accessor per ordered path, named for its keys (`$.visits[*].at` is `At.VisitsAt`, `$.a.1` is `At.A1`); two paths with one name, or one path given twice, stop `stashgen`.
+An ordering compares the value `->` extracts at its path, and EQL's `<` compares ordering terms alone, so take the selector from the same accessor (`At.Age.Selector`) rather than spelling the path again.
+`OpenOne` reads one value and refuses a read whose path has a wildcard before anything is opened; open a wildcard read with `Open`.
 The needle and the values are `json.RawMessage`: write the JSON you mean, such as `json.RawMessage(`+"`"+`{"active":true}`+"`"+`)`.
 A position in a path is refused for `EqAt` and `Selector`, whose selector reads every position as the wildcard; read a position with `Subtree`.
 

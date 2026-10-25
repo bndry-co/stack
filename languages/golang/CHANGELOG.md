@@ -19,10 +19,13 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `*json.RawMessage` field takes `null=sql`. Its `Fields` entry has
   `Contains`, `ContainedBy`, `EqAt`, `Selector`, `Subtree`, `Children` and
   `ChildCount`, and `At.<Path>` per ordered path with `Lt`, `Lte`, `Gt`,
-  `Gte` and `Between`. `encrypt.JSONSelection` and `encrypt.JSONRead` open
-  the rows `->` and `eql_v4.json_tree_subtree` return against the request
-  that prepared them; `encrypt.JSONSelector`, `JSONToken` and `JSONTokens`
-  bind as `text` and `text[]`. `gensupport.JSON`, `TargetOptions`,
+  `Gte`, `Between` and the path's own `Selector`. `encrypt.JSONSelection`
+  and `encrypt.JSONRead` open the rows `->` and `eql_v4.json_tree_subtree`
+  return against the request that prepared them (`OpenOne` refuses a
+  wildcard read up front); `encrypt.JSONSelector`, `JSONToken` and
+  `JSONTokens` bind as `text` and `text[]`, and a zero selector or token is
+  refused rather than bound. A `json.RawMessage` sealed any other way stays
+  bytes. `gensupport.JSON`, `TargetOptions`,
   `Declaration.Options` and the `JSON*` helpers are the generated code's.
 
 - **Query and read an encrypted JSON document, at the record level**

@@ -714,6 +714,17 @@ func (r *reader) buildFields(c *collected) error {
 		if t.Omit {
 			field.Verb = VerbOmit
 		}
+		// A json.RawMessage is a document only where it names an EQL type
+		// that stores one; sealed or indexed any other way it is bytes, as
+		// it was before documents were.
+		for g := &field.GoType; g != nil; g = g.Elem {
+			if g.Kind == KindJSON && field.Verb != VerbEncryptInto {
+				g.Kind, g.Basic = KindBytes, "[]byte"
+			}
+			if g.Kind != KindPointer {
+				break
+			}
+		}
 		// A sealed field declared over a pointer to one scalar may be nil:
 		// it is that scalar's field, and says how it stores nil (#1298).
 		pointer := field.Sealed() && field.GoType.Kind == KindPointer && field.GoType.Elem != nil && field.GoType.Elem.Kind.Scalar()

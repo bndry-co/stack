@@ -333,6 +333,20 @@ func TestRunGeneratesEncryptedJSONFields(t *testing.T) {
 	if strings.Contains(written, "PrefsFieldAt") {
 		t.Error("Prefs orders no path, and got an At")
 	}
+	if !strings.Contains(written, "func (p ProfileFieldPath) Selector(ctx context.Context, c *encrypt.Cipher) (encrypt.JSONSelection[eql.EncryptedJSONEntry], error)") {
+		t.Error("an ordered path has no Selector of its own")
+	}
+	// A json.RawMessage sealed any other way is bytes, as it was before
+	// documents; an object key of digits names its accessor.
+	written, stderr, code = generate("\tData json.RawMessage `stash:\"data,encrypt,index=equality\"`\n\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJson(ordered=$.a.1)\"`")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	for _, want := range []string{`EncryptIndex("data", gensupport.Bytes`, "A1 ProfileFieldPath // $.a.1"} {
+		if !strings.Contains(written, want) {
+			t.Errorf("the generated file lacks %q", want)
+		}
+	}
 	for _, c := range []struct{ name, fields, want string }{
 		{"a sealed null", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=EncryptedJson,null=sealed\"`", "Customer.Prefs"},
 		{"a nil document that does not say null=sql", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=EncryptedJson\"`", "null=sql"},
@@ -341,7 +355,8 @@ func TestRunGeneratesEncryptedJSONFields(t *testing.T) {
 		{"an unknown option", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJson(bound=3)\"`", "no option \"bound\""},
 		{"the Go name in the tag", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJSON\"`", "as the engine does, EncryptedJson"},
 		{"two paths, one accessor", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJson(ordered=$.a_b;$.aB)\"`", "both name the accessor At.AB"},
-		{"a document with no target", "\tProfile json.RawMessage `stash:\"profile,encrypt\"`", "the engine refuses the declaration"},
+		{"the same ordered path twice", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJson(ordered=$.a;$.a)\"`", "the ordered path $.a is given twice"},
+		{"a path with no accessor name", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=EncryptedJson(ordered=$.__)\"`", "no Go accessor name"},
 		{"a string into a document", "\tProfile string `stash:\"profile,encrypt_into=EncryptedJson\"`", "EncryptedJson seals a json"},
 		{"options on a type that takes none", "\tEmail string `stash:\"email,encrypt_into=TextEq(ordered=$.a)\"`", "the engine refuses the declaration"},
 	} {

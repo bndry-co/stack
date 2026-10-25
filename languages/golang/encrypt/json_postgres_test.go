@@ -99,6 +99,9 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 		}
 		stored = append(stored, e)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
 	_ = rows.Close()
 	back, err := testusers.DecryptCustomer(ctx, c, stored)
 	if err != nil {
@@ -127,8 +130,9 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 	}
 	want("prefs contains", ids(`SELECT id FROM customers WHERE prefs @> $1::eql_v4.query_json_tree ORDER BY id`, pq), 1)
 
-	// Orderings at an ordered path compare the leaf `->` extracts there.
-	age, err := f.Selector(ctx, cipher, "$.age")
+	// Orderings at an ordered path compare the leaf `->` extracts there,
+	// selected by the accessor's own Selector, so the path is named once.
+	age, err := f.At.Age.Selector(ctx, cipher)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +146,7 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	want("age between", ids(`SELECT id FROM customers WHERE (profile -> $1::text) >= $2::eql_v4.query_json_tree_leaf AND (profile -> $1::text) <= $3::eql_v4.query_json_tree_leaf ORDER BY id`, age.Selector(), rng.Low, rng.High), 1, 3)
-	at, err := f.Selector(ctx, cipher, "$.visits[*].at")
+	at, err := f.At.VisitsAt.Selector(ctx, cipher)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +172,9 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 				t.Fatal(err)
 			}
 			entries = append(entries, e)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
 		}
 		values, err := sel.Open(ctx, entries)
 		if err != nil {
@@ -212,6 +219,9 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 				}
 				groups[i] = append(groups[i], e)
 			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
 			_ = rows.Close()
 		}
 		opened, err := read.Open(ctx, groups)
@@ -254,6 +264,9 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 		}
 		entries = append(entries, e)
 	}
+	if err := rs.Err(); err != nil {
+		t.Fatal(err)
+	}
 	_ = rs.Close()
 	one, err := visits.OpenOne(ctx, entries)
 	if err != nil || !one.Found || !sameJSON(t, one.JSON, []byte(`[{"at":3},{"at":1}]`)) {
@@ -280,6 +293,9 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 		} else {
 			counts = append(counts, "NULL")
 		}
+	}
+	if err := cr.Err(); err != nil {
+		t.Fatal(err)
 	}
 	_ = cr.Close()
 	if !slices.Equal(counts, []string{"2", "1", "0", "NULL"}) {

@@ -25,6 +25,11 @@ func emit(f *genFile) ([]byte, error) {
 	if err := planQueries(f); err != nil {
 		return nil, err
 	}
+	// Planning adds imports (encoding/json for a document field): a clash
+	// it makes is refused here, before anything is written.
+	if f.imports.err != nil {
+		return nil, f.imports.err
+	}
 	w := &writer{}
 	w.header(f)
 	w.encryptedType(f)
@@ -989,15 +994,27 @@ var jsonOperators = map[string]bool{
 // planJSON checks a document field's operators against the methods the
 // generator writes for them, and names each ordered path's accessor.
 func planJSON(f *genFile, g *genField) error {
+	document := false
 	for _, op := range g.operators {
 		if !jsonOperators[op.Name] {
 			return fieldErr(f.typeName, g.GoName, "the engine answers %s on %s, which the generator has no method for", op.Name, g.EQLType)
 		}
+		document = document || op.Name == "selector"
+	}
+	// The engine answers selector for a field whose type stores a json_tree
+	// document; the leaf and entry types below are that family's.
+	if !document {
+		return fieldErr(f.typeName, g.GoName, "the engine answers no document operator on %s, and the generator writes json.RawMessage fields of EncryptedJson only", g.EQLType)
 	}
 	g.jsonPaths = nil
 	seen := map[string]string{}
+	given := map[string]bool{}
 	if g.TargetOptions != nil {
 		for _, path := range g.TargetOptions.Ordered {
+			if given[path] {
+				return fieldErr(f.typeName, g.GoName, "the ordered path %s is given twice", path)
+			}
+			given[path] = true
 			name, err := jsonPathName(path)
 			if err != nil {
 				return fieldErr(f.typeName, g.GoName, "%v", err)
@@ -1014,11 +1031,16 @@ func planJSON(f *genFile, g *genField) error {
 }
 
 // jsonPathName is an ordered path's accessor name: its keys in Go case,
-// array steps dropped. $.age is Age, $.visits[*].at is VisitsAt, $ is Root.
+// wildcard steps dropped. $.age is Age, $.visits[*].at is VisitsAt, $.a.1
+// is A1, and $ is Root. An ordered path names no position (the engine
+// refuses one), so a step of digits is an object key.
 func jsonPathName(path string) (string, error) {
+	if path == "$" {
+		return "Root", nil
+	}
 	var b strings.Builder
 	for _, step := range strings.FieldsFunc(strings.TrimPrefix(path, "$"), func(r rune) bool { return r == '.' || r == '[' || r == ']' }) {
-		if step == "*" || strings.Trim(step, "0123456789") == "" {
+		if step == "*" {
 			continue
 		}
 		for _, word := range strings.Split(step, "_") {
@@ -1028,11 +1050,8 @@ func jsonPathName(path string) (string, error) {
 		}
 	}
 	name := b.String()
-	if name == "" {
-		name = "Root"
-	}
-	if !isIdent(name) || name[0] < 'A' || name[0] > 'Z' {
-		return "", fmt.Errorf("the ordered path %s has no Go accessor name: a key starts with a digit", path)
+	if name == "" || !isIdent(name) || name[0] < 'A' || name[0] > 'Z' {
+		return "", fmt.Errorf("the ordered path %s has no Go accessor name: its keys give no name that starts with a letter", path)
 	}
 	return name, nil
 }
@@ -1160,6 +1179,13 @@ func (w *writer) jsonEntry(g genField) {
 		w.nl()
 		w.p("func (p %sPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi json.RawMessage) (encrypt.JSONRange[%s], error) {", g.fieldType, leaf)
 		w.p("\treturn gensupport.JSONBetweenAt[%s](ctx, p.field, c, p.path, lo, hi)", leaf)
+		w.p("}")
+	}
+	if answered["selector"] {
+		w.nl()
+		w.b.WriteString(wrapComment("Selector prepares `->` at this path: the value an ordering here compares is col -> Selector(), so bind it beside the ordering's operand, from the same path.", 80))
+		w.p("func (p %sPath) Selector(ctx context.Context, c *encrypt.Cipher) (encrypt.JSONSelection[%s], error) {", g.fieldType, entry)
+		w.p("\treturn gensupport.JSONSelect[%s](ctx, p.field, c, p.path)", entry)
 		w.p("}")
 	}
 }
