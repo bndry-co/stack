@@ -1513,7 +1513,9 @@ fn labelled_token(parent: &Tag, s: &Tag, label: &Label) -> Option<Tag> {
 /// that it carries the selector of `node`'s path, whose selector bytes are
 /// `bytes`, extended by its own label; and that it carries the self tag of
 /// the token its label derives under `token`, `node`'s. A sealed root
-/// among the rows is not a node of any walk.
+/// among the rows is not a node of any walk. Rows that end before `node`'s
+/// authenticated child count is met are refused like a gap: a read returns
+/// a node's whole subtree, so the database left the next node out.
 ///
 /// The rows are consecutive entries of one sealed document, placed by its
 /// authenticated child counts, so they nest no deeper than the document
@@ -1536,9 +1538,11 @@ fn rebuild_walked(
     }
     let next = || wrong("the next node of the walked subtree");
     let child = |rest: &mut dyn Iterator<Item = Row>, cursor: &mut u64| {
-        let row = rest
-            .next()
-            .ok_or_else(|| shape("a complete JSON subtree"))?;
+        // A read returns a node's whole subtree and stops at no budget
+        // short of it (the SQL falls back to the sealed root instead), so
+        // rows that run out before a child count is met are a row left out
+        // at the end, the same refusal as one left out in the middle.
+        let row = rest.next().ok_or_else(next)?;
         let child_bytes = child_selector_bytes(bytes, &row.node.label).ok_or_else(next)?;
         if row.j != *cursor
             || row.d.is_some_and(|got| Some(got) != d.checked_add(1))

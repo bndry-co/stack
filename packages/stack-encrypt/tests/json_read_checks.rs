@@ -378,12 +378,12 @@ mod given_the_rows_of_a_read {
         let doc = seal(&cipher, &fixture()).await;
         let nested = key(&cipher, "$.nested").await;
         let mut rows = walk(&doc, &nested);
-        let _ = rows.pop();
+        // The last row is the second element's `x` (8): without it the
+        // element says it has a member the rows do not hold, the same
+        // dropped row as a gap, at the end of the rows.
+        assert_eq!(rows.pop().map(|n| n.ordinal()), Some(8), "x, the last row");
         let refused = open_value(&cipher, nested.open(rows)).await;
-        assert!(
-            matches!(refused, Err(Error::OpenedType { .. })),
-            "{refused:?}"
-        );
+        assertions::wrong_entry(refused, NEXT);
     }
 
     #[tokio::test]
@@ -467,6 +467,27 @@ mod given_the_rows_of_a_read {
             json!([1]),
             "126 positions down, by its own token"
         );
+    }
+
+    #[tokio::test]
+    async fn an_array_read_missing_its_first_or_last_element_is_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &json!({"arr": [10, 20, 30]})).await;
+        let arr = key(&cipher, "$.arr").await;
+        // The read returns the array's own node, whose child count bounds
+        // its elements: leaving out the first would have opened as
+        // `[20, 30]` when the walk began at the children (review of
+        // #1358), and leaving out the last as `[10, 20]`.
+        let rows = walk(&doc, &arr);
+        let (first, last) = (rows[1].ordinal(), rows[rows.len() - 1].ordinal());
+        for dropped in [first, last] {
+            let rows: Vec<JsonNode> = walk(&doc, &arr)
+                .into_iter()
+                .filter(|n| n.ordinal() != dropped)
+                .collect();
+            assertions::wrong_entry(open_value(&cipher, arr.open(rows.clone())).await, NEXT);
+            assertions::wrong_entry(open_list(&cipher, arr.open(rows)).await, NEXT);
+        }
     }
 
     #[tokio::test]
