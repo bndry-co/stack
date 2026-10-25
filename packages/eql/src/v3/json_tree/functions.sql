@@ -503,14 +503,18 @@ $$;
 --! of the probe, so two entries forged under one parent with one selector
 --! and the member rule's self tag derive one token, and the walk visits the
 --! subtree beneath it once for each: forged level after level, the rows
---! would double at every level. So each read reads its recursion through
---! `LIMIT` the entry count times the number of tokens: a sealed document's
---! nodes each sit under one token of a read, so an honest read never
---! reaches it, and PostgreSQL computes a recursive query only as far as its
---! reader pulls rows, so the limit stops the recursion and not only the
---! output. A forged walk that hits it returns rows the client refuses: it
---! places them by the authenticated positions and child counts, and
---! refuses a repeated position (`j`).
+--! would double at every level. So {{prefix}}.json_tree_subtree reads its
+--! recursion through `LIMIT` the entry count times the number of tokens: a
+--! sealed document's nodes each sit under one token of a read, so an honest
+--! read never reaches it, and PostgreSQL computes a recursive query only as
+--! far as its reader pulls rows, so the limit stops the recursion and not
+--! only the output. A forged walk that hits it returns rows the client
+--! refuses: it places them by the authenticated positions and child counts,
+--! and refuses a repeated position (`j`). {{prefix}}.json_tree_children and
+--! {{prefix}}.json_tree_child_count probe one level and never descend:
+--! each ordinal's tag names at most one entry, and an entry carries one
+--! parent tag, so the probes hit each entry at most once, and theirs is
+--! `LIMIT` the entry count plus one, every entry and the miss.
 
 --! @brief The children of the node whose token is `token`, as rows.
 --!
