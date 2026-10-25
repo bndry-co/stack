@@ -437,12 +437,18 @@ impl JsonSubtreeKey {
     /// no entry between, so that each node's rows are exactly its subtree.
     /// A row whose parent is not among the rows is refused.
     ///
+    /// With no gates the walk does not return the node it starts from, so
+    /// its children are checked against each other: they follow one
+    /// another with no gap, and an array's start at element `0`.
+    ///
     /// Not covered: which row of the column the entries come from (ADR
-    /// 0010), and, until the walk returns the node it starts from, which
-    /// node at the path's selector a walk with no gates descends from. An
-    /// array position before the last step of a path reads as the wildcard
-    /// to the selectors, so another element's subtree at the same depth
-    /// passes too.
+    /// 0010), and, until the walk returns the node it starts from (#1356),
+    /// two things about a walk with no gates: which node at the path's
+    /// selector it descends from, and whether children were left out after
+    /// the last row, or members anywhere (a member's place is a keyed rank
+    /// the client does not hold). An array position before the last step
+    /// of a path reads as the wildcard to the selectors, so another
+    /// element's subtree at the same depth passes too.
     pub fn open(&self, rows: Vec<JsonNode>) -> JsonSubtree {
         JsonSubtree::keyed(rows, self.clone())
     }
