@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 use base64ct::{Base64, Encoding};
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::{
-    self, record, OpSpec, Operand, QueryTerm, Reason, Scope, TargetDescriptor, TargetError,
-    TargetOptions, TargetResolver, ValueFrame, ValueKind,
+    self, record, OpSpec, Operand, QueryTerm, Reason, TargetDescriptor, TargetError, TargetOptions,
+    TargetResolver, ValueFrame, ValueKind,
 };
 use stack_encrypt::json::{JsonDocument, Tag};
 use stack_encrypt::target::{Borrowed, CallerContext, IndexSpec};
@@ -205,7 +205,6 @@ async fn open(
 ) -> Result<Vec<Vec<Value>>, stack_encrypt::Error> {
     let opened = dynamic::json_open(
         keyset,
-        Scope::Keyset(keyset.clone()),
         plan,
         "profile",
         json_frame(&request),
@@ -621,20 +620,6 @@ async fn reads_open_against_the_request_that_prepared_them() {
         ),
         "{truncated:?}"
     );
-
-    // Through the client rather than the keyset, the same rows open.
-    let opened = dynamic::json_open(
-        &keyset,
-        Scope::Client(&cipher),
-        &plan,
-        "profile",
-        json_frame(&json!({"operation": "selector", "path": "$.name"})),
-        frame(vec![extracted(&docs[1], &name)]),
-        &Documents,
-    )
-    .unwrap()
-    .await;
-    assert!(opened.is_ok());
 }
 
 /// A read's request and rows are checked before anything is derived.

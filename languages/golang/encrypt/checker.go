@@ -279,8 +279,10 @@ func parseOperators(value any) ([]record.Operator, error) {
 }
 
 // parseOperatorName reads an operator's name as the engine writes it: one
-// of eq, lt, lte, gt, gte, between and matches, the names the engine's
-// OpSpec::parse accepts. The catalog (se_targets) and se_query_term are
+// of the names the engine's OpSpec::parse accepts, the scalar operators
+// (eq, lt, lte, gt, gte, between, matches) and a document's (contains,
+// contained_by, eq_at, the orderings at a path, between_at, selector,
+// subtree, children, child_count). The catalog (se_targets) and se_query_term are
 // read through this, parseFidelity and parseOperatorIndex, so the two
 // readers refuse the same values.
 func parseOperatorName(s string) (string, error) {

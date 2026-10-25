@@ -236,17 +236,21 @@ where
 ///
 /// ```text
 /// { "operator": "matches", "fidelity": "probabilistic", "index": "match",
-///   "domain": null, "term": <bytes> }
+///   "domain": null, "encoding": "bytes", "term": <bytes> }
 /// ```
 ///
 /// The input is one value for every operator but `between`, whose input is
-/// a list of two, low then high. It is read as the field's declared kind
-/// first, so a host's float `34.0` queries a `uint64` field. A field with
-/// indexes derives the term of the index that answers the operator, as
-/// bytes; `between` derives one per bound, as a list of two. A field that
-/// names an EQL type runs the type's query twin through this build's
+/// a list of two, low then high, and a document's operators, whose input
+/// is an object of named inputs (`{"json"}`, `{"path", "json"}`, ...; see
+/// [`dynamic::OpSpec::input`]). A value is read as the field's declared
+/// kind first, so a host's float `34.0` queries a `uint64` field. A field
+/// with indexes derives the term of the index that answers the operator,
+/// as bytes; `between` derives one per bound, as a list of two. A field
+/// that names an EQL type runs the type's query twin through this build's
 /// resolver, and `term` holds the twin's JSON bytes and `domain` its
-/// PostgreSQL domain. No data key is minted.
+/// PostgreSQL domain. A document's operator gives `encoding` `eql` (a
+/// needle or leaf operand), `text` (a selector or node token) or
+/// `text_array` (a subtree read's tokens). No data key is minted.
 pub async fn query_term<K>(
     cipher: &KeysetCipher<'_, K>,
     input: &[u8],
@@ -296,7 +300,6 @@ where
     let (plan, field) = parse_field(plan, field)?;
     let opened = dynamic::json_open(
         keyset,
-        Scope::Keyset(keyset.clone()),
         &plan,
         field,
         parse_frame(request)?,
@@ -369,11 +372,8 @@ pub fn target_limit(
     encode_answer(&limit.rows())
 }
 
-/// The plan, field name and operator a query names: the plan parsed against
-/// this build's resolver, the field's name UTF-8, and the operator one the
-/// engine knows ([`dynamic::OpSpec::parse`]); an unknown operator is
-/// refused naming the field, as an operator the field does not answer is.
-/// A plan and one of its fields' names.
+/// A plan and one of its fields' names: the plan parsed against this
+/// build's resolver, and the field's name UTF-8.
 fn parse_field<'f>(plan: &[u8], field: &'f [u8]) -> Result<(dynamic::record::Plan, &'f str), u32> {
     let plan = parse_plan(plan)?;
     let field = std::str::from_utf8(field)
@@ -381,14 +381,16 @@ fn parse_field<'f>(plan: &[u8], field: &'f [u8]) -> Result<(dynamic::record::Pla
     Ok((plan, field))
 }
 
+/// The plan, field name and operator a query names: [`parse_field`]'s two,
+/// and the operator one the engine knows ([`dynamic::OpSpec::parse`]); an
+/// unknown operator is refused naming the field, as an operator the field
+/// does not answer is.
 fn parse_query<'f>(
     plan: &[u8],
     field: &'f [u8],
     operator: &[u8],
 ) -> Result<(dynamic::record::Plan, &'f str, dynamic::OpSpec), u32> {
-    let plan = parse_plan(plan)?;
-    let field = std::str::from_utf8(field)
-        .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
+    let (plan, field) = parse_field(plan, field)?;
     let operator = std::str::from_utf8(operator)
         .ok()
         .and_then(dynamic::OpSpec::parse)

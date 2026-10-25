@@ -138,3 +138,41 @@ func TestParseQueryTermTakesOnlyWhatTheEngineWrites(t *testing.T) {
 		}
 	}
 }
+
+// The encoding, the term's shape and the domain must agree as the engine
+// writes them; a term that mixes them is a wire bug, refused.
+func TestParseQueryTermRefusesAMixedShape(t *testing.T) {
+	domain := "eql_v4.query_json_tree"
+	shaped := func(encoding string, domain any, term any) vcvalue.Object {
+		return vcvalue.Object{
+			{Key: "operator", Value: "contains"}, {Key: "fidelity", Value: "exact"}, {Key: "index", Value: "json"},
+			{Key: "domain", Value: domain}, {Key: "encoding", Value: encoding}, {Key: "term", Value: term},
+		}
+	}
+	for name, ok := range map[string]vcvalue.Object{
+		"bytes":       shaped("bytes", nil, []byte{1}),
+		"bytes range": shaped("bytes", nil, []any{[]byte{1}, []byte{2}}),
+		"eql":         shaped("eql", domain, []byte{1}),
+		"eql range":   shaped("eql", domain, []any{[]byte{1}, []byte{2}}),
+		"text":        shaped("text", "text", "c2VsZWN0b3I="),
+		"text array":  shaped("text_array", "text[]", []any{"dA==", "dQ=="}),
+		"no tokens":   shaped("text_array", "text[]", []any{}),
+	} {
+		if _, err := parseQueryTerm(ok); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, bad := range map[string]vcvalue.Object{
+		"text array as one string": shaped("text_array", "text[]", "dA=="),
+		"text as a list":           shaped("text", "text", []any{"dA=="}),
+		"eql with no domain":       shaped("eql", nil, []byte{1}),
+		"bytes with a domain":      shaped("bytes", domain, []byte{1}),
+		"text with no domain":      shaped("text", nil, "dA=="),
+		"text array of bytes":      shaped("text_array", "text[]", []any{[]byte{1}, []byte{2}}),
+		"eql as text":              shaped("eql", domain, "dA=="),
+	} {
+		if _, err := parseQueryTerm(bad); err == nil {
+			t.Errorf("%s: read, want refused", name)
+		}
+	}
+}

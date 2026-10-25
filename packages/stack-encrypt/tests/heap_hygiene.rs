@@ -322,6 +322,118 @@ fn verify_leaves_no_plaintext_on_the_heap() {
     });
 }
 
+/// A resolver holding `EncryptedJson` alone, for checking a document
+/// field's operators: a check derives nothing, so nothing here runs.
+struct Documents;
+
+impl stack_encrypt::dynamic::TargetResolver for Documents {
+    fn targets(&self) -> Vec<stack_encrypt::dynamic::TargetDescriptor> {
+        vec![stack_encrypt::dynamic::TargetDescriptor::new(
+            "EncryptedJson",
+            "json",
+            "",
+            Some(stack_encrypt::dynamic::ValueKind::Json),
+            "public.eql_v4_json_tree",
+            vec!["json".to_string()],
+            Some("EncryptedJsonQuery".to_string()),
+            Some("eql_v4.query_json_tree".to_string()),
+            true,
+            None,
+        )
+        .with_leaf_query_sql_domain("eql_v4.query_json_tree_leaf")]
+    }
+    fn encrypt<'a, K: 'static>(
+        &self,
+        _: &str,
+        _: Option<&stack_encrypt::dynamic::TargetOptions>,
+        _: &'a stack_encrypt::KeysetCipher<'_, K>,
+        _: &stack_encrypt::Label,
+        _: ValueFrame,
+    ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, stack_encrypt::dynamic::TargetError> {
+        unreachable!("a check seals nothing")
+    }
+    fn decrypt<'a, K: 'static>(
+        &self,
+        _: &str,
+        _: &'a stack_encrypt::StackCipher<K>,
+        _: &stack_encrypt::Label,
+        _: &[u8],
+    ) -> Result<stack_encrypt::Pending<'a, ValueFrame, K>, stack_encrypt::dynamic::TargetError>
+    {
+        unreachable!("a check opens nothing")
+    }
+    fn query<'a, K: 'static>(
+        &self,
+        _: &str,
+        _: &stack_encrypt::target::IndexSpec,
+        _: &'a stack_encrypt::KeysetCipher<'_, K>,
+        _: &stack_encrypt::Label,
+        _: ValueFrame,
+    ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, stack_encrypt::dynamic::TargetError> {
+        unreachable!("a document's operators are the engine's")
+    }
+}
+
+/// A document operator's JSON input is parsed and checked, and the parsed
+/// needle wiped when the check drops it: a check derives nothing, so what
+/// it frees is the input's alone.
+#[test]
+fn a_json_operators_input_leaves_no_plaintext_on_the_heap() {
+    let wire = serde_json::json!({
+        "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
+                    "target": {"name": "EncryptedJson", "options": {"ordered": ["$.age"]}}}
+    });
+    let plan = record::plan_with(
+        &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),
+        &Documents,
+    )
+    .unwrap();
+    let mark = marked("needle");
+    let pad = "x".repeat(160);
+    let needle = format!(r#"{{"{mark}": ["{mark}\n{pad}"]}}"#);
+    let at = format!(r#""{mark}\n""#);
+    let inputs = [
+        (OpSpec::Contains, serde_json::json!({"json": needle})),
+        (
+            OpSpec::EqAt,
+            serde_json::json!({"path": "$.name", "json": at}),
+        ),
+        (
+            OpSpec::GtAt,
+            serde_json::json!({"path": "$.age", "json": at}),
+        ),
+    ]
+    .map(|(op, input)| {
+        let bytes = stack_encrypt::dynamic::frame::serde::to_vec(&input).unwrap();
+        (op, ValueFrame::from_bytes(&bytes).unwrap())
+    });
+    for (operator, input) in &inputs {
+        watched(&format!("check_query ({operator:?})"), || {
+            stack_encrypt::dynamic::check_query(&plan, "profile", *operator, input, &Documents)
+                .expect("a document operator's input");
+        });
+    }
+}
+
+/// A JSON document a binding hands over is parsed by the engine's own
+/// parser and held in a `JsonPlaintext`, which wipes it when it drops: the
+/// marker in a key, in a string with an escape (decoded, not borrowed) and
+/// past 128 bytes leaves no freed block. A refused document wipes what was
+/// built.
+#[test]
+fn a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap() {
+    let mark = marked("doc");
+    let pad = "x".repeat(160);
+    let document = format!(r#"{{"{mark}": ["{mark}\n{pad}", 1.5], "n": "{mark}"}}"#);
+    let refused = format!(r#"{{"{mark}": "{mark}\n", "{mark}": 1}}"#);
+    let (document, refused) = (frame(document.as_str()), frame(refused.as_str()));
+    watched("read_json", || {
+        let parsed = stack_encrypt::dynamic::read_json(&document).expect("a document");
+        drop(parsed);
+        assert!(stack_encrypt::dynamic::read_json(&refused).is_err());
+    });
+}
+
 /// The spy itself: a plain `String` holding the marker, freed while
 /// watched, fails the watch. Without this a spy that saw nothing would pass
 /// every test above.

@@ -770,17 +770,9 @@ async fn open(
     let request =
         ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(&request).unwrap()).unwrap();
     let rows = frame(&groups);
-    let opened = dynamic::json_open(
-        keyset,
-        Scope::Keyset(keyset.clone()),
-        plan,
-        "profile",
-        request,
-        rows,
-        &Eql,
-    )
-    .unwrap()
-    .await?;
+    let opened = dynamic::json_open(keyset, plan, "profile", request, rows, &Eql)
+        .unwrap()
+        .await?;
     let groups: Vec<Vec<serde_bytes_like::Bytes>> =
         dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
     Ok(groups

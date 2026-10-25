@@ -52,7 +52,7 @@ use vitaminc_protected::Protected;
 use zeroize::Zeroizing;
 
 use super::query::{OpSpec, Operand};
-use super::{Error, Reason, Scope, ValueFrame};
+use super::{Error, Reason, ValueFrame};
 use crate::json::{
     parse_text, wipe_value, JsonExtracted, JsonLeafQuery, JsonNode, JsonOptions, JsonPath,
     JsonQuery, JsonSubtree, JsonSubtreeKey,
@@ -74,15 +74,36 @@ pub(super) enum Binds {
     TextArray,
 }
 
-/// What a JSON operator's operand binds as.
-pub(super) fn binds(op: OpSpec) -> Binds {
+/// What a JSON operator's operand binds as, or `None` for an operator
+/// that is not one: the one table that says which operators the JSON
+/// index answers ([`OpSpec::is_json`]). Exhaustive, so a new operator
+/// must be placed.
+pub(super) fn binds(op: OpSpec) -> Option<Binds> {
     match op {
+        OpSpec::Contains | OpSpec::ContainedBy | OpSpec::EqAt => Some(Binds::Needle),
         OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt | OpSpec::BetweenAt => {
-            Binds::Leaf
+            Some(Binds::Leaf)
         }
-        OpSpec::Selector | OpSpec::Children | OpSpec::ChildCount => Binds::Text,
-        OpSpec::Subtree => Binds::TextArray,
-        _ => Binds::Needle,
+        OpSpec::Selector | OpSpec::Children | OpSpec::ChildCount => Some(Binds::Text),
+        OpSpec::Subtree => Some(Binds::TextArray),
+        OpSpec::Eq
+        | OpSpec::Matches
+        | OpSpec::Lt
+        | OpSpec::Lte
+        | OpSpec::Gt
+        | OpSpec::Gte
+        | OpSpec::Between => None,
+    }
+}
+
+/// The SQL type an operand of `binds` binds as for `target`: its needle
+/// or leaf domain, which a resolver may not name, or text.
+pub(super) fn domain(target: &super::TargetDescriptor, binds: Binds) -> Option<String> {
+    match binds {
+        Binds::Needle => target.query_sql_domain.clone(),
+        Binds::Leaf => target.leaf_query_sql_domain.clone(),
+        Binds::Text => Some("text".to_owned()),
+        Binds::TextArray => Some("text[]".to_owned()),
     }
 }
 
@@ -124,17 +145,18 @@ impl JsonText {
             .map(Parsed)
             .map_err(|error| Error::Source {
                 field: None,
-                reason: json_reason(error.code()),
+                reason: json_reason(error),
             })
     }
 }
 
-/// The reason a JSON text refusal is reported with, from its code.
-fn json_reason(code: &str) -> Reason {
-    match code {
-        "json_duplicate_key" => Reason::JsonDuplicateKey,
-        "json_integer_range" => Reason::JsonIntegerRange,
-        _ => Reason::JsonSyntax,
+/// The reason a JSON text refusal is reported with.
+fn json_reason(error: crate::json::JsonTextError) -> Reason {
+    use crate::json::JsonTextError as E;
+    match error {
+        E::Syntax { .. } => Reason::JsonSyntax,
+        E::DuplicateKey { .. } => Reason::JsonDuplicateKey,
+        E::IntegerRange => Reason::JsonIntegerRange,
     }
 }
 
@@ -450,7 +472,8 @@ enum Opener {
 
 /// Open the rows a read returned against the request that prepared it,
 /// under the field's column and options and through `keyset`, the keyset
-/// whose index key derived the read; the rows open through `scope`. Each
+/// whose index key derived the read, and that keyset alone: a document
+/// sealed under another is refused before any key is retrieved. Each
 /// group of rows is one database row's: for `selector`, the entry `->`
 /// returned or none (SQL `NULL`); for `subtree`, the rows
 /// `json_tree_subtree` returned. Every group opens to a list of JSON
@@ -460,9 +483,9 @@ enum Opener {
 ///
 /// # Errors
 ///
-/// [`Error::Source`] for a request or rows that do not parse
-/// ([`Reason::JsonInput`]), an operator that is not a read
-/// ([`Reason::OperatorNotAnswered`]), or a selector group of more than one
+/// [`Error::Source`] ([`Reason::JsonInput`]) for a request or rows that
+/// do not parse, an operation that is not `selector` or `subtree`, a
+/// `wildcard_bound` on a `selector`, or a selector group of more than one
 /// entry; [`Error::Cipher`] for the read's own refusals (a path that does
 /// not parse, a wildcard that expands too far). A row that is not the one
 /// the read asked for fails the pending
@@ -470,7 +493,6 @@ enum Opener {
 /// longer than the bound ([`crate::Error::JsonWildcardTruncated`]).
 pub(super) fn open<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
-    scope: Scope<'a, K>,
     label: &Label,
     options: &JsonOptions,
     request: &ValueFrame,
@@ -485,17 +507,12 @@ pub(super) fn open<'a, K: 'static>(
         }
     };
     let context = || AeadContext::from(NonEmpty::from(label.clone()));
-    // Opened through the client, confined to the scope's keyset when it is
-    // one, as a record's leaves are: a document sealed under another
-    // keyset is refused before any key is retrieved.
-    let (opener_cipher, confine) = match &scope {
-        Scope::Client(cipher) => (*cipher, None),
-        Scope::Keyset(keyset) => (keyset.cipher(), Some(keyset.keyset_id())),
-    };
-    let confined = |pending: Pending<'a, Vec<Value>, K>| match confine {
-        Some(keyset) => pending.scoped_to(keyset),
-        None => pending,
-    };
+    // Opened through the client, confined to the deriving keyset, as a
+    // record's leaves are under `Scope::Keyset`: the read's key is that
+    // keyset's, so a document sealed under another cannot answer it.
+    let opener_cipher = keyset.cipher();
+    let confine = keyset.keyset_id();
+    let confined = |pending: Pending<'a, Vec<Value>, K>| pending.scoped_to(confine);
     let mut pendings: Vec<Pending<'a, Vec<Value>, K>> = Vec::with_capacity(groups.len());
     for nodes in groups {
         pendings.push(match &opener {
