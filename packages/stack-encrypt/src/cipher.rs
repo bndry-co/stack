@@ -178,8 +178,9 @@ pub enum Error {
     /// or the sealed root in place of a node, or a subtree walk returned a
     /// row that is not where the walk's key says its rows are (a node of
     /// another path, a row out of its place in the document, a row whose
-    /// parent is not among the rows, or rows that stop before a node's
-    /// subtree is complete). Refused by the client, which
+    /// parent is not among the rows, rows that stop before a node's
+    /// subtree is complete, one entry returned twice, or rows of two
+    /// documents). Refused by the client, which
     /// derived the path's selector itself; see
     /// [`JsonSelector::open`](crate::json::JsonSelector::open) and
     /// [`JsonSubtreeKey::open`](crate::json::JsonSubtreeKey::open).
@@ -202,6 +203,20 @@ pub enum Error {
         help("The entry opened, but it is not the one the query asked for. A database that answers the query it was sent never returns one: check that the rows came from the query the selector or subtree key was derived for, and treat them as tampered with if they did.")
     )]
     JsonWrongEntry { expected: &'static str },
+    /// A JSON subtree read with a wildcard found an array longer than the
+    /// bound the wildcard was expanded to: the probe the read sent for the
+    /// element at `bound` named a node. The read fails rather than return
+    /// part of the answer; see
+    /// [`KeysetCipher::json_subtree_key_with_bound`](crate::KeysetCipher::json_subtree_key_with_bound).
+    ///
+    /// Names the bound and nothing of the path, whose key names can be
+    /// customer data.
+    #[error("a JSON array at the wildcard is longer than the read's bound of {bound}")]
+    #[diagnostic(
+        code(stack_encrypt::json_wildcard_truncated),
+        help("A wildcard read expands to the positions below its bound and fails when an array is longer, so it never returns part of the answer. Derive the key with a larger bound (`json_subtree_key_with_bound`), or read the array itself.")
+    )]
+    JsonWildcardTruncated { bound: u32 },
     /// ZeroKMS returned a different number of keys than were requested.
     #[error("expected {expected} data keys from ZeroKMS but received {received}")]
     #[diagnostic(code(stack_encrypt::key_count_mismatch))]
@@ -375,6 +390,7 @@ impl crate::ErrorPayload for Error {
             Self::OpenedType { expected } | Self::JsonWrongEntry { expected } => {
                 payload([("expected", (*expected).into())])
             }
+            Self::JsonWildcardTruncated { bound } => payload([("bound", (*bound).into())]),
             Self::DescriptorTooLong { len } => payload([
                 ("len", (*len).into()),
                 ("limit", Descriptor::MAX_LEN.into()),
