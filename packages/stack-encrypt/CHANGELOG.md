@@ -36,8 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A JSON document through a data plan** (#1349). A plan field may
   declare the new `json` value kind and name a target that stores a
-  document, `EncryptedJson`, with the JSON index's options:
-  `"target": {"name": "EncryptedJson", "options": {"sealed_root": true,
+  document, `JsonSearch`, with the JSON index's options:
+  `"target": {"name": "JsonSearch", "options": {"sealed_root": true,
   "ordered": ["$.age"]}}`, or the bare name for the defaults. The plan
   resolves the options once when it is built (`FieldPlan::target_options`,
   `TargetOptions::Json`), so writes, queries and reads of the field run
