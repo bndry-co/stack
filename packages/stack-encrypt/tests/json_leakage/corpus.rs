@@ -117,6 +117,9 @@ fn names() -> World {
             Query::subtree("$.tags"),
             Query::subtree("$.tags[1]"),
             Query::subtree_with("$.tags[*]", 2, 64),
+            // Past every row's array: found nowhere, and linked to the
+            // read of `$.tags` by the element rule alone.
+            Query::subtree("$.tags[10]"),
         ],
     }
 }

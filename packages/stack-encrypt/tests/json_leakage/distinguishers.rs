@@ -1094,8 +1094,10 @@ pub fn member_ordinals_follow_key_order(world: &ObservedWorld) -> Option<bool> {
 /// `(i, j)` when a token sent by query `j` is one the walks from query
 /// `i`'s tokens derive in some row, or is a child token of one of `i`'s
 /// tokens that finds a node somewhere, by the member rule under any
-/// selector the column holds, or by the element rule at an index below 4
-/// (bounds on what the harness tries, not on what the database can). The page: a token's holder can "derive the tokens of
+/// selector the column holds, by the element rule at an index below 4, or
+/// by the element rule under the selector of the children its walks reach
+/// at any index up to the longest token list sent or 64 (bounds on what the
+/// harness tries, not on what the database can). The page: a token's holder can "derive the tokens of
 /// the nodes beneath". Catches tokens that are not chained (a token
 /// unrelated to its path's) as well as tokens chained where the profile
 /// says they are not.
@@ -1107,6 +1109,12 @@ pub fn token_derivability(world: &ObservedWorld) -> BTreeSet<(usize, usize)> {
         .iter()
         .flat_map(|r| r.entries.iter().map(|e| e.s))
         .collect();
+    let longest = queries
+        .iter()
+        .map(|(_, tokens, _)| u32::try_from(tokens.len()).unwrap_or(u32::MAX))
+        .max()
+        .unwrap_or(0)
+        .max(64);
     let mut out = BTreeSet::new();
     for (q, &(i, tokens, _)) in queries.iter().enumerate() {
         let mut derived: BTreeSet<Tag16> = walks[q]
@@ -1121,11 +1129,30 @@ pub fn token_derivability(world: &ObservedWorld) -> BTreeSet<(usize, usize)> {
             .iter()
             .flat_map(|row| row.iter().map(|(k, _)| *k))
             .collect();
-        for t in found.into_iter().map(|k| &tokens[k]) {
+        for t in found.iter().map(|&k| &tokens[k]) {
             for s in &selectors {
                 let _ = derived.insert(member_token(t, s));
                 for o in 0..4 {
                     let _ = derived.insert(element_token(t, s, o));
+                }
+            }
+        }
+        // And by the element rule at every index up to the longest list
+        // sent or 64, whichever is more, under the one selector an element of the found node can
+        // carry: its children's, wherever a walk from it reaches one. This
+        // links a read of `$.tags[10]` to one of `$.tags` in a column whose
+        // arrays are all shorter.
+        for (r, rows) in walks[q].iter().enumerate() {
+            for (k, hits) in rows {
+                let kids: BTreeSet<Tag16> = hits
+                    .iter()
+                    .filter(|h| h.depth == 1)
+                    .map(|h| world.rows[r].entries[h.position].s)
+                    .collect();
+                for s in &kids {
+                    for o in 0..=longest {
+                        let _ = derived.insert(element_token(&tokens[*k], s, o));
+                    }
                 }
             }
         }

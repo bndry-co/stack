@@ -496,6 +496,33 @@ mod the_harness {
         );
     }
 
+    /// A token for a position past every row's array finds nothing, and the
+    /// database still links it to the array's token by the element rule:
+    /// `token_derivability` tries indices up to the longest token list
+    /// sent or 64, not only the first few.
+    #[test]
+    fn a_position_past_every_array_is_linked_to_its_array() {
+        let runtime = runtime();
+        let cipher = runtime.block_on(stack_cipher());
+        let world = handcrafted()
+            .into_iter()
+            .find(|w| w.name == "ordered strings")
+            .expect("the corpus has it");
+        let at = |path: &str| {
+            world
+                .queries
+                .iter()
+                .position(|q| matches!(q, Query::Subtree { path: p, .. } if p == path))
+                .expect("the column reads it")
+        };
+        let observed = real_world(&runtime, &cipher, &world);
+        let links = distinguishers::token_derivability(&observed);
+        assert!(
+            links.contains(&(at("$.tags"), at("$.tags[10]"))),
+            "`$.tags[10]`'s token derives from `$.tags`'s: {links:?}"
+        );
+    }
+
     /// The page's claim that the stored order reveals each row's shape holds
     /// on a column whose rows vary: the order-only attack of
     /// `distinguishers::depth_recovery` recovers every row's depth sequence
