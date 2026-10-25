@@ -7,7 +7,10 @@
 //!
 //! A mutant transforms a [`Leakage`] value. It never sees the plaintext, so
 //! it can only coarsen what `L` already states, which is the point: the
-//! mutant is "the profile without this clause".
+//! mutant is "the profile without this clause". A few state a format the
+//! code does not have, to show the distinguishers would see it: the
+//! pre-#1363 read's top-level token (`ancestor_token_sent`), the pre-#1363
+//! member rule (`member_tokens_carry_ordinal`).
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -15,7 +18,8 @@ use proptest::prelude::RngCore;
 use proptest::test_runner::TestRng;
 
 use super::profile::{
-    EntryLeakage, GateLeak, GroupLeakage, Leakage, QueryLeakage, RowLeakage, Step, AEAD_OVERHEAD,
+    EntryLeakage, GroupLeakage, Leakage, QueryLeakage, ReadLeak, RowLeakage, Rule, Step, TokenName,
+    TokenStep, AEAD_OVERHEAD,
 };
 
 /// One mutant: its name, the clause it drops (a field or sentence of the
@@ -73,6 +77,15 @@ fn every_group(leakage: &mut Leakage, mut f: impl FnMut(&mut GroupLeakage)) {
     }
 }
 
+/// Every token a subtree read sends, with the read's budget.
+fn every_read(leakage: &mut Leakage, mut f: impl FnMut(&mut Vec<ReadLeak>)) {
+    for query in &mut leakage.queries {
+        if let QueryLeakage::Subtree { reads, .. } = query {
+            f(reads);
+        }
+    }
+}
+
 /// Reorder a row's entries: `order[k]` is the old position of the entry now
 /// at `k`. Parents and every query's positions follow.
 fn reorder(leakage: &mut Leakage, r: usize, order: &[usize]) {
@@ -89,13 +102,16 @@ fn reorder(leakage: &mut Leakage, r: usize, order: &[usize]) {
             ..old[o].clone()
         })
         .collect();
-    for query in &mut leakage.queries {
-        if let QueryLeakage::Subtree { reach, named, .. } = query {
-            for at in reach[r].iter_mut().chain(named[r].iter_mut()) {
+    every_read(leakage, |reads| {
+        for read in reads {
+            if let Some(at) = &mut read.hits[r] {
+                *at = new_at[*at];
+            }
+            for at in &mut read.reach[r] {
                 *at = new_at[*at];
             }
         }
-    }
+    });
 }
 
 fn children(row: &RowLeakage) -> Vec<Vec<usize>> {
@@ -107,6 +123,10 @@ fn children(row: &RowLeakage) -> Vec<Vec<usize>> {
     }
     kids
 }
+
+// =============================================================================
+// At rest
+// =============================================================================
 
 // =============================================================================
 // At rest
@@ -178,8 +198,9 @@ fn entry_count_padded(l: &mut Leakage, _: &mut TestRng) {
             selector: fresh.next(),
             parent: Some(0),
             step: Step::Member,
-            head: None,
+            rule: Some(Rule::Member),
             has_parent_tag: true,
+            self_tag: Some(fresh.next()),
             ciphertext_len: AEAD_OVERHEAD + 10,
             ordering: None,
         });
@@ -437,13 +458,55 @@ fn keyset_per_row(l: &mut Leakage, _: &mut TestRng) {
     }
 }
 
-/// Head tokens per row rather than column-wide.
-fn tokens_per_row(l: &mut Leakage, _: &mut TestRng) {
-    let mut fresh = Fresh::new();
+/// No entry carries a self tag.
+fn self_tags_absent(l: &mut Leakage, _: &mut TestRng) {
     for row in &mut l.rows {
         for entry in &mut row.entries {
-            if entry.head.is_some() {
-                entry.head = Some(fresh.next());
+            entry.self_tag = None;
+        }
+    }
+}
+
+/// A self tag that is not salted by the row: the same node in two rows
+/// carries the same one, named by its selector and its place among the
+/// row's entries with that selector.
+fn self_tags_linkable_across_rows(l: &mut Leakage, _: &mut TestRng) {
+    let mut fresh = Fresh::new();
+    let mut names: HashMap<(usize, usize), usize> = HashMap::new();
+    for row in &mut l.rows {
+        let mut seen: HashMap<usize, usize> = HashMap::new();
+        for entry in &mut row.entries {
+            let k = seen.entry(entry.selector).or_default();
+            let name = *names
+                .entry((entry.selector, *k))
+                .or_insert_with(|| fresh.next());
+            *k += 1;
+            entry.self_tag = Some(name);
+        }
+    }
+}
+
+/// A self tag that is not distinct per entry: the entries of a row that
+/// share a selector (an array's elements) share one.
+fn self_tags_per_selector(l: &mut Leakage, _: &mut TestRng) {
+    let mut fresh = Fresh::new();
+    for row in &mut l.rows {
+        let mut names: HashMap<usize, usize> = HashMap::new();
+        for entry in &mut row.entries {
+            entry.self_tag = Some(*names.entry(entry.selector).or_insert_with(|| fresh.next()));
+        }
+    }
+}
+
+/// The member rule hidden: every member's token takes the element rule
+/// with its ordinal, so the database's test of a hit's self tag never
+/// says "member". What the page as #1363 published it states, which says
+/// nothing of the rule ([`super::profile::Clauses::hit_rule`]).
+fn hit_rule_uniform(l: &mut Leakage, _: &mut TestRng) {
+    for row in &mut l.rows {
+        for entry in &mut row.entries {
+            if entry.rule == Some(Rule::Member) {
+                entry.rule = Some(Rule::Element);
             }
         }
     }
@@ -471,12 +534,9 @@ fn queries_nondeterministic(l: &mut Leakage, _: &mut TestRng) {
         if seen.contains(query) {
             match query {
                 QueryLeakage::Extract { selector } => *selector = fresh.next(),
-                QueryLeakage::Subtree { token, gates, .. } => {
-                    token.head = fresh.next();
-                    for gate in gates {
-                        match gate {
-                            GateLeak::Selector(s) | GateLeak::Slot(_, s) => *s = fresh.next(),
-                        }
+                QueryLeakage::Subtree { reads, .. } => {
+                    for read in reads {
+                        read.token.head = fresh.next();
                     }
                 }
                 QueryLeakage::Contains { needle, .. } | QueryLeakage::Equals { needle } => {
@@ -494,90 +554,215 @@ fn queries_nondeterministic(l: &mut Leakage, _: &mut TestRng) {
     }
 }
 
-/// No query's token links any entry: parent tags are random everywhere, as
-/// if they were not chained from the tokens at all.
-fn parent_tags_unchained(l: &mut Leakage, _: &mut TestRng) {
-    for query in &mut l.queries {
-        if let QueryLeakage::Subtree { reach, .. } = query {
-            for row in reach {
-                row.clear();
+/// A token finds its node in one row only, as a token salted per row
+/// would: "Tokens are column-wide".
+fn tokens_per_row(l: &mut Leakage, _: &mut TestRng) {
+    every_read(l, |reads| {
+        for read in reads {
+            let mut kept = false;
+            for (hit, reach) in read.hits.iter_mut().zip(&mut read.reach) {
+                if hit.is_some() {
+                    if kept {
+                        *hit = None;
+                        reach.clear();
+                    }
+                    kept = true;
+                }
             }
         }
-    }
+    });
 }
 
-/// A token links only what the read names: the nodes on the path below the
-/// token's node and the subtrees of the nodes the path reaches. What the
-/// page would say if the subtree read revealed no more than it asked for.
-fn token_reaches_named_nodes_only(l: &mut Leakage, _: &mut TestRng) {
-    for q in 0..l.queries.len() {
-        let QueryLeakage::Subtree { reach, named, .. } = &l.queries[q] else {
-            continue;
+/// No token finds or links anything: self and parent tags random
+/// everywhere, as if they were not derived from the tokens at all.
+fn tokens_find_nothing(l: &mut Leakage, _: &mut TestRng) {
+    every_read(l, |reads| {
+        for read in reads {
+            read.hits.iter_mut().for_each(|h| *h = None);
+            read.reach.iter_mut().for_each(Vec::clear);
+        }
+    });
+}
+
+/// A token finds its node and links nothing below it: what the page would
+/// say if a read revealed no more than the node it names.
+fn token_reaches_its_node_only(l: &mut Leakage, _: &mut TestRng) {
+    every_read(l, |reads| {
+        for read in reads {
+            read.reach.iter_mut().for_each(Vec::clear);
+        }
+    });
+}
+
+/// A probe that finds its element links nothing below it: what the page
+/// would say without its exception ("In a row where a probe finds an
+/// element, the database also walks that element's subtree").
+fn probe_reaches_nothing(l: &mut Leakage, _: &mut TestRng) {
+    every_read(l, |reads| {
+        for read in reads.iter_mut().filter(|r| r.probe) {
+            read.reach.iter_mut().for_each(Vec::clear);
+        }
+    });
+}
+
+/// Each read also sends the token of the head its path starts from (the
+/// top-level field under the sealed root, the root with it open), which
+/// links that head's whole subtree in every row: the read before #1363,
+/// which sent the top-level field's token for any path below it. Its hits
+/// are the heads above the read's own hits, so a row where the read finds
+/// nothing gets none.
+fn ancestor_token_sent(l: &mut Leakage, _: &mut TestRng) {
+    let rows = l.rows.clone();
+    every_read(l, |reads| {
+        let Some(first) = reads.iter().find(|r| !r.token.steps.is_empty()).cloned() else {
+            return;
         };
-        let narrowed: Vec<Vec<usize>> = reach
+        let head = |row: &RowLeakage, mut at: usize| {
+            let depth = if row.sealed_root { 1 } else { 0 };
+            let mut chain = vec![at];
+            while let Some(p) = row.entries[at].parent {
+                chain.push(p);
+                at = p;
+            }
+            chain.iter().rev().nth(depth).copied()
+        };
+        let hits: Vec<Option<usize>> = rows
             .iter()
-            .zip(named)
             .enumerate()
-            .map(|(r, (reach, named))| {
-                let row = &l.rows[r];
-                reach
+            .map(|(r, row)| {
+                reads
                     .iter()
-                    .copied()
+                    .find_map(|read| read.hits[r])
+                    .and_then(|h| head(row, h))
+            })
+            .collect();
+        let reach = rows
+            .iter()
+            .zip(&hits)
+            .map(|(row, hit)| {
+                let Some(top) = *hit else { return Vec::new() };
+                (0..row.entries.len())
                     .filter(|&i| {
-                        named.iter().any(|&n| {
-                            // `i` is on the path to `n`, is `n`, or is below it.
-                            let under = |a: usize, b: usize| {
-                                let mut at = Some(a);
-                                while let Some(j) = at {
-                                    if j == b {
-                                        return true;
-                                    }
-                                    at = row.entries[j].parent;
-                                }
-                                false
-                            };
-                            under(n, i) || under(i, n)
-                        })
+                        let mut at = i;
+                        while row.entries[at].has_parent_tag {
+                            match row.entries[at].parent {
+                                Some(p) if p == top => return true,
+                                Some(p) => at = p,
+                                None => return false,
+                            }
+                        }
+                        false
                     })
                     .collect()
             })
             .collect();
-        if let QueryLeakage::Subtree { reach, .. } = &mut l.queries[q] {
-            *reach = narrowed;
-        }
-    }
+        reads.insert(
+            0,
+            ReadLeak {
+                token: TokenName {
+                    head: first.token.head,
+                    steps: Vec::new(),
+                },
+                probe: false,
+                hits,
+                reach,
+            },
+        );
+    });
 }
 
-/// A token for a path through array positions is not chained from its
-/// head's: the client would send an unrelated token.
-fn position_tokens_unchained(l: &mut Leakage, _: &mut TestRng) {
+/// A read's token is not derived from its path: every token with a step
+/// below its head is unrelated to its head's, so no token is derivable
+/// from another.
+fn tokens_not_chained(l: &mut Leakage, _: &mut TestRng) {
     let mut fresh = Fresh::new();
-    for query in &mut l.queries {
-        if let QueryLeakage::Subtree { token, .. } = query {
-            if !token.positions.is_empty() {
-                token.head = fresh.next();
-                token.positions.clear();
+    every_read(l, |reads| {
+        for read in reads {
+            if !read.token.steps.is_empty() {
+                read.token = TokenName {
+                    head: fresh.next(),
+                    steps: Vec::new(),
+                };
             }
         }
-    }
+    });
 }
 
-fn slot_positions_hidden(l: &mut Leakage, _: &mut TestRng) {
-    for query in &mut l.queries {
-        if let QueryLeakage::Subtree { gates, .. } = query {
-            for gate in gates {
-                if let GateLeak::Slot(n, _) = gate {
-                    *n = 0;
+/// The member rule before #1363, `H16("t" ‖ t(parent) ‖ s ‖ LE32(o))`
+/// with `o` the member's keyed rank: the client cannot derive a member's
+/// token from the path, so a read through a key step below its head sends a
+/// token that names nothing.
+fn member_tokens_carry_ordinal(l: &mut Leakage, _: &mut TestRng) {
+    let mut fresh = Fresh::new();
+    every_read(l, |reads| {
+        for read in reads {
+            if read
+                .token
+                .steps
+                .iter()
+                .any(|s| matches!(s, TokenStep::Member(_)))
+            {
+                read.token = TokenName {
+                    head: fresh.next(),
+                    steps: Vec::new(),
+                };
+                read.hits.iter_mut().for_each(|h| *h = None);
+                read.reach.iter_mut().for_each(Vec::clear);
+            }
+        }
+    });
+}
+
+/// An element's token without its index: every element of an array would
+/// share one token.
+fn element_tokens_without_index(l: &mut Leakage, _: &mut TestRng) {
+    every_read(l, |reads| {
+        for read in reads {
+            for step in &mut read.token.steps {
+                if let TokenStep::Element(_, i) = step {
+                    *i = 0;
                 }
             }
         }
-    }
+    });
 }
 
-fn gates_dropped(l: &mut Leakage, _: &mut TestRng) {
+/// No probe is sent: a wildcard's tokens stop at `N − 1`.
+fn probes_dropped(l: &mut Leakage, _: &mut TestRng) {
+    every_read(l, |reads| reads.retain(|r| !r.probe));
+}
+
+/// The tokens are sent in an order unrelated to the paths they name.
+fn token_list_shuffled(l: &mut Leakage, rng: &mut TestRng) {
+    every_read(l, |reads| shuffle(reads, rng));
+}
+
+/// The token list padded with tokens that name nothing, to the next power
+/// of two: a list whose length does not give the bound away.
+fn token_list_padded(l: &mut Leakage, _: &mut TestRng) {
+    let mut fresh = Fresh::new();
+    let rows = l.rows.len();
+    every_read(l, |reads| {
+        let target = (reads.len() + 1).next_power_of_two();
+        while reads.len() < target {
+            reads.push(ReadLeak {
+                token: TokenName {
+                    head: fresh.next(),
+                    steps: Vec::new(),
+                },
+                probe: false,
+                hits: vec![None; rows],
+                reach: vec![Vec::new(); rows],
+            });
+        }
+    });
+}
+
+/// The budget is not sent: every read goes in full.
+fn budget_not_sent(l: &mut Leakage, _: &mut TestRng) {
     for query in &mut l.queries {
-        if let QueryLeakage::Subtree { gates, .. } = query {
-            gates.clear();
+        if let QueryLeakage::Subtree { budget, .. } = query {
+            *budget = 0;
         }
     }
 }
@@ -638,9 +823,12 @@ mutants!(
     positions_in_selectors => "EntryLeakage::selector (\"Array elements share their array's selector\")",
     entry_count_padded => "RowLeakage::entries (\"the number of entries\")",
     order_random_permutation => "RowLeakage::entries (the stored order)",
-    members_unsorted => "RowLeakage::entries (\"an object's members in the sorted order of their key names\")",
+    members_unsorted => "RowLeakage::entries (\"an object's members in the byte order of their key names\")",
     parent_tag_on_every_entry => "EntryLeakage::has_parent_tag",
     parent_tag_on_no_entry => "EntryLeakage::has_parent_tag",
+    self_tags_absent => "EntryLeakage::self_tag (\"the self tag on every entry\")",
+    self_tags_linkable_across_rows => "EntryLeakage::self_tag (\"salted by the document's iv, so it is unrelated bytes in every row\")",
+    self_tags_per_selector => "EntryLeakage::self_tag (\"links no entry to another\")",
     ciphertext_length_bucketed => "EntryLeakage::ciphertext_len",
     sealed_root_length_hidden => "EntryLeakage::ciphertext_len (\"the root entry's length is the document's length as JSON\")",
     value_selectors_all_distinct => "GroupLeakage::pairs (value selector equality)",
@@ -650,20 +838,27 @@ mutants!(
     ordering_terms_absent => "EntryLeakage::ordering (presence)",
     ordering_terms_unordered => "Leakage::ordering_ranks (\"the order of that leaf's value among every row\")",
     ordering_terms_all_distinct => "OrderingLeak::class (\"which rows hold equal values\")",
-    ordering_term_length_constant => "OrderingLeak::len (beyond the page)",
-    ordering_terms_per_path => "OrderingLeak::class across paths (\"leaves at two ordered paths compare with each other too\")",
+    ordering_term_length_constant => "OrderingLeak::len (\"Its length is the leaf's length\")",
+    ordering_terms_per_path => "OrderingLeak::class across paths (\"two ordered paths holding equal values carry equal terms\")",
     member_ranks_follow_key_order => "EntryLeakage::step (a member's ordinal is its keyed rank)",
+    hit_rule_uniform => "EntryLeakage::rule (the member or element rule a walk's hit matches; added to the page by #1362)",
     sealed_flag_flipped => "RowLeakage::sealed_root",
     data_key_shared => "RowLeakage::data_key (\"the data key's identifier (unique to the row)\")",
     keyset_per_row => "RowLeakage::keyset (\"the keyset the data key was minted under\")",
-    tokens_per_row => "EntryLeakage::head (\"Tokens are column-wide\")",
     extraction_selector_fresh => "QueryLeakage::Extract (\"The selector of the path asked\")",
     queries_nondeterministic => "every query term is a function of the query (\"Tokens are column-wide and do not expire\")",
-    parent_tags_unchained => "QueryLeakage::Subtree::reach (a token links anything at all)",
-    token_reaches_named_nodes_only => "QueryLeakage::Subtree::reach (\"its node's subtree in every row\", not the path asked)",
-    position_tokens_unchained => "TokenName::positions (\"while the path goes on through array positions, the element they reach\")",
-    slot_positions_hidden => "GateLeak::Slot (\"with the position n in the clear\")",
-    gates_dropped => "QueryLeakage::Subtree::gates (\"one gate per step below it\")",
+    tokens_per_row => "ReadLeak::hits in every row (\"find that node in any row\")",
+    tokens_find_nothing => "ReadLeak::hits (a token finds its node, through its self tag x)",
+    token_reaches_its_node_only => "ReadLeak::reach (\"the structure of its node's subtree in every row\")",
+    probe_reaches_nothing => "ReadLeak::reach of a probe (\"the database also walks that element's subtree\")",
+    ancestor_token_sent => "ReadLeak::token (\"nothing that covers $.profile\"): the pre-#1363 top-level token",
+    tokens_not_chained => "TokenName::steps (\"derive the tokens of the nodes beneath\")",
+    member_tokens_carry_ordinal => "TokenStep::Member (a member's token has no ordinal): the pre-#1363 member rule",
+    element_tokens_without_index => "TokenStep::Element (an element's token carries its index)",
+    probes_dropped => "ReadLeak::probe (\"a probe token for the element at index N of every array a wildcard expands\")",
+    token_list_shuffled => "QueryLeakage::Subtree::reads (the tokens' order, which places each)",
+    token_list_padded => "QueryLeakage::Subtree::reads (the tokens' number, which gives N away)",
+    budget_not_sent => "QueryLeakage::Subtree::budget (the budget, in the clear)",
     needle_flat => "QueryLeakage::Contains::needle (\"its element grouping\")",
     needle_alt_dropped => "QueryLeakage::Contains::alt",
     bound_rank_random => "QueryLeakage::Order::bound (\"the bound's place in the order of the stored values\")",

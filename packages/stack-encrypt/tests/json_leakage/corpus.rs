@@ -45,18 +45,26 @@ fn shapes() -> Vec<Value> {
 }
 
 fn shape_queries(sealed_root: bool) -> Vec<Query> {
-    // `$.nested` is only ever read through gates, so its token is sent but
-    // nothing under it is named whole: what that token reaches beyond the
-    // paths asked is the page's subtree-read clause. `$.zeta` is read twice,
-    // for determinism.
+    // Reads below a key step (`$.nested.deep`), through positions, and
+    // through one and two wildcard levels, at the default bound (65 tokens)
+    // and at bounds the rows overflow, so that probes find elements and the
+    // database walks them. `$.nested` is read under a budget its rows
+    // overflow, so the sealed root falls back. `$.zeta` is read twice, for
+    // determinism. `$` is a read under either root.
     let mut queries = vec![
-        Query::Subtree("$.nested.list".into()),
-        Query::Subtree("$.nested.list[1]".into()),
-        Query::Subtree("$.nested.list[*].x".into()),
-        Query::Subtree("$.zeta".into()),
-        Query::Subtree("$[1]".into()),
-        Query::Subtree("$[1][1]".into()),
-        Query::Subtree("$.zeta".into()),
+        Query::subtree("$.nested.list"),
+        Query::subtree("$.nested.list[1]"),
+        Query::subtree("$.nested.list[*].x"),
+        Query::subtree_with("$.nested.list[*].x", 1, 64),
+        Query::subtree("$.nested.deep"),
+        Query::subtree_with("$.nested.list[*].y[*]", 2, 64),
+        Query::subtree_with("$.nested", 64, 3),
+        Query::subtree("$.zeta"),
+        Query::subtree("$[1]"),
+        Query::subtree("$[1][1]"),
+        Query::subtree_with("$[*].x", 3, 64),
+        Query::subtree("$"),
+        Query::subtree("$.zeta"),
         Query::Extract("$.nested.list[0].x".into()),
         Query::Extract("$.nested.list[1].x".into()),
         Query::Extract("$.hello".into()),
@@ -74,9 +82,8 @@ fn shape_queries(sealed_root: bool) -> Vec<Query> {
     ];
     if !sealed_root {
         queries.extend([
-            Query::Subtree("$".into()),
-            Query::Subtree("$.a.b".into()),
-            Query::Subtree("$[*].x".into()),
+            Query::subtree("$.a.b"),
+            Query::subtree_with("$[*][*]", 2, 64),
         ]);
     }
     queries
@@ -84,7 +91,9 @@ fn shape_queries(sealed_root: bool) -> Vec<Query> {
 
 /// A column that orders strings, so the string half of the ordering clause
 /// has something to compare (a world orders one kind of leaf; see
-/// [`super::profile::Ids::ordering_ranks`]).
+/// [`super::profile::Ids::ordering_ranks`]). `"Carol"` and `"carol"`, and
+/// `"ál"` and `"al"`, fold to one value, so their terms are equal and
+/// `"ál"`'s length is that of the two bytes it folds to.
 fn names() -> World {
     World {
         name: "ordered strings",
@@ -98,12 +107,16 @@ fn names() -> World {
             json!({"name": "carol", "age": 3}),
             json!({"name": "bob", "tags": []}),
             json!({"tags": ["zzzzzzzz", "b"]}),
+            json!({"name": "Carol", "tags": ["B", "aa", "Ab"]}),
+            json!({"name": "ál"}),
         ],
         queries: vec![
             Query::Order("$.name".into(), json!("b")),
             Query::Order("$.tags[*]".into(), json!("aa")),
-            Query::Subtree("$.tags".into()),
-            Query::Subtree("$.tags[1]".into()),
+            Query::Order("$.name".into(), json!("AL")),
+            Query::subtree("$.tags"),
+            Query::subtree("$.tags[1]"),
+            Query::subtree_with("$.tags[*]", 2, 64),
         ],
     }
 }
@@ -126,13 +139,18 @@ fn wide() -> World {
             ordered: Vec::new(),
         },
         docs: vec![
-            json!({"w1": object("a", 8), "w2": object("b", 8), "w3": object("c", 8)}),
-            json!({"w1": object("a", 5), "w3": object("c", 8)}),
+            json!({"w1": object("a", 8), "w2": object("b", 8), "w3": object("c", 8),
+                   "arr": [{"k": 1}, {"k": {"z": 2}, "m": [3]}]}),
+            json!({"w1": object("a", 5), "w3": object("c", 8), "arr": [{"k": 4}]}),
         ],
+        // `$.arr[*].k` at a bound of one: the probe `$.arr[1]` finds the
+        // first row's second element, and no other read names anything in
+        // it, so only the probe links its subtree.
         queries: vec![
-            Query::Subtree("$.w1".into()),
-            Query::Subtree("$.w2".into()),
-            Query::Subtree("$.w3".into()),
+            Query::subtree("$.w1"),
+            Query::subtree("$.w2"),
+            Query::subtree("$.w3"),
+            Query::subtree_with("$.arr[*].k", 1, 64),
         ],
     }
 }
@@ -232,8 +250,9 @@ fn document() -> impl Strategy<Value = Value> {
     .prop_map(numberize)
 }
 
-fn query(sealed_root: bool) -> impl Strategy<Value = Query> {
-    let mut subtree = vec![
+fn query() -> impl Strategy<Value = Query> {
+    let subtree = vec![
+        "$",
         "$.a",
         "$.list",
         "$.list[0]",
@@ -247,12 +266,23 @@ fn query(sealed_root: bool) -> impl Strategy<Value = Query> {
         "$[1].a",
         "$[0][1]",
         "$.a.tags[*]",
+        "$[*].a",
+        "$.list[*]",
+        "$.list[*].tags[*]",
     ];
-    if !sealed_root {
-        subtree.extend(["$", "$[*].a", "$.list[*]"]);
-    }
     prop_oneof![
-        3 => prop::sample::select(subtree).prop_map(|p| Query::Subtree(p.into())),
+        3 => (
+            prop::sample::select(subtree),
+            prop::sample::select(vec![1u32, 2, 3, 64]),
+            prop::sample::select(vec![0u32, 2, 64]),
+        )
+            // Two wildcard levels at the default bound send 4,161 tokens;
+            // the harness keeps them small, and `a_read_gives_away_its_bound`
+            // sends the full count once.
+            .prop_map(|(p, bound, budget)| {
+                let bound = if p.matches("[*]").count() > 1 { bound.min(3) } else { bound };
+                Query::subtree_with(p, bound, budget)
+            }),
         2 => prop::sample::select(vec!["$", "$.a", "$.a.b", "$.list[0].n", "$.list[3].n", "$.tags[*]"])
             .prop_map(|p| Query::Extract(p.into())),
         2 => prop_oneof![
@@ -276,7 +306,7 @@ pub fn random_world() -> impl Strategy<Value = World> {
     any::<bool>().prop_flat_map(|sealed_root| {
         (
             prop::collection::vec(document(), 2..7),
-            prop::collection::vec(query(sealed_root), 4..11),
+            prop::collection::vec(query(), 4..11),
         )
             .prop_map(move |(docs, queries)| World {
                 name: "random",

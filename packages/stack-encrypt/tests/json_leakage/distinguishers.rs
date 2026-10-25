@@ -7,9 +7,9 @@
 //! equality pattern give the same feature whatever their bytes. A real world
 //! and a simulated one are compared feature by feature for equality; no
 //! statistics are involved. The one source of chance is a collision of
-//! random bytes (an eight-byte parent tag colliding with another, say), which
-//! changes a feature with probability below `n² / 2^64` for `n` tags in a
-//! world, about `10^-13` at the harness's sizes.
+//! random bytes (an eight-byte parent or self tag colliding with another,
+//! say), which changes a feature with probability below `n² / 2^64` for `n`
+//! tags in a world, about `10^-13` at the harness's sizes.
 //!
 //! What is deliberately not here, and why, is in the module docs
 //! (`mod.rs`, "Out of reach").
@@ -17,8 +17,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::Hash;
 
-use super::chain::{child_token, parent_tag, Tag16, Tag8};
-use super::observe::{ObservedGate, ObservedGroup, ObservedQuery, ObservedRow, ObservedWorld};
+use super::chain::{
+    element_token, hit_token, member_token, parent_tag, self_tag, Rule, Tag16, Tag8,
+};
+use super::observe::{ObservedGroup, ObservedQuery, ObservedRow, ObservedWorld};
 
 /// One distinguisher: a name and the feature it computes, printed so that
 /// any two features compare as strings and a mismatch reads as a diff.
@@ -47,20 +49,28 @@ registry!(
     ciphertext_lengths,
     ciphertext_length_multisets,
     ciphertext_framing,
+    stored_lengths,
     selector_pattern_within_rows,
     selector_pattern_across_rows,
     parent_tag_equalities,
+    self_tag_equalities,
     headers,
     projections,
     value_selector_partitions,
     chain_head_runs,
     selector_precedence,
     depth_recovery,
+    token_counts,
+    bound_recovery,
+    token_hits,
+    wildcard_positions,
     token_reach,
+    hit_rules,
+    ancestor_links,
     ordinal_patterns,
     member_ordinals_follow_key_order,
     token_derivability,
-    gated_walk_results,
+    subtree_results,
     transcripts,
     extraction_matches,
     containment_matches,
@@ -180,6 +190,19 @@ pub fn ciphertext_framing(world: &ObservedWorld) -> (BTreeSet<u8>, usize) {
     (frames, pairs)
 }
 
+/// Each row's length in characters as compact JSON, and each entry's: what
+/// the stored size says, with every tag's and term's fixed width included.
+/// The self tag adds 19 characters to every entry (`,"x":"` and twelve
+/// base64 characters and a quote; 21 in PostgreSQL's `jsonb` text form,
+/// which writes `, "x": "…"`), a constant, so it adds nothing that varies.
+pub fn stored_lengths(world: &ObservedWorld) -> Vec<(usize, Vec<usize>)> {
+    world
+        .rows
+        .iter()
+        .map(|r| (r.chars, r.entries.iter().map(|e| e.chars).collect()))
+        .collect()
+}
+
 // =============================================================================
 // At rest: equality patterns
 // =============================================================================
@@ -224,6 +247,40 @@ pub fn parent_tag_equalities(world: &ObservedWorld) -> Vec<((usize, usize), (usi
     let mut out: Vec<_> = seen
         .into_values()
         .filter(|at| at.len() > 1)
+        .flat_map(|at| {
+            let first = at[0];
+            at.into_iter().skip(1).map(move |other| (first, other))
+        })
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+/// An eight-byte tag's place: the row, the entry, and the field (`x` or
+/// `p`).
+pub type TagAt = (usize, usize, char);
+
+/// Every pair of entries, within a row or across rows, whose self tag equals
+/// another self tag or a parent tag anywhere in the world. The page: the
+/// self tag "is unrelated bytes in every row and links no entry to
+/// another", so this is expected empty: each is a hash of a distinct
+/// token under its row's `iv`, in its own domain (`"x"`, where the parent
+/// tag's is `"p"`).
+pub fn self_tag_equalities(world: &ObservedWorld) -> Vec<(TagAt, TagAt)> {
+    let mut seen: HashMap<Tag8, Vec<(usize, usize, char)>> = HashMap::new();
+    for (r, row) in world.rows.iter().enumerate() {
+        for (j, entry) in row.entries.iter().enumerate() {
+            if let Some(x) = entry.x {
+                seen.entry(x).or_default().push((r, j, 'x'));
+            }
+            if let Some(p) = entry.p {
+                seen.entry(p).or_default().push((r, j, 'p'));
+            }
+        }
+    }
+    let mut out: Vec<_> = seen
+        .into_values()
+        .filter(|at| at.len() > 1 && at.iter().any(|(_, _, f)| *f == 'x'))
         .flat_map(|at| {
             let first = at[0];
             at.into_iter().skip(1).map(move |other| (first, other))
@@ -465,61 +522,89 @@ pub fn depth_recovery(world: &ObservedWorld) -> Vec<Vec<Option<usize>>> {
 }
 
 // =============================================================================
-// Under a token: the walk, with the real hash
+// Under a token: the database's walk, with the real hash
 // =============================================================================
 
-/// One entry a walk from a token reaches.
-#[derive(Clone, Copy, Debug)]
-struct Hit {
-    position: usize,
-    /// The position of the hit's parent, or `None` for a child of the
-    /// token's own node, which the walk never identifies.
-    parent: Option<usize>,
-    ordinal: u32,
-    depth: usize,
-    token: Tag16,
-    parent_token: Tag16,
+/// A row's two lookups, as `eql_v4_internal.json_tree_index` builds them:
+/// self tag to position and parent tag to position, the last entry winning
+/// a repeated tag (`jsonb_object_agg` keeps the last value of a repeated
+/// key).
+struct RowIndex {
+    x: HashMap<Tag8, usize>,
+    p: HashMap<Tag8, usize>,
 }
 
-/// The children of the node whose token is `token`, as the database finds
-/// them: the parent tag of ordinal `0, 1, 2, …` until the first miss.
-fn children(
-    row: &ObservedRow,
-    index: &HashMap<Tag8, usize>,
-    token: &Tag16,
-) -> Vec<(usize, u32, Tag16)> {
-    let mut out = Vec::new();
-    for o in 0..u32::try_from(row.entries.len()).unwrap_or(u32::MAX) {
-        let Some(&j) = index.get(&parent_tag(&row.header.iv, token, o)) else {
-            break;
-        };
-        out.push((j, o, child_token(token, &row.entries[j].s, o)));
-    }
-    out
-}
-
-fn parent_index(row: &ObservedRow) -> HashMap<Tag8, usize> {
-    let mut index = HashMap::new();
+fn row_index(row: &ObservedRow) -> RowIndex {
+    let mut index = RowIndex {
+        x: HashMap::new(),
+        p: HashMap::new(),
+    };
     for (j, entry) in row.entries.iter().enumerate() {
+        if let Some(x) = entry.x {
+            let _ = index.x.insert(x, j);
+        }
         if let Some(p) = entry.p {
-            let _ = index.entry(p).or_insert(j);
+            let _ = index.p.insert(p, j);
         }
     }
     index
 }
 
-/// Everything below `token` in `row`, depth first, bounded as the SQL walk
-/// is: no deeper than the index seals, and no more hits than entries.
-fn walk(row: &ObservedRow, token: &Tag16) -> Vec<Hit> {
+/// One entry a walk from a token reaches.
+#[derive(Clone, Copy, Debug)]
+struct Hit {
+    position: usize,
+    /// The position of the hit's parent, `None` for the node the token
+    /// names.
+    parent: Option<usize>,
+    /// The ordinal the hit was probed at under its parent.
+    ordinal: Option<u32>,
+    depth: usize,
+    /// The hit's own token, when the database has one: the token sent, for
+    /// the node it names, or the one the member rule or the element rule
+    /// gives a hit whose self tag matches it. A hit with neither is returned
+    /// and not descended into.
+    token: Option<Tag16>,
+    /// The rule that gave a hit below the named node its token.
+    rule: Option<Rule>,
+    /// The token of the hit's parent (for the named node, its own).
+    parent_token: Tag16,
+}
+
+/// A child as the database finds it: its position, the ordinal it was
+/// probed at, and its token and the rule that gave it, if either matches.
+type Child = (usize, u32, Option<(Tag16, Rule)>);
+
+/// The children of the node whose token is `token`, as the database finds
+/// them: the parent tag of ordinal `0, 1, 2, …` until the first miss, each
+/// with the token the member rule or the element rule gives it.
+fn children(row: &ObservedRow, index: &RowIndex, token: &Tag16) -> Vec<Child> {
+    let iv = &row.header.iv;
+    let mut out = Vec::new();
+    for o in 0..u32::try_from(row.entries.len()).unwrap_or(u32::MAX) {
+        let Some(&j) = index.p.get(&parent_tag(iv, token, o)) else {
+            break;
+        };
+        let entry = &row.entries[j];
+        out.push((j, o, hit_token(iv, token, &entry.s, entry.x.as_ref(), o)));
+    }
+    out
+}
+
+/// The node `token` names in `row`, found by its self tag, then everything
+/// below it, depth first, bounded as the crate's walk (`JsonDocument::subtree`)
+/// and the SQL's are: no deeper than the index seals, and no more hits than
+/// entries.
+fn walk_with(row: &ObservedRow, index: &RowIndex, token: &Tag16) -> Vec<Hit> {
     fn go(
         row: &ObservedRow,
-        index: &HashMap<Tag8, usize>,
+        index: &RowIndex,
         token: &Tag16,
-        parent: Option<usize>,
+        parent: usize,
         depth: usize,
         out: &mut Vec<Hit>,
     ) {
-        if depth > 128 || out.len() >= row.entries.len() {
+        if out.len() >= row.entries.len() || depth > 127 {
             return;
         }
         for (j, o, child) in children(row, index, token) {
@@ -528,57 +613,276 @@ fn walk(row: &ObservedRow, token: &Tag16) -> Vec<Hit> {
             }
             out.push(Hit {
                 position: j,
-                parent,
-                ordinal: o,
+                parent: Some(parent),
+                ordinal: Some(o),
                 depth,
-                token: child,
+                token: child.map(|(t, _)| t),
+                rule: child.map(|(_, rule)| rule),
                 parent_token: *token,
             });
-            go(row, index, &child, Some(j), depth + 1, out);
+            if let Some((child, _)) = child {
+                go(row, index, &child, j, depth + 1, out);
+            }
         }
     }
-    let index = parent_index(row);
-    let mut out = Vec::new();
-    go(row, &index, token, None, 1, &mut out);
+    let Some(&at) = index.x.get(&self_tag(&row.header.iv, token)) else {
+        return Vec::new();
+    };
+    let mut out = vec![Hit {
+        position: at,
+        parent: None,
+        ordinal: None,
+        depth: 0,
+        token: Some(*token),
+        rule: None,
+        parent_token: *token,
+    }];
+    go(row, index, token, at, 1, &mut out);
     out
 }
 
-fn subtree_queries(world: &ObservedWorld) -> Vec<(usize, Tag16, &[ObservedGate])> {
+/// The subtree reads of a world: each one's place among the queries, its
+/// tokens and its budget.
+fn subtree_queries(world: &ObservedWorld) -> Vec<(usize, &[Tag16], u32)> {
     world
         .queries
         .iter()
         .enumerate()
         .filter_map(|(i, q)| match q {
-            ObservedQuery::Subtree { t, gates } => Some((i, *t, gates.as_slice())),
+            ObservedQuery::Subtree { tokens, budget } => Some((i, tokens.as_slice(), *budget)),
             _ => None,
         })
         .collect()
 }
 
-/// One entry a token links: its position, its parent's position (`None`
-/// for a child of the token's own node) and its depth below that node.
-pub type Link = (usize, Option<usize>, usize);
+/// For every subtree read, every row, and every token of the read that
+/// finds a node there, the walk: computed once per world and handed to the
+/// features that read it.
+type Walks = Vec<Vec<Vec<(usize, Vec<Hit>)>>>;
 
-/// For every subtree read and every row, what the token links: each entry
-/// the walk from the token reaches, its parent among them, and its depth
-/// below the token's node, found by recomputing the real parent tags over
-/// the row's `iv`. Catches a token that reaches more (or less) than the
-/// profile's reach clause says: the page says a token covers its node's
-/// whole subtree, in every row, and not only the path asked for (#1360).
-pub fn token_reach(world: &ObservedWorld) -> Vec<Vec<Vec<Link>>> {
+fn walks(world: &ObservedWorld) -> Walks {
+    let indexes: Vec<RowIndex> = world.rows.iter().map(row_index).collect();
     subtree_queries(world)
         .into_iter()
-        .map(|(_, t, _)| {
+        .map(|(_, tokens, _)| {
             world
                 .rows
                 .iter()
-                .map(|row| {
-                    let mut hits: Vec<_> = walk(row, &t)
+                .zip(&indexes)
+                .map(|(row, index)| {
+                    tokens
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(k, t)| {
+                            let hits = walk_with(row, index, t);
+                            (!hits.is_empty()).then_some((k, hits))
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// How many tokens each subtree read sends: one for a path with no
+/// wildcard, `N + 1` for one wildcard level, `N² + N + 1` for two.
+pub fn token_counts(world: &ObservedWorld) -> Vec<usize> {
+    subtree_queries(world)
+        .into_iter()
+        .map(|(_, tokens, _)| tokens.len())
+        .collect()
+}
+
+/// The bound an observer recovers from a read's token count alone: every
+/// `(levels, N)` with `N^levels + … + N + 1` equal to the count, up to three
+/// levels (`(0, 0)` for a single token). One wildcard level at the default
+/// bound sends 65 tokens, and 65 is `N + 1` for `N = 64` and nothing else;
+/// two levels send 4,161, which is also one level at `N = 4160`, and which
+/// tokens find nodes tells the two apart.
+pub fn bound_recovery(world: &ObservedWorld) -> Vec<Vec<(u32, u64)>> {
+    token_counts(world)
+        .into_iter()
+        .map(|count| {
+            let count = count as u64;
+            let mut out = Vec::new();
+            if count == 1 {
+                out.push((0, 0));
+            }
+            for levels in 1..=3u32 {
+                for n in 1..count {
+                    let sum: u64 = (0..=levels).map(|k| n.pow(k)).sum();
+                    if sum == count {
+                        out.push((levels, n));
+                    }
+                    if sum >= count {
+                        break;
+                    }
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// For every subtree read and every row, which of the read's tokens find a
+/// node there (by its place in the list) and where: "which of the nodes
+/// exist in each row". Catches a token that is not column-wide, a token
+/// list in another order, and a token that names another node.
+pub fn token_hits(world: &ObservedWorld) -> Vec<Vec<Vec<(usize, usize)>>> {
+    walks(world)
+        .into_iter()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|found| {
+                    found
+                        .iter()
+                        .map(|(k, hits)| (*k, hits[0].position))
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// What a one-level wildcard read gives away, read as one: with `N` the
+/// count less one, per row, the positions below `N` whose tokens find a
+/// node (which elements hold the rest of the path, `$.items[*].price`'s
+/// `price`), whether the last token, the probe, finds one (the array is
+/// longer than `N`), and, where both found something, whether the probe's
+/// node carries a selector none of the others does (the probe names the
+/// element, the others the path below it: the probe is told from the other
+/// tokens by what it finds as well as by its place). `None` for a read of
+/// one token.
+#[allow(clippy::type_complexity)]
+pub fn wildcard_positions(
+    world: &ObservedWorld,
+) -> Vec<Option<Vec<(Vec<usize>, bool, Option<bool>)>>> {
+    let counts = token_counts(world);
+    walks(world)
+        .into_iter()
+        .zip(counts)
+        .map(|(rows, count)| {
+            (count >= 2).then(|| {
+                let n = count - 1;
+                rows.iter()
+                    .zip(&world.rows)
+                    .map(|(found, row)| {
+                        let positions: Vec<usize> =
+                            found.iter().map(|(k, _)| *k).filter(|k| *k < n).collect();
+                        let probe = found.iter().find(|(k, _)| *k == n);
+                        let told = probe.filter(|_| !positions.is_empty()).map(|(_, hits)| {
+                            let s = row.entries[hits[0].position].s;
+                            found
+                                .iter()
+                                .filter(|(k, _)| *k < n)
+                                .all(|(_, h)| row.entries[h[0].position].s != s)
+                        });
+                        (positions, probe.is_some(), told)
+                    })
+                    .collect()
+            })
+        })
+        .collect()
+}
+
+/// One entry a token links: its position, its parent's position (`None`
+/// for the node the token names) and its depth below that node.
+pub type Link = (usize, Option<usize>, usize);
+
+/// What one token of a read links in one row: its place in the list and
+/// its links.
+pub type Reached = (usize, Vec<Link>);
+
+/// For every subtree read, every row and every token that finds a node,
+/// what the token links: the node, each entry the walk below it reaches,
+/// its parent and its depth, found by recomputing the real self and parent
+/// tags over the row's `iv`. Catches a token that reaches more (or less)
+/// than the profile's reach clause says: a token covers its node's whole
+/// subtree in every row, and nothing above it.
+pub fn token_reach(world: &ObservedWorld) -> Vec<Vec<Vec<Reached>>> {
+    walks(world)
+        .into_iter()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|found| {
+                    found
                         .into_iter()
-                        .map(|h| (h.position, h.parent, h.depth))
+                        .map(|(k, hits)| {
+                            let mut links: Vec<Link> = hits
+                                .into_iter()
+                                .map(|h| (h.position, h.parent, h.depth))
+                                .collect();
+                            links.sort_unstable();
+                            (k, links)
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// A reached node's rule: the place in the list of the token whose walk
+/// reached it, its position, and the rule its self tag matched.
+pub type RuleAt = (usize, usize, Option<Rule>);
+
+/// For every node a walk reaches below a token, which rule its self tag
+/// matched: the member rule (its parent is an object), the element rule
+/// (an array), or neither. The database runs this test on every hit
+/// (`json_tree_hit_token`), so it learns each reached node's parent's kind,
+/// which the stored form keeps out (the design's "no kind bit").
+pub fn hit_rules(world: &ObservedWorld) -> Vec<Vec<Vec<RuleAt>>> {
+    walks(world)
+        .into_iter()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|found| {
+                    let mut rules: Vec<_> = found
+                        .into_iter()
+                        .flat_map(|(k, hits)| {
+                            hits.into_iter()
+                                .filter(|h| h.depth > 0)
+                                .map(move |h| (k, h.position, h.rule))
+                        })
                         .collect();
-                    hits.sort_unstable();
-                    hits
+                    // The walk's order follows the members' keyed ranks.
+                    rules.sort_unstable();
+                    rules
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// For every subtree read, every row and every token that finds a node,
+/// whether the database can link that node to its parent with any token it
+/// holds: every token of every read, and every token its walks derive. The
+/// page: no token "over a top-level field or an array leaves the client
+/// unless that field or array is itself what is read", so a node's parent
+/// is linked only where some read named one of its ancestors. Catches a
+/// read that sends an ancestor's token, as the gated read before #1363 sent
+/// its top-level field's.
+pub fn ancestor_links(world: &ObservedWorld) -> Vec<Vec<Vec<(usize, bool)>>> {
+    let walks = walks(world);
+    let below: Vec<BTreeSet<usize>> = (0..world.rows.len())
+        .map(|r| {
+            walks
+                .iter()
+                .flat_map(|rows| rows[r].iter())
+                .flat_map(|(_, hits)| hits.iter().filter(|h| h.depth > 0).map(|h| h.position))
+                .collect()
+        })
+        .collect();
+    walks
+        .iter()
+        .map(|rows| {
+            rows.iter()
+                .enumerate()
+                .map(|(r, found)| {
+                    found
+                        .iter()
+                        .map(|(k, hits)| (*k, below[r].contains(&hits[0].position)))
+                        .collect()
                 })
                 .collect()
         })
@@ -598,42 +902,44 @@ pub fn ordinal_patterns(world: &ObservedWorld) -> (usize, Vec<(usize, usize, usi
     let mut tokens = Canon::new();
     let mut out_of_order = 0;
     let mut ranked: BTreeMap<(usize, usize, usize), BTreeSet<bool>> = BTreeMap::new();
-    for (_, t, _) in subtree_queries(world) {
-        for row in &world.rows {
-            let hits = walk(row, &t);
-            let mut by_parent: BTreeMap<(Option<usize>, Tag16), Vec<Hit>> = BTreeMap::new();
-            for hit in hits {
-                by_parent
-                    .entry((hit.parent, hit.parent_token))
-                    .or_default()
-                    .push(hit);
-            }
-            for ((_, parent_token), mut kids) in by_parent {
-                kids.sort_by_key(|h| h.position);
-                let same = kids
-                    .windows(2)
-                    .all(|w| row.entries[w[0].position].s == row.entries[w[1].position].s);
-                if same
-                    && kids
-                        .iter()
-                        .enumerate()
-                        .any(|(i, h)| h.ordinal as usize != i)
-                {
-                    out_of_order += 1;
+    for rows in walks(world) {
+        for (r, found) in rows.into_iter().enumerate() {
+            let row = &world.rows[r];
+            for (_, hits) in found {
+                let mut by_parent: BTreeMap<(usize, Tag16), Vec<Hit>> = BTreeMap::new();
+                for hit in hits.into_iter().filter(|h| h.depth > 0) {
+                    by_parent
+                        .entry((hit.parent.expect("below the node"), hit.parent_token))
+                        .or_default()
+                        .push(hit);
                 }
-                if !same {
-                    let parent = tokens.id(parent_token);
-                    for a in &kids {
-                        for b in &kids {
-                            let (sa, sb) = (
-                                selectors.id(row.entries[a.position].s),
-                                selectors.id(row.entries[b.position].s),
-                            );
-                            if sa < sb {
-                                let _ = ranked
-                                    .entry((parent, sa, sb))
-                                    .or_default()
-                                    .insert(a.ordinal < b.ordinal);
+                for ((_, parent_token), mut kids) in by_parent {
+                    kids.sort_by_key(|h| h.position);
+                    let same = kids
+                        .windows(2)
+                        .all(|w| row.entries[w[0].position].s == row.entries[w[1].position].s);
+                    if same
+                        && kids
+                            .iter()
+                            .enumerate()
+                            .any(|(i, h)| h.ordinal != Some(i as u32))
+                    {
+                        out_of_order += 1;
+                    }
+                    if !same {
+                        let parent = tokens.id(parent_token);
+                        for a in &kids {
+                            for b in &kids {
+                                let (sa, sb) = (
+                                    selectors.id(row.entries[a.position].s),
+                                    selectors.id(row.entries[b.position].s),
+                                );
+                                if sa < sb {
+                                    let _ = ranked
+                                        .entry((parent, sa, sb))
+                                        .or_default()
+                                        .insert(a.ordinal < b.ordinal);
+                                }
                             }
                         }
                     }
@@ -664,68 +970,76 @@ pub fn ordinal_patterns(world: &ObservedWorld) -> (usize, Vec<(usize, usize, usi
 /// Only objects directly under a token sent are counted, since which deeper
 /// nodes share a derived token depends on the ranks themselves.
 pub fn member_ordinals_follow_key_order(world: &ObservedWorld) -> Option<bool> {
+    let indexes: Vec<RowIndex> = world.rows.iter().map(row_index).collect();
     let mut chance = 1.0f64;
     let mut all_in_order = true;
     let mut sent = BTreeSet::new();
-    for (_, t, _) in subtree_queries(world) {
-        if !sent.insert(t) {
-            continue;
-        }
-        let mut widest = 0usize;
-        for row in &world.rows {
-            let mut kids: Vec<Hit> = walk(row, &t)
-                .into_iter()
-                .filter(|h| h.parent.is_none())
-                .collect();
-            let distinct: BTreeSet<Tag16> =
-                kids.iter().map(|h| row.entries[h.position].s).collect();
-            if kids.len() < 2 || distinct.len() != kids.len() {
+    for (_, tokens, _) in subtree_queries(world) {
+        for t in tokens {
+            if !sent.insert(*t) {
                 continue;
             }
-            widest = widest.max(kids.len());
-            kids.sort_by_key(|h| h.position);
-            if kids
-                .iter()
-                .enumerate()
-                .any(|(i, h)| h.ordinal as usize != i)
-            {
-                all_in_order = false;
+            let mut widest = 0usize;
+            for (row, index) in world.rows.iter().zip(&indexes) {
+                let mut kids: Vec<Hit> = walk_with(row, index, t)
+                    .into_iter()
+                    .filter(|h| h.depth == 1)
+                    .collect();
+                let distinct: BTreeSet<Tag16> =
+                    kids.iter().map(|h| row.entries[h.position].s).collect();
+                if kids.len() < 2 || distinct.len() != kids.len() {
+                    continue;
+                }
+                widest = widest.max(kids.len());
+                kids.sort_by_key(|h| h.position);
+                if kids
+                    .iter()
+                    .enumerate()
+                    .any(|(i, h)| h.ordinal != Some(i as u32))
+                {
+                    all_in_order = false;
+                }
             }
+            chance /= (1..=widest).map(|k| k as f64).product::<f64>();
         }
-        chance /= (1..=widest).map(|k| k as f64).product::<f64>();
     }
     (chance < 2f64.powi(-40)).then_some(all_in_order)
 }
 
 /// Which subtree reads' tokens the database can derive from which others':
-/// `(i, j)` when the token sent by query `j` is one the walk from query
-/// `i`'s token derives in some row, or is the child token of `i`'s under
-/// any selector the column holds and an ordinal below 8 (a bound on what
-/// the harness tries, not on what the database can). The page: a token's
-/// holder can "derive the tokens of the nodes beneath". Catches tokens that
-/// are not chained (a positional token unrelated to its head's) as well as
-/// tokens chained where the profile says they are not.
+/// `(i, j)` when a token sent by query `j` is one the walks from query
+/// `i`'s tokens derive in some row, or is a child token of one of `i`'s by
+/// the member rule under any selector the column holds, or by the element
+/// rule at an index below 4 (a bound on what the harness tries, not on what
+/// the database can). The page: a token's holder can "derive the tokens of
+/// the nodes beneath". Catches tokens that are not chained (a token
+/// unrelated to its path's) as well as tokens chained where the profile
+/// says they are not.
 pub fn token_derivability(world: &ObservedWorld) -> BTreeSet<(usize, usize)> {
     let queries = subtree_queries(world);
+    let walks = walks(world);
     let selectors: BTreeSet<Tag16> = world
         .rows
         .iter()
         .flat_map(|r| r.entries.iter().map(|e| e.s))
         .collect();
     let mut out = BTreeSet::new();
-    for &(i, ti, _) in &queries {
-        let mut derived: BTreeSet<Tag16> = world
-            .rows
+    for (q, &(i, tokens, _)) in queries.iter().enumerate() {
+        let mut derived: BTreeSet<Tag16> = walks[q]
             .iter()
-            .flat_map(|row| walk(row, &ti).into_iter().map(|h| h.token))
+            .flatten()
+            .flat_map(|(_, hits)| hits.iter().filter_map(|h| h.token))
             .collect();
-        for s in &selectors {
-            for o in 0..8 {
-                let _ = derived.insert(child_token(&ti, s, o));
+        for t in tokens {
+            for s in &selectors {
+                let _ = derived.insert(member_token(t, s));
+                for o in 0..4 {
+                    let _ = derived.insert(element_token(t, s, o));
+                }
             }
         }
-        for &(j, tj, _) in &queries {
-            if i != j && derived.contains(&tj) {
+        for &(j, others, _) in &queries {
+            if i != j && others.iter().any(|t| derived.contains(t)) {
                 let _ = out.insert((i, j));
             }
         }
@@ -733,47 +1047,50 @@ pub fn token_derivability(world: &ObservedWorld) -> BTreeSet<(usize, usize)> {
     out
 }
 
-/// What each subtree read returns from each row, as the SQL walk computes
-/// it: from the token, through each gate (a child carrying the gate's
-/// selector, or the child at ordinal `n` carrying it), then each node
-/// reached with everything beneath it; with no gates, everything beneath the
-/// token's node.
-pub fn gated_walk_results(world: &ObservedWorld) -> Vec<Vec<Vec<usize>>> {
-    subtree_queries(world)
+/// What one subtree read returns from one row.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Returned {
+    /// `(k, j, d)`: the place in the token list of the token whose node the
+    /// row sits in, its position and its depth below that node, ordered by
+    /// `k` then `j`.
+    Rows(Vec<(usize, usize, usize)>),
+    /// The root entry alone: the root is sealed, the budget is not `0`, and
+    /// the read found more rows than the budget.
+    RootAlone,
+}
+
+/// What each subtree read returns from each row, as `json_tree_subtree`
+/// computes it: for each token in turn the node it names and everything
+/// beneath it, or, past the budget under the sealed root, the root entry
+/// alone. The database computes the fallback from the walk it already
+/// sees, so it learns nothing from it; to someone who sees only the
+/// results, a row answered with its root alone had more than `budget` rows
+/// under the tokens.
+pub fn subtree_results(world: &ObservedWorld) -> Vec<Vec<Returned>> {
+    let budgets: Vec<u32> = subtree_queries(world)
         .into_iter()
-        .map(|(_, t, gates)| {
-            world
-                .rows
-                .iter()
-                .map(|row| {
-                    let index = parent_index(row);
-                    let mut frontier: Vec<(Option<usize>, Tag16)> = vec![(None, t)];
-                    for gate in gates {
-                        let mut next = Vec::new();
-                        for (_, token) in &frontier {
-                            let kids = children(row, &index, token);
-                            match gate {
-                                ObservedGate::Selector(s) => next.extend(
-                                    kids.iter()
-                                        .filter(|(j, _, _)| row.entries[*j].s == *s)
-                                        .map(|(j, _, child)| (Some(*j), *child)),
-                                ),
-                                ObservedGate::Slot(n, s) => next.extend(
-                                    kids.get(*n as usize)
-                                        .filter(|(j, _, _)| row.entries[*j].s == *s)
-                                        .map(|(j, _, child)| (Some(*j), *child)),
-                                ),
-                            }
-                        }
-                        frontier = next;
+        .map(|(_, _, budget)| budget)
+        .collect();
+    walks(world)
+        .into_iter()
+        .zip(budgets)
+        .map(|(rows, budget)| {
+            rows.into_iter()
+                .zip(&world.rows)
+                .map(|(found, row)| {
+                    let mut out: Vec<(usize, usize, usize)> = found
+                        .into_iter()
+                        .flat_map(|(k, hits)| {
+                            hits.into_iter().map(move |h| (k, h.position, h.depth))
+                        })
+                        .collect();
+                    let sealed = row.header.flags & 1 == 1;
+                    if sealed && budget > 0 && out.len() > budget as usize {
+                        Returned::RootAlone
+                    } else {
+                        out.sort_unstable();
+                        Returned::Rows(out)
                     }
-                    let mut rows = Vec::new();
-                    for (reached, token) in frontier {
-                        rows.extend(reached);
-                        rows.extend(walk(row, &token).into_iter().map(|h| h.position));
-                    }
-                    rows.sort_unstable();
-                    rows
                 })
                 .collect()
         })
@@ -789,17 +1106,18 @@ pub fn gated_walk_results(world: &ObservedWorld) -> Vec<Vec<Vec<usize>>> {
 #[allow(dead_code)]
 pub enum NamedQuery {
     Extract(usize),
-    Subtree(usize, Vec<(Option<u32>, usize)>),
+    Subtree(Vec<usize>, u32),
     Contains(NamedGroup, Option<NamedGroup>),
     Equals(NamedGroup),
     Order(usize, usize),
 }
 
 /// Every query term, its tags named across the column and the other terms:
-/// which terms repeat (a query is deterministic), which selectors a term
-/// shares with the stored rows and with other terms (two paths that differ
-/// only in an array position send one selector), a gate's position in the
-/// clear, and a needle's shape.
+/// which terms repeat (a query is deterministic, and a token is the same in
+/// every read that names its node), which selectors a term shares with the
+/// stored rows and with other terms (two paths that differ only in an array
+/// position send one selector), a read's tokens in the order sent and its
+/// budget, and a needle's shape.
 pub fn transcripts(world: &ObservedWorld) -> Vec<NamedQuery> {
     let mut selectors = selector_names(world);
     let mut values = Canon::new();
@@ -813,16 +1131,10 @@ pub fn transcripts(world: &ObservedWorld) -> Vec<NamedQuery> {
         .iter()
         .map(|q| match q {
             ObservedQuery::Extract { s } => NamedQuery::Extract(selectors.id(*s)),
-            ObservedQuery::Subtree { t, gates } => NamedQuery::Subtree(
-                tokens.id(*t),
-                gates
-                    .iter()
-                    .map(|g| match g {
-                        ObservedGate::Selector(s) => (None, selectors.id(*s)),
-                        ObservedGate::Slot(n, s) => (Some(*n), selectors.id(*s)),
-                    })
-                    .collect(),
-            ),
+            ObservedQuery::Subtree {
+                tokens: sent,
+                budget,
+            } => NamedQuery::Subtree(sent.iter().map(|t| tokens.id(*t)).collect(), *budget),
             ObservedQuery::Contains { needle, alt } => NamedQuery::Contains(
                 name_group(needle, &mut selectors, &mut values),
                 alt.as_ref()
@@ -983,11 +1295,13 @@ pub fn ordering_matches(world: &ObservedWorld) -> Vec<Vec<Vec<usize>>> {
         .collect()
 }
 
-/// The positions and depths a walk from `token` reaches in `row`, in the
-/// walk's order: what `JsonDocument::subtree` returns.
-pub fn walk_positions(row: &ObservedRow, token: &Tag16) -> Vec<(usize, usize)> {
-    walk(row, token)
-        .into_iter()
+/// The positions and depths a read of `tokens` reaches in `row`, token by
+/// token in the walk's order: what `JsonDocument::subtree` returns.
+pub fn walk_positions(row: &ObservedRow, tokens: &[Tag16]) -> Vec<(usize, usize)> {
+    let index = row_index(row);
+    tokens
+        .iter()
+        .flat_map(|t| walk_with(row, &index, t))
         .map(|h| (h.position, h.depth))
         .collect()
 }

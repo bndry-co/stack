@@ -34,10 +34,15 @@ pub struct ObservedHeader {
 pub struct ObservedEntry {
     pub s: Tag16,
     pub c: Vec<u8>,
+    /// The self tag. Every real entry carries one; `None` only from a
+    /// mutant, and then [`ObservedEntry::fields`] shows it.
+    pub x: Option<Tag8>,
     pub p: Option<Tag8>,
     pub op: Option<Vec<u8>>,
     /// The entry's wire keys.
     pub fields: Vec<String>,
+    /// The entry's length in characters, as compact JSON.
+    pub chars: usize,
 }
 
 /// One group of a projection: a stored `q`, or a needle.
@@ -52,6 +57,8 @@ pub struct ObservedGroup {
 pub struct ObservedRow {
     /// The document's wire keys.
     pub fields: Vec<String>,
+    /// The document's length in characters, as compact JSON.
+    pub chars: usize,
     pub header: ObservedHeader,
     pub entries: Vec<ObservedEntry>,
     pub q: ObservedGroup,
@@ -63,7 +70,8 @@ pub struct ObservedRow {
 pub enum QueryKind {
     /// `->`, `json_tree_path_query`: a selector.
     Extract,
-    /// `json_tree_subtree`, `json_tree_subtree_at`: a token and gates.
+    /// `json_tree_subtree(doc, tokens, budget)`: a list of tokens and the
+    /// budget.
     Subtree,
     /// `@>`: a containment needle, with its `alt`.
     Contains,
@@ -73,13 +81,6 @@ pub enum QueryKind {
     Order,
 }
 
-/// One gate of a subtree read.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ObservedGate {
-    Selector(Tag16),
-    Slot(u32, Tag16),
-}
-
 /// One query term, as the database receives it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ObservedQuery {
@@ -87,8 +88,8 @@ pub enum ObservedQuery {
         s: Tag16,
     },
     Subtree {
-        t: Tag16,
-        gates: Vec<ObservedGate>,
+        tokens: Vec<Tag16>,
+        budget: u32,
     },
     Contains {
         needle: ObservedGroup,
@@ -167,9 +168,11 @@ fn entry(value: &Value) -> ObservedEntry {
         s: b64_16(&value["s"]),
         c: base85_simd::decode(value["c"].as_str().expect("`c` is a string"))
             .expect("`c` is base85"),
+        x: value.get("x").map(b64_8),
         p: value.get("p").map(b64_8),
         op: value.get("op").map(b64),
         fields: keys(value),
+        chars: chars(value),
     }
 }
 
@@ -191,9 +194,16 @@ pub fn group(value: &Value) -> ObservedGroup {
     }
 }
 
+fn chars(value: &Value) -> usize {
+    serde_json::to_string(value)
+        .expect("a wire value serializes")
+        .len()
+}
+
 fn row(value: &Value) -> ObservedRow {
     ObservedRow {
         fields: keys(value),
+        chars: chars(value),
         header: header(&b64(&value["h"])),
         entries: value["sv"]
             .as_array()
@@ -205,35 +215,20 @@ fn row(value: &Value) -> ObservedRow {
     }
 }
 
-fn gate(text: &Value) -> ObservedGate {
-    let text = text.as_str().expect("a gate is a string");
-    match text.strip_prefix('#') {
-        Some(slot) => {
-            let (n, selector) = slot.split_once(':').expect("`#n:<selector>`");
-            ObservedGate::Slot(
-                n.parse().expect("a position"),
-                b64_16(&Value::String(selector.to_owned())),
-            )
-        }
-        None => ObservedGate::Selector(b64_16(&Value::String(text.to_owned()))),
-    }
-}
-
 fn query(kind: QueryKind, value: &Value) -> ObservedQuery {
     match kind {
         QueryKind::Extract => ObservedQuery::Extract { s: b64_16(value) },
         QueryKind::Subtree => ObservedQuery::Subtree {
-            t: b64_16(&value["t"]),
-            gates: value
-                .get("g")
-                .map(|g| {
-                    g.as_array()
-                        .expect("`g` is a list")
-                        .iter()
-                        .map(gate)
-                        .collect()
-                })
-                .unwrap_or_default(),
+            tokens: value["t"]
+                .as_array()
+                .expect("`t` is a list of tokens")
+                .iter()
+                .map(b64_16)
+                .collect(),
+            budget: value["budget"]
+                .as_u64()
+                .and_then(|b| u32::try_from(b).ok())
+                .expect("the budget is an integer"),
         },
         QueryKind::Contains => ObservedQuery::Contains {
             needle: group(value),

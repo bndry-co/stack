@@ -1,6 +1,6 @@
 //! The checks: the full profile is indistinguishable from the real scheme
-//! (the positive control), the page as written is not (the finding), and
-//! every clause's removal is noticed (the calibration).
+//! (the positive control), the page as #1363 published it is not (the
+//! finding), and every clause's removal is noticed (the calibration).
 
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
 use serde_json::json;
@@ -12,7 +12,7 @@ use super::corpus::{handcrafted, random_world, World};
 use super::distinguishers::{self, walk_positions};
 use super::mutants;
 use super::observe::ObservedWorld;
-use super::profile::{flatten, leak, Clauses, Column, KeyOrder, Leakage};
+use super::profile::{flatten, leak, Clauses, Column, KeyOrder, Leakage, Query, StringOrder};
 use super::{real, simulator};
 use crate::common::stack_cipher;
 
@@ -142,15 +142,31 @@ mod given_the_full_profile {
     }
 }
 
-mod given_the_page_as_written {
+mod given_the_page_as_published_in_1363 {
     use super::*;
 
-    /// The finding, held as a test: with only what the page states, a
-    /// distinguisher separates the simulated world from the real one, and
-    /// it is the ordering term's length. When the page states it, move the
-    /// clause into the page's profile and this test changes with it.
+    /// The finding, held as a test: with only what the page stated at
+    /// #1363's head, which says nothing of the rule a node's token takes
+    /// under its parent's, a distinguisher separates the simulated world
+    /// from the real one, and `hit_rules` is the one that names it. This
+    /// branch adds the sentence to the page ("whether each node beneath is
+    /// an object member or an array element, and each element's index");
+    /// the test keeps it load-bearing.
+    ///
+    /// The rest of the set is what follows from it. A world that states no
+    /// rule gives every member's token by the element rule, with its keyed
+    /// rank as the index. But a read through a key step sends a token
+    /// derived by the member rule, since that is the only token a client
+    /// can derive from a path; so where such a read names a node below a
+    /// member that another read's walk reaches (`$.nested.list[*].y[*]`
+    /// below `$.nested.list`'s walk), the walk derives the member by the
+    /// element rule and then fails to recognise the named node beneath it:
+    /// what the walk links (`token_reach`), what the read returns
+    /// (`subtree_results`) and which tokens derive which
+    /// (`token_derivability`) all change. No world consistent with the
+    /// tokens a client sends hides the rule: the page has to state it.
     #[test]
-    fn the_ordering_term_length_separates_it_from_the_real_scheme() {
+    fn the_hit_rule_separates_it_from_the_real_scheme() {
         let runtime = runtime();
         let cipher = runtime.block_on(stack_cipher());
         let mut fired = std::collections::BTreeSet::new();
@@ -158,7 +174,7 @@ mod given_the_page_as_written {
             let real = real_world(&runtime, &cipher, &world);
             let leakage = leak(
                 &world.column,
-                Clauses::page_only(),
+                Clauses::as_published_in_1363(),
                 &world.docs,
                 &world.queries,
             );
@@ -171,9 +187,54 @@ mod given_the_page_as_written {
         }
         assert_eq!(
             fired.into_iter().collect::<Vec<_>>(),
-            ["ordering_term_lengths"],
-            "the page as written is separated from the real scheme by exactly the ordering term's length"
+            PAGE_AS_PUBLISHED_FIRES,
+            "the page as #1363 published it is separated from the real scheme by the hit rule"
         );
+    }
+
+    /// What separates the page as #1363 published it from the real scheme.
+    const PAGE_AS_PUBLISHED_FIRES: &[&str] = &[
+        "hit_rules",
+        "subtree_results",
+        "token_derivability",
+        "token_reach",
+    ];
+}
+
+mod given_strings_ordered_by_their_bytes {
+    use super::*;
+
+    /// The page says strings are "ordered and compared after their case and
+    /// accents are folded", and that the term's length counts the folded
+    /// form. Read as the strings' own bytes (which the profile first
+    /// assumed, on a corpus of lower-case ASCII where the two agree), the
+    /// profile is told from the real scheme on the column whose names fold:
+    /// `"Carol"` and `"carol"` share a term, and `"ál"`'s term is as long
+    /// as `"al"`'s.
+    #[test]
+    fn the_ordering_terms_tell_it_apart() {
+        let runtime = runtime();
+        let cipher = runtime.block_on(stack_cipher());
+        let clauses = Clauses {
+            string_order: StringOrder::Bytes,
+            ..Clauses::default()
+        };
+        let world = handcrafted()
+            .into_iter()
+            .find(|w| w.name == "ordered strings")
+            .expect("the corpus has it");
+        let real = real_world(&runtime, &cipher, &world);
+        let leakage = leak(&world.column, clauses, &world.docs, &world.queries);
+        let fired: Vec<&str> = separating(&features(&real), &simulated_world(&leakage, &mut rng()))
+            .into_iter()
+            .map(|(n, _, _)| n)
+            .collect();
+        for expected in ["ordering_term_lengths", "ordering_term_order"] {
+            assert!(
+                fired.contains(&expected),
+                "folding shows in {expected}: {fired:?}"
+            );
+        }
     }
 }
 
@@ -281,14 +342,15 @@ mod given_a_mutant_profile {
 mod the_harness {
     use super::*;
 
-    /// The harness's hash chain is the crate's: walking a sealed document's
-    /// observed bytes from a subtree key's token finds exactly the entries
-    /// `JsonDocument::subtree` does, at the same depths.
+    /// The harness's hash chain is the crate's: reading a sealed
+    /// document's observed bytes with a subtree key's tokens finds exactly
+    /// the entries `JsonDocument::subtree` does, at the same depths, for
+    /// paths through members, positions and wildcards, and `$`.
     #[test]
     fn chain_is_the_crates_chain() {
         let runtime = runtime();
         let cipher = runtime.block_on(stack_cipher());
-        let doc = json!({"a": {"b": [1, {"c": 2}], "d": "e"}, "f": [[3], {"g": null}]});
+        let doc = json!({"a": {"b": [1, {"c": 2}], "d": "e"}, "f": [[3], {"g": null}, [4, 5]]});
         for sealed_root in [true, false] {
             let options = JsonOptions {
                 sealed_root,
@@ -307,26 +369,39 @@ mod the_harness {
             let sealed: stack_encrypt::json::JsonDocument =
                 serde_json::from_value(rows[0].clone()).expect("a document");
             let observed = ObservedWorld::from_wire(&rows, &[]);
-            for path in ["$.a", "$.f", "$.f[1]", "$.f[0]"] {
+            for (path, bound) in [
+                ("$", 64),
+                ("$.a", 64),
+                ("$.a.b", 64),
+                ("$.a.b[1].c", 64),
+                ("$.f", 64),
+                ("$.f[1]", 64),
+                ("$.f[0]", 64),
+                ("$.f[*]", 64),
+                ("$.f[*].g", 64),
+                ("$.f[*][*]", 1),
+            ] {
                 let key = runtime
                     .block_on(async {
                         cipher
                             .default_keyset()
-                            .json_subtree_key(
+                            .json_subtree_key_with_bound(
                                 &JsonPath::parse(path).unwrap(),
                                 &options,
+                                bound,
                                 stack_encrypt::nonempty!("users").with("profile"),
                             )
                             .await
                     })
                     .expect("derives");
+                let tokens = key.token_bytes();
                 let crates: Vec<(usize, usize)> = sealed
-                    .subtree(key.token_bytes())
+                    .subtree(&tokens)
                     .iter()
                     .map(|(j, _, d)| (*j, *d as usize))
                     .collect();
                 assert_eq!(
-                    walk_positions(&observed.rows[0], key.token_bytes()),
+                    walk_positions(&observed.rows[0], &tokens),
                     crates,
                     "{path} with the root sealed: {sealed_root}"
                 );
@@ -336,6 +411,55 @@ mod the_harness {
                 );
             }
         }
+    }
+
+    /// What a wildcard read's token list gives away, on the real scheme:
+    /// its count is the bound (65 tokens, so `N = 64`, at one level; 4,161,
+    /// so `N = 64`, at two), the probe is the last token at its level and
+    /// finds the element where the path's other tokens find the leaf below
+    /// it, and which tokens find a node says which elements hold the rest of
+    /// the path. `json_tree_subtree`'s comment that "the server cannot tell
+    /// a probe from any other token" is true of a token's bytes and of
+    /// nothing else.
+    #[test]
+    fn a_read_gives_away_its_bound_and_its_probes() {
+        let runtime = runtime();
+        let cipher = runtime.block_on(stack_cipher());
+        let items = |n: usize| {
+            json!({"items": (0..n)
+                .map(|i| if i == 1 { json!({"sku": i}) } else { json!({"price": i, "tags": [i]}) })
+                .collect::<Vec<_>>()})
+        };
+        let world = World {
+            name: "items",
+            column: Column {
+                sealed_root: true,
+                ordered: Vec::new(),
+            },
+            docs: vec![items(0), items(3), items(70)],
+            queries: vec![
+                Query::subtree("$.items[*].price"),
+                Query::subtree("$.items[*].tags[*]"),
+            ],
+        };
+        let observed = real_world(&runtime, &cipher, &world);
+        assert_eq!(distinguishers::token_counts(&observed), [65, 4161]);
+        // 4,161 is also one level at a bound of 4,160; which tokens find a
+        // node (the 65th finds `$.items[0].tags[64]`'s absence, not an
+        // item) is what tells the reading apart.
+        assert_eq!(
+            distinguishers::bound_recovery(&observed),
+            [vec![(1, 64)], vec![(1, 4160), (2, 64)]]
+        );
+        let price = &distinguishers::wildcard_positions(&observed)[0];
+        let price = price.as_ref().expect("a wildcard read");
+        // No items; three, the second without a price; seventy, the
+        // second without a price, longer than the bound.
+        assert_eq!(price[0], (vec![], false, None));
+        assert_eq!(price[1], (vec![0, 2], false, None));
+        let mut most: Vec<usize> = (0..64).collect();
+        most.retain(|&i| i != 1);
+        assert_eq!(price[2], (most, true, Some(true)));
     }
 
     /// The page's claim that the stored order reveals each row's shape holds

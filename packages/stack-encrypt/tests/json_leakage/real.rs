@@ -63,16 +63,26 @@ pub async fn world(
                     .expect("derives");
                 (QueryKind::Extract, serde_json::to_value(selector).unwrap())
             }
-            Query::Subtree(path) => {
+            Query::Subtree {
+                path,
+                bound,
+                budget,
+            } => {
                 let key = keyset
-                    .json_subtree_key(
+                    .json_subtree_key_with_bound(
                         &JsonPath::parse(path).expect("a path"),
                         &options(column),
+                        *bound,
                         nonempty!("users").with("profile"),
                     )
                     .await
                     .expect("derives");
-                (QueryKind::Subtree, serde_json::to_value(&key).unwrap())
+                // What `json_tree_subtree(doc, key.tokens(), budget)` hands
+                // the database: the key's wire form, `{"t": [...]}`, and the
+                // budget argument beside it.
+                let mut wire = serde_json::to_value(&key).unwrap();
+                wire["budget"] = serde_json::json!(budget);
+                (QueryKind::Subtree, wire)
             }
             Query::Contains(needle) => {
                 let term = cipher

@@ -2,33 +2,41 @@
 //! randomness, with no plaintext and no key.
 //!
 //! Every keyed value is a fresh random string per opaque name (a selector
-//! per [`SelId`], a value selector per [`ValueId`], a head token per
-//! [`HeadId`]), so equality patterns are exactly the profile's. Ciphertexts
-//! are random bytes of the stated length behind the frame's public version
-//! byte. Ordering terms are random bytes laid out so that byte order is the
-//! profile's rank order.
+//! per [`SelId`](super::profile::SelId), a value selector per
+//! [`ValueId`](super::profile::ValueId), a head token per
+//! [`HeadId`](super::profile::HeadId), a self tag per
+//! [`SelfTagId`](super::profile::SelfTagId)), so equality patterns are
+//! exactly the profile's. Ciphertexts are random bytes of the stated length
+//! behind the frame's public version byte. Ordering terms are random bytes
+//! laid out so that byte order is the profile's rank order.
 //!
 //! The chain is the one place the simulator evaluates the real scheme's
 //! public functions ([`super::chain`]): a token the database is sent has to
-//! derive the parent tags of exactly the entries the profile says it reaches,
-//! with the real hash, or the database would notice. So the simulator gives
-//! every node a token (heads random, every other node chained below its
-//! parent with an ordinal: an element's position, or a member's rank under a
-//! keyed function the simulator samples itself), and writes the chained
-//! parent tag on every entry some query's [`QueryLeakage::Subtree::reach`]
-//! names. Every other parent tag is random bytes, as a tag under a token the
-//! database never sees is to it.
+//! find the node the profile says it names, by that node's self tag, and
+//! link the entries the profile says it reaches, by their parent tags and
+//! self tags, with the real hash, or the database would notice. So the
+//! simulator derives each token a query sends from its random head and the
+//! steps the profile names (the member rule or the element rule, as the
+//! client does), writes the self tag of that token on each entry the token
+//! names, and below it chains every entry the token reaches: its parent tag
+//! from its parent's token and its ordinal (an element's position, or a
+//! member's rank under a keyed function the simulator samples itself), its
+//! self tag from its own token, by the rule the profile states for it.
+//! Every other parent and self tag is random bytes, as a tag under a token
+//! the database never sees is to it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use base64ct::{Base64, Encoding};
 use proptest::prelude::RngCore;
 use proptest::test_runner::TestRng;
 use serde_json::{json, Value};
 
-use super::chain::{child_token, parent_tag, simulated_rank, Tag16};
+use super::chain::{
+    element_token, member_token, parent_tag, self_tag, simulated_rank, Rule, Tag16, Tag8,
+};
 use super::observe::QueryKind;
-use super::profile::{GateLeak, GroupLeakage, Leakage, QueryLeakage, RowLeakage, Step};
+use super::profile::{GroupLeakage, Leakage, QueryLeakage, RowLeakage, Step, TokenName, TokenStep};
 
 /// The version byte `vitaminc-encrypt` writes at the front of every
 /// ciphertext: public framing, not leakage.
@@ -67,6 +75,13 @@ fn b64(bytes: &[u8]) -> String {
     Base64::encode_string(bytes)
 }
 
+/// The tags a row's entries carry where some query's token links them.
+#[derive(Default)]
+struct Linked {
+    x: HashMap<usize, Tag8>,
+    p: HashMap<usize, Tag8>,
+}
+
 struct Simulator<'a> {
     leakage: &'a Leakage,
     rng: &'a mut TestRng,
@@ -75,6 +90,7 @@ struct Simulator<'a> {
     heads: Names<16>,
     keysets: Names<16>,
     ivs: Names<16>,
+    self_tags: Names<8>,
     tags: HashMap<usize, Vec<u8>>,
     ordering: HashMap<usize, Vec<u8>>,
     rank_key: [u8; 32],
@@ -92,15 +108,17 @@ pub fn simulate(leakage: &Leakage, rng: &mut TestRng) -> (Vec<Value>, Vec<(Query
         heads: Names::new(),
         keysets: Names::new(),
         ivs: Names::new(),
+        self_tags: Names::new(),
         tags: HashMap::new(),
         ordering: HashMap::new(),
         rank_key,
     };
+    let linked = sim.link();
     let rows = leakage
         .rows
         .iter()
-        .enumerate()
-        .map(|(r, row)| sim.row(r, row))
+        .zip(linked)
+        .map(|(row, linked)| sim.row(row, &linked))
         .collect();
     let queries = leakage.queries.iter().map(|q| sim.query(q)).collect();
     (rows, queries)
@@ -109,6 +127,27 @@ pub fn simulate(leakage: &Leakage, rng: &mut TestRng) -> (Vec<Value>, Vec<(Query
 impl Simulator<'_> {
     fn selector(&mut self, id: usize) -> Tag16 {
         self.selectors.get(id, self.rng)
+    }
+
+    fn iv(&mut self, row: &RowLeakage) -> Tag16 {
+        self.ivs.get(row.data_key, self.rng)
+    }
+
+    /// The token the client derives for `name`: its head's random token,
+    /// then each step by its rule.
+    fn token(&mut self, name: &TokenName) -> Tag16 {
+        let mut t = self.heads.get(name.head, self.rng);
+        for step in &name.steps {
+            t = match *step {
+                TokenStep::Member(s) => member_token(&t, &self.selector(s)),
+                TokenStep::Element(s, i) => element_token(
+                    &t,
+                    &self.selector(s),
+                    u32::try_from(i).expect("a small position"),
+                ),
+            };
+        }
+        t
     }
 
     /// An ordering term of `len` bytes for class `class`: a zero byte, the
@@ -142,70 +181,119 @@ impl Simulator<'_> {
         json!({"sv": pairs, "el": elements})
     }
 
-    /// Every entry's token and ordinal under its parent, where it has them.
-    fn tokens(&mut self, row: &RowLeakage) -> (Vec<Option<Tag16>>, Vec<Option<u32>>) {
-        let n = row.entries.len();
-        let mut tokens: Vec<Option<Tag16>> = vec![None; n];
-        let mut ordinals: Vec<Option<u32>> = vec![None; n];
-        // A parent precedes its children only under the order clause; a
-        // mutant that shuffles the stored order still names parents, so the
-        // chain is resolved by depth rather than by position.
-        let depth: Vec<usize> = row
-            .entries
-            .iter()
-            .map(|entry| {
-                let mut d = 0;
-                let mut at = entry.parent;
-                while let Some(p) = at {
-                    d += 1;
-                    at = row.entries[p].parent;
-                }
-                d
-            })
-            .collect();
-        let mut order: Vec<usize> = (0..n).collect();
-        order.sort_by_key(|&i| (depth[i], i));
-        for &i in &order {
-            let entry = &row.entries[i];
-            if let Some(head) = entry.head {
-                tokens[i] = Some(self.heads.get(head, self.rng));
-                continue;
+    /// Entry `i`'s ordinal under its parent, whose token is `parent`: an
+    /// element's position, or a member's rank among its sibling members
+    /// under the simulator's own keyed rank.
+    fn ordinal(&mut self, row: &RowLeakage, i: usize, parent: &Tag16) -> u32 {
+        let entry = &row.entries[i];
+        match entry.step {
+            Step::Element(n) => u32::try_from(n).expect("a small array"),
+            Step::Member => {
+                let mine = self.selector(entry.selector);
+                let my_rank = simulated_rank(&self.rank_key, parent, &mine);
+                let siblings: Vec<usize> = (0..row.entries.len())
+                    .filter(|&j| {
+                        row.entries[j].parent == entry.parent && row.entries[j].step == Step::Member
+                    })
+                    .collect();
+                let below = siblings
+                    .into_iter()
+                    .filter(|&j| {
+                        let theirs = self.selector(row.entries[j].selector);
+                        simulated_rank(&self.rank_key, parent, &theirs) < my_rank
+                    })
+                    .count();
+                u32::try_from(below).expect("a small object")
             }
-            let Some(parent) = entry.parent else { continue };
-            let Some(parent_token) = tokens[parent] else {
-                continue;
-            };
-            let ordinal = match entry.step {
-                Step::Element(i) => u32::try_from(i).expect("a small array"),
-                Step::Member => {
-                    let mine = self.selector(entry.selector);
-                    let my_rank = simulated_rank(&self.rank_key, &parent_token, &mine);
-                    let siblings: Vec<usize> = (0..n)
-                        .filter(|&j| {
-                            row.entries[j].parent == Some(parent)
-                                && row.entries[j].step == Step::Member
-                        })
-                        .collect();
-                    let below = siblings
-                        .into_iter()
-                        .filter(|&j| {
-                            let theirs = self.selector(row.entries[j].selector);
-                            simulated_rank(&self.rank_key, &parent_token, &theirs) < my_rank
-                        })
-                        .count();
-                    u32::try_from(below).expect("a small object")
-                }
-                Step::Root => continue,
-            };
-            ordinals[i] = Some(ordinal);
-            let s = self.selector(entry.selector);
-            tokens[i] = Some(child_token(&parent_token, &s, ordinal));
+            Step::Root => 0,
         }
-        (tokens, ordinals)
     }
 
-    fn row(&mut self, r: usize, row: &RowLeakage) -> Value {
-        let iv: [u8; 16] = self.ivs.get(row.data_key, self.rng);
+    /// The self and parent tags every query's tokens link, row by row:
+    /// each token's self tag on the entry it names, and below it the chain
+    /// over the entries it reaches.
+    ///
+    /// Shallower named nodes first, so that where two reads link one entry
+    /// the one that names it last sets its tags, and every chain below it
+    /// is derived from that. Under the full profile the two always agree;
+    /// under a profile that states other rules than the code's (the page as
+    /// #1363 published it), this is what keeps the world consistent: a
+    /// node a read names keeps the token the read sends, as the database's
+    /// test of the member rule first then finds it.
+    fn link(&mut self) -> Vec<Linked> {
+        let mut linked: Vec<Linked> = self
+            .leakage
+            .rows
+            .iter()
+            .map(|_| Linked::default())
+            .collect();
+        let leakage = self.leakage;
+        let depth = |row: &RowLeakage, mut at: usize| {
+            let mut d = 0;
+            while let Some(p) = row.entries[at].parent {
+                d += 1;
+                at = p;
+            }
+            d
+        };
+        let mut work = Vec::new();
+        for query in &leakage.queries {
+            let QueryLeakage::Subtree { reads, .. } = query else {
+                continue;
+            };
+            for read in reads {
+                let t = self.token(&read.token);
+                for (r, row) in leakage.rows.iter().enumerate() {
+                    let named = read.hits[r].map_or(0, |h| depth(row, h));
+                    work.push((named, work.len(), r, t, read));
+                }
+            }
+        }
+        work.sort_by_key(|&(named, order, ..)| (named, order));
+        for (_, _, r, t, read) in work {
+            let row = &leakage.rows[r];
+            let iv = self.iv(row);
+            let mut tokens: HashMap<usize, Tag16> = HashMap::new();
+            if let Some(h) = read.hits[r] {
+                let _ = linked[r].x.insert(h, self_tag(&iv, &t));
+                let _ = tokens.insert(h, t);
+            }
+            // Parents before children: the stored order puts them first,
+            // but a mutant may not, so by depth.
+            let mut reach = read.reach[r].clone();
+            reach.sort_by_key(|&i| (depth(row, i), i));
+            for c in reach {
+                let entry = &row.entries[c];
+                let Some(pt) = entry.parent.and_then(|p| tokens.get(&p).copied()) else {
+                    continue;
+                };
+                let o = self.ordinal(row, c, &pt);
+                let s = self.selector(entry.selector);
+                let ct = match entry.rule {
+                    Some(Rule::Member) => member_token(&pt, &s),
+                    Some(Rule::Element) => element_token(&pt, &s, o),
+                    None => continue,
+                };
+                // A node a read names keeps that read's token, as the
+                // database's member-rule-first test then finds it.
+                let ct = match linked[r].x.get(&c) {
+                    Some(x) if *x == self_tag(&iv, &member_token(&pt, &s)) => member_token(&pt, &s),
+                    _ => {
+                        let _ = linked[r].x.insert(c, self_tag(&iv, &ct));
+                        ct
+                    }
+                };
+                if entry.has_parent_tag {
+                    let _ = linked[r].p.insert(c, parent_tag(&iv, &pt, o));
+                }
+                let _ = tokens.insert(c, ct);
+            }
+        }
+        linked
+    }
+
+    fn row(&mut self, row: &RowLeakage, linked: &Linked) -> Value {
+        let iv = self.iv(row);
         let tag = self
             .tags
             .entry(row.data_key)
@@ -218,17 +306,6 @@ impl Simulator<'_> {
         header.extend_from_slice(&u16::try_from(tag.len()).expect("a short tag").to_le_bytes());
         header.extend_from_slice(&tag);
 
-        let reached: HashSet<usize> = self
-            .leakage
-            .queries
-            .iter()
-            .filter_map(|q| match q {
-                QueryLeakage::Subtree { reach, .. } => Some(reach[r].iter().copied()),
-                _ => None,
-            })
-            .flatten()
-            .collect();
-        let (tokens, ordinals) = self.tokens(row);
         let entries: Vec<Value> = row
             .entries
             .iter()
@@ -238,14 +315,16 @@ impl Simulator<'_> {
                 let mut c = vec![CIPHERTEXT_FRAME];
                 c.extend(random_vec(self.rng, entry.ciphertext_len - 1));
                 let mut wire = json!({"s": b64(&s), "c": base85_simd::encode(&c)});
+                if let Some(id) = entry.self_tag {
+                    let x = match linked.x.get(&i) {
+                        Some(x) => *x,
+                        None => self.self_tags.get(id, self.rng),
+                    };
+                    wire["x"] = json!(b64(&x));
+                }
                 if entry.has_parent_tag {
-                    let chained = entry
-                        .parent
-                        .and_then(|p| tokens[p])
-                        .zip(ordinals[i])
-                        .filter(|_| reached.contains(&i));
-                    let p = match chained {
-                        Some((parent, o)) => parent_tag(&iv, &parent, o),
+                    let p: Tag8 = match linked.p.get(&i) {
+                        Some(p) => *p,
                         None => random(self.rng),
                     };
                     wire["p"] = json!(b64(&p));
@@ -265,24 +344,12 @@ impl Simulator<'_> {
             QueryLeakage::Extract { selector } => {
                 (QueryKind::Extract, json!(b64(&self.selector(*selector))))
             }
-            QueryLeakage::Subtree { token, gates, .. } => {
-                let mut t = self.heads.get(token.head, self.rng);
-                for &(s, i) in &token.positions {
-                    let s = self.selector(s);
-                    t = child_token(&t, &s, u32::try_from(i).expect("a small position"));
-                }
-                let gates: Vec<String> = gates
+            QueryLeakage::Subtree { reads, budget } => {
+                let tokens: Vec<String> = reads
                     .iter()
-                    .map(|g| match *g {
-                        GateLeak::Selector(s) => b64(&self.selector(s)),
-                        GateLeak::Slot(n, s) => format!("#{n}:{}", b64(&self.selector(s))),
-                    })
+                    .map(|read| b64(&self.token(&read.token)))
                     .collect();
-                let mut wire = json!({"t": b64(&t)});
-                if !gates.is_empty() {
-                    wire["g"] = json!(gates);
-                }
-                (QueryKind::Subtree, wire)
+                (QueryKind::Subtree, json!({"t": tokens, "budget": budget}))
             }
             QueryLeakage::Contains { needle, alt } => {
                 let mut wire = self.group(needle);

@@ -5,33 +5,38 @@
 //! query reveals on top of them. Neither takes a key or calls the crate: they
 //! read the documents, the column's options and the query, and they name
 //! every keyed value (a selector, a value selector, a token, an ordering
-//! term) by an opaque integer that is equal wherever the real values are
-//! equal, so the profile states equality patterns and never names. The
-//! simulator ([`super::simulator`]) builds a wire-shaped world from this
-//! output and its own randomness, and the distinguishers
+//! term, a self tag) by an opaque integer that is equal wherever the real
+//! values are equal, so the profile states equality patterns and never
+//! names. The simulator ([`super::simulator`]) builds a wire-shaped world
+//! from this output and its own randomness, and the distinguishers
 //! ([`super::distinguishers`]) compare it with the real one.
 //!
 //! Each field of the leakage types is one clause, and its doc comment quotes
 //! the sentence of the page it encodes. Where the page is vague the clause is
 //! as precise as the code forces, and says so. One clause is marked
-//! **beyond the page**: the code reveals it and the page does not say so.
-//! [`Clauses::page_only`] turns it off, and the calibration shows a
-//! distinguisher separating that profile from the real scheme.
+//! **added to the page by #1362**: the code revealed it and the page as
+//! #1363 published it did not say so. [`Clauses::as_published_in_1363`]
+//! turns it off, and the calibration shows a distinguisher separating that
+//! profile from the real scheme.
 //!
-//! **This module is expected to change with the format.** The design change
-//! of 2026-10-24 (member tokens without ordinals, a self tag `x` on every
-//! entry, wildcards expanded on the client, no gates;
-//! `docs/plans/2026-10-17-json-tree-index.md`, "Design change (2026-10-24)")
-//! rewrites the subtree clauses of [`QueryLeakage`] and adds a clause for
-//! `x`. When it lands, this file and the real-side adapter
-//! ([`super::real`]) change together with the leakage page; the simulator
-//! changes where the wire does; the distinguishers should not need to.
+//! **This module models the format of #1363** (`docs/plans/2026-10-17-json-tree-index.md`,
+//! "Design change (2026-10-24)" and its decisions): a self tag `x` on every
+//! entry, member tokens without an ordinal, element tokens with their
+//! index, and a subtree read that sends the tokens of exactly the nodes it
+//! names, with wildcards expanded on the client and a probe per expanded
+//! array. The profile was first written against the format before it
+//! (`{s, c, p?, op?}` entries, one head token and plaintext gates per read);
+//! `docs/plans/2026-10-25-json-tree-leakage-before-and-after.md` records
+//! what changed between the two.
 
 use std::collections::HashMap;
 use std::hash::Hash;
 
 use serde_json::{Number, Value};
 use stack_encrypt::json::{JsonPath, Segment};
+use vitaminc_protected::Controlled;
+
+pub use super::chain::Rule;
 
 /// What every entry's ciphertext adds to its plaintext: the frame's version
 /// byte, the 96-bit random nonce and the 128-bit GCM tag
@@ -43,6 +48,13 @@ pub const AEAD_OVERHEAD: usize = 1 + 12 + 16;
 /// the tests seal under mints 32-byte tags; it is a property of the key
 /// service, not of any document, so it is a column constant here.
 pub const KEY_TAG_LEN: usize = 32;
+
+/// The bound a wildcard expands to when a read names none
+/// (`JsonSubtreeKey::DEFAULT_BOUND`).
+pub const DEFAULT_BOUND: u32 = 64;
+
+/// The budget `json_tree_subtree` takes when the caller names none.
+pub const DEFAULT_BUDGET: u32 = 64;
 
 /// A column's configuration, which the database knows: it is in every
 /// header (the root option) or in the plan the queries run under.
@@ -57,8 +69,13 @@ pub struct Column {
 pub enum Query {
     /// `->` on a path.
     Extract(String),
-    /// A subtree read of a path (`json_tree_subtree`, `json_tree_subtree_at`).
-    Subtree(String),
+    /// A subtree read of a path, `json_tree_subtree(doc, tokens, budget)`,
+    /// its wildcards expanded to `bound` positions each.
+    Subtree {
+        path: String,
+        bound: u32,
+        budget: u32,
+    },
     /// Containment, `@>`, of a needle document.
     Contains(Value),
     /// Equality at a path, `AtPath<Eq>`, of a scalar.
@@ -67,53 +84,90 @@ pub enum Query {
     Order(String, Value),
 }
 
-/// Which sort "the sorted order of their key names" means. The page does
-/// not say; the code sorts by the keys' UTF-8 bytes.
+impl Query {
+    /// A subtree read at the default bound and budget.
+    pub fn subtree(path: &str) -> Self {
+        Self::Subtree {
+            path: path.to_owned(),
+            bound: DEFAULT_BOUND,
+            budget: DEFAULT_BUDGET,
+        }
+    }
+
+    /// A subtree read at `bound` and `budget`.
+    pub fn subtree_with(path: &str, bound: u32, budget: u32) -> Self {
+        Self::Subtree {
+            path: path.to_owned(),
+            bound,
+            budget,
+        }
+    }
+}
+
+/// Which sort "the byte order of their key names' UTF-8 encodings" means.
+/// The page now says it; the other reading is kept to show the sentence is
+/// load-bearing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyOrder {
     /// Byte order of the UTF-8 key: serde_json's `Map` without
     /// `preserve_order`, which is what the walk iterates.
     Utf8Bytes,
     /// PostgreSQL `jsonb`'s own order: shorter keys first, then bytes. The
-    /// other reading a reader of the page could reasonably take.
+    /// other reading a reader could take of an unqualified "sorted order".
     JsonbLengthFirst,
 }
 
-/// The clauses of the profile that are on or off as a whole, and the one
-/// reading the page leaves open. The default is what the code needs;
-/// [`Clauses::page_only`] is the page as written.
+/// What a string's ordering term orders and compares by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StringOrder {
+    /// The page: "Strings are ordered and compared after their case and
+    /// accents are folded", and the term's length counts "a string whose
+    /// folded UTF-8 form is `n` bytes". Unicode 16 NFC with case and accents
+    /// folded (`vitaminc_ore::text`).
+    Folded,
+    /// The string's own bytes, as the profile first assumed (its corpus had
+    /// only lower-case ASCII, where the two agree).
+    Bytes,
+}
+
+/// The clauses of the profile that are on or off as a whole, and the two
+/// readings the page could leave open. The default is what the code needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Clauses {
-    /// How "an object's members in the sorted order of their key names"
+    /// How "an object's members in the byte order of their key names"
     /// sorts.
     pub key_order: KeyOrder,
-    /// **Beyond the page.** An ordering term's length: `8 × n + 1` bytes for
-    /// a value encoded in `n` bytes (`clww-ore`'s `OpeClww8VariableV1`). A
-    /// number encodes in eight bytes, so its term is 65 bytes; a string in
-    /// its UTF-8 bytes and one more, so its term is `8 × (len + 1) + 1`
-    /// bytes and gives its length. The page says only that "a term's
-    /// presence at an ordered path also says the leaf is a number or a
-    /// string"; the length also says which, unless the string is seven bytes
-    /// long, and repeats the string's length that `c` already shows. Off,
-    /// every term is stated as one length.
-    pub ordering_term_length: bool,
+    /// How a string's ordering term orders.
+    pub string_order: StringOrder,
+    /// **Added to the page by #1362.** The rule a node's token takes under
+    /// its parent's, member or element, which the database learns for every
+    /// node a walk reaches: it tests the member rule against the hit's self
+    /// tag and then the element rule (`json_tree_hit_token`), so the one
+    /// that matches says whether the parent is an object or an array. The
+    /// design's decision 2 ("no kind bit") keeps it out of the stored form;
+    /// the walk reveals it anyway, below any token sent. Off, the profile
+    /// states no rule, and every node takes the element rule with its
+    /// ordinal, which is the coarsest world consistent with the rest.
+    pub hit_rule: bool,
 }
 
 impl Default for Clauses {
     fn default() -> Self {
         Self {
             key_order: KeyOrder::Utf8Bytes,
-            ordering_term_length: true,
+            string_order: StringOrder::Folded,
+            hit_rule: true,
         }
     }
 }
 
 impl Clauses {
-    /// The page as written: every clause beyond it off.
-    pub fn page_only() -> Self {
+    /// The page as #1363 published it (at `997c64b1e`): every clause #1362
+    /// added to it off.
+    pub fn as_published_in_1363() -> Self {
         Self {
-            key_order: KeyOrder::Utf8Bytes,
-            ordering_term_length: false,
+            hit_rule: false,
+            ..Self::default()
         }
     }
 }
@@ -123,13 +177,17 @@ impl Clauses {
 pub type SelId = usize;
 /// An opaque name for a value selector `vs`.
 pub type ValueId = usize;
-/// An opaque name for a chain head's token.
+/// An opaque name for a token that is a PRF of a path: the root's, and
+/// under the sealed root each top-level field's or element's.
 pub type HeadId = usize;
 /// An opaque name for an ordering term's value: equal for equal values.
 pub type OrderClass = usize;
+/// An opaque name for a self tag the database cannot recompute: one per
+/// entry, so equal nowhere.
+pub type SelfTagId = usize;
 
 /// How a node hangs off its parent, which decides its ordinal under the
-/// parent's token.
+/// parent's token: the `o` of its parent tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
     Root,
@@ -146,8 +204,11 @@ pub struct OrderingLeak {
     /// which rows hold equal values." Equal values share a class; the
     /// classes' order is [`Leakage::ordering_ranks`].
     pub class: OrderClass,
-    /// **Beyond the page** ([`Clauses::ordering_term_length`]): the term's
-    /// length in bytes.
+    /// "Its length is the leaf's length: one byte per bit of the value's
+    /// order encoding plus one, so 65 bytes for every number and
+    /// `8 × (n + 1) + 1` bytes for a string whose folded UTF-8 form is `n`
+    /// bytes." (Beyond the page when the profile was first written; on it
+    /// since #1363.)
     pub len: usize,
 }
 
@@ -168,27 +229,41 @@ pub struct EntryLeakage {
     /// below a token a query sends; at rest the order clause
     /// ([`RowLeakage::entries`]) is what shows it.
     pub parent: Option<usize>,
-    /// How the node hangs off its parent, which a token's holder sees in the
-    /// ordinals it probes: an element's ordinal is its position. The page
-    /// says a token's holder can "see how the nodes nest, link each one to
-    /// its parent"; it does not say that it also sees each element's
-    /// position and each member's keyed rank. Vague; stated here as the code
-    /// forces it.
+    /// The node's ordinal under its parent, which a token's holder sees in
+    /// the ordinals it probes: "each element's index: […] an element's index
+    /// is the ordinal it is found at". A member's ordinal is its keyed rank,
+    /// which the page does not mention; under one token it is a fixed
+    /// permutation of the members' key order that the holder sees and
+    /// cannot read (`member_ordinals_follow_key_order`).
     pub step: Step,
-    /// The chain head this entry is, if it is one: under the sealed root a
-    /// top-level field ("the top-level field the path starts with"), with the
-    /// root open the root. A head's token is a keyed function of its path,
-    /// "column-wide", so every row's entry at that path is one head.
-    pub head: Option<HeadId>,
+    /// The rule this node's token takes under its parent's: "whether each
+    /// node beneath is an object member or an array element […] the
+    /// database tests its self tag against the member rule and then the
+    /// element rule, and the one that matches says which"
+    /// ([`Clauses::hit_rule`]). `None` for an entry that chains from no
+    /// parent (the root, and the top-level entries of a sealed root).
+    pub rule: Option<Rule>,
     /// "Which entries carry no `p` does show: with the sealed root on, those
     /// are the root's direct members […] With the sealed root off, only the
     /// root lacks one." (The root lacks one under the sealed root too.)
     pub has_parent_tag: bool,
+    /// "`x`, the self tag on every entry: Nothing on its own. It is a hash
+    /// of the entry's own token salted by the document's `iv`, so it is
+    /// unrelated bytes in every row and links no entry to another, and since
+    /// every entry carries one, its presence marks none." Named per entry,
+    /// so no two are equal; an entry a query's token finds or reaches has
+    /// its real self tag instead, in [`QueryLeakage::Subtree`]. `None` would
+    /// be an entry without one, which only a mutant states.
+    pub self_tag: Option<SelfTagId>,
     /// "Each ciphertext's length […] for each node the length of its key name
     /// (for an object member) plus, for a scalar, the length of its value,
     /// exactly, less the AEAD's fixed overhead. […] With the sealed root on,
     /// the root entry's length is the document's length as JSON." The fixed
-    /// parts the page leaves out are written in [`ciphertext_len`].
+    /// parts the page leaves out are written in [`ciphertext_len`]. The self
+    /// tag sits beside the ciphertext, not in it, so it changes no
+    /// ciphertext's length; it adds a fixed 12 base64 characters per entry,
+    /// 19 with its key in compact JSON, which
+    /// `distinguishers::stored_lengths` counts.
     pub ciphertext_len: usize,
     /// "`op`, the ordering term, only on number and string leaves at the
     /// paths the index orders."
@@ -220,37 +295,59 @@ pub struct RowLeakage {
     pub keyset: usize,
     /// The header's key identifiers (the `iv` and the ZeroKMS tag): "the
     /// data key's identifier (unique to the row)". A different name in every
-    /// row.
+    /// row. The `iv` also salts every parent and self tag in the row.
     pub data_key: usize,
     /// "The number of entries", and the entries in their stored order:
     /// "Entries are stored in depth-first order, the root first, each node
     /// followed by everything beneath it, and an object's members in the
-    /// sorted order of their key names." The page does not say which sort;
-    /// the code's is the keys' UTF-8 bytes (serde_json's `Map` without
-    /// `preserve_order`), so that is the order here.
+    /// byte order of their key names' UTF-8 encodings."
     pub entries: Vec<EntryLeakage>,
     /// The containment projection `q`.
     pub projection: GroupLeakage,
 }
 
-/// A gate of a subtree read.
+/// One step of a token's derivation below its head, as the client derives
+/// it from the path alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GateLeak {
-    /// "A gate is the step's selector".
-    Selector(SelId),
-    /// "or, for an array position, `#n:<selector>`, with the position `n` in
-    /// the clear."
-    Slot(u64, SelId),
+pub enum TokenStep {
+    /// `H16("t" ‖ t(parent) ‖ s(member))`: a key step, by its selector.
+    Member(SelId),
+    /// `H16("t" ‖ t(array) ‖ s(element) ‖ LE32(i))`: a position step, by
+    /// the element selector and the position.
+    Element(SelId, u64),
 }
 
-/// The token a subtree read sends, by name: a head, then the array positions
-/// the client chains below it.
+/// A token, by name: a head, then the steps the client chains below it.
+/// Two reads of one concrete path send one token, in every query: "Tokens
+/// are column-wide and do not expire".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TokenName {
     pub head: HeadId,
-    /// Each position step after the head: the element selector and the
-    /// position.
-    pub positions: Vec<(SelId, u64)>,
+    pub steps: Vec<TokenStep>,
+}
+
+/// One token of a subtree read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadLeak {
+    /// "A token for exactly the node the path names, which the client
+    /// derives from the path alone." For a wildcard, one per concrete path
+    /// below the bound, in document order.
+    pub token: TokenName,
+    /// "plus a probe token for the element at index `N` of every array a
+    /// wildcard expands", the last token at its level. The database is not
+    /// told which tokens are probes; it can tell from their places in the
+    /// list (`distinguishers::wildcard_positions`).
+    pub probe: bool,
+    /// Per row, the entry the token names, if the row has the node: "whoever
+    /// holds it can find that node in any row (through its self tag `x`)".
+    pub hits: Vec<Option<usize>>,
+    /// Per row, the entries below that node the token links: "see how the
+    /// nodes beneath it nest, link each one to its parent, and derive the
+    /// tokens of the nodes beneath". Every strict descendant that chains
+    /// from it, which under the sealed root excludes everything below the
+    /// root ("the top-level fields chain from nothing"). Nothing above it:
+    /// "nothing that covers `$.profile`".
+    pub reach: Vec<Vec<usize>>,
 }
 
 /// What one query reveals, beyond the rows it returns.
@@ -259,27 +356,18 @@ pub enum QueryLeakage {
     /// "Path extraction […] The selector of the path asked. A position in the
     /// path reads as the wildcard, so a position is not sent."
     Extract { selector: SelId },
-    /// "A subtree read […] A token, and one gate per step below it. The token
-    /// is not the token of the node you asked for: it is the token of the
-    /// deepest node on the path the client can derive, which is the
-    /// top-level field the path starts with or, while the path goes on
-    /// through array positions, the element they reach."
+    /// "A subtree read […] A token for exactly the node the path names". The
+    /// tokens' number gives the wildcards' bound away (`N + 1` per one-level
+    /// wildcard, `N² + N + 1` for two levels), and which of them find a node
+    /// in which row gives each expanded array's length below `N`, or that it
+    /// is longer.
     Subtree {
-        token: TokenName,
-        gates: Vec<GateLeak>,
-        /// Per row, the entries the token lets the database link: "A token
-        /// is a capability over the structure of its node's subtree in every
-        /// row of the column: whoever holds it can find each node under that
-        /// field in any row, see how the nodes nest, link each one to its
-        /// parent, and derive the tokens of the nodes beneath." So: every
-        /// strict descendant of the token's node, in every row.
-        reach: Vec<Vec<usize>>,
-        /// Per row, the nodes the path names (what the walk returns at depth
-        /// `0`). Not a clause of its own: the database computes it from the
-        /// token, the gates and the rows. Carried so a mutant profile can
-        /// narrow `reach` to what a read would reveal if the token covered
-        /// only the path asked (`token_reaches_named_nodes_only`).
-        named: Vec<Vec<usize>>,
+        reads: Vec<ReadLeak>,
+        /// The `budget` argument, in the clear in the call. Past it, with
+        /// the root sealed, the database returns the root entry alone; it
+        /// computes that from the walk it already sees, so the fallback
+        /// tells it nothing more.
+        budget: u32,
     },
     /// "Containment […] The needle's own projection: the selectors of its
     /// paths, the value selectors of its nodes, and its element grouping."
@@ -315,7 +403,8 @@ pub struct Leakage {
     /// The rank of each [`OrderClass`] among all of them: "the order of that
     /// leaf's value among every row that holds one", and the bound's "place
     /// in the order of the stored values at every ordered path" ("leaves at
-    /// two ordered paths compare with each other too").
+    /// two ordered paths compare with each other too, and two ordered paths
+    /// holding equal values carry equal terms").
     pub ordering_ranks: Vec<usize>,
 }
 
@@ -343,7 +432,7 @@ impl<T: Hash + Eq> Interner<T> {
 }
 
 /// A value an ordering term orders by. Numbers order as `f64` (the term is
-/// derived from `as_f64`); strings by their bytes.
+/// derived from `as_f64`); strings by their order encoding's bytes.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum OrderKey {
     Number(u64),
@@ -360,6 +449,7 @@ pub struct Ids {
     heads: Interner<Vec<Segment>>,
     ordering: Interner<OrderKey>,
     ordering_keys: Vec<OrderKey>,
+    self_tags: usize,
     pub clauses: Clauses,
 }
 
@@ -391,34 +481,44 @@ impl Ids {
         self.heads.id(positional.to_vec())
     }
 
+    fn self_tag(&mut self) -> SelfTagId {
+        self.self_tags += 1;
+        self.self_tags
+    }
+
     fn ordering(&mut self, value: &Value) -> OrderingLeak {
-        let (key, len) = match value {
+        let key = match value {
             Value::Number(n) => {
                 let f = n.as_f64().expect("a JSON number has an f64");
                 assert!(
                     f != 0.0 || f.is_sign_positive(),
                     "the corpus has no -0.0, whose term the page does not describe"
                 );
-                (OrderKey::Number(f.to_bits()), 8 * 8 + 1)
+                OrderKey::Number(f.to_bits())
             }
-            Value::String(s) => (
-                OrderKey::String(s.as_bytes().to_vec()),
-                8 * (s.len() + 1) + 1,
-            ),
+            Value::String(s) => OrderKey::String(match self.clauses.string_order {
+                // The marker, then the folded text: the order encoding.
+                StringOrder::Folded => vitaminc_ore::text(s)
+                    .expect("the corpus holds assigned code points")
+                    .risky_unwrap(),
+                StringOrder::Bytes => {
+                    let mut out = vec![vitaminc_ore::VARIABLE_WIDTH_MARKER];
+                    out.extend_from_slice(s.as_bytes());
+                    out
+                }
+            }),
             _ => unreachable!("only numbers and strings carry a term"),
+        };
+        // One byte per bit of the order encoding, plus one.
+        let len = match &key {
+            OrderKey::Number(_) => 8 * 8 + 1,
+            OrderKey::String(encoded) => 8 * encoded.len() + 1,
         };
         let class = self.ordering.id(key.clone());
         if class == self.ordering_keys.len() {
             self.ordering_keys.push(key);
         }
-        OrderingLeak {
-            class,
-            len: if self.clauses.ordering_term_length {
-                len
-            } else {
-                65
-            },
-        }
+        OrderingLeak { class, len }
     }
 
     /// The rank of every ordering class. The page does not say how a
@@ -678,6 +778,13 @@ fn projection(ids: &mut Ids, doc: &Value) -> GroupLeakage {
     group(ids, &nodes, &selectors, None)
 }
 
+/// Whether the node at `depth` chains from its parent, which is whether it
+/// carries a parent tag: under the sealed root the top-level entries chain
+/// from nothing.
+fn chains(depth: usize, sealed_root: bool) -> bool {
+    depth > 0 && !(sealed_root && depth == 1)
+}
+
 // =============================================================================
 // L
 // =============================================================================
@@ -697,20 +804,21 @@ pub fn l_store(column: &Column, ids: &mut Ids, docs: &[Value]) -> Vec<RowLeakage
                 .iter()
                 .map(|node| {
                     let depth = node.positional.len();
-                    let is_head = if column.sealed_root {
-                        depth == 1
-                    } else {
-                        depth == 0
-                    };
                     let ordering = (ordered.iter().any(|o| covers(o, &node.positional))
                         && matches!(node.value, Value::Number(_) | Value::String(_)))
                     .then(|| ids.ordering(node.value));
+                    let has_parent_tag = chains(depth, column.sealed_root);
+                    let rule = has_parent_tag.then_some(match node.step {
+                        Step::Member if ids.clauses.hit_rule => Rule::Member,
+                        _ => Rule::Element,
+                    });
                     EntryLeakage {
                         selector: ids.selector(&node.positional),
                         parent: node.parent,
                         step: node.step,
-                        head: is_head.then(|| ids.head(&node.positional)),
-                        has_parent_tag: depth > 0 && !(column.sealed_root && depth == 1),
+                        rule,
+                        has_parent_tag,
+                        self_tag: Some(ids.self_tag()),
                         ciphertext_len: ciphertext_len(node, column.sealed_root, doc),
                         ordering,
                     }
@@ -727,25 +835,122 @@ pub fn l_store(column: &Column, ids: &mut Ids, docs: &[Value]) -> Vec<RowLeakage
         .collect()
 }
 
-/// The nodes of `nodes` that `pattern` reaches, as `JsonPath::select` finds
-/// them: a key step into an array, or a position into an object, reaches
-/// nothing.
-fn reached(nodes: &[Node<'_>], pattern: &[Segment]) -> Vec<usize> {
-    (0..nodes.len())
-        .filter(|&i| covers(pattern, &nodes[i].positional))
-        .collect()
-}
-
-/// Every strict descendant of node `at`: in the stored order these are the
-/// positions after it up to the end of its subtree.
-fn descendants(nodes: &[Node<'_>], at: usize) -> Vec<usize> {
+/// Every strict descendant of node `at` that chains from it: in the stored
+/// order these are the positions after it up to the end of its subtree.
+fn descendants(nodes: &[Node<'_>], at: usize, sealed_root: bool) -> Vec<usize> {
     let mut inside = vec![false; nodes.len()];
     inside[at] = true;
     let mut out = Vec::new();
     for (i, node) in nodes.iter().enumerate().skip(at + 1) {
-        if node.parent.is_some_and(|p| inside[p]) {
+        if node.parent.is_some_and(|p| inside[p]) && chains(node.positional.len(), sealed_root) {
             inside[i] = true;
             out.push(i);
+        }
+    }
+    out
+}
+
+/// One concrete path a read sends a token for.
+struct Concrete {
+    path: Vec<Segment>,
+    token: TokenName,
+    probe: bool,
+}
+
+/// The concrete paths a read of `segs` sends tokens for, in the order the
+/// client sends them (`subtree_key_for` and `Expansion::descend` in
+/// `derive.rs`): each wildcard step expanded to the positions `0 … N − 1`,
+/// each in turn, then the probe at `N`, the element itself.
+fn expand(ids: &mut Ids, sealed_root: bool, segs: &[Segment], bound: u32) -> Vec<Concrete> {
+    fn descend(
+        ids: &mut Ids,
+        segs: &[Segment],
+        bound: u32,
+        at: Vec<Segment>,
+        token: TokenName,
+        k: usize,
+        out: &mut Vec<Concrete>,
+    ) {
+        let Some(segment) = segs.get(k) else {
+            out.push(Concrete {
+                path: at,
+                token,
+                probe: false,
+            });
+            return;
+        };
+        let step = |i: u64, at: &[Segment], token: &TokenName, ids: &mut Ids| {
+            let mut path = at.to_vec();
+            path.push(Segment::Index(i));
+            let s = ids.selector(&path);
+            let mut token = token.clone();
+            token.steps.push(TokenStep::Element(s, i));
+            (path, token)
+        };
+        match segment {
+            Segment::Key(key) => {
+                let mut path = at;
+                path.push(Segment::Key(key.clone()));
+                let s = ids.selector(&path);
+                let mut token = token;
+                token.steps.push(TokenStep::Member(s));
+                descend(ids, segs, bound, path, token, k + 1, out);
+            }
+            Segment::Index(i) => {
+                let (path, token) = step(*i, &at, &token, ids);
+                descend(ids, segs, bound, path, token, k + 1, out);
+            }
+            Segment::Wildcard => {
+                for i in 0..u64::from(bound) {
+                    let (path, token) = step(i, &at, &token, ids);
+                    descend(ids, segs, bound, path, token, k + 1, out);
+                }
+                let (path, token) = step(u64::from(bound), &at, &token, ids);
+                out.push(Concrete {
+                    path,
+                    token,
+                    probe: true,
+                });
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    match segs.first() {
+        // Under the sealed root the chain starts at the heads, each a PRF
+        // of its path; a wildcard head is each position's head in turn.
+        Some(first) if sealed_root => {
+            let heads: Vec<(Segment, bool)> = match first {
+                Segment::Wildcard => (0..u64::from(bound))
+                    .map(|i| (Segment::Index(i), false))
+                    .chain(std::iter::once((Segment::Index(u64::from(bound)), true)))
+                    .collect(),
+                step => vec![(step.clone(), false)],
+            };
+            for (step, probe) in heads {
+                let at = vec![step];
+                let token = TokenName {
+                    head: ids.head(&at),
+                    steps: Vec::new(),
+                };
+                if probe {
+                    out.push(Concrete {
+                        path: at,
+                        token,
+                        probe,
+                    });
+                } else {
+                    descend(ids, segs, bound, at, token, 1, &mut out);
+                }
+            }
+        }
+        // `$` itself, under either root, or any path from an open root.
+        _ => {
+            let token = TokenName {
+                head: ids.head(&[]),
+                steps: Vec::new(),
+            };
+            descend(ids, segs, bound, Vec::new(), token, 0, &mut out);
         }
     }
     out
@@ -757,55 +962,49 @@ pub fn l_query(column: &Column, ids: &mut Ids, docs: &[Value], query: &Query) ->
         Query::Extract(path) => QueryLeakage::Extract {
             selector: ids.selector(&segments(path)),
         },
-        Query::Subtree(path) => {
-            let segs = segments(path);
-            // The head: under the sealed root the top-level field (or
-            // element) the path starts with, with the root open the root.
-            let split = usize::from(column.sealed_root);
-            assert!(
-                segs.len() >= split && !segs[..split].contains(&Segment::Wildcard),
-                "under the sealed root a subtree read names a top-level node: {path}"
-            );
-            let (head_path, rest) = segs.split_at(split);
-            let head = ids.head(head_path);
-            let mut prefix = head_path.to_vec();
-            let mut positions = Vec::new();
-            let mut gates = Vec::new();
-            let mut chaining = true;
-            for segment in rest {
-                prefix.push(segment.clone());
-                match (segment, chaining) {
-                    (Segment::Index(i), true) => positions.push((ids.selector(&prefix), *i)),
-                    (Segment::Index(i), false) => {
-                        gates.push(GateLeak::Slot(*i, ids.selector(&prefix)))
-                    }
-                    (Segment::Key(_) | Segment::Wildcard, _) => {
-                        chaining = false;
-                        gates.push(GateLeak::Selector(ids.selector(&prefix)));
-                    }
-                }
-            }
-            let token_path = &segs[..split + positions.len()];
+        Query::Subtree {
+            path,
+            bound,
+            budget,
+        } => {
             let order = ids.clauses.key_order;
-            let (reach, named) = docs
+            let flattened: Vec<Vec<Node<'_>>> = docs.iter().map(|d| flatten(d, order)).collect();
+            let positions: Vec<HashMap<&[Segment], usize>> = flattened
                 .iter()
-                .map(|doc| {
-                    let nodes = flatten(doc, order);
-                    let at = nodes.iter().position(|n| n.positional == token_path);
-                    let reach = at.map(|at| descendants(&nodes, at)).unwrap_or_default();
-                    let named = if gates.is_empty() {
-                        at.into_iter().collect()
-                    } else {
-                        reached(&nodes, &segs)
-                    };
-                    (reach, named)
+                .map(|nodes| {
+                    nodes
+                        .iter()
+                        .enumerate()
+                        .map(|(i, n)| (n.positional.as_slice(), i))
+                        .collect()
                 })
-                .unzip();
+                .collect();
+            let reads = expand(ids, column.sealed_root, &segments(path), *bound)
+                .into_iter()
+                .map(|concrete| {
+                    let hits: Vec<Option<usize>> = positions
+                        .iter()
+                        .map(|at| at.get(concrete.path.as_slice()).copied())
+                        .collect();
+                    let reach = hits
+                        .iter()
+                        .zip(&flattened)
+                        .map(|(hit, nodes)| {
+                            hit.map(|at| descendants(nodes, at, column.sealed_root))
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    ReadLeak {
+                        token: concrete.token,
+                        probe: concrete.probe,
+                        hits,
+                        reach,
+                    }
+                })
+                .collect();
             QueryLeakage::Subtree {
-                token: TokenName { head, positions },
-                gates,
-                reach,
-                named,
+                reads,
+                budget: *budget,
             }
         }
         Query::Contains(needle) => {
