@@ -219,15 +219,22 @@
 //!   [`distinguishers::ordering_term_prefixes`]); which shared bytes differ
 //!   by one is not a function of the plaintexts, and no distinguisher reads
 //!   it.
-//! - **A path ordered over numbers and strings both.** The profile refuses
-//!   such a column ([`profile::Ids::ordering_ranks`]), and the page does not
-//!   say what it shows. Measured on this crate: a number's term and a
-//!   string's are under different keys (the order space's salt names its
-//!   domain), so how one compares with the other is set by the column's key
-//!   and the two values' leading bits, not by any order between a number
-//!   and a string. In the column measured every string sorted below every
-//!   number, and a bound of either kind compares with the stored terms of
-//!   both. Stating it needs the page to say it first.
+//! - **A near-tie between the two kinds' keys.** At a path ordered over
+//!   numbers and strings both, the profile states where the column's key
+//!   puts the strings' terms among the numbers' ([`profile::Placement`]):
+//!   as one block, below, between the negative and non-negative numbers, or
+//!   above. That holds because each kind's terms begin with that kind's
+//!   key's constant byte (plus 128 for a first bit of 1, with a carry). For
+//!   about one pair of keys in forty, the two kinds' front bytes tie to
+//!   within a carry, and then a few pairs of a number and a string compare
+//!   by their later, keyed bytes. No clause states that case; the simulator
+//!   refuses such keys, and the test key is not one. Since the real key
+//!   picked one placement and the simulator cannot know which, the
+//!   calibration simulates each and counts two worlds as told apart only
+//!   when none agrees, which is also why one world cannot tell "the key
+//!   chose numbers first" from jsonb's fixed order: the mutant that states
+//!   jsonb's (`mixed_kinds_jsonb_order`) is caught because the test key put
+//!   the strings below the numbers.
 //! - **The keyed member rank as a permutation.** Under a token, a member's
 //!   ordinal is a keyed rank. Its relation to the stored (key) order is a
 //!   random permutation, decidable exactly only where enough wide objects sit

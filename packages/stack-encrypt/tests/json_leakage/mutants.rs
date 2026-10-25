@@ -18,8 +18,8 @@ use proptest::prelude::RngCore;
 use proptest::test_runner::TestRng;
 
 use super::profile::{
-    EntryLeakage, GroupLeakage, Leakage, QueryLeakage, ReadLeak, RowLeakage, Rule, Step, TokenName,
-    TokenStep, AEAD_OVERHEAD,
+    EntryLeakage, GroupLeakage, KindOrder, Leakage, OrderKind, Placement, QueryLeakage, ReadLeak,
+    RowLeakage, Rule, Step, TokenName, TokenStep, AEAD_OVERHEAD,
 };
 
 /// One mutant: its name, the clause it drops (a field or sentence of the
@@ -408,20 +408,21 @@ fn ordering_terms_all_distinct(l: &mut Leakage, rng: &mut TestRng) {
 /// two ordered paths compare with each other too"). The order is kept, and
 /// ties across paths are broken by path.
 fn ordering_terms_per_path(l: &mut Leakage, _: &mut TestRng) {
-    let mut keyed: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    let mut keyed: BTreeMap<(OrderKind, usize, usize), usize> = BTreeMap::new();
     for row in &l.rows {
         for entry in &row.entries {
             if let Some(op) = &entry.ordering {
-                let _ = keyed.insert((l.ordering_ranks[op.class], entry.selector), 0);
+                let _ = keyed.insert((op.kind, l.ordering_ranks[op.class], entry.selector), 0);
             }
         }
     }
     for query in &l.queries {
         if let QueryLeakage::Order { selector, bound } = query {
-            let _ = keyed.insert((l.ordering_ranks[bound.class], *selector), 0);
+            let _ = keyed.insert((bound.kind, l.ordering_ranks[bound.class], *selector), 0);
         }
     }
-    // Classes in (rank, path) order, so a class's index is its new rank.
+    // Classes in (kind, rank, path) order, so a class's index orders it
+    // within its kind.
     for (class, slot) in keyed.values_mut().enumerate() {
         *slot = class;
     }
@@ -429,13 +430,13 @@ fn ordering_terms_per_path(l: &mut Leakage, _: &mut TestRng) {
     for row in &mut l.rows {
         for entry in &mut row.entries {
             if let Some(op) = &mut entry.ordering {
-                op.class = keyed[&(old_ranks[op.class], entry.selector)];
+                op.class = keyed[&(op.kind, old_ranks[op.class], entry.selector)];
             }
         }
     }
     for query in &mut l.queries {
         if let QueryLeakage::Order { selector, bound } = query {
-            bound.class = keyed[&(old_ranks[bound.class], *selector)];
+            bound.class = keyed[&(bound.kind, old_ranks[bound.class], *selector)];
         }
     }
     l.ordering_ranks = (0..keyed.len()).collect();
@@ -454,6 +455,12 @@ fn ordering_term_length_constant(l: &mut Leakage, _: &mut TestRng) {
             bound.len = 65;
         }
     }
+}
+
+/// A number's and a string's terms compare in jsonb's order, numbers first,
+/// whatever the key: the order the page says the scheme does not keep.
+fn mixed_kinds_jsonb_order(l: &mut Leakage, _: &mut TestRng) {
+    l.kind_order = KindOrder::Fixed(Placement::Above);
 }
 
 /// The terms show their order and lengths and no shared prefix beyond what
@@ -892,6 +899,7 @@ mutants!(
     ordering_terms_all_distinct => "OrderingLeak::class (\"which rows hold equal values\")",
     ordering_term_length_constant => "OrderingLeak::len (\"Its length is the leaf's length\")",
     ordering_terms_per_path => "OrderingLeak::class across paths (\"two ordered paths holding equal values carry equal terms\")",
+    mixed_kinds_jsonb_order => "Leakage::kind_order (\"the order between a number and a string depends on the column key and is not jsonb's\")",
     ordering_prefixes_hidden => "Leakage::ordering_prefixes (\"the term also shows how long that common prefix is\")",
     member_ranks_follow_key_order => "EntryLeakage::step (a member's ordinal is its keyed rank)",
     hit_rule_uniform => "EntryLeakage::rule (the member or element rule a walk's hit matches; added to the page by #1362)",

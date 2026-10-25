@@ -116,6 +116,19 @@ pub fn cllw_ope(key: &[u8; 32], bits: &[bool]) -> Vec<u8> {
     out
 }
 
+/// How many leading plaintext bits two CLLW OPE terms show their values
+/// share: the bytes after the carry byte before the first that differs by
+/// more than one modulo 256, or the shorter term's bit count when there is
+/// none. A shared bit's bytes differ only by a carry, zero or one; the first
+/// differing bit's by 127 to 129. Terms under two keys share none, but where
+/// a front byte ties to within a carry.
+pub fn shared_bits(a: &[u8], b: &[u8]) -> usize {
+    let bits = a.len().min(b.len()).saturating_sub(1);
+    (1..=bits)
+        .find(|&k| !matches!(a[k].wrapping_sub(b[k]), 0 | 1 | 255))
+        .map_or(bits, |k| k - 1)
+}
+
 /// The simulator's stand-in for the keyed member rank: any keyed function of
 /// the parent's token and the member's selector will do, since the real one
 /// is a PRF under a key the database never sees. The simulator samples its

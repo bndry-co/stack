@@ -35,11 +35,13 @@ use proptest::test_runner::TestRng;
 use serde_json::{json, Value};
 
 use super::chain::{
-    cllw_ope, element_token, member_token, parent_tag, self_tag, simulated_rank, Rule, Tag16, Tag8,
+    cllw_ope, element_token, member_token, parent_tag, self_tag, shared_bits, simulated_rank, Rule,
+    Tag16, Tag8,
 };
 use super::observe::QueryKind;
 use super::profile::{
-    GroupLeakage, Leakage, OrderingLeak, QueryLeakage, RowLeakage, Step, TokenName, TokenStep,
+    GroupLeakage, KindOrder, Leakage, OrderKind, OrderingLeak, Placement, QueryLeakage, RowLeakage,
+    Step, TokenName, TokenStep,
 };
 
 /// The version byte `vitaminc-encrypt` writes at the front of every
@@ -101,10 +103,17 @@ struct Simulator<'a> {
 }
 
 /// Build the rows' wire JSON and the queries' wire JSON from `leakage` and
-/// `rng` alone.
-pub fn simulate(leakage: &Leakage, rng: &mut TestRng) -> (Vec<Value>, Vec<(QueryKind, Value)>) {
+/// `rng` alone. Where the profile leaves the place of the strings' ordering
+/// terms among the numbers' to the column's key and the column orders both,
+/// they go at `placement`, or at one drawn from `rng` for `None`: the
+/// calibration passes each placement a key could pick in turn.
+pub fn simulate(
+    leakage: &Leakage,
+    rng: &mut TestRng,
+    placement: Option<Placement>,
+) -> (Vec<Value>, Vec<(QueryKind, Value)>) {
     let rank_key = random(rng);
-    let ordering = ordering_terms(leakage, &random(rng));
+    let ordering = ordering_terms(leakage, rng, placement);
     let mut sim = Simulator {
         leakage,
         rng,
@@ -129,16 +138,24 @@ pub fn simulate(leakage: &Leakage, rng: &mut TestRng) -> (Vec<Value>, Vec<(Query
     (rows, queries)
 }
 
-/// Every ordering class's term: a CLLW OPE term ([`cllw_ope`]) under `key`
-/// over a code of the class's bit length, the codes built in rank order from
-/// the profile's shared prefixes alone ([`successor`]). So the terms
-/// compare as the ranks do, are equal where the classes are, are as long as
-/// the profile says, and share leading bytes exactly as far as the profile
-/// says the values' encodings share leading bits.
-fn ordering_terms(leakage: &Leakage, key: &[u8; 32]) -> HashMap<usize, Vec<u8>> {
-    let mut bits: BTreeMap<usize, usize> = BTreeMap::new();
+/// Every ordering class's term: a CLLW OPE term ([`cllw_ope`]) under its
+/// kind's key over a code of the class's bit length, each kind's codes built
+/// in rank order from the profile's shared prefixes alone ([`successor`]).
+/// So within a kind the terms compare as the ranks do, are equal where the
+/// classes are, are as long as the profile says, and share leading bytes
+/// exactly as far as the profile says the values' encodings share leading
+/// bits. Where a column orders both kinds, the two keys are drawn until the
+/// strings' terms fall at `placement` among the numbers' ([`placed`]): the
+/// one the profile fixes, else the one given, else one drawn at random, as
+/// a column's key picks one.
+fn ordering_terms(
+    leakage: &Leakage,
+    rng: &mut TestRng,
+    placement: Option<Placement>,
+) -> HashMap<usize, Vec<u8>> {
+    let mut classes: BTreeMap<usize, (OrderKind, usize)> = BTreeMap::new();
     let mut note = |op: &OrderingLeak| {
-        let _ = bits.insert(op.class, op.len - 1);
+        let _ = classes.insert(op.class, (op.kind, op.len - 1));
     };
     for row in &leakage.rows {
         for op in row.entries.iter().filter_map(|e| e.ordering.as_ref()) {
@@ -150,24 +167,83 @@ fn ordering_terms(leakage: &Leakage, key: &[u8; 32]) -> HashMap<usize, Vec<u8>> 
             note(bound);
         }
     }
-    let mut classes: Vec<usize> = bits.keys().copied().collect();
-    classes.sort_by_key(|&class| (leakage.ordering_ranks[class], class));
-    let mut terms = HashMap::new();
-    let mut previous: Option<(usize, Vec<bool>)> = None;
-    for class in classes {
-        let n = bits[&class];
-        let code = match &previous {
-            None => vec![false; n],
-            Some((below, code)) => successor(
-                code,
-                n,
-                leakage.ordering_prefixes.get(&(*below, class)).copied(),
-            ),
-        };
-        let _ = terms.insert(class, cllw_ope(key, &code));
-        previous = Some((class, code));
+    let mut codes: HashMap<usize, (OrderKind, Vec<bool>)> = HashMap::new();
+    for kind in [OrderKind::Number, OrderKind::String] {
+        let mut mine: Vec<usize> = classes
+            .iter()
+            .filter(|(_, (k, _))| *k == kind)
+            .map(|(&class, _)| class)
+            .collect();
+        mine.sort_by_key(|&class| (leakage.ordering_ranks[class], class));
+        let mut previous: Option<(usize, Vec<bool>)> = None;
+        for class in mine {
+            let n = classes[&class].1;
+            let code = match &previous {
+                None => vec![false; n],
+                Some((below, code)) => successor(
+                    code,
+                    n,
+                    leakage.ordering_prefixes.get(&(*below, class)).copied(),
+                ),
+            };
+            let _ = codes.insert(class, (kind, code.clone()));
+            previous = Some((class, code));
+        }
     }
-    terms
+    let both = [OrderKind::Number, OrderKind::String]
+        .iter()
+        .all(|kind| codes.values().any(|(k, _)| k == kind));
+    let target = match leakage.kind_order {
+        KindOrder::Fixed(fixed) => fixed,
+        KindOrder::ByKey => {
+            placement.unwrap_or_else(|| Placement::ALL[(rng.next_u32() % 3) as usize])
+        }
+    };
+    for _ in 0..100_000 {
+        let keys: [[u8; 32]; 2] = [random(rng), random(rng)];
+        let terms: HashMap<usize, Vec<u8>> = codes
+            .iter()
+            .map(|(&class, (kind, code))| {
+                let key = &keys[usize::from(*kind == OrderKind::String)];
+                (class, cllw_ope(key, code))
+            })
+            .collect();
+        if !both || placed(&terms, &codes, target) {
+            return terms;
+        }
+    }
+    panic!("no two keys put the strings {target:?} in 100,000 tries")
+}
+
+/// Whether the strings' terms sit at `placement` among the numbers': each
+/// string below or above every number whose code begins with 0 (a negative
+/// one, or every number where none is negative) as `placement` says, and
+/// likewise for those whose code begins with 1, and sharing no leading
+/// byte with any of them, as a number's and a string's term under two keys
+/// share none. A pair of keys under which some string and some number tie
+/// to within a carry at the front (about one pair in forty) is refused: a
+/// real key like that makes a few such pairs compare by their later bytes,
+/// which no clause states (`mod.rs`, "Out of reach").
+fn placed(
+    terms: &HashMap<usize, Vec<u8>>,
+    codes: &HashMap<usize, (OrderKind, Vec<bool>)>,
+    placement: Placement,
+) -> bool {
+    let of = |kind: OrderKind| {
+        codes
+            .iter()
+            .filter(move |(_, (k, _))| *k == kind)
+            .map(|(class, (_, code))| (&terms[class], code[0]))
+    };
+    of(OrderKind::String).all(|(string, _)| {
+        of(OrderKind::Number).all(|(number, high)| {
+            let above = match (placement, high) {
+                (Placement::Below, _) | (Placement::Between, true) => false,
+                (Placement::Above, _) | (Placement::Between, false) => true,
+            };
+            (string > number) == above && shared_bits(string, number) == 0
+        })
+    })
 }
 
 /// The least `n`-bit code above `below` that shares `shared` leading bits

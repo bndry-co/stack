@@ -89,9 +89,8 @@ fn shape_queries(sealed_root: bool) -> Vec<Query> {
     queries
 }
 
-/// A column that orders strings, so the string half of the ordering clause
-/// has something to compare (a world orders one kind of leaf; see
-/// [`super::profile::Ids::ordering_ranks`]). `"Carol"` and `"carol"`, and
+/// A column that orders strings only, so the string half of the ordering
+/// clause has something to compare on its own. `"Carol"` and `"carol"`, and
 /// `"ál"` and `"al"`, fold to one value, so their terms are equal and
 /// `"ál"`'s length is that of the two bytes it folds to.
 fn names() -> World {
@@ -124,15 +123,17 @@ fn names() -> World {
     }
 }
 
-/// A column that orders numbers of both signs and many magnitudes, so the
+/// A column whose one ordered path holds numbers in some rows and strings in
+/// others, so the strings' terms have a place among the numbers' that the
+/// column's key picks; numbers of both signs and many magnitudes, so the
 /// terms' shared prefixes (sign, then exponent) have something to show; two
 /// integers past 2^53 that round to one `f64`, so one term under two value
 /// selectors; and leaves at the ordered path that carry no term (a null, a
 /// boolean, an empty object, an array, which holds its own leaf below the
-/// ordered path).
+/// ordered path). Bounds of both kinds compare with the terms of both.
 fn numbers() -> World {
     World {
-        name: "ordered numbers",
+        name: "numbers and strings at one ordered path",
         column: Column {
             sealed_root: true,
             ordered: ordered(&["$.v"]),
@@ -151,9 +152,14 @@ fn numbers() -> World {
             json!({"v": true}),
             json!({"v": {}}),
             json!({"v": [3]}),
+            json!({"v": "carol"}),
+            json!({"v": "Carol"}),
+            json!({"v": "al"}),
+            json!({"v": ""}),
         ],
         queries: vec![
             Query::Order("$.v".into(), json!(0)),
+            Query::Order("$.v".into(), json!("b")),
             Query::Order("$.v".into(), json!(9_007_199_254_740_992u64)),
             Query::Order("$.v".into(), json!(-1)),
             Query::subtree("$.v"),
@@ -196,7 +202,8 @@ fn wide() -> World {
 }
 
 /// The handcrafted worlds: the shapes under each root option, a column of
-/// ordered strings, one of ordered numbers, and one of wide objects.
+/// ordered strings, one ordering numbers and strings at one path, and one
+/// of wide objects.
 pub fn handcrafted() -> Vec<World> {
     vec![
         World {
@@ -275,20 +282,23 @@ fn value() -> impl Strategy<Value = Value> {
     })
 }
 
-/// Which kind of leaf a random column orders: a world orders one (see
-/// [`super::profile::Ids::ordering_ranks`]).
+/// Which kind of leaf a random column orders: numbers, strings, or both at
+/// one path.
 #[derive(Clone, Copy, Debug)]
 enum Ordered {
     /// `$.n` and `$.list[*].n`.
     Numbers,
     /// `$.name` and `$.tags[*]`.
     Strings,
+    /// `$.n` and `$.list[*].n`, holding numbers in some rows and strings in
+    /// others.
+    Mixed,
 }
 
 impl Ordered {
     fn paths(self) -> Vec<JsonPath> {
         match self {
-            Self::Numbers => ordered(&["$.n", "$.list[*].n"]),
+            Self::Numbers | Self::Mixed => ordered(&["$.n", "$.list[*].n"]),
             Self::Strings => ordered(&["$.name", "$.tags[*]"]),
         }
     }
@@ -302,6 +312,7 @@ impl Ordered {
         let to_number = |v: &Value| Value::from(i64::try_from(v.to_string().len() % 7).unwrap());
         let to_string = |v: &Value| Value::from(STRINGS[v.to_string().len() % STRINGS.len()]);
         match (self, value) {
+            (Self::Mixed, value) => value,
             (_, Value::Object(map)) => Value::Object(
                 map.into_iter()
                     .map(|(k, v)| {
@@ -346,6 +357,11 @@ impl Ordered {
                 prop::sample::select(STRINGS),
             )
                 .prop_map(|(p, v)| Query::Order(p.into(), Value::from(v)))
+                .boxed(),
+            Self::Mixed => (prop::sample::select(vec!["$.n", "$.list[*].n"]), leaf())
+                .prop_filter_map("a number or string bound", |(p, v)| {
+                    (v.is_number() || v.is_string()).then(|| Query::Order(p.into(), v))
+                })
                 .boxed(),
         }
     }
@@ -414,7 +430,11 @@ fn query(kind: Ordered) -> impl Strategy<Value = Query> {
 pub fn random_world() -> impl Strategy<Value = World> {
     (
         any::<bool>(),
-        prop_oneof![Just(Ordered::Numbers), Just(Ordered::Strings)],
+        prop_oneof![
+            Just(Ordered::Numbers),
+            Just(Ordered::Strings),
+            Just(Ordered::Mixed)
+        ],
     )
         .prop_flat_map(|(sealed_root, kind)| {
             (

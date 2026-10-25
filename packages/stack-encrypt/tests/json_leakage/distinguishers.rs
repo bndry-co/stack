@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::Hash;
 
 use super::chain::{
-    element_token, hit_token, member_token, parent_tag, self_tag, Rule, Tag16, Tag8,
+    element_token, hit_token, member_token, parent_tag, self_tag, shared_bits, Rule, Tag16, Tag8,
 };
 use super::observe::{ObservedGroup, ObservedQuery, ObservedRow, ObservedWorld};
 
@@ -1388,16 +1388,10 @@ pub fn ordering_term_prefixes(world: &ObservedWorld) -> Vec<(usize, usize, usize
     }));
     all.sort_unstable();
     all.dedup();
-    let shared = |a: &[u8], b: &[u8]| {
-        let bits = a.len().min(b.len()).saturating_sub(1);
-        (1..=bits)
-            .find(|&k| !matches!(a[k].wrapping_sub(b[k]), 0 | 1 | 255))
-            .map_or(bits, |k| k - 1)
-    };
     let mut out = Vec::new();
     for (i, a) in all.iter().enumerate() {
         for (j, b) in all.iter().enumerate().skip(i + 1) {
-            out.push((i, j, shared(a, b)));
+            out.push((i, j, shared_bits(a, b)));
         }
     }
     out

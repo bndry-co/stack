@@ -197,13 +197,57 @@ pub enum Step {
     Element(u64),
 }
 
+/// The kind of leaf an ordering term is of. Each kind's terms are under a
+/// key of its own: the order space's salt names its domain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum OrderKind {
+    Number,
+    String,
+}
+
+/// Where a column's key puts the strings' terms among the numbers', at an
+/// ordered path that holds both. A CLLW term begins with a carry byte and
+/// then `PRF(key, ε) + 128 × first bit`, and the two kinds' keys differ,
+/// so under one key every string compares the same way with every negative
+/// number (first bit 0) and the same way with every non-negative one (first
+/// bit 1): the strings sort as one block, in one of three places.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Placement {
+    /// Below every number.
+    Below,
+    /// Above the negative numbers and below the non-negative ones.
+    Between,
+    /// Above every number: jsonb's order, which sorts numbers first.
+    Above,
+}
+
+impl Placement {
+    pub const ALL: [Self; 3] = [Self::Below, Self::Between, Self::Above];
+}
+
+/// How a number's term and a string's compare.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KindOrder {
+    /// The page: "the order between a number and a string depends on the
+    /// column key and is not jsonb's". The key picks a [`Placement`], once
+    /// per column, and the simulator does what the key does, drawing one.
+    ByKey,
+    /// A placement that does not depend on the key: what only a mutant
+    /// states.
+    Fixed(Placement),
+}
+
 /// The ordering term of one leaf, or of one query bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OrderingLeak {
     /// "The order of that leaf's value among every row that holds one, and
     /// which rows hold equal values." Equal values share a class; the
-    /// classes' order is [`Leakage::ordering_ranks`].
+    /// classes' order within their kind is [`Leakage::ordering_ranks`].
     pub class: OrderClass,
+    /// Whether the leaf is a number or a string: "the terms also show which
+    /// leaves are numbers and which are strings", since each kind's terms
+    /// are under a key of its own and so begin with that key's bytes.
+    pub kind: OrderKind,
     /// "Its length is the leaf's length: one byte per bit of the value's
     /// order encoding plus one, so 65 bytes for every number and
     /// `8 × (n + 1) + 1` bytes for a string whose folded UTF-8 form is `n`
@@ -400,14 +444,19 @@ pub struct Leakage {
     pub key_tag_len: usize,
     pub rows: Vec<RowLeakage>,
     pub queries: Vec<QueryLeakage>,
-    /// The rank of each [`OrderClass`] among all of them: "the order of that
-    /// leaf's value among every row that holds one", and the bound's "place
-    /// in the order of the stored values at every ordered path" ("leaves at
-    /// two ordered paths compare with each other too, and two ordered paths
-    /// holding equal values carry equal terms").
+    /// The rank of each [`OrderClass`] among the classes of its kind: "the
+    /// order of that leaf's value among every row that holds one", and the
+    /// bound's "place in the order of the stored values at every ordered
+    /// path" ("leaves at two ordered paths compare with each other too, and
+    /// two ordered paths holding equal values carry equal terms"; "within
+    /// each kind the order is the values'").
     pub ordering_ranks: Vec<usize>,
-    /// For each two classes next to each other in rank order, `(lower,
-    /// higher)`, how many leading bits their order encodings share: "two
+    /// How the two kinds' terms compare ([`KindOrder`]).
+    pub kind_order: KindOrder,
+    /// For each two classes of one kind next to each other in rank order,
+    /// `(lower, higher)`, how many leading bits their order encodings
+    /// share. A number's term and a string's share none: their keys
+    /// differ. "Two
     /// values whose encodings share leading bits […] get terms that share
     /// leading bytes, […] so the term also shows how long that common
     /// prefix is". CLLW OPE writes one byte per bit, the PRF of the bits
@@ -556,63 +605,70 @@ impl Ids {
         };
         // One byte per bit of the order encoding, plus one.
         let len = match &key {
-            OrderKey::Number(_) => 8 * 8 + 1,
+            OrderKey::Number(..) => 8 * 8 + 1,
             OrderKey::String(encoded) => 8 * encoded.len() + 1,
+        };
+        let kind = match &key {
+            OrderKey::Number(..) => OrderKind::Number,
+            OrderKey::String(_) => OrderKind::String,
         };
         let class = self.ordering.id(key.clone());
         if class == self.ordering_keys.len() {
             self.ordering_keys.push(key);
         }
-        OrderingLeak { class, len }
+        OrderingLeak { class, kind, len }
     }
 
-    /// The rank of every ordering class. The page does not say how a
-    /// number's term compares with a string's, so a column that orders both
-    /// is refused rather than guessed at.
+    /// The rank of every ordering class among the classes of its kind.
     pub fn ordering_ranks(&self) -> Vec<usize> {
-        let numbers = self
-            .ordering_keys
-            .iter()
-            .any(|k| matches!(k, OrderKey::Number(_)));
-        let strings = self
-            .ordering_keys
-            .iter()
-            .any(|k| matches!(k, OrderKey::String(_)));
-        assert!(
-            !(numbers && strings),
-            "the page does not say how a number's ordering term compares with a string's; \
-             a world orders one kind of leaf"
-        );
-        let mut order: Vec<usize> = (0..self.ordering_keys.len()).collect();
+        let mut ranks = vec![0; self.ordering_keys.len()];
+        for kind in [OrderKind::Number, OrderKind::String] {
+            for (rank, class) in self.of_kind(kind).into_iter().enumerate() {
+                ranks[class] = rank;
+            }
+        }
+        ranks
+    }
+
+    /// The classes of `kind`, in their order.
+    fn of_kind(&self, kind: OrderKind) -> Vec<OrderClass> {
+        let mut order: Vec<OrderClass> = (0..self.ordering_keys.len())
+            .filter(|&c| {
+                matches!(
+                    (&self.ordering_keys[c], kind),
+                    (OrderKey::Number(..), OrderKind::Number)
+                        | (OrderKey::String(_), OrderKind::String)
+                )
+            })
+            .collect();
         order.sort_by(
             |&a, &b| match (&self.ordering_keys[a], &self.ordering_keys[b]) {
                 (OrderKey::Number(x), OrderKey::Number(y)) => {
                     f64::from_bits(*x).total_cmp(&f64::from_bits(*y))
                 }
                 (OrderKey::String(x), OrderKey::String(y)) => x.cmp(y),
-                _ => unreachable!("refused above"),
+                _ => unreachable!("one kind"),
             },
         );
-        let mut ranks = vec![0; order.len()];
-        for (rank, class) in order.into_iter().enumerate() {
-            ranks[class] = rank;
-        }
-        ranks
+        order
     }
 
-    /// The leading bits each two classes next to each other in `ranks`'
-    /// order share ([`Leakage::ordering_prefixes`]).
-    pub fn ordering_prefixes(&self, ranks: &[usize]) -> BTreeMap<(OrderClass, OrderClass), usize> {
-        let mut by_rank: Vec<OrderClass> = (0..ranks.len()).collect();
-        by_rank.sort_by_key(|&class| ranks[class]);
-        by_rank
-            .windows(2)
-            .map(|pair| {
-                let shared = common_bits(
-                    &self.ordering_keys[pair[0]].encoding(),
-                    &self.ordering_keys[pair[1]].encoding(),
-                );
-                ((pair[0], pair[1]), shared)
+    /// The leading bits each two classes of one kind next to each other in
+    /// its order share ([`Leakage::ordering_prefixes`]).
+    pub fn ordering_prefixes(&self) -> BTreeMap<(OrderClass, OrderClass), usize> {
+        [OrderKind::Number, OrderKind::String]
+            .into_iter()
+            .flat_map(|kind| {
+                self.of_kind(kind)
+                    .windows(2)
+                    .map(|pair| {
+                        let shared = common_bits(
+                            &self.ordering_keys[pair[0]].encoding(),
+                            &self.ordering_keys[pair[1]].encoding(),
+                        );
+                        ((pair[0], pair[1]), shared)
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect()
     }
@@ -1114,12 +1170,12 @@ pub fn leak(column: &Column, clauses: Clauses, docs: &[Value], queries: &[Query]
         .iter()
         .map(|q| l_query(column, &mut ids, docs, q))
         .collect();
-    let ordering_ranks = ids.ordering_ranks();
     Leakage {
         key_tag_len: KEY_TAG_LEN,
         rows,
         queries,
-        ordering_prefixes: ids.ordering_prefixes(&ordering_ranks),
-        ordering_ranks,
+        ordering_ranks: ids.ordering_ranks(),
+        kind_order: KindOrder::ByKey,
+        ordering_prefixes: ids.ordering_prefixes(),
     }
 }

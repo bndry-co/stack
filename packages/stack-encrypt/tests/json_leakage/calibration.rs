@@ -2,6 +2,8 @@
 //! (the positive control), the page as #1363 published it is not (the
 //! finding), and every clause's removal is noticed (the calibration).
 
+use std::collections::BTreeSet;
+
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
 use serde_json::json;
 use stack_encrypt::json::{JsonOptions, JsonPath};
@@ -12,7 +14,10 @@ use super::corpus::{handcrafted, random_world, World};
 use super::distinguishers::{self, walk_positions};
 use super::mutants;
 use super::observe::{ObservedQuery, ObservedWorld};
-use super::profile::{flatten, leak, Clauses, Column, KeyOrder, Leakage, Query, StringOrder};
+use super::profile::{
+    flatten, leak, Clauses, Column, KeyOrder, KindOrder, Leakage, OrderKind, Placement, Query,
+    QueryLeakage, StringOrder,
+};
 use super::{real, simulator};
 use crate::common::stack_cipher;
 
@@ -44,9 +49,25 @@ fn real_world(
     ObservedWorld::from_wire(&rows, &queries)
 }
 
-fn simulated_world(leakage: &Leakage, rng: &mut TestRng) -> ObservedWorld {
-    let (rows, queries) = simulator::simulate(leakage, rng);
-    ObservedWorld::from_wire(&rows, &queries)
+/// The placements of the strings' terms among the numbers' a simulation
+/// tries: every one a key could pick where the profile leaves it to the key
+/// and the column orders both kinds, since the real column's key picked one
+/// and the simulator cannot know which; otherwise only the profile's own.
+fn placements(leakage: &Leakage) -> Vec<Option<Placement>> {
+    let kinds: BTreeSet<OrderKind> = leakage
+        .rows
+        .iter()
+        .flat_map(|r| r.entries.iter().filter_map(|e| e.ordering.map(|o| o.kind)))
+        .chain(leakage.queries.iter().filter_map(|q| match q {
+            QueryLeakage::Order { bound, .. } => Some(bound.kind),
+            _ => None,
+        }))
+        .collect();
+    if leakage.kind_order == KindOrder::ByKey && kinds.len() == 2 {
+        Placement::ALL.into_iter().map(Some).collect()
+    } else {
+        vec![None]
+    }
 }
 
 /// Every distinguisher's feature of `world`, by name.
@@ -57,16 +78,28 @@ fn features(world: &ObservedWorld) -> Vec<(&'static str, String)> {
         .collect()
 }
 
-/// The distinguishers whose features differ between two worlds, each with
-/// the two features.
+/// The distinguishers whose features differ between the real world and
+/// the simulation of `leakage`, each with the two features: of the
+/// simulations at every placement [`placements`] tries, the one fewest
+/// distinguishers separate. So the worlds count as told apart only when no
+/// placement a key could pick makes them agree.
 fn separating(
     real: &[(&'static str, String)],
-    simulated: &ObservedWorld,
+    leakage: &Leakage,
+    rng: &mut TestRng,
 ) -> Vec<(&'static str, String, String)> {
-    real.iter()
-        .zip(features(simulated))
-        .filter_map(|((name, a), (_, b))| (*a != b).then(|| (*name, a.clone(), b)))
-        .collect()
+    placements(leakage)
+        .into_iter()
+        .map(|placement| {
+            let (rows, queries) = simulator::simulate(leakage, rng, placement);
+            let simulated = ObservedWorld::from_wire(&rows, &queries);
+            real.iter()
+                .zip(features(&simulated))
+                .filter_map(|((name, a), (_, b))| (*a != b).then(|| (*name, a.clone(), b)))
+                .collect::<Vec<_>>()
+        })
+        .min_by_key(Vec::len)
+        .expect("at least one placement")
 }
 
 fn report(separated: &[(&'static str, String, String)]) -> String {
@@ -95,8 +128,7 @@ mod given_the_full_profile {
                 &world.docs,
                 &world.queries,
             );
-            let simulated = simulated_world(&leakage, &mut rng());
-            let separated = separating(&features(&real), &simulated);
+            let separated = separating(&features(&real), &leakage, &mut rng());
             assert!(
                 separated.is_empty(),
                 "{}: the real scheme reveals more than L states:\n{}",
@@ -128,8 +160,7 @@ mod given_the_full_profile {
                 &world.docs,
                 &world.queries,
             );
-            let simulated = simulated_world(&leakage, &mut rng());
-            let separated = separating(&features(&real), &simulated);
+            let separated = separating(&features(&real), &leakage, &mut rng());
             if separated.is_empty() {
                 Ok(())
             } else {
@@ -179,9 +210,8 @@ mod given_the_page_as_published_in_1363 {
                 &world.docs,
                 &world.queries,
             );
-            let simulated = simulated_world(&leakage, &mut rng());
             fired.extend(
-                separating(&features(&real), &simulated)
+                separating(&features(&real), &leakage, &mut rng())
                     .into_iter()
                     .map(|(n, _, _)| n),
             );
@@ -226,7 +256,7 @@ mod given_strings_ordered_by_their_bytes {
             .expect("the corpus has it");
         let real = real_world(&runtime, &cipher, &world);
         let leakage = leak(&world.column, clauses, &world.docs, &world.queries);
-        let fired: Vec<&str> = separating(&features(&real), &simulated_world(&leakage, &mut rng()))
+        let fired: Vec<&str> = separating(&features(&real), &leakage, &mut rng())
             .into_iter()
             .map(|(n, _, _)| n)
             .collect();
@@ -259,7 +289,7 @@ mod given_the_jsonb_reading_of_the_key_order {
         let world = &handcrafted()[0];
         let real = real_world(&runtime, &cipher, world);
         let leakage = leak(&world.column, clauses, &world.docs, &world.queries);
-        let fired: Vec<&str> = separating(&features(&real), &simulated_world(&leakage, &mut rng()))
+        let fired: Vec<&str> = separating(&features(&real), &leakage, &mut rng())
             .into_iter()
             .map(|(n, _, _)| n)
             .collect();
@@ -307,8 +337,11 @@ mod given_a_mutant_profile {
             for (real, leakage) in &worlds {
                 let mut mutated = leakage.clone();
                 (mutant.apply)(&mut mutated, &mut rng);
-                let simulated = simulated_world(&mutated, &mut rng);
-                fired.extend(separating(real, &simulated).into_iter().map(|(n, _, _)| n));
+                fired.extend(
+                    separating(real, &mutated, &mut rng)
+                        .into_iter()
+                        .map(|(n, _, _)| n),
+                );
             }
             let expected_unnoticed = UNNOTICED.iter().any(|(name, _)| *name == mutant.name);
             if fired.is_empty() != expected_unnoticed {
