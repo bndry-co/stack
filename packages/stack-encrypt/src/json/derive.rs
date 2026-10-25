@@ -1670,8 +1670,13 @@ fn open_fallback<'a, K>(
 /// tokens under each node it sits below, so wildcards nested `w` deep send
 /// `N^w + … + N + 1`: two levels at the default bound send 4,161, three
 /// would send 266,305. Past this a read is refused
-/// ([`TermError::JsonWildcardTooWide`]) rather than built.
-pub(crate) const MAX_READ_TOKENS: u64 = 1 << 16;
+/// ([`TermError::JsonWildcardTooWide`]) rather than built. 8,192 admits
+/// every one-level wildcard up to 8,191 elements and two levels up to a
+/// bound of 90, the default included, and no third level: the server looks
+/// every token up in every row before it knows whether the budget is
+/// blown, so a wider read costs its tokens even when the whole document
+/// comes back instead, and the largest read measured sent 4,161.
+pub(crate) const MAX_READ_TOKENS: u64 = 1 << 13;
 
 /// How a path expands into the concrete paths a read sends tokens for.
 struct Expansion<'p> {
@@ -1911,7 +1916,7 @@ impl<K> KeysetCipher<'_, K> {
     /// a `bound`, past 2³¹ − 1: no stored document has an element there.
     /// [`TermError::JsonTooDeep`] for a path deeper than any document the
     /// index seals. [`TermError::JsonWildcardTooWide`] for a path whose
-    /// wildcards would expand past 65,536 tokens at `bound`.
+    /// wildcards would expand past 8,192 tokens at `bound`.
     pub fn json_subtree_key_with_bound<'c>(
         &self,
         path: &JsonPath,
@@ -2233,11 +2238,16 @@ mod tests {
 
         #[test]
         fn an_expansion_past_the_token_limit_is_refused() {
-            assert_eq!(read_tokens(2, 255), Some(65_281), "two levels at 255");
             assert_eq!(
-                read_tokens(2, 256),
+                read_tokens(2, 64),
+                Some(4_161),
+                "two levels at the default bound"
+            );
+            assert_eq!(read_tokens(2, 90), Some(8_191), "two levels at 90");
+            assert_eq!(
+                read_tokens(2, 91),
                 None,
-                "two levels at 256 is past 65,536"
+                "two levels at 91 is past 8,192"
             );
             assert_eq!(
                 read_tokens(3, 64),
@@ -2249,7 +2259,8 @@ mod tests {
                 Some(1),
                 "no wildcard is one token"
             );
-            assert_eq!(read_tokens(1, 65_535), Some(65_536), "the limit itself");
+            assert_eq!(read_tokens(1, 8_191), Some(8_192), "the limit itself");
+            assert_eq!(read_tokens(1, 8_192), None, "one past the limit");
             assert!(
                 matches!(
                     key_for(&JsonOptions::default(), "$.a[*].b[*].c[*]", 64),

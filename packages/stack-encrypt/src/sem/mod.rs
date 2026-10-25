@@ -318,7 +318,7 @@ pub enum TermError {
     #[error("a JSON subtree read expands to too many tokens")]
     #[diagnostic(
         code(stack_encrypt::json_wildcard_too_wide),
-        help("A read sends at most 65536 tokens. Lower the wildcard bound (`json_subtree_key_with_bound`), use fewer nested wildcards, or read the array itself.")
+        help("A read sends at most 8192 tokens. Lower the wildcard bound (`json_subtree_key_with_bound`), use fewer nested wildcards, or read the array itself.")
     )]
     JsonWildcardTooWide,
     /// An ordering at a JSON path was asked with a value that is neither a

@@ -67,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `json_tree_subtree(doc, tokens, budget)` takes. A read whose probe finds
   an element, an array longer than the bound, fails with the new
   `Error::JsonWildcardTruncated { bound }` rather than return part of the
-  answer, and a read that would send more than 65,536 tokens is refused
+  answer, and a read that would send more than 8,192 tokens is refused
   as `JsonWildcardTooWide`. The rows open as a `Value` (the node at the
   path, `{}`, `[]` and scalars included), an `Option<Value>` (`None` where
   the row has no node there) or a `Vec<Value>` (one value per concrete
