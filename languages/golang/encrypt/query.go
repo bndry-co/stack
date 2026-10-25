@@ -36,8 +36,16 @@ type QueryTerm struct {
 	Domain string
 	// Terms is the term: one, or for between two, the low bound's then the
 	// high's. For a field that names an EQL type it is the query value's
-	// JSON.
+	// JSON. Empty when the term is Text.
 	Terms [][]byte
+	// Encoding says what the term holds: bytes (an index term), eql (an EQL
+	// query value's JSON), text (a JSON path's selector or one node's
+	// token, in Text[0]) or text_array (a read's tokens, in Text).
+	Encoding string
+	// Text is the term as text, for the text and text_array encodings: what
+	// a document's selector, children, child_count and subtree operators
+	// derive. It binds as SQL text, or text[].
+	Text []string
 }
 
 // Bucket is one bar of a histogram of the stored match filters' set-bit
@@ -184,20 +192,39 @@ func parseQueryTerm(decoded any) (QueryTerm, error) {
 			}
 		case "domain":
 			t.Domain, err = targetOptionalString(f)
+		case "encoding":
+			var s string
+			if s, err = targetString(f); err == nil {
+				switch s {
+				case "bytes", "eql", "text", "text_array":
+					t.Encoding = s
+				default:
+					err = fmt.Errorf("unknown encoding %q", s)
+				}
+			}
 		case "term":
 			switch v := f.Value.(type) {
 			case []byte:
 				t.Terms = [][]byte{v}
+			case string:
+				t.Text = []string{v}
 			case []any:
-				if len(v) != 2 {
-					return QueryTerm{}, fmt.Errorf("a range of %d terms", len(v))
-				}
-				for _, bound := range v {
-					b, ok := bound.([]byte)
-					if !ok {
-						return QueryTerm{}, fmt.Errorf("a bound is %T, not bytes", bound)
+				for _, item := range v {
+					switch x := item.(type) {
+					case []byte:
+						t.Terms = append(t.Terms, x)
+					case string:
+						t.Text = append(t.Text, x)
+					default:
+						return QueryTerm{}, fmt.Errorf("a term part is %T", item)
 					}
-					t.Terms = append(t.Terms, b)
+				}
+				if t.Terms != nil && (len(t.Terms) != 2 || t.Text != nil) {
+					return QueryTerm{}, fmt.Errorf("a range of %d terms", len(t.Terms))
+				}
+				if t.Text == nil && t.Terms == nil {
+					// An empty list is a read that sends no token.
+					t.Text = []string{}
 				}
 			default:
 				return QueryTerm{}, fmt.Errorf("term is %T", f.Value)
@@ -209,8 +236,16 @@ func parseQueryTerm(decoded any) (QueryTerm, error) {
 			return QueryTerm{}, err
 		}
 	}
-	if len(seen) != 5 {
-		return QueryTerm{}, fmt.Errorf("%d keys, not 5", len(seen))
+	if len(seen) != 6 {
+		return QueryTerm{}, fmt.Errorf("%d keys, not 6", len(seen))
+	}
+	// The encoding and the term agree: text for the text encodings,
+	// bytes for the others.
+	if text := t.Encoding == "text" || t.Encoding == "text_array"; text != (t.Text != nil) {
+		return QueryTerm{}, fmt.Errorf("a %s term that holds %d texts and %d byte strings", t.Encoding, len(t.Text), len(t.Terms))
+	}
+	if t.Encoding == "text" && len(t.Text) != 1 {
+		return QueryTerm{}, fmt.Errorf("a text term of %d texts", len(t.Text))
 	}
 	return t, nil
 }

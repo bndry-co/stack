@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`OpSpec`, `Operand` and the query term's wire form grow for documents**
+  (#1350). `OpSpec` gains twelve operators and `Operand` gains `Text` and
+  `TextList`; a binding that matches on either adds the arms. The query
+  term an `se_query_term`-style export writes has a sixth key,
+  `encoding` (`bytes`, `eql`, `text`, `text_array`), and an operator entry
+  a fifth, `input` (`value`, `pair`, `json`, `path_json`, `path_pair`,
+  `path`, `path_bound`); a reader that checks every key reads the new
+  ones. `TargetDescriptor` has a `leaf_query_sql_domain`, set with
+  `with_leaf_query_sql_domain`.
+
 - **`TargetResolver::encrypt` takes the field's target options** (#1349):
   `encrypt(name, options: Option<&TargetOptions>, keyset, label,
   plaintext)`. A resolver implemented outside this crate adds the
@@ -30,6 +40,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the value it parses.
 
 ### Added
+
+- **A document field's queries and reads through a data plan** (#1350,
+  #1352). A field naming `EncryptedJson` answers `contains`,
+  `contained_by`, `eq_at`, `selector`, `subtree`, `children` and
+  `child_count`, and, when it orders a path, `lt_at`, `lte_at`, `gt_at`,
+  `gte_at` and `between_at`, each taking an object of named inputs
+  (`{"json"}`, `{"path", "json"}`, `{"path", "low", "high"}`,
+  `{"path"}`, `{"path", "wildcard_bound"}`; JSON values as JSON text).
+  `query_term` derives the typed chain's operands, bit for bit: the
+  containment needle and the leaf ordering operand as EQL JSON (bound as
+  `eql_v4.query_json_tree` and `eql_v4.query_json_tree_leaf`), the
+  selector as `text` and a read's tokens as `text[]`. A position in a
+  path is refused where the operand is a selector (`json_path_position`),
+  a wildcard where the operator names one node (`json_path_wildcard`).
+  `json_open` opens the rows a read returned against the request that
+  prepared it: the engine derives the selector or the read key again from
+  the request, the field's options and the keyset, checks every row with
+  the index's own checks, and opens each database row's group on its own,
+  in one key request. `check_json_open` is its cipher-free check.
 
 - **A JSON document through a data plan** (#1349). A plan field may
   declare the new `json` value kind and name a target that stores a

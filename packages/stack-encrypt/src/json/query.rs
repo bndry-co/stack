@@ -245,7 +245,7 @@ pub struct JsonLeafQuery {
 }
 
 impl JsonLeafQuery {
-    fn of_leaf(terms: &JsonTerms) -> Self {
+    pub(crate) fn of_leaf(terms: &JsonTerms) -> Self {
         // `check` admitted only a number or a string, both of which carry a
         // term; an empty term here would be a leaf that cannot be.
         let leaf = terms.leaf();

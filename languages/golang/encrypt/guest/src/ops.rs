@@ -272,6 +272,43 @@ where
     encode_answer(&term)
 }
 
+/// Open the rows a read of a document field returned
+/// ([`dynamic::json_open`]): a codec-encoded list per database row of the
+/// entries the SQL returned (`public.eql_v4_json_tree_entry` JSON, text or
+/// bytes), the plan, the field's name and the codec-encoded read request
+/// (`{"operation": "selector" | "subtree", "path", "wildcard_bound"?}`) in;
+/// a codec-encoded list per row of JSON texts (bytes) out, which is
+/// **plaintext**. The selector or the read key is derived again from the
+/// request under `keyset`, which the host names as it named it to prepare
+/// the read, and the rows open through that keyset only: a document sealed
+/// under another is refused before any key is retrieved. One batched key
+/// request for every row.
+pub async fn json_open<K>(
+    keyset: &KeysetCipher<'_, K>,
+    rows: &[u8],
+    plan: &[u8],
+    field: &[u8],
+    request: &[u8],
+) -> Result<Vec<u8>, u32>
+where
+    K: DataKeySource + Sync + 'static,
+{
+    let (plan, field) = parse_field(plan, field)?;
+    let opened = dynamic::json_open(
+        keyset,
+        Scope::Keyset(keyset.clone()),
+        &plan,
+        field,
+        parse_frame(request)?,
+        parse_frame(rows)?,
+        &resolver(),
+    )
+    .map_err(|e| fail_dynamic(&e))?
+    .await
+    .map_err(|e| fail_error(&e))?;
+    encode_frame(opened)
+}
+
 /// Verify a page of decrypted values against a probabilistic query: the
 /// query's codec-encoded input and a codec-encoded list of values, with the
 /// plan, the field's name and the operator's name, in; a codec-encoded list
@@ -336,6 +373,14 @@ pub fn target_limit(
 /// this build's resolver, the field's name UTF-8, and the operator one the
 /// engine knows ([`dynamic::OpSpec::parse`]); an unknown operator is
 /// refused naming the field, as an operator the field does not answer is.
+/// A plan and one of its fields' names.
+fn parse_field<'f>(plan: &[u8], field: &'f [u8]) -> Result<(dynamic::record::Plan, &'f str), u32> {
+    let plan = parse_plan(plan)?;
+    let field = std::str::from_utf8(field)
+        .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
+    Ok((plan, field))
+}
+
 fn parse_query<'f>(
     plan: &[u8],
     field: &'f [u8],
@@ -495,6 +540,21 @@ pub mod validate {
             field,
             operator,
             checked_plaintext(input)?,
+            &resolver(),
+        )
+        .map_err(|e| fail_dynamic(&e))
+    }
+
+    /// A read's inputs, as [`json_open`](super::json_open) takes them: the
+    /// plan parses, the field stores a document, and the request and rows
+    /// are the read's ([`dynamic::check_json_open`]).
+    pub fn json_open(rows: &[u8], plan: &[u8], field: &[u8], request: &[u8]) -> Result<(), u32> {
+        let (plan, field) = parse_field(plan, field)?;
+        dynamic::check_json_open(
+            &plan,
+            field,
+            parse_frame(request)?,
+            parse_frame(rows)?,
             &resolver(),
         )
         .map_err(|e| fail_dynamic(&e))
@@ -894,7 +954,8 @@ mod tests {
             panic!("a query term is an object")
         };
         assert!(matches!(&term[3].1, Tree::String(s) if s.as_bytes() == b"eql_v4.query_text_eq"));
-        let Tree::Bytes(query_bytes) = &term[4].1 else {
+        assert!(matches!(&term[4].1, Tree::String(s) if s.as_bytes() == b"eql"));
+        let Tree::Bytes(query_bytes) = &term[5].1 else {
             panic!("the term is the query value's bytes")
         };
         let probe_json: serde_json::Value =

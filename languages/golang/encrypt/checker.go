@@ -218,7 +218,7 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 
 // parseOperators reads a list of operators, an se_targets entry's or
 // se_operators's: a list of objects, each with exactly the keys operator,
-// fidelity, arity and index, every value one the engine writes.
+// fidelity, arity, index and input, every value one the engine writes.
 func parseOperators(value any) ([]record.Operator, error) {
 	list, ok := value.([]any)
 	if !ok {
@@ -256,6 +256,13 @@ func parseOperators(value any) ([]record.Operator, error) {
 				}
 			case "index":
 				op.Index, err = parseOperatorIndex(s)
+			case "input":
+				switch s {
+				case "value", "pair", "json", "path_json", "path_pair", "path", "path_bound":
+					op.Input = s
+				default:
+					return nil, fmt.Errorf("operator %d: unknown input %q", i, s)
+				}
 			default:
 				return nil, fmt.Errorf("operator %d: unknown key %q", i, f.Key)
 			}
@@ -263,7 +270,7 @@ func parseOperators(value any) ([]record.Operator, error) {
 				return nil, fmt.Errorf("operator %d: %v", i, err)
 			}
 		}
-		if len(seen) != 4 || op.Name == "" {
+		if len(seen) != 5 || op.Name == "" {
 			return nil, fmt.Errorf("operator %d: not every key, or no name", i)
 		}
 		operators = append(operators, op)
@@ -278,7 +285,9 @@ func parseOperators(value any) ([]record.Operator, error) {
 // readers refuse the same values.
 func parseOperatorName(s string) (string, error) {
 	switch s {
-	case "eq", "lt", "lte", "gt", "gte", "between", "matches":
+	case "eq", "lt", "lte", "gt", "gte", "between", "matches",
+		"contains", "contained_by", "eq_at", "lt_at", "lte_at", "gt_at", "gte_at", "between_at",
+		"selector", "subtree", "children", "child_count":
 		return s, nil
 	}
 	return "", fmt.Errorf("unknown operator %q", s)
@@ -294,10 +303,10 @@ func parseFidelity(s string) (record.Fidelity, error) {
 }
 
 // parseOperatorIndex reads the index that answers an operator: eq, match,
-// ore, ope or ore_block.
+// ore, ope, ore_block or json.
 func parseOperatorIndex(s string) (record.Output, error) {
 	switch o := record.Output(s); o {
-	case record.Equality, record.Match, record.Ore, record.Ope, record.OreBlock:
+	case record.Equality, record.Match, record.Ore, record.Ope, record.OreBlock, record.JSONIndex:
 		return o, nil
 	}
 	return "", fmt.Errorf("unknown index %q", s)

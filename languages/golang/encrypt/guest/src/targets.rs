@@ -110,8 +110,13 @@ fn describe(target: &eql_bindings::encryption::targets::Target) -> TargetDescrip
     );
     // A type with a match index answers `matches` through its twin only
     // when the engine knows the options its filter is built under.
-    match target.match_options() {
+    let descriptor = match target.match_options() {
         Some(options) => descriptor.with_match_options(options),
+        None => descriptor,
+    };
+    // A document's orderings at a path bind as its leaf operand.
+    match target.leaf_query_sql_domain() {
+        Some(domain) => descriptor.with_leaf_query_sql_domain(domain),
         None => descriptor,
     }
 }

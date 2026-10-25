@@ -36,7 +36,7 @@ use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending,
 struct Eql;
 
 fn describe(target: &Target) -> TargetDescriptor {
-    TargetDescriptor::new(
+    let descriptor = TargetDescriptor::new(
         target.name,
         target.family,
         target.suffix,
@@ -47,7 +47,11 @@ fn describe(target: &Target) -> TargetDescriptor {
         target.query_sql_domain.map(str::to_owned),
         target.producible,
         target.reason.map(str::to_owned),
-    )
+    );
+    match target.leaf_query_sql_domain() {
+        Some(domain) => descriptor.with_leaf_query_sql_domain(domain),
+        None => descriptor,
+    }
 }
 
 /// As the guest converts: a document refusal keeps its code.
@@ -333,4 +337,614 @@ async fn text_that_is_not_a_document_is_refused_before_any_key() {
         calls.lock().unwrap().generate.is_empty(),
         "no key was requested"
     );
+}
+
+// =============================================================================
+// Operators: the data path's operands against the typed chain's
+// =============================================================================
+
+/// A typed plan over the same column and options, as a Rust program
+/// queries a document: the engine's document target under the label
+/// `users/profile`, the same context as the EQL identifier.
+fn typed_plan() -> stack_encrypt::plan::ValuePlan<
+    Value,
+    stack_encrypt::plan::Laid<stack_encrypt::target::Json, stack_encrypt::json::JsonDocument>,
+> {
+    stack_encrypt::Plan::value::<Value>()
+        .context("users/profile")
+        .encrypt_with_layout(stack_encrypt::target::Json::new(options()))
+        .build()
+        .unwrap()
+}
+
+/// An operator's input as a binding writes it: an object of named inputs.
+fn input(entries: &[(&str, Value)]) -> ValueFrame {
+    let object: serde_json::Map<String, Value> = entries
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), v.clone()))
+        .collect();
+    ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(&object).unwrap()).unwrap()
+}
+
+/// The data path's term for one operator and input on `profile`.
+async fn data_term(
+    keyset: &KeysetCipher<'_, common::Observed>,
+    plan: &record::Plan,
+    operator: &str,
+    entries: &[(&str, Value)],
+) -> dynamic::QueryTerm {
+    dynamic::query_term(
+        keyset,
+        plan,
+        "profile",
+        dynamic::OpSpec::parse(operator).unwrap(),
+        input(entries),
+        &Eql,
+    )
+    .unwrap()
+    .await
+    .unwrap()
+}
+
+fn one(term: &dynamic::QueryTerm) -> Value {
+    let dynamic::Operand::One(bytes) = term.operand() else {
+        panic!("{}: one operand", term.operator());
+    };
+    serde_json::from_slice(bytes).unwrap()
+}
+
+/// The operators a document field answers, with the input each takes:
+/// the orderings at a path only when the field orders a path.
+#[test]
+fn a_document_field_answers_the_json_operators() {
+    let names = |plan: &record::Plan| -> Vec<(&'static str, &'static str)> {
+        dynamic::field_operators(plan, "profile", &Eql)
+            .unwrap()
+            .into_iter()
+            .map(|(op, index)| {
+                assert_eq!(index.key(), "json");
+                (op.name(), op.input())
+            })
+            .collect()
+    };
+    assert_eq!(
+        names(&plan()),
+        [
+            ("contains", "json"),
+            ("contained_by", "json"),
+            ("eq_at", "path_json"),
+            ("lt_at", "path_json"),
+            ("lte_at", "path_json"),
+            ("gt_at", "path_json"),
+            ("gte_at", "path_json"),
+            ("between_at", "path_pair"),
+            ("selector", "path"),
+            ("subtree", "path_bound"),
+            ("children", "path"),
+            ("child_count", "path"),
+        ]
+    );
+    let unordered = record::plan_with(
+        &dynamic::frame::serde::to_vec(&json!({
+            "profile": {"context": ["users", "profile"], "target": "EncryptedJson"}
+        }))
+        .unwrap(),
+        &Eql,
+    )
+    .unwrap();
+    assert_eq!(
+        names(&unordered)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>(),
+        [
+            "contains",
+            "contained_by",
+            "eq_at",
+            "selector",
+            "subtree",
+            "children",
+            "child_count"
+        ],
+        "no ordering without an ordered path"
+    );
+}
+
+/// Every operand the data path derives is the typed chain's, in the EQL
+/// wire form, bound as the domain the target names for it.
+#[tokio::test]
+async fn every_operand_is_the_typed_chains() {
+    use stack_encrypt::op;
+    let (cipher, calls) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = plan();
+    let typed = typed_plan();
+    let needle = json!({"visits": [{"at": 3}], "name": "Alice"});
+
+    for (operator, typed_op) in [("contains", true), ("contained_by", false)] {
+        let term = data_term(
+            &keyset,
+            &plan,
+            operator,
+            &[("json", json!(needle.to_string()))],
+        )
+        .await;
+        let typed = if typed_op {
+            cipher
+                .query(op::Contains, &needle)
+                .on(&typed)
+                .await
+                .unwrap()
+        } else {
+            cipher
+                .query(op::ContainedBy, &needle)
+                .on(&typed)
+                .await
+                .unwrap()
+        };
+        assert_eq!(
+            one(&term),
+            serde_json::to_value(&typed).unwrap(),
+            "{operator}"
+        );
+        assert_eq!(term.domain(), Some("eql_v4.query_json_tree"));
+        assert_eq!(term.encoding(), "eql");
+    }
+
+    let eq = data_term(
+        &keyset,
+        &plan,
+        "eq_at",
+        &[("path", json!("$.name")), ("json", json!("\"Alice\""))],
+    )
+    .await;
+    let typed_eq = cipher
+        .query(op::AtPath(op::Eq), &("$.name", "Alice"))
+        .on(&typed)
+        .await
+        .unwrap();
+    assert_eq!(one(&eq), serde_json::to_value(&typed_eq).unwrap());
+    assert_eq!(eq.domain(), Some("eql_v4.query_json_tree"));
+
+    let lt = data_term(
+        &keyset,
+        &plan,
+        "lt_at",
+        &[("path", json!("$.age")), ("json", json!("40"))],
+    )
+    .await;
+    let typed_lt = cipher
+        .query(op::AtPath(op::Lt), &("$.age", 40))
+        .on(&typed)
+        .await
+        .unwrap();
+    assert_eq!(one(&lt), serde_json::to_value(&typed_lt).unwrap());
+    assert_eq!(lt.domain(), Some("eql_v4.query_json_tree_leaf"));
+
+    let between = data_term(
+        &keyset,
+        &plan,
+        "between_at",
+        &[
+            ("path", json!("$.age")),
+            ("low", json!("18")),
+            ("high", json!("40")),
+        ],
+    )
+    .await;
+    let dynamic::Operand::Range { lo, hi } = between.operand() else {
+        panic!("a range");
+    };
+    let gte = data_term(
+        &keyset,
+        &plan,
+        "gte_at",
+        &[("path", json!("$.age")), ("json", json!("18"))],
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_slice::<Value>(lo).unwrap(),
+        one(&gte),
+        "the low bound"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(hi).unwrap(),
+        one(&lt),
+        "the high bound"
+    );
+    assert_eq!(between.domain(), Some("eql_v4.query_json_tree_leaf"));
+
+    let path = stack_encrypt::json::JsonPath::parse("$.visits[*].at").unwrap();
+    let selector = data_term(
+        &keyset,
+        &plan,
+        "selector",
+        &[("path", json!("$.visits[*].at"))],
+    )
+    .await;
+    assert_eq!(
+        selector.operand(),
+        &dynamic::Operand::Text(
+            keyset
+                .json_selector(&path, column())
+                .await
+                .unwrap()
+                .to_string()
+        )
+    );
+    assert_eq!(
+        (selector.domain(), selector.encoding()),
+        (Some("text"), "text")
+    );
+
+    let subtree = data_term(
+        &keyset,
+        &plan,
+        "subtree",
+        &[
+            ("path", json!("$.visits[*].at")),
+            ("wildcard_bound", json!(4)),
+        ],
+    )
+    .await;
+    let key = keyset
+        .json_subtree_key_with_bound(&path, &options(), 4, column())
+        .await
+        .unwrap();
+    assert_eq!(subtree.operand(), &dynamic::Operand::TextList(key.tokens()));
+    assert_eq!(key.tokens().len(), 5, "four elements and a probe");
+    assert_eq!(
+        (subtree.domain(), subtree.encoding()),
+        (Some("text[]"), "text_array")
+    );
+
+    let children = data_term(&keyset, &plan, "children", &[("path", json!("$.visits"))]).await;
+    let visits = keyset
+        .json_subtree_key(
+            &stack_encrypt::json::JsonPath::parse("$.visits").unwrap(),
+            &options(),
+            column(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        children.operand(),
+        &dynamic::Operand::Text(visits.tokens()[0].clone())
+    );
+    let count = data_term(
+        &keyset,
+        &plan,
+        "child_count",
+        &[("path", json!("$.visits"))],
+    )
+    .await;
+    assert_eq!(count.operand(), children.operand());
+
+    assert!(
+        calls.lock().unwrap().generate.is_empty(),
+        "a query mints no key"
+    );
+}
+
+/// The refusals a JSON operator makes before it derives anything, each
+/// naming the field and a reason or an engine error, never the input.
+#[test]
+fn a_json_operator_refuses_what_it_cannot_answer() {
+    let plan = plan();
+    let check = |operator: &str, entries: &[(&str, Value)]| {
+        dynamic::check_query(
+            &plan,
+            "profile",
+            dynamic::OpSpec::parse(operator).unwrap(),
+            input(entries),
+            &Eql,
+        )
+    };
+    let reason = |operator: &str, entries: &[(&str, Value)]| {
+        let error = check(operator, entries).unwrap_err();
+        assert!(!format!("{error}").contains("secret"), "{error}");
+        match error.reason() {
+            // An input refusal names the field; the engine's own (a term
+            // error) is the same refusal the typed chain makes.
+            Some(reason) => {
+                assert_eq!(error.field(), Some("profile"), "{error}");
+                reason.as_str()
+            }
+            None => "engine",
+        }
+    };
+    use dynamic::Reason;
+    assert_eq!(reason("contains", &[("needle", json!("{}"))]), "json_input");
+    assert_eq!(
+        reason("contains", &[("json", json!(r#"{"secret":1,"secret":1}"#))]),
+        "json_duplicate_key"
+    );
+    assert_eq!(
+        reason("contains", &[("json", json!("{\"secret\""))]),
+        "json_syntax"
+    );
+    assert_eq!(
+        reason("eq_at", &[("path", json!("$.a[2]")), ("json", json!("1"))]),
+        "json_path_position"
+    );
+    assert_eq!(
+        reason("selector", &[("path", json!("$.a[0].b"))]),
+        "json_path_position"
+    );
+    assert_eq!(
+        reason("children", &[("path", json!("$.a[*]"))]),
+        "json_path_wildcard"
+    );
+    // The engine's own refusals: a container at a path, a path the field
+    // does not order, a value no ordering takes, a path that is not one.
+    for (operator, entries) in [
+        (
+            "eq_at",
+            vec![("path", json!("$.a")), ("json", json!(r#"{"secret":1}"#))],
+        ),
+        (
+            "lt_at",
+            vec![("path", json!("$.name")), ("json", json!("1"))],
+        ),
+        (
+            "lt_at",
+            vec![("path", json!("$.age")), ("json", json!("true"))],
+        ),
+        (
+            "lt_at",
+            vec![("path", json!("$.visits[2].at")), ("json", json!("1"))],
+        ),
+        ("selector", vec![("path", json!("secret"))]),
+    ] {
+        assert_eq!(reason(operator, &entries), "engine", "{operator}");
+    }
+    // `eq` and friends are not a document's operators.
+    let error =
+        dynamic::check_query(&plan, "profile", dynamic::OpSpec::Eq, input(&[]), &Eql).unwrap_err();
+    assert_eq!(error.reason(), Some(Reason::OperatorNotAnswered));
+}
+
+// =============================================================================
+// Reads: rows opened against the request that prepared them
+// =============================================================================
+
+/// The engine's document under a stored EQL document: its entries, `h`, `sv`
+/// and `q` without the envelope.
+fn engine_document(stored: &JsonTreeDocument) -> stack_encrypt::json::JsonDocument {
+    let mut value = serde_json::to_value(stored).unwrap();
+    let object = value.as_object_mut().unwrap();
+    let _ = object.remove("v");
+    let _ = object.remove("i");
+    serde_json::from_value(value).unwrap()
+}
+
+/// The rows `json_tree_subtree(doc, tokens, 0)` returns, as the SQL writes
+/// them: each node with its header, ordinal and depth grafted.
+fn subtree_rows(doc: &stack_encrypt::json::JsonDocument, tokens: &[String]) -> Vec<String> {
+    use base64::Engine;
+    let tokens: Vec<[u8; 16]> = tokens
+        .iter()
+        .map(|t| {
+            base64::engine::general_purpose::STANDARD
+                .decode(t)
+                .unwrap()
+                .try_into()
+                .unwrap()
+        })
+        .collect();
+    doc.subtree(&tokens)
+        .into_iter()
+        .map(|(j, _, d)| {
+            let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+            wire["d"] = json!(d);
+            wire.to_string()
+        })
+        .collect()
+}
+
+/// The entry `doc -> selector` returns: the first entry carrying it.
+fn extracted_row(doc: &stack_encrypt::json::JsonDocument, selector: &str) -> Option<String> {
+    use base64::Engine;
+    let selector: [u8; 16] = base64::engine::general_purpose::STANDARD
+        .decode(selector)
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let j = doc
+        .entries()
+        .iter()
+        .position(|e| e.selector() == &selector)?;
+    Some(
+        serde_json::to_value(doc.node(j).unwrap())
+            .unwrap()
+            .to_string(),
+    )
+}
+
+async fn open(
+    keyset: &KeysetCipher<'_, common::Observed>,
+    plan: &record::Plan,
+    request: Value,
+    groups: Vec<Vec<String>>,
+) -> Result<Vec<Vec<Value>>, stack_encrypt::Error> {
+    let request =
+        ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(&request).unwrap()).unwrap();
+    let rows = frame(&groups);
+    let opened = dynamic::json_open(
+        keyset,
+        Scope::Keyset(keyset.clone()),
+        plan,
+        "profile",
+        request,
+        rows,
+        &Eql,
+    )
+    .unwrap()
+    .await?;
+    let groups: Vec<Vec<serde_bytes_like::Bytes>> =
+        dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+    Ok(groups
+        .into_iter()
+        .map(|g| {
+            g.into_iter()
+                .map(|b| serde_json::from_slice(&b.0).unwrap())
+                .collect()
+        })
+        .collect())
+}
+
+/// Two documents, read through the data path: `->` by selector, a concrete
+/// subtree, a wildcard subtree, and a row with no node there, in one key
+/// request; each group of rows opens on its own.
+#[tokio::test]
+async fn reads_open_against_the_request_that_prepared_them() {
+    let (cipher, calls) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = plan();
+    let documents = [
+        json!({"name": "Alice", "age": 34, "visits": [{"at": 3}, {"at": 1, "where": "x"}]}),
+        json!({"name": "Bob", "visits": []}),
+    ];
+    let mut stored = Vec::new();
+    for document in &documents {
+        let text = document.to_string();
+        let sealed = record::encrypt_with(
+            &keyset,
+            frame(BTreeMap::from([("profile", text.as_str())])),
+            &plan,
+            &Eql,
+        )
+        .unwrap()
+        .await
+        .unwrap();
+        stored.push(engine_document(&stored_of(&sealed)));
+    }
+
+    // `->` on `$.name` in each row, and a row with no `$.age` (NULL).
+    let name = data_term(&keyset, &plan, "selector", &[("path", json!("$.name"))]).await;
+    let dynamic::Operand::Text(name) = name.operand() else {
+        panic!()
+    };
+    let age = data_term(&keyset, &plan, "selector", &[("path", json!("$.age"))]).await;
+    let dynamic::Operand::Text(age) = age.operand() else {
+        panic!()
+    };
+    calls.lock().unwrap().retrieve.clear();
+    let names = open(
+        &keyset,
+        &plan,
+        json!({"operation": "selector", "path": "$.name"}),
+        stored
+            .iter()
+            .map(|d| extracted_row(d, name).into_iter().collect())
+            .collect(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(names, [vec![json!("Alice")], vec![json!("Bob")]]);
+    assert_eq!(
+        calls.lock().unwrap().retrieve.len(),
+        1,
+        "one key request for every row"
+    );
+    let ages = open(
+        &keyset,
+        &plan,
+        json!({"operation": "selector", "path": "$.age"}),
+        stored
+            .iter()
+            .map(|d| extracted_row(d, age).into_iter().collect())
+            .collect(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        ages,
+        [vec![json!(34)], vec![]],
+        "absence is no value, not null"
+    );
+
+    // A wildcard read: every element's `at` below the bound, per row.
+    let tokens = data_term(
+        &keyset,
+        &plan,
+        "subtree",
+        &[("path", json!("$.visits[*].at"))],
+    )
+    .await;
+    let dynamic::Operand::TextList(tokens) = tokens.operand() else {
+        panic!()
+    };
+    let ats = open(
+        &keyset,
+        &plan,
+        json!({"operation": "subtree", "path": "$.visits[*].at"}),
+        stored.iter().map(|d| subtree_rows(d, tokens)).collect(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ats, [vec![json!(3), json!(1)], vec![]]);
+
+    // The rows of one read opened against another's request are refused:
+    // the request, not the rows, says which path they are for.
+    let wrong = open(
+        &keyset,
+        &plan,
+        json!({"operation": "subtree", "path": "$.name"}),
+        vec![subtree_rows(&stored[0], tokens)],
+    )
+    .await;
+    assert!(
+        matches!(wrong, Err(stack_encrypt::Error::JsonWrongEntry { .. })),
+        "{:?}",
+        wrong.err()
+    );
+    let wrong = open(
+        &keyset,
+        &plan,
+        json!({"operation": "selector", "path": "$.age"}),
+        vec![extracted_row(&stored[0], name).into_iter().collect()],
+    )
+    .await;
+    assert!(
+        matches!(wrong, Err(stack_encrypt::Error::JsonWrongEntry { .. })),
+        "{:?}",
+        wrong.err()
+    );
+
+    // A wildcard read of an array longer than its bound fails rather than
+    // opening to part of the answer.
+    let short = data_term(
+        &keyset,
+        &plan,
+        "subtree",
+        &[
+            ("path", json!("$.visits[*].at")),
+            ("wildcard_bound", json!(1)),
+        ],
+    )
+    .await;
+    let dynamic::Operand::TextList(short) = short.operand() else {
+        panic!()
+    };
+    let truncated = open(
+        &keyset,
+        &plan,
+        json!({"operation": "subtree", "path": "$.visits[*].at", "wildcard_bound": 1}),
+        vec![subtree_rows(&stored[0], short)],
+    )
+    .await;
+    assert!(
+        matches!(
+            truncated,
+            Err(stack_encrypt::Error::JsonWildcardTruncated { .. })
+        ),
+        "{:?}",
+        truncated.err()
+    );
+}
+
+/// The stored document a sealed row holds for `profile`.
+fn stored_of(row: &stack_encrypt::StackCipherText) -> JsonTreeDocument {
+    stored(row)
 }

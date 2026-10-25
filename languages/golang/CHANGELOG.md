@@ -12,6 +12,14 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **Query and read an encrypted JSON document, at the record level**
+  (#1350, #1352). `Cipher.QueryTerm` derives a document field's operands:
+  `QueryTerm.Encoding` says what the term holds, and `QueryTerm.Text`
+  carries a selector, a node's token or a read's tokens.
+  `Cipher.JSONOpen` opens the rows a selector or subtree read returned
+  against the request that prepared it. `record.Operator.Input` names an
+  operator's input. Generated methods follow with `stashgen`.
+
 - **The EQL types for an encrypted JSON document** (#1348):
   `eql.EncryptedJSON` (`public.eql_v4_json_tree`), its containment needle
   `eql.EncryptedJSONQuery`, its ordering operand
