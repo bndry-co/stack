@@ -307,6 +307,7 @@ An `opaque` struct crosses as one storage blob and is one column, read back into
 The blob is vitaminc's storage profile, version 1 (`vcffi.MarshalStorage`), the format vitaminc keeps readable across releases and languages.
 A field may be any type that both the storage profile and `encoding/json` carry both ways: a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, and types with both `MarshalText` and `UnmarshalText`, such as `time.Time`.
 `encrypt.Decimal` and `encrypt.Date` have no storage form and are refused in an opaque struct: store them as text, or by their parts.
+A row an earlier release sealed with one of them in an opaque struct does not decrypt under this release, because no generated file can name the field: decrypt such rows with the earlier release, change the field's type, and encrypt them again before upgrading.
 The generated shape struct tags each field `vc:"name,default"`, so a field added to the opaque struct reads as its zero value from a row sealed before it; a field added to a nested struct type needs a pointer type for the same.
 `Encrypt` refuses a string that is not UTF-8 and a value nested more than 128 levels deep, as `encrypt.ErrEncoding`.
 `encoding/json` still matters because a row an earlier release sealed holds a JSON document, and `Decrypt` reads it as JSON.
