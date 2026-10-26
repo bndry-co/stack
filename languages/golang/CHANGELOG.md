@@ -17,7 +17,11 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   marshals it with `encoding/json` when it seals it, and reads the opened
   document back into the declared type (`gensupport.GetDocument`,
   `GetDocumentPtr`), so 64-bit integers and finite `float64`s round-trip
-  exactly. A pointer to one takes `null=sql`. `stashgen` refuses, when it
+  exactly. A pointer to one takes `null=sql`. The rest of a document comes
+  back as `encoding/json` reads it: invalid UTF-8 in a string becomes
+  U+FFFD, a nil map or slice is stored as JSON `null` (not `{}` or `[]`),
+  and a `time.Time` inside a document is stored as RFC 3339 text in its
+  own offset, which `EqAt` and the orderings compare as text. `stashgen` refuses, when it
   runs, a type `encoding/json` cannot carry both ways: an interface such as
   `any`, a struct field `encoding/json` drops (unexported, tagged
   `json:"-"`, or two writing one member), a field tagged

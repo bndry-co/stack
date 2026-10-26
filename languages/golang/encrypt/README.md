@@ -597,7 +597,9 @@ column.
 column, from a struct, map or slice field, or a `json.RawMessage`
 (`stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"`; see the
 stashgen README). A struct is marshalled with `encoding/json` when it is
-sealed and read back into its type when it is opened. One entry per node is
+sealed and read back into its type when it is opened. Its numbers come back
+exactly; the stashgen README lists what `encoding/json` does not keep
+(invalid UTF-8, a nil map or slice, a time's zone). One entry per node is
 encrypted, so the database can test containment, equality and ordering at a
 path, return one node with `->`, and walk a subtree, without decrypting:
 

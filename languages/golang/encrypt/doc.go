@@ -207,7 +207,15 @@
 // text, or as a struct, map or slice type. The generated code marshals such
 // a type with encoding/json when it seals the field. It unmarshals the
 // opened text into the declared type, so integers to 64 bits and finite
-// float64s come back exactly.
+// float64s come back exactly. The rest comes back as encoding/json reads
+// what it wrote, which is not always the value sealed: invalid UTF-8 in a
+// string becomes U+FFFD, with no error (a property of the value, which the
+// generated code does not walk, so check it with utf8.ValidString first); a
+// nil map or slice is stored as JSON null, which a needle of an empty one
+// does not match; and a time.Time inside a document is stored as RFC 3339
+// text in its own offset, so EqAt with a time in another zone misses and
+// an ordering on that path orders the text, not the instants. Store a time
+// you query as an integer, such as t.UnixNano().
 //
 // The field's operands are Go values. Contains and ContainedBy take a
 // needle, and EqAt and the orderings take a scalar. Each is a
