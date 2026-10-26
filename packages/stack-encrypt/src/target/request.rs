@@ -12,7 +12,6 @@
 //! sibling's key material are unit-testable on their own.
 
 use super::context::AeadContext;
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use stack_kms::{DataKey, DataKeyWithTag, Iv};
@@ -157,25 +156,68 @@ pub(super) fn tally(requests: &[Request]) -> (usize, usize, usize) {
 /// asked for (never a neighbour's), and drawing past that is
 /// [`Error::ResponseShape`].
 pub struct Responses {
-    generated: VecDeque<DataKeyWithTag>,
-    retrieved: VecDeque<DataKey>,
-    keysets: VecDeque<Arc<KeysetState>>,
+    generated: Queue<DataKeyWithTag>,
+    retrieved: Queue<DataKey>,
+    keysets: Queue<Arc<KeysetState>>,
+}
+
+/// One kind's responses, drawn front first. A response is handed out as a
+/// clone and the original stays where it is until the queue drops, so it
+/// drops in place: a data key wipes itself on drop, and one moved out of the
+/// buffer would leave its bytes behind in the freed allocation.
+struct Queue<T> {
+    items: Vec<T>,
+    next: usize,
+}
+
+impl<T: Clone> Queue<T> {
+    fn new(items: Vec<T>) -> Self {
+        Self { items, next: 0 }
+    }
+
+    fn len(&self) -> usize {
+        self.items.len() - self.next
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn pop_front(&mut self) -> Option<T> {
+        let item = self.items.get(self.next).cloned()?;
+        self.next += 1;
+        Some(item)
+    }
+
+    /// The first `n`, as a queue of their own; `n` must not pass the end.
+    fn split_front(&mut self, n: usize) -> Self {
+        let front = self.items[self.next..self.next + n].to_vec();
+        self.next += n;
+        Self::new(front)
+    }
+
+    /// Every response left, front first.
+    fn drain(&mut self) -> impl Iterator<Item = T> + '_ {
+        let rest = &self.items[self.next..];
+        self.next = self.items.len();
+        rest.iter().cloned()
+    }
 }
 
 impl Responses {
     /// The full response set of one batched dispatch, in request order.
     pub(super) fn new(generated: Vec<DataKeyWithTag>, retrieved: Vec<DataKey>) -> Self {
         Self {
-            generated: generated.into(),
-            retrieved: retrieved.into(),
-            keysets: VecDeque::new(),
+            generated: Queue::new(generated),
+            retrieved: Queue::new(retrieved),
+            keysets: Queue::new(Vec::new()),
         }
     }
 
     /// These responses with the keysets loaded for the keyset requests, in
     /// request order.
     pub(super) fn with_keysets(mut self, keysets: Vec<Arc<KeysetState>>) -> Self {
-        self.keysets = keysets.into();
+        self.keysets = Queue::new(keysets);
         self
     }
 
@@ -211,9 +253,9 @@ impl Responses {
             return Err(Error::ResponseShape);
         }
         Ok(Responses {
-            generated: self.generated.drain(..generated).collect(),
-            retrieved: self.retrieved.drain(..retrieved).collect(),
-            keysets: self.keysets.drain(..keysets).collect(),
+            generated: self.generated.split_front(generated),
+            retrieved: self.retrieved.split_front(retrieved),
+            keysets: self.keysets.split_front(keysets),
         })
     }
 
@@ -225,11 +267,11 @@ impl Responses {
     }
 
     pub(crate) fn drain_generated(&mut self) -> impl Iterator<Item = DataKeyWithTag> + '_ {
-        self.generated.drain(..)
+        self.generated.drain()
     }
 
     pub(crate) fn drain_retrieved(&mut self) -> impl Iterator<Item = DataKey> + '_ {
-        self.retrieved.drain(..)
+        self.retrieved.drain()
     }
 }
 

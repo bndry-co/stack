@@ -20,6 +20,7 @@ use vitaminc_encrypt::{Aes256Cipher, Key as AesKey};
 use vitaminc_hmac::HmacSha256Prf;
 use vitaminc_prf::{BlockVisitor, IntoPrfContext, PrfValue};
 use vitaminc_protected::{AsProtectedRef, Controlled, Protected};
+use zeroize::{Zeroize, Zeroizing};
 
 use super::cascade::{self, ChildrenDigest};
 use super::order;
@@ -463,17 +464,30 @@ fn rank(
     parent: &Tag,
     key: &str,
 ) -> Result<Tag, TermError> {
-    let framed = Context::pae(&[parent, key.as_bytes()]);
-    prf16(prf, RANK_DOMAIN, context, framed.as_bytes())
+    let framed = pae_wiped(&[parent, key.as_bytes()]);
+    prf16(prf, RANK_DOMAIN, context, &framed)
+}
+
+/// [`Context::pae`] into a buffer that is sized before it is written and
+/// wiped when it drops: for framing that holds a key name or a scalar.
+fn pae_wiped(pieces: &[&[u8]]) -> Zeroizing<Vec<u8>> {
+    let len = 8 + pieces.iter().map(|piece| 8 + piece.len()).sum::<usize>();
+    let mut out = Zeroizing::new(Vec::with_capacity(len));
+    out.extend_from_slice(&(pieces.len() as u64).to_le_bytes());
+    for piece in pieces {
+        out.extend_from_slice(&(piece.len() as u64).to_le_bytes());
+        out.extend_from_slice(piece);
+    }
+    out
 }
 
 /// A number's canonical bytes for its value selector: an integral value,
 /// whichever JSON spelling it had, is its `i128`; anything else is its
 /// `f64`. So `2` and `2.0` are one value, as `jsonb` compares them, and
 /// `-0.0` is `0`.
-fn canonical_number(number: &Number) -> Vec<u8> {
-    fn int(i: i128) -> Vec<u8> {
-        let mut out = Vec::with_capacity(17);
+fn canonical_number(number: &Number) -> Zeroizing<Vec<u8>> {
+    fn int(i: i128) -> Zeroizing<Vec<u8>> {
+        let mut out = Zeroizing::new(Vec::with_capacity(17));
         out.push(b'i');
         out.extend_from_slice(&i.to_le_bytes());
         out
@@ -488,7 +502,7 @@ fn canonical_number(number: &Number) -> Vec<u8> {
     if f.fract() == 0.0 && f.abs() < 1e38 {
         return int(f as i128);
     }
-    let mut out = Vec::with_capacity(9);
+    let mut out = Zeroizing::new(Vec::with_capacity(9));
     out.push(b'f');
     out.extend_from_slice(&f.to_le_bytes());
     out
@@ -496,12 +510,12 @@ fn canonical_number(number: &Number) -> Vec<u8> {
 
 /// A scalar's canonical bytes; a container contributes nothing beyond its
 /// kind's tag.
-fn canonical(value: &Value) -> Vec<u8> {
+fn canonical(value: &Value) -> Zeroizing<Vec<u8>> {
     match value {
-        Value::Null | Value::Object(_) | Value::Array(_) => Vec::new(),
-        Value::Bool(b) => vec![u8::from(*b)],
+        Value::Null | Value::Object(_) | Value::Array(_) => Zeroizing::new(Vec::new()),
+        Value::Bool(b) => Zeroizing::new(vec![u8::from(*b)]),
         Value::Number(n) => canonical_number(n),
-        Value::String(s) => s.as_bytes().to_vec(),
+        Value::String(s) => Zeroizing::new(s.as_bytes().to_vec()),
     }
 }
 
@@ -513,8 +527,8 @@ fn value_selector(
     s: &Tag,
     value: &Value,
 ) -> Result<Tag, TermError> {
-    let framed = Context::pae(&[Kind::of(value).tag(), s, &canonical(value)]);
-    prf16(prf, VALUE_DOMAIN, context, framed.as_bytes())
+    let framed = pae_wiped(&[Kind::of(value).tag(), s, &canonical(value)]);
+    prf16(prf, VALUE_DOMAIN, context, &framed)
 }
 
 /// The leaf ordering term: the OPE term of a number as an `f64` or of a
@@ -684,7 +698,7 @@ impl Walker<'_> {
         };
         match value {
             Value::Object(map) => {
-                let ordinals: Option<BTreeMap<String, u32>> = chains
+                let ordinals: Option<BTreeMap<&String, u32>> = chains
                     .then(|| shuffled_ordinals(self.prf, self.context, &token, map))
                     .transpose()?;
                 for (key, child) in map {
@@ -732,12 +746,12 @@ impl Walker<'_> {
 /// An object's members' ordinals: their positions in the order of their
 /// ranks under the parent's token, so the ordinals rank nothing a reader
 /// without the token can see.
-fn shuffled_ordinals(
+fn shuffled_ordinals<'m>(
     prf: &HmacSha256Prf,
     context: &Context<'_>,
     parent: &Tag,
-    map: &Map<String, Value>,
-) -> Result<BTreeMap<String, u32>, TermError> {
+    map: &'m Map<String, Value>,
+) -> Result<BTreeMap<&'m String, u32>, TermError> {
     let mut ranked: Vec<(Tag, &String)> = map
         .keys()
         .map(|k| Ok((rank(prf, context, parent, k)?, k)))
@@ -746,7 +760,7 @@ fn shuffled_ordinals(
     Ok(ranked
         .into_iter()
         .enumerate()
-        .map(|(o, (_, key))| (key.clone(), o as u32))
+        .map(|(o, (_, key))| (key, o as u32))
         .collect())
 }
 
@@ -793,6 +807,8 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     if let Err(error) = descriptor.check() {
         return Pending::failed(cipher, error);
     }
+    // The caller's document, owned here: wiped when this returns.
+    let value = Wiped(value);
     let prf_context = piece.clone().into_prf_context().into_owned();
     let aad = piece.into_aad().into_owned();
     let walked = match walk(&value, options, cipher.prf(), &prf_context) {
@@ -821,6 +837,39 @@ pub(crate) fn seal_pending<'a, K: 'static>(
             seal(walked, whole, keyset_id, key, &aad, sealed_root, order)
         },
     )
+}
+
+/// A document this crate owns, its strings and key names wiped when it
+/// drops.
+pub(crate) struct Wiped(pub(crate) Value);
+
+impl std::ops::Deref for Wiped {
+    type Target = Value;
+    fn deref(&self) -> &Value {
+        &self.0
+    }
+}
+
+impl Drop for Wiped {
+    fn drop(&mut self) {
+        wipe_value(&mut self.0);
+    }
+}
+
+/// Wipe every string and key name in `value`, leaving it empty: numbers,
+/// booleans and nulls hold nothing outside the value itself.
+pub(crate) fn wipe_value(value: &mut Value) {
+    match value {
+        Value::String(text) => text.zeroize(),
+        Value::Array(items) => items.iter_mut().for_each(wipe_value),
+        Value::Object(map) => {
+            for (mut key, mut child) in std::mem::take(map) {
+                wipe_value(&mut child);
+                key.zeroize();
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
 }
 
 /// An entry's AAD: the domain, the keyset, the column's AAD, the key tag,
@@ -1697,7 +1746,7 @@ impl<'k> Placing<'k> {
                 if !names(path, &label) {
                     return Err(refused());
                 }
-                Protected::new(path.selector_bytes())
+                path.protected_selector_bytes()
             }
             Under::Node(parent) => child_selector_bytes(parent, &label).ok_or_else(refused)?,
         };
@@ -2170,6 +2219,35 @@ mod tests {
         )
         .unwrap()
         .terms
+    }
+
+    /// The wiped framing is byte for byte the PAE vitaminc writes, so a
+    /// value selector or a rank does not move.
+    #[test]
+    fn the_wiped_framing_is_vitamincs_pae() {
+        for pieces in [
+            vec![],
+            vec![&b""[..]],
+            vec![&b"a"[..], &b""[..], &b"key name"[..]],
+            vec![&[7u8; 16][..], &b"x".repeat(300)[..]],
+        ] {
+            let wiped = pae_wiped(&pieces);
+            assert_eq!(&wiped[..], Context::pae(&pieces).as_bytes());
+            assert_eq!(wiped.len(), wiped.capacity(), "sized before it is written");
+        }
+    }
+
+    #[test]
+    fn wiping_a_value_empties_its_strings_and_keys() {
+        let mut value = json!({"key": ["text", 1, null, {"inner": "more"}], "n": 2.5});
+        wipe_value(&mut value);
+        assert_eq!(value, json!({}), "every member taken and wiped");
+        let mut text = json!("text");
+        wipe_value(&mut text);
+        assert_eq!(text, json!(""));
+        let mut list = json!(["a", ["b"], true]);
+        wipe_value(&mut list);
+        assert_eq!(list, json!(["", [""], true]));
     }
 
     #[test]
@@ -2883,12 +2961,12 @@ mod tests {
 
         #[test]
         fn a_childs_selector_bytes_are_its_paths() {
-            let parent = Protected::new(path("$.a[3]").selector_bytes());
+            let parent = path("$.a[3]").protected_selector_bytes();
             for (label, child) in [(key("b"), "$.a[*].b"), (Label::Index(7), "$.a[*][*]")] {
                 let bytes = child_selector_bytes(&parent, &label).expect("a child");
                 assert_eq!(
                     bytes.risky_ref(),
-                    &path(child).selector_bytes(),
+                    &*path(child).selector_bytes(),
                     "{child}: the parent's bytes and the child's step"
                 );
                 assert_eq!(
@@ -2953,7 +3031,7 @@ mod tests {
             };
             assert_eq!(
                 selectors
-                    .of(Protected::new(path("$.a.b").selector_bytes()))
+                    .of(path("$.a.b").protected_selector_bytes())
                     .unwrap(),
                 at("$.a.b"),
                 "a protected input derives what its bytes do"

@@ -718,7 +718,7 @@ where
     type Verifier = ();
     fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
         let _ = parse_path(path.as_ref())?;
-        scalar(&value.clone().into())
+        wiped_after(value.clone().into(), scalar)
     }
     fn verifier(&self, _: &(P, V)) {}
     fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonQuery {
@@ -741,6 +741,17 @@ where
 }
 
 /// Whether `value` is a scalar, which equality at a path compares.
+/// `check` over `value`, a copy this crate made of the caller's plaintext,
+/// which is wiped afterwards rather than dropped.
+fn wiped_after(
+    mut value: Value,
+    check: impl FnOnce(&Value) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let checked = check(&value);
+    super::wipe_value(&mut value);
+    checked
+}
+
 fn scalar(value: &Value) -> Result<(), Error> {
     match value {
         Value::Object(_) | Value::Array(_) => Err(TermError::JsonValueNotScalar.into()),
@@ -788,7 +799,7 @@ macro_rules! orderings {
             fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
                 let path = parse_path(path.as_ref())?;
                 orders(self, &path)?;
-                ordered(&value.clone().into())
+                wiped_after(value.clone().into(), ordered)
             }
             fn verifier(&self, _: &(P, V)) {}
             fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonLeafQuery {
@@ -823,8 +834,8 @@ where
     fn check(&self, (path, (lo, hi)): &(P, (V, V))) -> Result<(), Error> {
         let path = parse_path(path.as_ref())?;
         orders(self, &path)?;
-        ordered(&lo.clone().into())?;
-        ordered(&hi.clone().into())
+        wiped_after(lo.clone().into(), ordered)?;
+        wiped_after(hi.clone().into(), ordered)
     }
     fn verifier(&self, _: &(P, (V, V))) {}
     fn query(

@@ -16,6 +16,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use zeroize::{Zeroize, Zeroizing};
+
 /// One step of a [`JsonPath`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Segment {
@@ -28,9 +30,23 @@ pub enum Segment {
 }
 
 /// A path into a JSON document, from the root (`$`) down.
+///
+/// A key step's name can be customer data (the walk builds a path for every
+/// node of a document it seals or queries), so a path wipes its key names
+/// when it drops.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub struct JsonPath {
     segments: Vec<Segment>,
+}
+
+impl Drop for JsonPath {
+    fn drop(&mut self) {
+        for segment in &mut self.segments {
+            if let Segment::Key(key) = segment {
+                key.zeroize();
+            }
+        }
+    }
 }
 
 /// Why text is not a [`JsonPath`]. The message names the position of the
@@ -260,8 +276,18 @@ impl JsonPath {
     /// positional or wildcard, is the one array tag, so every element of an
     /// array shares its parent's selector. A key is length-prefixed, so two
     /// paths cannot encode to one byte string.
-    pub(crate) fn selector_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::new();
+    pub(crate) fn selector_bytes(&self) -> Zeroizing<Vec<u8>> {
+        // Sized before it is written: a buffer that grew would free a copy
+        // of the key names it held.
+        let len = self
+            .segments
+            .iter()
+            .map(|segment| match segment {
+                Segment::Key(key) => key_step_len(key.len()),
+                Segment::Index(_) | Segment::Wildcard => 1,
+            })
+            .sum();
+        let mut out = Zeroizing::new(Vec::with_capacity(len));
         for segment in &self.segments {
             match segment {
                 Segment::Key(key) => push_key(&mut out, key),
@@ -271,11 +297,24 @@ impl JsonPath {
         out
     }
 
+    /// [`selector_bytes`](Self::selector_bytes), moved into a `Protected`.
+    pub(crate) fn protected_selector_bytes(&self) -> vitaminc_protected::Protected<Vec<u8>> {
+        vitaminc_protected::Protected::new(std::mem::take(&mut *self.selector_bytes()))
+    }
+
     /// The canonical bytes a token is derived over: an array step carries
     /// its position. `None` for a path with a wildcard, which names no one
     /// node.
-    pub(crate) fn token_bytes(&self) -> Option<Vec<u8>> {
-        let mut out = Vec::new();
+    pub(crate) fn token_bytes(&self) -> Option<Zeroizing<Vec<u8>>> {
+        let len = self
+            .segments
+            .iter()
+            .map(|segment| match segment {
+                Segment::Key(key) => key_step_len(key.len()),
+                Segment::Index(_) | Segment::Wildcard => 1 + 8,
+            })
+            .sum();
+        let mut out = Zeroizing::new(Vec::with_capacity(len));
         for segment in &self.segments {
             match segment {
                 Segment::Key(key) => push_key(&mut out, key),
@@ -540,6 +579,24 @@ mod tests {
 
     /// `covers` is public and matches positions though an ordered path may
     /// not name one: a position covers that position alone.
+    /// The byte encodings hold key names, so each is sized before it is
+    /// written: a buffer that grew would free a copy. (That they and a path
+    /// wipe on drop is held by `tests/heap_hygiene.rs`.)
+    #[test]
+    fn the_byte_encodings_are_sized_once() {
+        use vitaminc_protected::Controlled;
+        for text in ["$", "$.a", "$.a[3].bc", r#"$["a b"][*][0]"#, "$[1][2].k"] {
+            let path = JsonPath::parse(text).unwrap();
+            let selector = path.selector_bytes();
+            assert_eq!(selector.len(), selector.capacity(), "{text}: selector");
+            if let Some(token) = path.token_bytes() {
+                assert_eq!(token.len(), token.capacity(), "{text}: token");
+            }
+            let protected = path.protected_selector_bytes();
+            assert_eq!(protected.risky_ref(), &*selector, "{text}: protected");
+        }
+    }
+
     #[test]
     fn a_position_covers_its_own_position_only() {
         let path = |text: &str| JsonPath::parse(text).unwrap();

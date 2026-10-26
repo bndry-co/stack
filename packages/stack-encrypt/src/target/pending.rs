@@ -567,15 +567,19 @@ async fn dispatch<K: DataKeySource>(
                 received: keys.len(),
             });
         }
-        for (index, key) in indices.into_iter().zip(keys) {
-            retrieved[index] = Some(key);
+        // Cloned, not moved: a data key wipes itself when it drops, and one
+        // moved out of `keys` would leave its bytes in the buffer `keys`
+        // frees. The originals drop here, in place.
+        for (index, key) in indices.into_iter().zip(&keys) {
+            retrieved[index] = Some(key.clone());
         }
     }
     // Every slot was filled by exactly one group; a hole would mean the
     // grouping above lost a request, which is a bug here, not a data error.
+    // Cloned out for the same reason; `retrieved` drops its keys in place.
     let retrieved: Vec<DataKey> = retrieved
-        .into_iter()
-        .map(|key| key.ok_or(Error::ResponseShape))
+        .iter()
+        .map(|key| key.clone().ok_or(Error::ResponseShape))
         .collect::<Result<_, _>>()?;
 
     // A keyset request is answered from the cipher's cache, and loaded from

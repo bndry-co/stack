@@ -135,7 +135,7 @@ pub use query::{
     AtPathTerms, JsonLeafQuery, JsonProjection, JsonQuery, JsonSelector, JsonSubtreeKey,
 };
 
-pub(crate) use derive::{seal_pending, terms_pending};
+pub(crate) use derive::{seal_pending, terms_pending, wipe_value};
 
 /// A sixteen-byte tag: a selector or a token.
 pub type Tag = [u8; 16];
