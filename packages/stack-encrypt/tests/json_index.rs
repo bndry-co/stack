@@ -97,10 +97,10 @@ fn ordering(paths: &[&str]) -> JsonOptions {
     JsonOptions::default().ordering(paths).unwrap()
 }
 
-/// The design's fixture document. Its entries, by ordinal: `$`, `$.hello`,
-/// `$.nested`, `$.nested.deep`, `$.nested.list`, `[0]`, `[0].x`, `[1]`,
-/// `[1].x`, `$.number`. The tests pin those ordinals, so the document is
-/// fixed rather than generated.
+/// The design's fixture document: `$`, `$.hello`, `$.nested`,
+/// `$.nested.deep`, `$.nested.list`, `[0]`, `[0].x`, `[1]`, `[1].x`,
+/// `$.number`. Its entries are stored in a random order (the root first),
+/// so a test finds a node's entry by its path ([`at`]).
 fn fixture() -> Value {
     json!({"hello": "world-1", "nested": {"deep": "constant", "list": [{"x": 1}, {"x": 2}]}, "number": 1})
 }
@@ -189,6 +189,45 @@ async fn keyed(cipher: &Cipher, path: &str, rows: Vec<JsonNode>) -> JsonSubtree 
         .await
         .unwrap()
         .open(rows)
+}
+
+/// The slot the node at the concrete `path` is stored at, found as the
+/// server finds it: by the self tag of the path's token, under the root
+/// option of `options`.
+async fn at_with(cipher: &Cipher, doc: &JsonDocument, path: &str, options: JsonOptions) -> usize {
+    let key = subtree_key(cipher, path, options).await.unwrap();
+    doc.find(&key.token_bytes()[0])
+        .unwrap_or_else(|| panic!("the document has {path}"))
+        .0
+}
+
+/// [`at_with`] under the sealed root.
+async fn at(cipher: &Cipher, doc: &JsonDocument, path: &str) -> usize {
+    at_with(cipher, doc, path, JsonOptions::default()).await
+}
+
+/// The slots of `paths`, sorted: which entries a set of nodes is stored at.
+async fn slots_of(cipher: &Cipher, doc: &JsonDocument, paths: &[&str]) -> Vec<usize> {
+    let mut slots = Vec::with_capacity(paths.len());
+    for path in paths {
+        slots.push(at(cipher, doc, path).await);
+    }
+    slots.sort_unstable();
+    slots
+}
+
+/// A projection as a set: every group's pairs and element groups sorted, so
+/// two projections that hold the same pairs in the same groups compare
+/// equal whatever their stored order (`jsonb @>` reads them as sets).
+fn as_set(q: &Value) -> Value {
+    let mut sv = q["sv"].as_array().cloned().unwrap_or_default();
+    sv.sort_by_key(|pair| pair.to_string());
+    let mut el: Vec<Value> = q["el"]
+        .as_array()
+        .map(|groups| groups.iter().map(as_set).collect())
+        .unwrap_or_default();
+    el.sort_by_key(|group| group.to_string());
+    json!({"sv": sv, "el": el})
 }
 
 /// Padded standard base64, as the SQL reads and writes it.
@@ -393,15 +432,16 @@ mod given_the_fixture_document {
         assert_eq!(keys, ["h", "q", "sv"], "the document's wire keys");
         // `q` is the document's own projection, written once: the needle a
         // `Contains` of the whole document derives has the same pairs in the
-        // same groups, and nothing else.
+        // same groups, and nothing else. Stored, its lists are shuffled; as
+        // sets, which is how `jsonb @>` reads them, the two are one.
         let needle = cipher
             .query(op::Contains, &fixture())
             .on(&plan)
             .await
             .unwrap();
         assert_eq!(
-            wire["q"],
-            serde_json::to_value(&needle).unwrap(),
+            as_set(&wire["q"]),
+            as_set(&serde_json::to_value(&needle).unwrap()),
             "`q` is the needle a `Contains` of the whole document derives"
         );
         assert!(
@@ -415,7 +455,7 @@ mod given_the_fixture_document {
             "`q` round-trips as stored"
         );
         assert_eq!(
-            serde_json::to_value(back.projection()).unwrap(),
+            serde_json::to_value(back.selector_set()).unwrap(),
             wire["q"],
             "the projection read back is the stored one"
         );
@@ -456,19 +496,32 @@ mod given_the_fixture_document {
         assert_eq!(entries.len(), 10, "one entry per node of the fixture");
         assert!(
             entries[0].parent_tag().is_none(),
-            "the root has no parent tag"
+            "the root, at slot 0, has no parent tag"
         );
-        for head in [&entries[1], &entries[2], &entries[9]] {
+        let heads = slots_of(&cipher, &doc, &["$.hello", "$.nested", "$.number"]).await;
+        for j in &heads {
             assert!(
-                head.parent_tag().is_none(),
+                entries[*j].parent_tag().is_none(),
                 "a head has no parent tag under the sealed root"
             );
         }
-        for (j, below) in entries[3..9].iter().enumerate() {
+        let below = slots_of(
+            &cipher,
+            &doc,
+            &[
+                "$.nested.deep",
+                "$.nested.list",
+                "$.nested.list[0]",
+                "$.nested.list[0].x",
+                "$.nested.list[1]",
+                "$.nested.list[1].x",
+            ],
+        )
+        .await;
+        for j in &below {
             assert!(
-                below.parent_tag().is_some(),
-                "entry {} below a head carries a parent tag",
-                j + 3
+                entries[*j].parent_tag().is_some(),
+                "entry {j} below a head carries a parent tag"
             );
         }
         // Every entry carries a self tag, the root and the heads included, and
@@ -480,14 +533,14 @@ mod given_the_fixture_document {
             "one distinct self tag per entry"
         );
         // Every parent tag is distinct: siblings are not linkable at rest.
-        let tags: std::collections::HashSet<_> = entries[3..9]
+        let tags: std::collections::HashSet<_> = below
             .iter()
-            .map(|e| *e.parent_tag().unwrap())
+            .map(|j| *entries[*j].parent_tag().unwrap())
             .collect();
         assert_eq!(tags.len(), 6, "every parent tag is distinct");
         // The projection groups the two list elements: each is a nested group
         // holding its own pair and its `x`.
-        let q = serde_json::to_value(doc.projection()).unwrap();
+        let q = serde_json::to_value(doc.selector_set()).unwrap();
         assert_eq!(
             q["el"].as_array().unwrap().len(),
             2,
@@ -514,19 +567,29 @@ mod given_the_fixture_document {
     #[tokio::test]
     async fn gives_equal_values_at_one_path_one_value_selector_and_two_ciphertexts() {
         let Scenario { cipher, .. } = scenario().await;
-        let pair = |doc: &JsonDocument, i: usize| -> (String, String) {
-            let q = serde_json::to_value(doc.projection()).unwrap();
-            (
-                q["sv"][i]["s"].as_str().unwrap().to_owned(),
-                q["sv"][i]["vs"].as_str().unwrap().to_owned(),
-            )
+        // The value selectors of the elements: the pairs of `q` at the
+        // elements' path, in their stored (shuffled) order.
+        let element_vs = |doc: &JsonDocument| -> Vec<String> {
+            let s = base64(doc.entries()[1].selector());
+            let q = serde_json::to_value(doc.selector_set()).unwrap();
+            q["sv"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|pair| pair["s"] == json!(s))
+                .map(|pair| pair["vs"].as_str().unwrap().to_owned())
+                .collect()
         };
         let same = seal(&cipher, &json!([1, 1])).await;
-        let (a, b) = (&same.entries()[1], &same.entries()[2]);
+        let (a, b) = (
+            &same.entries()[at(&cipher, &same, "$[0]").await],
+            &same.entries()[at(&cipher, &same, "$[1]").await],
+        );
         assert_eq!(a.selector(), b.selector(), "two elements share a path");
+        let same_vs = element_vs(&same);
+        assert_eq!(same_vs.len(), 2, "one pair per element");
         assert_eq!(
-            pair(&same, 1),
-            pair(&same, 2),
+            same_vs[0], same_vs[1],
             "equal values at one path share a value selector"
         );
         assert_ne!(
@@ -535,16 +598,18 @@ mod given_the_fixture_document {
             "equal values do not share a ciphertext"
         );
         let different = seal(&cipher, &json!([1, 2])).await;
-        let (one, two) = (&different.entries()[1], &different.entries()[2]);
+        let (one, two) = (
+            &different.entries()[at(&cipher, &different, "$[0]").await],
+            &different.entries()[at(&cipher, &different, "$[1]").await],
+        );
         assert_eq!(one.selector(), two.selector(), "one path");
+        let different_vs = element_vs(&different);
         assert_ne!(
-            pair(&different, 1),
-            pair(&different, 2),
+            different_vs[0], different_vs[1],
             "different values at one path have different value selectors"
         );
-        assert_eq!(
-            pair(&different, 1),
-            pair(&same, 1),
+        assert!(
+            different_vs.contains(&same_vs[0]),
             "the value selector names the value at its path, in any document"
         );
     }
@@ -553,8 +618,9 @@ mod given_the_fixture_document {
     async fn chains_the_top_level_fields_from_an_open_root() {
         let Scenario { cipher, .. } = scenario().await;
         let open_doc = seal_with(&cipher, &fixture(), &open_root()).await;
+        let hello = at_with(&cipher, &open_doc, "$.hello", open_root()).await;
         assert!(
-            open_doc.entries()[1].parent_tag().is_some(),
+            open_doc.entries()[hello].parent_tag().is_some(),
             "without the sealed root, the top-level fields chain from the root"
         );
     }
@@ -568,16 +634,18 @@ mod given_the_fixture_document {
             let path = JsonPath::parse(path).unwrap();
             keyset.json_selector(&path, nonempty!("users").with("profile"))
         };
-        for (path, j) in [
-            ("$.nested.deep", 3),
-            ("$.nested.list[*].x", 6),
-            ("$.nested.list[1].x", 8),
-            ("$", 0),
+        for (path, node) in [
+            ("$.nested.deep", "$.nested.deep"),
+            ("$.nested.list[*].x", "$.nested.list[0].x"),
+            ("$.nested.list[1].x", "$.nested.list[1].x"),
+            ("$.nested.list[1].x", "$.nested.list[0].x"),
+            ("$", "$"),
         ] {
+            let j = at(&cipher, &doc, node).await;
             assert_eq!(
                 selector(path).await.unwrap().as_bytes(),
                 doc.entries()[j].selector(),
-                "{path} derives entry {j}'s stored selector"
+                "{path} derives {node}'s stored selector"
             );
         }
         assert_ne!(
@@ -657,9 +725,22 @@ mod given_ordered_paths {
     async fn puts_a_term_only_on_a_number_or_string_leaf_at_an_ordered_path() {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal_with(&cipher, &fixture(), &ordering(&["$.hello", "$.number"])).await;
-        assert_eq!(with_term(&doc), [1, 9], "$.hello and $.number");
+        assert_eq!(
+            with_term(&doc),
+            slots_of(&cipher, &doc, &["$.hello", "$.number"]).await,
+            "$.hello and $.number"
+        );
         let wild = seal_with(&cipher, &fixture(), &ordering(&["$.nested.list[*].x"])).await;
-        assert_eq!(with_term(&wild), [6, 8], "a wildcard covers every element");
+        assert_eq!(
+            with_term(&wild),
+            slots_of(
+                &cipher,
+                &wild,
+                &["$.nested.list[0].x", "$.nested.list[1].x"]
+            )
+            .await,
+            "a wildcard covers every element"
+        );
         // A container, a boolean or a null at an ordered path carries none.
         let kinds = seal_with(
             &cipher,
@@ -667,8 +748,11 @@ mod given_ordered_paths {
             &ordering(&["$.a", "$.b", "$.c", "$.e", "$.e[*]"]),
         )
         .await;
-        // $, $.a, $.b, $.c, $.c.d, $.e, $.e[0], $.e[1]
-        assert_eq!(with_term(&kinds), [6, 7], "only the number and the string");
+        assert_eq!(
+            with_term(&kinds),
+            slots_of(&cipher, &kinds, &["$.e[0]", "$.e[1]"]).await,
+            "only the number and the string"
+        );
         let scalar = seal_with(&cipher, &json!(7), &ordering(&["$"])).await;
         assert_eq!(with_term(&scalar), [0], "the root scalar itself, at `$`");
         assertions::opens_to(&cipher, doc, &fixture(), "ordered at $.hello and $.number").await;
@@ -732,17 +816,29 @@ mod given_a_subtree_key {
             "the key carries the path it was derived from"
         );
         let under = doc.subtree(&key.token_bytes());
-        let found: Vec<usize> = under.iter().map(|(j, _, _)| *j).collect();
+        let mut expected = Vec::new();
+        for (path, d) in [
+            ("$.nested", 0),
+            ("$.nested.deep", 1),
+            ("$.nested.list", 1),
+            ("$.nested.list[0]", 2),
+            ("$.nested.list[0].x", 3),
+            ("$.nested.list[1]", 2),
+            ("$.nested.list[1].x", 3),
+        ] {
+            expected.push((at(&cipher, &doc, path).await, d));
+        }
         assert_eq!(
-            found,
-            [2, 3, 4, 5, 6, 7, 8],
-            "nested itself, then deep, list, both elements, both leaves"
+            under.first().map(|(j, _, d)| (*j, *d)),
+            Some(expected[0]),
+            "nested itself first"
         );
-        let depths: Vec<u32> = under.iter().map(|(_, _, d)| *d).collect();
+        let mut found: Vec<(usize, u32)> = under.iter().map(|(j, _, d)| (*j, *d)).collect();
+        found.sort_unstable();
+        expected.sort_unstable();
         assert_eq!(
-            depths,
-            [0, 1, 1, 2, 3, 2, 3],
-            "each row's depth below $.nested"
+            found, expected,
+            "nested, deep, list, both elements and both leaves, each at its depth below $.nested"
         );
         assert!(
             doc.subtree(&[[7; 16]]).is_empty(),
@@ -768,16 +864,20 @@ mod given_a_subtree_key {
         assert_ne!(deeper.token_bytes(), key.token_bytes(), "not nested's");
         assert_eq!(
             subtree_ordinals(&doc, &deeper.token_bytes()),
-            [7, 8],
+            [
+                at(&cipher, &doc, "$.nested.list[1]").await,
+                at(&cipher, &doc, "$.nested.list[1].x").await
+            ],
             "the second element and its x"
         );
+        let list_at = at(&cipher, &doc, "$.nested.list").await;
         let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
             .await
             .unwrap();
         let (_, entry, list_token) = doc
             .children(&key.token_bytes()[0])
             .into_iter()
-            .find(|(j, _, _)| *j == 4)
+            .find(|(j, _, _)| *j == list_at)
             .expect("the list is a child of nested");
         assert_eq!(
             list_token,
@@ -786,10 +886,10 @@ mod given_a_subtree_key {
         );
         assert_eq!(
             doc.find(&list.token_bytes()[0]).map(|(j, _)| j),
-            Some(4),
+            Some(list_at),
             "the list's token finds the list"
         );
-        assert_eq!(entry.selector(), doc.entries()[4].selector());
+        assert_eq!(entry.selector(), doc.entries()[list_at].selector());
         let children: Vec<usize> = doc
             .children(&list.token_bytes()[0])
             .iter()
@@ -797,7 +897,10 @@ mod given_a_subtree_key {
             .collect();
         assert_eq!(
             children,
-            [5, 7],
+            [
+                at(&cipher, &doc, "$.nested.list[0]").await,
+                at(&cipher, &doc, "$.nested.list[1]").await
+            ],
             "the children of a node, by ordinal: the list's two elements"
         );
         assert!(doc.children(&[7; 16]).is_empty(), "no node, no children");
@@ -833,8 +936,11 @@ mod given_a_subtree_key {
         let second_row = subtree_key(&cipher, "$[1]", open_root()).await.unwrap();
         assert_eq!(
             subtree_ordinals(&array_doc, &second_row.token_bytes()),
-            [4, 5],
-            "$, [0], [0][0], [0][1], [1], [1][0]"
+            [
+                at_with(&cipher, &array_doc, "$[1]", open_root()).await,
+                at_with(&cipher, &array_doc, "$[1][0]", open_root()).await
+            ],
+            "the second row and its element"
         );
     }
 }
@@ -858,12 +964,14 @@ mod given_a_position {
                 .unwrap();
             let array = seal(&cipher, &json!({"a": [{"x": 2}], "h": {"a": [{"x": 2}]}})).await;
             let found = subtree_ordinals(&array, &first.token_bytes());
-            let at = array
-                .entries()
-                .iter()
-                .position(|e| e.self_tag() == array.entries()[found[0]].self_tag())
-                .unwrap();
-            assert_eq!(found, [at, at + 1], "{path}: the element and its x");
+            assert_eq!(
+                found,
+                [
+                    at(&cipher, &array, path).await,
+                    at(&cipher, &array, &format!("{path}.x")).await
+                ],
+                "{path}: the element and its x"
+            );
             for object in [
                 json!({"a": {"k": {"x": 1}}, "h": {"a": {"k": {"x": 1}}}}),
                 json!({"a": {"k": [1, 2]}, "h": {"a": {"k": [1, 2]}}}),
@@ -890,35 +998,34 @@ mod given_an_extracted_node {
     async fn opens_to_its_scalar_and_a_walked_subtree_to_its_value() {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &fixture()).await;
-        let node = |j: usize| doc.node(j).unwrap();
-        let scalar = |path: &'static str, j: usize| {
+        let scalar = |path: &'static str| {
             let cipher = &cipher;
-            let node = node(j);
+            let doc = &doc;
             async move {
+                let node = doc.node(at(cipher, doc, path).await).unwrap();
                 cipher
                     .decrypt_as::<Value, JsonExtracted>(extracted(cipher, path, node).await, aead())
                     .await
             }
         };
         assert_eq!(
-            scalar("$.hello", 1).await.unwrap(),
+            scalar("$.hello").await.unwrap(),
             json!("world-1"),
             "$.hello opens to its scalar"
         );
         assert_eq!(
-            scalar("$.nested.list[0].x", 6).await.unwrap(),
+            scalar("$.nested.list[0].x").await.unwrap(),
             json!(1),
             "[0].x opens to its scalar"
         );
         assert_eq!(
-            scalar("$", 0).await.unwrap(),
+            scalar("$").await.unwrap(),
             fixture(),
             "the sealed root is the document"
         );
-        assertions::refused_as_opened_type(
-            &scalar("$.nested", 2).await,
-            None,
-            "a container node holds no value of its own",
+        assertions::refused_as_not_a_leaf(
+            &scalar("$.nested").await,
+            "a container is sealed over its children's tags and does not open alone",
         );
 
         let key = subtree_key(&cipher, "$.nested", JsonOptions::default())
@@ -966,11 +1073,12 @@ mod given_an_extracted_node {
     async fn round_trips_with_the_envelope_the_sql_grafts() {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &fixture()).await;
-        let mut wire = serde_json::to_value(doc.node(6).unwrap()).unwrap();
+        let x = at(&cipher, &doc, "$.nested.list[0].x").await;
+        let mut wire = serde_json::to_value(doc.node(x).unwrap()).unwrap();
         wire["i"] = json!({"t": "users", "c": "profile"});
         wire["v"] = json!(4);
         let back: JsonNode = serde_json::from_value(wire).unwrap();
-        assert_eq!(back.ordinal(), 6, "the node keeps its ordinal");
+        assert_eq!(back.slot(), x as u64, "the node keeps its slot");
         assert_eq!(
             cipher
                 .decrypt_as::<Value, JsonExtracted>(
@@ -1109,7 +1217,8 @@ mod given_a_derived_record {
     async fn opens_each_stored_form_as_its_field() {
         let Scenario { cipher, .. } = scenario().await;
         let doc = seal(&cipher, &fixture()).await;
-        let node = extracted(&cipher, "$.hello", doc.node(1).unwrap()).await;
+        let hello = at(&cipher, &doc, "$.hello").await;
+        let node = extracted(&cipher, "$.hello", doc.node(hello).unwrap()).await;
         let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
             .await
             .unwrap();
@@ -1341,10 +1450,11 @@ mod given_rows_the_server_chose {
     use super::*;
 
     /// The rows of a walk come from the server, which can repeat an entry or
-    /// pick which entries to return. Every entry is authentic, but the
-    /// rebuild nests the containers it is handed: a repeated row is refused,
-    /// and so is a line of containers that are not one subtree's consecutive
-    /// entries, before the rebuild can recurse as deep as the rows.
+    /// pick which entries to return. Every entry is authentic: a repeated
+    /// row is refused before any key is retrieved, and a line of containers
+    /// that are not one subtree is refused by the cascade at the first of
+    /// them, whose ciphertext commits to children the rows do not hold, so
+    /// the open never recurses past a node that did not open.
     #[tokio::test]
     async fn refuses_a_repeated_row_or_a_line_of_containers() {
         let Scenario { cipher, .. } = scenario().await;
@@ -1367,13 +1477,16 @@ mod given_rows_the_server_chose {
                 .collect(),
         );
         let doc = seal(&cipher, &wide).await;
-        let last = doc.entries().len() - 1;
-        let containers: Vec<JsonNode> = (1..doc.entries().len())
-            .filter(|j| j % 2 == 1 || *j == last)
-            .map(|j| doc.node(j).unwrap())
-            .collect();
+        let mut containers = Vec::new();
+        for i in 0..200 {
+            containers.push(
+                doc.node(at(&cipher, &doc, &format!("$.k{i:03}")).await)
+                    .unwrap(),
+            );
+        }
+        containers.push(doc.node(at(&cipher, &doc, "$.k199.x").await).unwrap());
         assert_eq!(containers.len(), 201, "200 objects and the last leaf");
-        assertions::refused_as_wrong_entry(
+        assertions::refused_as_tampered(
             &cipher
                 .decrypt_as::<Vec<Value>, JsonSubtree>(
                     keyed(&cipher, "$.k000", containers).await,
@@ -1391,17 +1504,20 @@ mod given_rows_the_server_chose {
                 .collect(),
         );
         let doc = seal(&cipher, &wide).await;
-        let last = doc.entries().len() - 1;
-        let arrays: Vec<JsonNode> = (1..doc.entries().len())
-            .filter(|j| *j == 1 || j % 3 == 2 || *j == last)
-            .map(|j| doc.node(j).unwrap())
-            .collect();
+        let mut arrays = vec![doc.node(at(&cipher, &doc, "$.k000").await).unwrap()];
+        for i in 0..200 {
+            arrays.push(
+                doc.node(at(&cipher, &doc, &format!("$.k{i:03}[0]")).await)
+                    .unwrap(),
+            );
+        }
+        arrays.push(doc.node(at(&cipher, &doc, "$.k199[0][0]").await).unwrap());
         assert_eq!(
             arrays.len(),
             202,
             "the outer array, 200 inner and the last leaf"
         );
-        assertions::refused_as_wrong_entry(
+        assertions::refused_as_tampered(
             &cipher
                 .decrypt_as::<Vec<Value>, JsonSubtree>(
                     keyed(&cipher, "$.k000", arrays).await,
@@ -1439,10 +1555,11 @@ mod given_a_tampered_document {
             "regrafted from another document",
         );
 
+        // The root's ciphertext commits to both members' tags.
         let truncated = tamper(wire.clone(), &|sv| {
             let _ = sv.pop();
         });
-        assertions::refused_as_opened_type(&open(&cipher, truncated).await, None, "truncated");
+        assertions::refused_as_tampered(&open(&cipher, truncated).await, "truncated");
 
         let flipped = tamper(wire.clone(), &|sv| {
             let c = sv[1]["c"].as_str().unwrap().to_owned();
@@ -1460,16 +1577,19 @@ mod given_a_tampered_document {
             .await;
         assertions::refused_as_tampered(&wrong_context, "another column");
 
-        // A node lifted out of its document fails under another ordinal.
+        // A node lifted out of its document fails under another slot. Through
+        // `->` the refusal cannot be told from a container's, so it is
+        // `JsonNotALeaf`, which names both.
         let sealed = seal(&cipher, &value).await;
-        let mut lifted = serde_json::to_value(sealed.node(1).unwrap()).unwrap();
-        lifted["j"] = json!(2);
+        let a = at(&cipher, &sealed, "$.a").await;
+        let mut lifted = serde_json::to_value(sealed.node(a).unwrap()).unwrap();
+        lifted["j"] = json!(3 - a);
         let lifted: JsonNode = serde_json::from_value(lifted).unwrap();
-        assertions::refused_as_tampered(
+        assertions::refused_as_not_a_leaf(
             &cipher
                 .decrypt_as::<Value, JsonExtracted>(extracted(&cipher, "$.a", lifted).await, aead())
                 .await,
-            "a node under another ordinal",
+            "a node under another slot",
         );
     }
 }
@@ -1624,6 +1744,41 @@ mod given_the_design_corpus {
             )
         })
         .collect()
+    }
+
+    /// A needle is sent in a random order of its own, drawn for each query:
+    /// two needles for one value, under the operating system's entropy,
+    /// carry their pairs in different orders and are equal as sets. Twelve
+    /// top-level pairs, so the two orders agree with probability 1 / 12!.
+    #[tokio::test]
+    async fn sends_each_needle_in_an_order_of_its_own() {
+        let Scenario { cipher, plan } = scenario().await;
+        let value: Value = (0..11)
+            .map(|i| (format!("k{i}"), json!(i)))
+            .collect::<Map<String, Value>>()
+            .into();
+        let one: JsonQuery = cipher.query(op::Contains, &value).on(&plan).await.unwrap();
+        let two: JsonQuery = cipher.query(op::Contains, &value).on(&plan).await.unwrap();
+        let (a, b) = (
+            serde_json::to_value(&one).unwrap(),
+            serde_json::to_value(&two).unwrap(),
+        );
+        assert_eq!(
+            a["sv"].as_array().unwrap().len(),
+            12,
+            "the root and eleven members"
+        );
+        assert_ne!(a, b, "two orders");
+        assert_eq!(as_set(&a), as_set(&b), "one set");
+        assert_eq!(one, two, "equal as sets");
+        let at: JsonQuery = cipher
+            .query(op::AtPath(op::Eq), &("$.k3", 3))
+            .on(&plan)
+            .await
+            .unwrap();
+        let doc = cipher.encrypt(&value).using(&plan).await.unwrap();
+        assert!(one.matches(doc.selector_set()) && two.matches(doc.selector_set()));
+        assert!(at.matches(doc.selector_set()), "an equality needle too");
     }
 
     /// Every pair of the corpus, both ways round: `@>` over the projections
@@ -2062,9 +2217,29 @@ mod given_generated_documents {
                 case.stored
             );
             prop_assert_eq!(
-                query.matches(doc.projection()),
+                query.matches(doc.selector_set()),
                 pg_contains(&case.stored, &needle, true),
                 "{} @> {}",
+                &case.stored,
+                &needle
+            );
+            // Every query sends its needle in a random order of its own: a
+            // second derivation is the same set of pairs and groups, and
+            // matches exactly what the first did.
+            let again: JsonQuery = runtime
+                .block_on(
+                    scenario
+                        .cipher
+                        .query(op::Contains, &needle)
+                        .on(&scenario.plan)
+                        .into_future(),
+                )
+                .unwrap();
+            prop_assert_eq!(&again, &query, "one needle, as sets");
+            prop_assert_eq!(
+                again.matches(doc.selector_set()),
+                query.matches(doc.selector_set()),
+                "{} @> {}, sent in another order",
                 &case.stored,
                 &needle
             );
@@ -2092,7 +2267,7 @@ mod given_generated_documents {
                 excluded.set(excluded.get() + 1);
             }
             prop_assert_eq!(
-                query.projection().contains(doc.projection()),
+                query.selector_set().contains(doc.selector_set()),
                 jsonb && !scalar_in_array(&case.stored, &needle),
                 "{} <@ {}",
                 &case.stored,
@@ -2158,7 +2333,7 @@ mod given_a_float_at_full_precision {
             .await
             .unwrap();
         let rows = read_rows(&sealed, &key);
-        let element = extracted(cipher, "$.list[0]", sealed.node(2).unwrap()).await;
+        let element = sealed.node(at(cipher, &sealed, "$.list[0]").await).unwrap();
         vec![
             (
                 "the document, from the sealed root",
@@ -2171,7 +2346,10 @@ mod given_a_float_at_full_precision {
             (
                 "the extracted element, as `->` returns it",
                 cipher
-                    .decrypt_as::<Value, JsonExtracted>(element, aead())
+                    .decrypt_as::<Value, JsonExtracted>(
+                        extracted(cipher, "$.list[*]", element).await,
+                        aead(),
+                    )
                     .await
                     .unwrap(),
             ),
@@ -2322,14 +2500,14 @@ mod given_equality_at_the_root {
         let scalar = cipher.encrypt(&json!(1)).using(&plan).await.unwrap();
         let array = cipher.encrypt(&json!([1])).using(&plan).await.unwrap();
         assert!(
-            at_root.matches(scalar.projection()),
+            at_root.matches(scalar.selector_set()),
             "(\"$\", 1) matches a stored 1"
         );
         assert!(
-            !at_root.matches(array.projection()),
+            !at_root.matches(array.selector_set()),
             "(\"$\", 1) does not match a stored [1]"
         );
-        assert!(contains.matches(array.projection()), "jsonb: [1] @> 1");
+        assert!(contains.matches(array.selector_set()), "jsonb: [1] @> 1");
         assert!(
             serde_json::to_value(&at_root).unwrap().get("alt").is_none(),
             "equality at the root carries no alternative"
@@ -2344,7 +2522,7 @@ mod given_an_accessor {
     async fn matches_the_value_at_its_path() {
         let Scenario { cipher, plan } = scenario().await;
         let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
-        let projection = doc.projection();
+        let projection = doc.selector_set();
         for (path, value, matches, what) in [
             ("$.nested.list[*].x", json!(2), true, "an element's x is 2"),
             ("$.nested.list[*].x", json!(3), false, "no element's x is 3"),
@@ -2368,7 +2546,8 @@ mod given_an_accessor {
         let Scenario { cipher, .. } = scenario().await;
         let plan = ordered_plan();
         let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
-        let number = &doc.entries()[9];
+        let number = &doc.entries()[at(&cipher, &doc, "$.number").await];
+        let hello = &doc.entries()[at(&cipher, &doc, "$.hello").await];
         let bound = cipher
             .query(op::AtPath(op::Gte), &("$.number", 0))
             .on(&plan)
@@ -2398,7 +2577,7 @@ mod given_an_accessor {
             .await
             .unwrap();
         assert!(
-            text.ordering_term() < doc.entries()[1].ordering_term().unwrap(),
+            text.ordering_term() < hello.ordering_term().unwrap(),
             "world-0 < world-1"
         );
         let range = cipher
@@ -2898,6 +3077,15 @@ mod assertions {
         );
     }
 
+    /// `result` is the refusal of an entry `->` returned that did not open
+    /// alone: a container with children, or an altered entry.
+    pub(super) fn refused_as_not_a_leaf<T: Debug>(result: &Result<T, Error>, what: &str) {
+        assert!(
+            matches!(result, Err(Error::JsonNotALeaf)),
+            "{what}: should be refused as not a leaf, got {result:?}"
+        );
+    }
+
     /// `result` is the refusal of an open that names a second context.
     pub(super) fn refused_for_two_contexts<T: Debug>(result: &Result<T, Error>, what: &str) {
         assert!(
@@ -2917,7 +3105,7 @@ mod assertions {
         needle: &Value,
     ) {
         assert_eq!(
-            query.matches(doc.projection()),
+            query.matches(doc.selector_set()),
             pg_contains(stored, needle, true),
             "{stored} @> {needle}"
         );
@@ -2932,7 +3120,7 @@ mod assertions {
         needle: &Value,
     ) {
         assert_eq!(
-            query.projection().contains(doc.projection()),
+            query.selector_set().contains(doc.selector_set()),
             pg_contains(needle, stored, true) && !scalar_in_array(stored, needle),
             "{stored} <@ {needle}"
         );

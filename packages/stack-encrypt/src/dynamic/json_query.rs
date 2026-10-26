@@ -356,16 +356,16 @@ pub(super) fn derive<'a, K: 'static>(
     let column = || NonEmpty::from(label.clone());
     Ok(match read_input(op, options, input)? {
         Input::Needle(needle) => terms(keyset, options, label, needle.0.clone())
-            .try_map(|terms| eql(&JsonQuery::of_terms(&terms)).map(Operand::One)),
+            .try_map(|terms| eql(&JsonQuery::of_terms(terms)).map(Operand::One)),
         Input::At(path, value) if op == OpSpec::EqAt => {
-            terms(keyset, options, label, path.needle(value.0.clone()))
-                .try_map(|terms| eql(&JsonQuery::at_path(&terms)).map(Operand::One))
+            terms(keyset, options, label, path.holding(value.0.clone()))
+                .try_map(|terms| eql(&JsonQuery::at_path(terms)).map(Operand::One))
         }
-        Input::At(path, value) => terms(keyset, options, label, path.needle(value.0.clone()))
+        Input::At(path, value) => terms(keyset, options, label, path.holding(value.0.clone()))
             .try_map(|terms| eql(&JsonLeafQuery::of_leaf(&terms)).map(Operand::One)),
         Input::Between(path, low, high) => {
-            terms(keyset, options, label, path.needle(low.0.clone()))
-                .zip(terms(keyset, options, label, path.needle(high.0.clone())))
+            terms(keyset, options, label, path.holding(low.0.clone()))
+                .zip(terms(keyset, options, label, path.holding(high.0.clone())))
                 .try_map(|(lo, hi)| {
                     Ok(Operand::Range {
                         lo: eql(&JsonLeafQuery::of_leaf(&lo))?,

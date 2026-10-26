@@ -115,7 +115,7 @@ The "before" column is the profile at `9a7ca372c`; the "after" column is the por
 | `selector_precedence` | kept | which of two selectors comes first across rows: sibling key order |
 | `depth_recovery` | kept | an attack that reconstructs every row's depth sequence from the stored order alone |
 | `token_reach` | kept | per read, row and token: the node it finds and everything its walk links, with parents and depths |
-| `ordinal_patterns` | kept | elements' ordinals in position order; members ranked consistently under one token |
+| `ordinal_patterns` | replaced by `member_order_shared_across_rows` | whether one token's objects give their members one order of ordinals across rows, reported only below a `2⁻⁴⁰` chance bound: members' ordinals are now a random permutation per row |
 | `member_ordinals_follow_key_order` | kept | whether members' ordinals follow key order, reported only below a `2⁻⁴⁰` chance bound |
 | `token_derivability` | kept | which reads' tokens the database can derive from which others' (now by the member rule and by the element rule at an index below 4, from the tokens that find a node in some row) |
 | `transcripts` | kept | every query term with its tags named: determinism, shared selectors, needles; a read is now its token list and budget instead of a token and gates |

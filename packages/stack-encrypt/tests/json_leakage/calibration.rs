@@ -15,10 +15,10 @@ use super::distinguishers::{self, walk_positions};
 use super::mutants;
 use super::observe::{ObservedQuery, ObservedWorld};
 use super::profile::{
-    flatten, leak, Clauses, Column, KeyOrder, KindOrder, Leakage, NumberOrder, OrderKind,
-    Placement, Query, QueryLeakage, StringOrder,
+    leak, Clauses, Column, KeyOrder, KindOrder, Leakage, NumberOrder, OrderKind, Placement, Query,
+    QueryLeakage, StringOrder,
 };
-use super::{real, simulator};
+use super::{canonical, real, simulator};
 use crate::common::stack_cipher;
 
 /// The seed of every simulator run and every mutant's choices. Any seed
@@ -70,11 +70,14 @@ fn placements(leakage: &Leakage) -> Vec<Option<Placement>> {
     }
 }
 
-/// Every distinguisher's feature of `world`, by name.
+/// Every distinguisher's feature of `world`, by name, read in its
+/// canonical order ([`canonical`]): the stored order is random in the real
+/// scheme and in the simulation, independently.
 fn features(world: &ObservedWorld) -> Vec<(&'static str, String)> {
+    let world = canonical::canonical(world);
     distinguishers::all()
         .into_iter()
-        .map(|d| (d.name, (d.run)(world)))
+        .map(|d| (d.name, (d.run)(&world)))
         .collect()
 }
 
@@ -304,31 +307,46 @@ mod given_integers_ordered_exactly {
 mod given_the_jsonb_reading_of_the_key_order {
     use super::*;
 
-    /// The page's "sorted order of their key names" does not say which
-    /// sort. Read as `jsonb`'s (shorter keys first), the profile is told
-    /// from the real scheme on a row whose keys sort differently the two
-    /// ways (`{"a": …, "a b": …, "é": …, "0": …}`): the sort is the keys'
-    /// UTF-8 bytes, and a reader inferring key names from the order needs to
-    /// know that.
+    /// The page once had to say which sort "the order of their key names"
+    /// meant, because the stored order showed it, and then a needle did. Now
+    /// neither does: the entries are stored in a random order, a needle is
+    /// sent in one, and a member's ordinal is a random permutation's. So the
+    /// two
+    /// readings, the keys' UTF-8 bytes and `jsonb`'s (shorter keys first),
+    /// give different profiles on a column whose keys sort differently the
+    /// two ways (a row and a needle `{"a": …, "a b": …, "é": …, "0": …}`),
+    /// and no distinguisher tells either from the real scheme: the key order
+    /// is nothing the database learns, and the page need not say which.
     #[test]
-    fn the_stored_order_tells_it_apart() {
+    fn nothing_tells_it_apart() {
         let runtime = runtime();
         let cipher = runtime.block_on(stack_cipher());
-        let clauses = Clauses {
+        let jsonb = Clauses {
             key_order: KeyOrder::JsonbLengthFirst,
             ..Clauses::default()
         };
-        let world = &handcrafted()[0];
-        let real = real_world(&runtime, &cipher, world);
-        let leakage = leak(&world.column, clauses, &world.docs, &world.queries);
-        let fired: Vec<&str> = separating(&features(&real), &leakage, &mut rng())
-            .into_iter()
-            .map(|(n, _, _)| n)
-            .collect();
-        assert!(
-            fired.contains(&"selector_pattern_across_rows"),
-            "the order of a row's selectors tells byte order from jsonb order: {fired:?}"
-        );
+        for world in &handcrafted()[..2] {
+            let real = real_world(&runtime, &cipher, world);
+            let bytes = leak(
+                &world.column,
+                Clauses::default(),
+                &world.docs,
+                &world.queries,
+            );
+            let leakage = leak(&world.column, jsonb, &world.docs, &world.queries);
+            assert_ne!(
+                leakage, bytes,
+                "{}: the two readings differ in the profile",
+                world.name
+            );
+            let separated = separating(&features(&real), &leakage, &mut rng());
+            assert!(
+                separated.is_empty(),
+                "{}: the key order shows after all:\n{}",
+                world.name,
+                report(&separated)
+            );
+        }
     }
 }
 
@@ -602,45 +620,74 @@ mod the_harness {
         );
     }
 
-    /// The page's claim that the stored order reveals each row's shape holds
-    /// on a column whose rows vary: the order-only attack of
-    /// `distinguishers::depth_recovery` recovers every row's depth sequence
-    /// exactly, from the stored rows alone.
+    /// The stored order says nothing beyond the root's place: sealing one
+    /// document four times stores its root at slot `0` every time and its
+    /// other entries, and the pairs of `q`, in a fresh order each time. The
+    /// document has twenty nodes, each at a path of its own and none inside
+    /// an array, so its selectors tell each seal's order and `q` is one
+    /// group of twenty pairs. The real scheme draws each order from the
+    /// operating system: two seals put the nineteen other entries in one
+    /// order with probability `1 / 19!`, about `10^-17`, and `q`'s pairs
+    /// with `1 / 20!`, so across the six pairs of seals this fails by chance
+    /// below `10^-15`.
     #[test]
-    fn the_order_reveals_the_shape() {
+    fn the_order_is_drawn_afresh_with_the_root_first() {
         let runtime = runtime();
         let cipher = runtime.block_on(stack_cipher());
-        let docs = vec![
-            json!({"a": {"b": 1, "c": {"d": 2}}, "e": [1, {"f": 3}]}),
-            json!({"a": {"c": {"d": 2}}, "e": []}),
-            json!({"a": {"b": 1}, "e": [{"f": 3}]}),
-            json!({"e": [{"f": 1}, {"g": 2}]}),
-            json!({"e": [{"g": 1}]}),
-            json!({"a": {"c": {}}}),
-        ];
+        let object = |prefix: &str, n: usize| {
+            serde_json::Value::Object((0..n).map(|i| (format!("{prefix}{i}"), json!(i))).collect())
+        };
+        let doc = json!({"a": object("a", 6), "b": object("b", 6), "c": object("c", 4)});
         let world = World {
-            name: "varied shapes",
+            name: "one document, sealed four times",
             column: Column {
                 sealed_root: true,
                 ordered: Vec::new(),
             },
-            docs: docs.clone(),
-            queries: Vec::new(),
+            docs: vec![doc; 4],
+            queries: vec![Query::Extract("$".into())],
         };
         let observed = real_world(&runtime, &cipher, &world);
-        let truth: Vec<Vec<Option<usize>>> = docs
+        let ObservedQuery::Extract { s: root } = observed.queries[0] else {
+            unreachable!("an extraction");
+        };
+        let orders: Vec<Vec<[u8; 16]>> = observed
+            .rows
             .iter()
-            .map(|doc| {
-                flatten(doc, KeyOrder::Utf8Bytes)
-                    .iter()
-                    .map(|n| Some(n.positional.len()))
-                    .collect()
+            .map(|row| row.entries.iter().map(|e| e.s).collect())
+            .collect();
+        let projections: Vec<Vec<[u8; 16]>> = observed
+            .rows
+            .iter()
+            .map(|row| {
+                assert!(row.q.elements.is_empty(), "no array, one group");
+                row.q.pairs.iter().map(|(s, _)| *s).collect()
             })
             .collect();
-        assert_eq!(
-            distinguishers::depth_recovery(&observed),
-            truth,
-            "the stored order alone gives every row's depth sequence"
-        );
+        let mut first = orders[0].clone();
+        first.sort_unstable();
+        for (order, pairs) in orders.iter().zip(&projections) {
+            assert_eq!(order.len(), 20, "one entry per node");
+            assert_eq!(order[0], root, "the root at slot 0");
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, first, "one document: one multiset of selectors");
+            let mut paired = pairs.clone();
+            paired.sort_unstable();
+            assert_eq!(paired, first, "`q` holds one pair per node");
+        }
+        for i in 0..orders.len() {
+            for j in i + 1..orders.len() {
+                assert_ne!(
+                    orders[i][1..],
+                    orders[j][1..],
+                    "seals {i} and {j} store the other entries in one order"
+                );
+                assert_ne!(
+                    projections[i], projections[j],
+                    "seals {i} and {j} store `q`'s pairs in one order"
+                );
+            }
+        }
     }
 }
