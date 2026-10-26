@@ -87,16 +87,17 @@ pub fn read_json(value: &ValueFrame) -> Result<JsonPlaintext, JsonValueError> {
 }
 
 /// A document as the value a `json` field opens to: its JSON text
-/// ([`to_text`]), in a bytes leaf. The text is written into the frame's
-/// protected buffer and the copy wiped.
+/// ([`to_text`]), in a bytes leaf. The text's buffer moves into the
+/// frame's protected value, so no second copy of it is made.
 ///
 /// # Errors
 ///
 /// [`crate::Error::Other`] if the frame writer refuses the bytes, which a
 /// document's text never is.
 pub fn json_frame(value: &Value) -> Result<ValueFrame, crate::Error> {
-    let text = Zeroizing::new(to_text(value).map_err(|e| crate::Error::Other(Box::new(e)))?);
-    ValueFrame::of(Protected::new(text.to_vec())).map_err(|e| crate::Error::Other(Box::new(e)))
+    let mut text = Zeroizing::new(to_text(value).map_err(|e| crate::Error::Other(Box::new(e)))?);
+    ValueFrame::of(Protected::new(std::mem::take(&mut *text)))
+        .map_err(|e| crate::Error::Other(Box::new(e)))
 }
 
 #[cfg(test)]
