@@ -2,13 +2,17 @@ module github.com/cipherstash/stack/languages/golang
 
 go 1.26.10
 
-// TEMPORARY: vcffi and vcvalue at cipherstash/vitaminc#526 (head c226edf),
-// unreleased, for the storage profile (vcffi.MarshalStorage). Only Go writes
-// and reads that profile; the guests stay on vitaminc 0.8.0 from crates.io,
-// whose transport is the one this commit writes. Replace with the release.
+// TEMPORARY: vcffi and vcvalue at vitaminc d7de535c4, the merge of
+// cipherstash/vitaminc#526 (the storage profile, vcffi.MarshalStorage) into
+// its branch feat/aead-frame-storage-profile. That commit is not on vitaminc
+// main and in no release, and vitaminc's Go bindings have no tags. Only Go
+// writes and reads that profile; the guests stay on vitaminc 0.8.0 from
+// crates.io, whose transport is the one this commit writes. The pin moves to
+// main, or to a tag, when vitaminc provides one; until then
+// scripts/go-release-version.mjs refuses a final version of this module.
 require (
-	github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261025114513-c226edfeaf43
-	github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261025114513-c226edfeaf43
+	github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261026030854-d7de535c4288
+	github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261026030854-d7de535c4288
 	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/oauth2 v0.37.0
 )

@@ -17,11 +17,12 @@ import (
 // pointer through gensupport.Deref, which gives an untyped nil; the two
 // paths that take a caller's value as it is are Cipher.Seal with a
 // hand-built record.Source and Cipher.QueryTerm's input. There a
-// (*int64)(nil) is not == nil, so it is sent, and vcffi (from vitaminc
-// e9c3837b on) writes it as a typed null, padded to the width of an int64,
-// where it wrote a one-byte null. These tests pin what the engine does with
-// it: a typed null is a null to the engine, so each path answers a typed nil
-// as it answers an untyped one, on a field of every null mode.
+// (*int64)(nil) is not == nil, so it is sent, and vcffi, from vitaminc
+// e9c3837b on (on main, in no Go tag yet), writes it as a typed null,
+// padded to the width of an int64, where it wrote a one-byte null. These
+// tests pin what the engine does with it: a typed null is a null to the
+// engine, so each path answers a typed nil as it answers an untyped one, on
+// a field of every null mode.
 
 // typedNilPlan has one int64 field in each null mode and a timestamp field
 // that seals its nulls, so both encodings meet every answer the engine has.
