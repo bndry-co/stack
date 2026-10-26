@@ -462,7 +462,7 @@ async fn a_typed_query_refuses_what_the_data_path_refuses() {
         .build()
         .unwrap();
     let short = cipher
-        .query(op::Matches, "al")
+        .query(op::Matches, "a")
         .keyset("tenant")
         .on(&plan)
         .await;
