@@ -362,7 +362,7 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 		t.Fatal("a file was written after the refusal")
 	}
 	for _, c := range []struct{ name, fields, want string }{
-		{"a sealed null", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=JsonSearch,null=sealed\"`", "Customer.Prefs"},
+		{"a sealed null", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=JsonSearch,null=sealed\"`", "Customer.Prefs: a nil has an equality term and no other, so another index's column would show which values are absent; write null=sql"},
 		{"a nil document that does not say null=sql", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=JsonSearch\"`", "null=sql"},
 		{"a position in an ordered path", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.scores[2])\"`", "the engine refuses the declaration"},
 		{"a quoted key in a tag", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$[\\\"a b\\\"])\"`", "not a plain JSONPath"},
