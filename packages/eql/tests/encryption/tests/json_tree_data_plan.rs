@@ -11,7 +11,7 @@
 //! - a batch of documents seals in one key request and opens to the same
 //!   values, scalar roots, arrays and a JSON `null` included;
 //! - the data plan and `JsonTree::new(options)` write the same search terms
-//!   (selectors, ordering terms, the containment projection) for the same
+//!   (selectors, ordering terms, the containment selector set) for the same
 //!   document under the same column, and each opens what the other sealed;
 //! - text that is not a document is refused before any key is requested,
 //!   naming the field and a code, never a byte of the text.
@@ -27,7 +27,7 @@ use serde_json::{json, Value};
 use stack_encrypt::dynamic::{
     self, record, Scope, TargetDescriptor, TargetError, TargetResolver, ValueFrame,
 };
-use stack_encrypt::json::JsonOptions;
+use stack_encrypt::json::{JsonDocument, JsonOptions};
 use stack_encrypt::target::{ExpectedContext, Layout};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
 
@@ -188,6 +188,33 @@ mod serde_bytes_like {
     }
 }
 
+/// The JSON index's own document under the EQL envelope, whose selector
+/// set compares as a set.
+fn index_document(document: &JsonTreeDocument) -> JsonDocument {
+    let wire = serde_json::to_value(document).unwrap();
+    serde_json::from_value(json!({"h": wire["h"], "sv": wire["sv"], "q": wire["q"]})).unwrap()
+}
+
+/// What each stored entry shows a query, as a sorted list: its selector,
+/// its ordering term and whether it carries a parent tag. Entries are
+/// stored in a random order, so two seals of one document compare as
+/// multisets.
+fn search_terms(document: &JsonTreeDocument) -> Vec<(String, String, bool)> {
+    let mut terms: Vec<_> = document
+        .sv
+        .iter()
+        .map(|entry| {
+            (
+                serde_json::to_string(&entry.s).unwrap(),
+                serde_json::to_string(&entry.op).unwrap(),
+                entry.p.is_some(),
+            )
+        })
+        .collect();
+    terms.sort();
+    terms
+}
+
 fn column() -> NonEmpty<Identifier> {
     Identifier::for_column("users", "profile").unwrap()
 }
@@ -229,10 +256,11 @@ async fn a_batch_of_documents_round_trips_in_one_request() {
 }
 
 /// The data plan and the typed layout write the same search terms for the
-/// same document under the same column: every entry's selector, self and
-/// parent tags' places and ordering term, and the containment projection.
-/// Only the ciphertexts, the data key and the tags salted by it differ.
-/// And each opens what the other sealed.
+/// same document under the same column: the root's entry first, then every
+/// entry's selector, parent tag's place and ordering term, and the
+/// containment selector set, compared as sets because each seal draws its
+/// own storage order. Only the ciphertexts, the data key, the tags salted
+/// by it and the order differ. And each opens what the other sealed.
 #[tokio::test]
 async fn the_data_plan_and_the_typed_layout_agree() {
     let (cipher, _) = common::cipher().await;
@@ -255,13 +283,17 @@ async fn the_data_plan_and_the_typed_layout_agree() {
             .await
             .unwrap();
         assert_eq!(data.i, typed.i, "{text}: the column");
-        assert_eq!(data.q, typed.q, "{text}: the containment projection");
-        assert_eq!(data.sv.len(), typed.sv.len(), "{text}: one entry per node");
-        for (a, b) in data.sv.iter().zip(&typed.sv) {
-            assert_eq!(a.s, b.s, "{text}: an entry's selector");
-            assert_eq!(a.op, b.op, "{text}: an entry's ordering term");
-            assert_eq!(a.p.is_some(), b.p.is_some(), "{text}: a parent tag's place");
-        }
+        assert_eq!(
+            index_document(&data).selector_set(),
+            index_document(&typed).selector_set(),
+            "{text}: the containment selector set"
+        );
+        assert_eq!(data.sv[0].s, typed.sv[0].s, "{text}: the root first");
+        assert_eq!(
+            search_terms(&data),
+            search_terms(&typed),
+            "{text}: one entry per node, each with its selector, ordering term and parent tag's place"
+        );
 
         // The typed path opens the data plan's document...
         let opened: Value = cipher
