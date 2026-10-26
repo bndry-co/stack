@@ -1,9 +1,11 @@
 package encrypt
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -433,4 +435,66 @@ func (r JSONRead[E]) OpenOne(ctx context.Context, entries []E) (JSONValue, error
 	default:
 		return JSONValue{}, fmt.Errorf("%w: the read reached %d values, not one; open it with Open", ErrEncoding, len(values))
 	}
+}
+
+// DecodeJSON reads JSON text a read opened, a [JSONValue]'s JSON or one
+// value of [JSONRead.Open], into a value of the caller's type T, with
+// encoding/json's rules: a number reads into a declared integer field
+// exactly, int64 and uint64 included, and into an interface (any) as a
+// json.Number, never a float64 that rounds it. A member T does not declare
+// is skipped, as encoding/json skips it. Text that is not one JSON value
+// (empty, as an unfound JSONValue's is, or followed by more) is refused.
+//
+// An error wraps [ErrEncoding] and names T and the kind of JSON value that
+// did not fit, never the value: what a read opened is plaintext.
+func DecodeJSON[T any](text json.RawMessage) (T, error) {
+	var out T
+	dec := json.NewDecoder(bytes.NewReader(text))
+	dec.UseNumber()
+	if err := dec.Decode(&out); err != nil {
+		var zero T
+		return zero, decodeError(err, typeName[T]())
+	}
+	// One value, and nothing after it: Decode reads the first of a stream.
+	switch _, err := dec.Token(); {
+	case errors.Is(err, io.EOF):
+		return out, nil
+	case err == nil:
+		var zero T
+		return zero, fmt.Errorf("%w: the JSON text holds more than one value, and reads into one %s", ErrEncoding, typeName[T]())
+	default:
+		var zero T
+		return zero, fmt.Errorf("%w: the text after its first JSON value is not JSON, and reads into no %s", ErrEncoding, typeName[T]())
+	}
+}
+
+// typeName is T as Go source, an interface type included: %T of a T
+// holding nil prints <nil>, and a *T names its element.
+func typeName[T any]() string {
+	return strings.TrimPrefix(fmt.Sprintf("%T", (*T)(nil)), "*")
+}
+
+// decodeError is encoding/json's decode error without the text it quotes:
+// a SyntaxError names the character it met and an UnmarshalTypeError the
+// number it could not store, both plaintext. It keeps the kind of JSON value
+// and the Go type that did not fit.
+func decodeError(err error, out string) error {
+	var typeErr *json.UnmarshalTypeError
+	switch {
+	case errors.As(err, &typeErr):
+		// Value is "number", "number 1.5", "string", "bool", "array" or
+		// "object": its first word is the kind, the rest the value.
+		kind, _, _ := strings.Cut(typeErr.Value, " ")
+		return fmt.Errorf("%w: a JSON %s does not read into the Go type %s, in a %s", ErrEncoding, kind, typeErr.Type, out)
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return fmt.Errorf("%w: no JSON value to read into a %s (an unfound JSONValue holds none: check Found)", ErrEncoding, out)
+	}
+	var syntax *json.SyntaxError
+	if errors.As(err, &syntax) {
+		return fmt.Errorf("%w: the text is not JSON (at byte %d), and reads into no %s", ErrEncoding, syntax.Offset, out)
+	}
+	// An UnmarshalJSON or UnmarshalText of the caller's type failed, or
+	// encoding/json refused the target (a non-pointer, say): its text may
+	// hold the value, so only the type is named.
+	return fmt.Errorf("%w: the JSON text does not read into a %s", ErrEncoding, out)
 }

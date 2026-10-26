@@ -139,36 +139,48 @@ func (f CustomerProfileField) Encrypt(ctx context.Context, c *encrypt.Cipher, v 
 	return eql.JSONSearch(out.EQL), err
 }
 
-// Contains derives the query for documents that contain needle, a JSON value:
-// col @> query. Each array element of the needle must sit inside one element of
-// the document's array.
-func (f CustomerProfileField) Contains(ctx context.Context, c *encrypt.Cipher, needle json.RawMessage) (eql.JSONSearchQuery, error) {
+// Contains derives the query for documents that contain needle: col @> query.
+// needle is a json.RawMessage of JSON text, or a map, struct or slice that
+// encoding/json writes; a Go string or a pointer to one is refused, as one JSON
+// string is not JSON text, and so is a needle that writes JSON null (nil, or a
+// nil pointer, map or slice). Each member it writes must be in the document, so
+// a zero-valued struct field narrows the query to documents holding that zero:
+// give a needle struct pointer fields, or omitempty, or use a map. Each array
+// element of the needle must sit inside one element of the document's array.
+func (f CustomerProfileField) Contains(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQuery[eql.JSONSearchQuery](ctx, f.field, c, "contains", needle)
 }
 
-// ContainedBy derives the query for documents contained by needle, a JSON
-// value: col <@ query.
-func (f CustomerProfileField) ContainedBy(ctx context.Context, c *encrypt.Cipher, needle json.RawMessage) (eql.JSONSearchQuery, error) {
+// ContainedBy derives the query for documents contained by needle: col <@
+// query. needle is a json.RawMessage of JSON text, or a map, struct or slice
+// that encoding/json writes (not a Go string or a pointer to one, nor a needle
+// that writes JSON null); here a zero-valued field widens the query, admitting
+// documents that hold that zero.
+func (f CustomerProfileField) ContainedBy(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQuery[eql.JSONSearchQuery](ctx, f.field, c, "contained_by", needle)
 }
 
 // EqAt derives the query for documents holding the scalar v at path: col @>
-// query. A wildcard step matches when any element holds it; a position ([2]) is
-// refused, since the stored selector reads every position as the wildcard.
-func (f CustomerProfileField) EqAt(ctx context.Context, c *encrypt.Cipher, path string, v json.RawMessage) (eql.JSONSearchQuery, error) {
+// query. v is a Go string, number or bool, nil for JSON null, or a
+// json.RawMessage of JSON text; a Go string is the JSON string it holds, never
+// parsed as JSON. A wildcard step matches when any element holds it; a position
+// ([2]) is refused, since the stored selector reads every position as the
+// wildcard.
+func (f CustomerProfileField) EqAt(ctx context.Context, c *encrypt.Cipher, path string, v any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchQuery](ctx, f.field, c, "eq_at", path, v)
 }
 
 // Selector prepares `->` at path: bind Selector() as col -> $1::text, and open
-// the entries it returns with Open. A position ([2]) is refused; read one with
-// Subtree.
+// the entries it returns with Open; encrypt.DecodeJSON reads each value into a
+// Go type. A position ([2]) is refused; read one with Subtree.
 func (f CustomerProfileField) Selector(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONSelection[eql.JSONEntry], error) {
 	return gensupport.JSONSelect[eql.JSONEntry](ctx, f.field, c, path)
 }
 
 // Subtree prepares a read of the value at path: bind Tokens() as
 // eql_v4.json_tree_subtree(col, $1::text[], budget), and open the rows it
-// returns with Open or OpenOne.
+// returns with Open or OpenOne; encrypt.DecodeJSON reads each value into a Go
+// type.
 func (f CustomerProfileField) Subtree(ctx context.Context, c *encrypt.Cipher, path string, opts encrypt.JSONReadOptions) (encrypt.JSONRead[eql.JSONEntry], error) {
 	return gensupport.JSONSubtree[eql.JSONEntry](ctx, f.field, c, path, opts)
 }
@@ -201,9 +213,9 @@ type CustomerProfileFieldAt struct {
 // over every match, EXISTS (SELECT 1 FROM eql_v4.json_tree_path_query(col,
 // $sel) e WHERE e < $1::eql_v4.query_json_leaf), and order by the least or
 // greatest match's term: (SELECT eql_v4.ord_term(e) FROM
-// eql_v4.json_tree_path_query(col, $sel) e ORDER BY 1 LIMIT 1). Numbers order
-// as float64, so integers past 2^53 can tie; text orders case- and
-// accent-folded.
+// eql_v4.json_tree_path_query(col, $sel) e ORDER BY 1 LIMIT 1). Each operand is
+// a Go number or string, or a json.RawMessage of JSON text. Numbers order as
+// float64, so integers past 2^53 can tie; text orders case- and accent-folded.
 type CustomerProfileFieldPath struct {
 	field gensupport.Field[json.RawMessage]
 	path  string
@@ -212,28 +224,28 @@ type CustomerProfileFieldPath struct {
 // Lt derives the operand that finds a leaf at this path less than v: (col ->
 // $sel) < $1::eql_v4.query_json_leaf, or at a wildcard path the same comparison
 // over every match (see CustomerProfileFieldPath).
-func (p CustomerProfileFieldPath) Lt(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearchLeafQuery, error) {
+func (p CustomerProfileFieldPath) Lt(ctx context.Context, c *encrypt.Cipher, v any) (eql.JSONSearchLeafQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchLeafQuery](ctx, p.field, c, "lt_at", p.path, v)
 }
 
 // Lte derives the operand that finds a leaf at this path at most v: (col ->
 // $sel) <= $1::eql_v4.query_json_leaf, or at a wildcard path the same
 // comparison over every match (see CustomerProfileFieldPath).
-func (p CustomerProfileFieldPath) Lte(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearchLeafQuery, error) {
+func (p CustomerProfileFieldPath) Lte(ctx context.Context, c *encrypt.Cipher, v any) (eql.JSONSearchLeafQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchLeafQuery](ctx, p.field, c, "lte_at", p.path, v)
 }
 
 // Gt derives the operand that finds a leaf at this path greater than v: (col ->
 // $sel) > $1::eql_v4.query_json_leaf, or at a wildcard path the same comparison
 // over every match (see CustomerProfileFieldPath).
-func (p CustomerProfileFieldPath) Gt(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearchLeafQuery, error) {
+func (p CustomerProfileFieldPath) Gt(ctx context.Context, c *encrypt.Cipher, v any) (eql.JSONSearchLeafQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchLeafQuery](ctx, p.field, c, "gt_at", p.path, v)
 }
 
 // Gte derives the operand that finds a leaf at this path at least v: (col ->
 // $sel) >= $1::eql_v4.query_json_leaf, or at a wildcard path the same
 // comparison over every match (see CustomerProfileFieldPath).
-func (p CustomerProfileFieldPath) Gte(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearchLeafQuery, error) {
+func (p CustomerProfileFieldPath) Gte(ctx context.Context, c *encrypt.Cipher, v any) (eql.JSONSearchLeafQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchLeafQuery](ctx, p.field, c, "gte_at", p.path, v)
 }
 
@@ -241,7 +253,7 @@ func (p CustomerProfileFieldPath) Gte(ctx context.Context, c *encrypt.Cipher, v 
 // inclusive: (col -> $sel) >= Low AND (col -> $sel) <= High, or at a wildcard
 // path the same over every match, with both bounds on one element (see
 // CustomerProfileFieldPath).
-func (p CustomerProfileFieldPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi json.RawMessage) (encrypt.JSONRange[eql.JSONSearchLeafQuery], error) {
+func (p CustomerProfileFieldPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi any) (encrypt.JSONRange[eql.JSONSearchLeafQuery], error) {
 	return gensupport.JSONBetweenAt[eql.JSONSearchLeafQuery](ctx, p.field, c, p.path, lo, hi)
 }
 
@@ -265,36 +277,48 @@ func (f CustomerPrefsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v js
 	return eql.JSONSearch(out.EQL), err
 }
 
-// Contains derives the query for documents that contain needle, a JSON value:
-// col @> query. Each array element of the needle must sit inside one element of
-// the document's array.
-func (f CustomerPrefsField) Contains(ctx context.Context, c *encrypt.Cipher, needle json.RawMessage) (eql.JSONSearchQuery, error) {
+// Contains derives the query for documents that contain needle: col @> query.
+// needle is a json.RawMessage of JSON text, or a map, struct or slice that
+// encoding/json writes; a Go string or a pointer to one is refused, as one JSON
+// string is not JSON text, and so is a needle that writes JSON null (nil, or a
+// nil pointer, map or slice). Each member it writes must be in the document, so
+// a zero-valued struct field narrows the query to documents holding that zero:
+// give a needle struct pointer fields, or omitempty, or use a map. Each array
+// element of the needle must sit inside one element of the document's array.
+func (f CustomerPrefsField) Contains(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQuery[eql.JSONSearchQuery](ctx, f.field, c, "contains", needle)
 }
 
-// ContainedBy derives the query for documents contained by needle, a JSON
-// value: col <@ query.
-func (f CustomerPrefsField) ContainedBy(ctx context.Context, c *encrypt.Cipher, needle json.RawMessage) (eql.JSONSearchQuery, error) {
+// ContainedBy derives the query for documents contained by needle: col <@
+// query. needle is a json.RawMessage of JSON text, or a map, struct or slice
+// that encoding/json writes (not a Go string or a pointer to one, nor a needle
+// that writes JSON null); here a zero-valued field widens the query, admitting
+// documents that hold that zero.
+func (f CustomerPrefsField) ContainedBy(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQuery[eql.JSONSearchQuery](ctx, f.field, c, "contained_by", needle)
 }
 
 // EqAt derives the query for documents holding the scalar v at path: col @>
-// query. A wildcard step matches when any element holds it; a position ([2]) is
-// refused, since the stored selector reads every position as the wildcard.
-func (f CustomerPrefsField) EqAt(ctx context.Context, c *encrypt.Cipher, path string, v json.RawMessage) (eql.JSONSearchQuery, error) {
+// query. v is a Go string, number or bool, nil for JSON null, or a
+// json.RawMessage of JSON text; a Go string is the JSON string it holds, never
+// parsed as JSON. A wildcard step matches when any element holds it; a position
+// ([2]) is refused, since the stored selector reads every position as the
+// wildcard.
+func (f CustomerPrefsField) EqAt(ctx context.Context, c *encrypt.Cipher, path string, v any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchQuery](ctx, f.field, c, "eq_at", path, v)
 }
 
 // Selector prepares `->` at path: bind Selector() as col -> $1::text, and open
-// the entries it returns with Open. A position ([2]) is refused; read one with
-// Subtree.
+// the entries it returns with Open; encrypt.DecodeJSON reads each value into a
+// Go type. A position ([2]) is refused; read one with Subtree.
 func (f CustomerPrefsField) Selector(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONSelection[eql.JSONEntry], error) {
 	return gensupport.JSONSelect[eql.JSONEntry](ctx, f.field, c, path)
 }
 
 // Subtree prepares a read of the value at path: bind Tokens() as
 // eql_v4.json_tree_subtree(col, $1::text[], budget), and open the rows it
-// returns with Open or OpenOne.
+// returns with Open or OpenOne; encrypt.DecodeJSON reads each value into a Go
+// type.
 func (f CustomerPrefsField) Subtree(ctx context.Context, c *encrypt.Cipher, path string, opts encrypt.JSONReadOptions) (encrypt.JSONRead[eql.JSONEntry], error) {
 	return gensupport.JSONSubtree[eql.JSONEntry](ctx, f.field, c, path, opts)
 }

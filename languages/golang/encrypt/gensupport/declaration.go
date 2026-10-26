@@ -48,8 +48,10 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
-	// JSON is a json.RawMessage field stored as a JSONSearch document:
-	// it crosses as its JSON text, which the engine parses.
+	// JSON is a field stored as a JSONSearch document: it crosses as
+	// its JSON text, which the engine parses. A json.RawMessage is that
+	// text; a field of another Go type is marshalled with encoding/json
+	// ([Field.Encrypt]) and opened with [GetDocument].
 	JSON Kind = "json"
 )
 

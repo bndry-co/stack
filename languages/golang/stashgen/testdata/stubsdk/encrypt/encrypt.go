@@ -8,6 +8,7 @@ package encrypt
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -134,6 +135,9 @@ type JSONValue struct {
 	Found bool
 	JSON  []byte
 }
+
+// DecodeJSON reads JSON text a read opened into a value of type T.
+func DecodeJSON[T any](json.RawMessage) (T, error) { var z T; return z, nil }
 
 // JSONReadOptions are a subtree read's options.
 type JSONReadOptions struct{ WildcardBound uint32 }

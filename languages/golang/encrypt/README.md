@@ -594,22 +594,37 @@ column.
 ### Encrypted JSON documents
 
 `JsonSearch` stores a whole JSON document in one `public.eql_v4_json_search`
-column, from a `json.RawMessage` field (`stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"`;
-see the stashgen README). Unlike the types above, a type defined over
-`json.RawMessage` (`type Doc json.RawMessage`) is refused; an alias of it
-(`type Doc = json.RawMessage`) is accepted. One entry per node is encrypted, so the database
-can test containment, equality and ordering at a path, return one node with
-`->`, and walk a subtree, without decrypting:
+column, from a struct, map or slice field, or a `json.RawMessage`
+(`stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"`; see the
+stashgen README). A struct is marshalled with `encoding/json` when it is
+sealed and read back into its type when it is opened. Its numbers come back
+exactly; the stashgen README lists what `encoding/json` does not keep
+(invalid UTF-8, a nil map or slice, a time's zone). Unlike the types above,
+a type defined over `json.RawMessage` (`type Doc json.RawMessage`) is
+refused; an alias of it (`type Doc = json.RawMessage`) is accepted. One
+entry per node is encrypted, so the database can test containment, equality
+and ordering at a path, return one node with `->`, and walk a subtree,
+without decrypting:
 
 ```go
-q, err := users.Fields.Profile.Contains(ctx, cipher, json.RawMessage(`{"plan":"pro"}`))
+q, err := users.Fields.Profile.Contains(ctx, cipher, map[string]any{"plan": "pro"})
 rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE profile @> $1::eql_v4.query_json`, q)
 
 read, err := users.Fields.Profile.Subtree(ctx, cipher, "$.visits[*].at", encrypt.JSONReadOptions{})
 // SELECT e FROM users, eql_v4.json_tree_subtree(profile, $1::text[], 64) AS e WHERE id = $2
 // with read.Tokens() as $1; collect each row's entries, then:
 values, err := read.Open(ctx, entriesPerRow)
+at, err := encrypt.DecodeJSON[int64](values[0][0])
 ```
+
+A needle or a value is a `json.RawMessage` of JSON text, or any Go value
+`encoding/json` writes. A document contains a needle when it holds every
+member the needle writes, and `encoding/json` writes a zero struct field
+that has no `omitempty`: that field narrows the query to documents holding
+the zero. Give a needle struct pointer fields with `omitempty`, or use a
+map. `Contains` refuses a needle of the field's own struct type for this
+reason. Each value a read opens is JSON text, and `encrypt.DecodeJSON` reads
+it into a Go type.
 
 A selection or read opens rows only as answers to the request that prepared
 it: the engine derives the selector or the read again from the field, the

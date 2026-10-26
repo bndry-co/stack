@@ -200,6 +200,48 @@
 // memory until the garbage collector reclaims it; a MatchQuery never prints
 // it.
 //
+// # Encrypted JSON documents
+//
+// A field tagged encrypt_into=JsonSearch is stored as one encrypted JSON
+// document. Declare it as a json.RawMessage, which holds the document's JSON
+// text, or as a struct, map or slice type. The generated code marshals such
+// a type with encoding/json when it seals the field. It unmarshals the
+// opened text into the declared type, so integers to 64 bits and finite
+// float64s come back exactly. The rest comes back as encoding/json reads
+// what it wrote, which is not always the value sealed: invalid UTF-8 in a
+// string becomes U+FFFD, with no error (a property of the value, which the
+// generated code does not walk, so check it with utf8.ValidString first); a
+// nil map or slice is stored as JSON null, which a needle of an empty one
+// does not match; and a time.Time inside a document is stored as RFC 3339
+// text in its own offset, so EqAt with a time in another zone misses and
+// an ordering on that path orders the text, not the instants. Store a time
+// you query as an integer, such as t.UnixNano().
+//
+// The field's operands are Go values. Contains and ContainedBy take a
+// needle, and EqAt and the orderings take a scalar. Each is a
+// json.RawMessage of JSON text or any value encoding/json writes:
+//
+//	q, err := customers.Fields.Profile.Contains(ctx, cipher, map[string]any{"tier": "gold"})
+//	older, err := customers.Fields.Profile.At.Age.Gt(ctx, cipher, 40)
+//
+// A Go string is the string value itself, never parsed. So Contains and
+// ContainedBy refuse a string needle, or a pointer to one; put JSON text in
+// a json.RawMessage. They refuse a needle that writes JSON null (nil, or a
+// nil pointer, map or slice) too: only a null document contains it.
+//
+// A document contains a needle when it holds every member the needle writes.
+// encoding/json writes a struct field that has no omitempty even when the
+// field is zero. So a zero field narrows the query to documents that hold
+// that zero. Give a needle struct pointer fields with omitempty, or use a
+// map. Contains refuses a needle of the field's own type when that type
+// holds a struct, the likeliest way to make this mistake, a slice of
+// structs included: for a []Visit document, pass a slice of a needle type
+// with pointer fields. ContainedBy takes one: there a zero field widens
+// the query.
+//
+// A selection or a subtree read opens values as JSON text ([JSONValue],
+// [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
+//
 // # Cancellation
 //
 // Every call takes a [context.Context], and a call whose context is
