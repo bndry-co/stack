@@ -68,7 +68,7 @@ run = "mise x --env test -- cargo +nightly fuzz run plan_build --sanitizer none 
 # aarch64 and x86_64) and the header's frozen layout must never panic, and an
 # accepted document or entry must survive a round trip through its wire form.
 ["fuzz:json-wire"]
-description = "Fuzz stack-encrypt's JSON index wire decoders: JsonDocument, JsonNode, JsonProjection, JsonLeafQuery and JsonHeader (libFuzzer, nightly, 60s default)"
+description = "Fuzz stack-encrypt's JSON index wire decoders: JsonDocument, JsonNode, JsonSelectorSet, JsonLeafQuery and JsonHeader (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-encrypt"
 run = "mise x --env test -- cargo +nightly fuzz run json_wire_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
