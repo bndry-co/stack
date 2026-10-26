@@ -800,6 +800,173 @@ mod json_index {
         drop(query);
     }
 
+    /// A document field's operators through the data plan
+    /// (`dynamic::query_term`) and its reads opened against their request
+    /// (`dynamic::json_open`) free no block holding plaintext or a data
+    /// key: the operator's parsed input and the document built from it,
+    /// and each opened value once its text is written.
+    #[test]
+    fn a_document_fields_operators_and_reads_leave_no_plaintext_or_key_on_the_heap() {
+        use base64ct::{Base64, Encoding};
+        use stack_encrypt::dynamic::json_open;
+
+        let rt = runtime();
+        let cipher = rt.block_on(cipher());
+        let keyset = cipher.default_keyset();
+        let wire = json!({
+            "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
+                        "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
+        });
+        let plan = record::plan_with(
+            &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),
+            &Documents,
+        )
+        .unwrap();
+
+        let mark = marked("operand");
+        let quoted = format!("{mark:?}");
+        let document = format!(r#"{{{quoted}: [{quoted}], "name": {quoted}}}"#);
+        let inputs = [
+            (
+                OpSpec::Contains,
+                object(vec![("json", frame(document.as_str()))]),
+            ),
+            (
+                OpSpec::EqAt,
+                object(vec![
+                    ("path", frame("$.name")),
+                    ("json", frame(quoted.as_str())),
+                ]),
+            ),
+            (
+                OpSpec::GtAt,
+                object(vec![
+                    ("path", frame("$.age")),
+                    ("json", frame(quoted.as_str())),
+                ]),
+            ),
+            (
+                OpSpec::BetweenAt,
+                object(vec![
+                    ("path", frame("$.age")),
+                    ("low", frame(quoted.as_str())),
+                    ("high", frame(quoted.as_str())),
+                ]),
+            ),
+        ];
+        for (operator, input) in &inputs {
+            let term = watched(&format!("query_term ({operator:?})"), || {
+                rt.block_on(async {
+                    query_term(&keyset, &plan, "profile", *operator, input, &Documents)
+                        .expect("a document operator")
+                        .await
+                        .expect("its operand")
+                })
+            });
+            drop(term);
+        }
+
+        // A stored document, sealed and laid out as the SQL returns its
+        // rows, before the watch.
+        let value = json!({
+            "name": marked("name"),
+            "age": 34,
+            "visits": [{"at": 3, "place": marked("place")}, {"at": 1}],
+        });
+        let doc = rt
+            .block_on(async {
+                keyset
+                    .run(
+                        json_document::<_, Borrowed>(
+                            JsonOptions::new().ordering(["$.age"]).unwrap(),
+                        ),
+                        &value,
+                        context(),
+                    )
+                    .await
+            })
+            .unwrap();
+        let operand = |operator: OpSpec, path: &str| {
+            rt.block_on(async {
+                query_term(
+                    &keyset,
+                    &plan,
+                    "profile",
+                    operator,
+                    object(vec![("path", frame(path))]),
+                    &Documents,
+                )
+                .unwrap()
+                .await
+                .unwrap()
+            })
+        };
+        let tag =
+            |text: &str| -> [u8; 16] { Base64::decode_vec(text).unwrap().try_into().unwrap() };
+        let row = |j: usize, d: Option<u64>| {
+            let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+            if let Some(d) = d {
+                wire["d"] = json!(d);
+            }
+            wire.to_string()
+        };
+        let stack_encrypt::dynamic::Operand::Text(name) =
+            operand(OpSpec::Selector, "$.name").operand().clone()
+        else {
+            panic!("a selector is text")
+        };
+        let at = doc
+            .entries()
+            .iter()
+            .position(|entry| entry.selector() == &tag(&name))
+            .unwrap();
+        let selected = vec![vec![row(at, None)]];
+        let stack_encrypt::dynamic::Operand::TextList(tokens) =
+            operand(OpSpec::Subtree, "$.visits").operand().clone()
+        else {
+            panic!("a subtree read's tokens are a text array")
+        };
+        let tokens: Vec<[u8; 16]> = tokens.iter().map(|t| tag(t)).collect();
+        let read = vec![doc
+            .subtree(&tokens)
+            .into_iter()
+            .map(|(j, _, d)| row(j, Some(u64::from(d))))
+            .collect::<Vec<_>>()];
+        for (what, request, rows) in [
+            (
+                "json_open (selector)",
+                object(vec![
+                    ("operation", frame("selector")),
+                    ("path", frame("$.name")),
+                ]),
+                selected,
+            ),
+            (
+                "json_open (subtree)",
+                object(vec![
+                    ("operation", frame("subtree")),
+                    ("path", frame("$.visits")),
+                ]),
+                read,
+            ),
+        ] {
+            let rows = frame(rows);
+            let opened = watched(what, || {
+                rt.block_on(async {
+                    json_open(&keyset, &plan, "profile", &request, &rows, &Documents)
+                        .expect("a read")
+                        .await
+                        .expect("its values")
+                })
+            });
+            assert!(opened
+                .risky_ref()
+                .windows(MARK.len())
+                .any(|window| window == MARK));
+        }
+        *KEY.lock().unwrap() = None;
+    }
+
     /// The spy sees the data key too: a copy of the key a seal was handed,
     /// freed while watched, fails the watch.
     #[test]
