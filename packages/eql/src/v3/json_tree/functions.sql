@@ -293,7 +293,9 @@ $$;
 --! @param val jsonb The document.
 --! @param selector text The path selector, base64.
 --! @return SETOF public.{{prefix}}_json_tree_entry The matching entries, in
---!         document order.
+--!         stored order, which says nothing about the document: entries
+--!         are stored in a random order, and the client puts an array's
+--!         elements back in order from their decrypted labels.
 CREATE FUNCTION {{prefix}}.json_tree_path_query(val jsonb, selector text)
   RETURNS SETOF public.{{prefix}}_json_tree_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
@@ -520,7 +522,8 @@ $$;
 --! @brief The children of the node whose token is `token`, as rows.
 --!
 --! What `jsonb_array_elements` is for an encrypted array, and the members of
---! an encrypted object: one row per child, in the document's order, each
+--! an encrypted object: one row per child, in ordinal order (an array's
+--! elements by position, an object's members by their keyed rank), each
 --! opening on its own. Enumerating one level needs no child's token, so the
 --! rows are the same whichever rule each child's token takes.
 --!
@@ -634,9 +637,10 @@ $$;
 --! miss and recursing under each hit's own token. So a read returns the
 --! node it names, and `{}`, `[]`, a scalar and an absent node are an empty
 --! object's entry, an empty array's entry, the scalar's entry and no rows,
---! the four answers `jsonb #>` gives. Rows come out in token order and,
---! within a token, in document order. A token that names no node yields no
---! row, and nothing in a row is linkable to anything without its token.
+--! the four answers `jsonb #>` gives. Rows come out in no promised order:
+--! the client places each one by its tags and checks it under its parent's
+--! digest, so the order they arrive in carries nothing. A token that names
+--! no node yields no row, and nothing in a row is linkable to anything without its token.
 --! The client sends one token for a path with no wildcard, and for a
 --! wildcard one per position below its bound and a probe at the bound. The
 --! server treats a probe like any other token, but can pick it out: it is
