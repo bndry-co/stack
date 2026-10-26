@@ -1253,11 +1253,11 @@ fn open_whole_chain(
         aad,
         aes,
     };
-    let mut values = place(rows, &reads, &selectors, 0, &opening)?;
-    match (values.pop(), values.is_empty()) {
-        (Some(value), true) => Ok(hand_over(value)),
-        _ => Err(shape("a document whose chain reaches its root")),
-    }
+    // One read, of the root the chain was seen to enter: one value.
+    place(rows, &reads, &selectors, 0, &opening)?
+        .pop()
+        .map(hand_over)
+        .ok_or_else(|| shape("a document whose chain reaches its root"))
 }
 
 impl DecryptInto<Value> for JsonDocument {
@@ -1432,22 +1432,23 @@ fn open_subtree<'a, K>(
     context: AeadContext,
 ) -> Pending<'a, Vec<Protected<PlainJson>>, K> {
     let (mut nodes, key) = subtree.into_parts();
-    nodes.sort_by_key(|n| n.j);
-    // A read returns each entry once. Two rows at one ordinal are the
-    // server repeating an entry, which would let it line up one container
-    // as many times as it likes: an honest database never returns one, so
-    // it is the wrong entry, not a shape the target refuses.
-    if nodes.windows(2).any(|pair| pair[0].j == pair[1].j) {
-        return Pending::failed(cipher, wrong("rows of distinct entries"));
-    }
     let Some(first) = nodes.first() else {
         return Pending::ready(cipher, Ok(Vec::new()));
     };
     let header = first.header.clone();
     // A read is of one row, so its rows carry one header. Rows of two
-    // documents are not the answer to it.
+    // documents are not the answer to it. Checked first: two documents'
+    // entries can share a slot.
     if nodes.iter().any(|n| n.header != header) {
         return Pending::failed(cipher, wrong("rows of one document"));
+    }
+    // A read returns each entry once. Two rows at one slot are the server
+    // repeating an entry, which would let it line up one container as many
+    // times as it likes: an honest database never returns one, so it is the
+    // wrong entry, not a shape the target refuses.
+    nodes.sort_by_key(|n| n.j);
+    if nodes.windows(2).any(|pair| pair[0].j == pair[1].j) {
+        return Pending::failed(cipher, wrong("rows of distinct entries"));
     }
     let (request, aad) = match retrieval(&header, context) {
         Ok(parts) => parts,
@@ -1507,15 +1508,17 @@ enum Under<'p> {
 /// ([`Error::Aead`]).
 ///
 /// The checks the client still makes, each [`Error::JsonWrongEntry`]: no
-/// row is placed twice; every row the server returned is one the reads
-/// reach; the depth the server reported for a row is the one the chain
-/// gives it; a node's selector is its path's, and its decrypted label is the
-/// last step of that path; a child's self tag is the one its label's rule
-/// derives; the sealed root sits nowhere but at `$`; and a container has the
-/// number of children its plaintext says. Under the cascade most of these
-/// hold whenever every node opens; they are kept because the node at the
-/// top of a read is checked by nothing above it, and because each is
-/// cheaper than the AEAD it backs.
+/// two rows are one entry ([`open_subtree`], before any key is retrieved);
+/// every row the server returned is one the reads reach; the depth the
+/// server reported for a row is the one the chain gives it; a child's self
+/// tag fits the member or the element rule, and the rule its decrypted
+/// label names; the node at the top of a read carries its path's selector
+/// and its decrypted label is the last step of that path; the sealed root
+/// sits nowhere but at `$`; and a container has the number of children its
+/// plaintext says. The node at the top of a read is checked by these alone,
+/// since nothing above it is read. Beneath it the cascade already holds
+/// every child to its place, and the selector and child-count checks there
+/// back the AEAD rather than replace it.
 ///
 /// Still allowed by design (ADR 0010): an entry from another row of the
 /// column, returned with that row's header; a node at the same selector
@@ -1633,10 +1636,11 @@ impl<'k> Placing<'k> {
         d: u32,
     ) -> Result<(Protected<PlainJson>, Label), Error> {
         let refused = || wrong("a node the walked path reaches");
-        // An honest walk reaches each row once.
-        if std::mem::replace(&mut self.used[at], true) {
-            return Err(wrong("rows of distinct entries"));
-        }
+        // No row is placed twice: below a node the chain follows only
+        // children that open under its digest, which are the ones sealed
+        // there, and a key's paths are disjoint, so no row is both a read's
+        // node and beneath another's.
+        self.used[at] = true;
         if self.rows[at].d.is_some_and(|got| got != d) {
             return Err(wrong("a row at the depth the chain gives it"));
         }
@@ -2920,6 +2924,100 @@ mod tests {
             );
             assert!(selectors != other_keyset, "another keyset");
         }
+    }
+
+    /// Seal `value` with its root open, under a fixed key, after `forge`
+    /// has had the walked nodes' plaintexts, and open it whole: what a
+    /// sealer that wrote a node's plaintext wrongly would leave behind.
+    fn seal_forged_and_open(
+        value: &Value,
+        forge: impl FnOnce(&mut Vec<Protected<Vec<u8>>>),
+    ) -> Result<Value, Error> {
+        let context = Context::from_encoded(b"users/profile");
+        let mut walked = walk(value, &open_root(), &prf(), &context).unwrap();
+        forge(&mut walked.plain);
+        let key = stack_kms::DataKeyWithTag {
+            key: stack_kms::DataKey {
+                iv: [1; 16],
+                key: [2; 32],
+            },
+            tag: vec![3; 8],
+            decryption_policy: None,
+        };
+        let aes = leaf_cipher(&key.key).unwrap();
+        let doc = seal(
+            walked,
+            None,
+            Uuid::from_u128(1),
+            key,
+            &context,
+            false,
+            SafeRand::from_controlled_seed(Protected::new([5; 32])),
+        )
+        .unwrap();
+        open_whole_chain(&doc, &aes, &context, Selectors::for_tests())
+    }
+
+    #[test]
+    fn a_document_opens_whole_from_its_chain() {
+        let value = json!({"a": [1, {"b": null}], "c": "d"});
+        assert_eq!(seal_forged_and_open(&value, |_| {}).unwrap(), value);
+    }
+
+    /// A container whose plaintext claims more children than it was sealed
+    /// over opens (its AAD covers the children the chain found) and is
+    /// refused by its child count; no honest sealing writes one.
+    #[test]
+    fn a_container_claiming_another_child_count_is_refused() {
+        let value = json!({"a": [1, 2]});
+        let refused = seal_forged_and_open(&value, |plain| {
+            // `$.a`, the second node walked: kind, then the child count.
+            plain[1] = encode_node(Kind::Array, 3, LabelRef::Key("a"), &json!([]));
+        });
+        assert!(
+            matches!(
+                refused,
+                Err(Error::JsonWrongEntry {
+                    expected: "a container with the children it was sealed over"
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+
+    /// The whole document opened under another column's PRF context finds
+    /// no entry carrying the root's token, and the cipher refuses its first
+    /// entry under the column's AAD.
+    #[test]
+    fn a_document_of_another_column_is_refused_by_the_cipher() {
+        let value = json!({"a": 1});
+        let context = Context::from_encoded(b"users/profile");
+        let walked = walk(&value, &open_root(), &prf(), &context).unwrap();
+        let key = stack_kms::DataKeyWithTag {
+            key: stack_kms::DataKey {
+                iv: [1; 16],
+                key: [2; 32],
+            },
+            tag: vec![3; 8],
+            decryption_policy: None,
+        };
+        let aes = leaf_cipher(&key.key).unwrap();
+        let doc = seal(
+            walked,
+            None,
+            Uuid::from_u128(1),
+            key,
+            &context,
+            false,
+            SafeRand::from_controlled_seed(Protected::new([5; 32])),
+        )
+        .unwrap();
+        let other = Context::from_encoded(b"users/bio");
+        let selectors = Selectors::new(Arc::clone(&Selectors::for_tests().keyset), other.clone());
+        assert!(matches!(
+            open_whole_chain(&doc, &aes, &other, selectors),
+            Err(Error::Aead)
+        ));
     }
 
     #[test]

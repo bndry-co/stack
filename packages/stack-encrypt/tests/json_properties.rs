@@ -15,7 +15,11 @@
 //!   the concrete paths its path names, below the bound, and the probes, and
 //!   no token of a node above them.
 //! - **What a row stores.** `x` on every entry, `p` on every entry but the
-//!   root and the heads, under either root option.
+//!   root and the heads, under either root option; the entries in a random
+//!   order that is a permutation of the nodes with the root at slot 0.
+//! - **Placement and tampering.** The rows of a read open to the same value
+//!   in any order they arrive in; and any one row changed, dropped,
+//!   repeated or misreported is refused, with the error that names how.
 
 mod common;
 
@@ -23,6 +27,7 @@ use std::collections::BTreeSet;
 
 use common::stack_cipher;
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
 use serde_json::{json, Map, Value};
 use stack_encrypt::json::{
     JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonSubtree, Segment,
@@ -109,8 +114,9 @@ async fn read(
         .unwrap_or_else(|error| panic!("{path}: {error}"))
 }
 
-/// Every node's path in `value`, in the order the index stores the nodes:
-/// depth first, the root first, members in key order.
+/// Every node's path in `value`, depth first, the root first, members in
+/// key order. The index stores the nodes in a random order instead; a node's
+/// slot is found by its path's token ([`slot`]).
 fn node_paths(value: &Value) -> Vec<JsonPath> {
     fn visit(value: &Value, at: &JsonPath, out: &mut Vec<JsonPath>) {
         out.push(at.clone());
@@ -131,6 +137,31 @@ fn node_paths(value: &Value) -> Vec<JsonPath> {
     let mut out = Vec::new();
     visit(value, &JsonPath::root(), &mut out);
     out
+}
+
+/// The slot the node at the concrete `path` is stored at, found by the
+/// self tag of the path's token, as the server finds it.
+async fn slot(
+    cipher: &Cipher,
+    doc: &JsonDocument,
+    path: &JsonPath,
+    options: &JsonOptions,
+) -> Option<usize> {
+    let k = key(cipher, path, options, 0).await;
+    doc.find(&k.token_bytes()[0]).map(|(j, _)| j)
+}
+
+/// `items` in the order a Fisher–Yates shuffle driven by `seed` puts them:
+/// any permutation, reproducibly from the case.
+fn permuted<T>(mut items: Vec<T>, seed: u64) -> Vec<T> {
+    let mut state = seed | 1;
+    for i in (1..items.len()).rev() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        items.swap(i, (state % (i as u64 + 1)) as usize);
+    }
+    items
 }
 
 fn append(at: &JsonPath, step: &Segment) -> JsonPath {
@@ -313,9 +344,9 @@ proptest! {
     }
 
     /// Two rows of one shape and one set of keys, with different values and
-    /// different data keys: the same selectors in the same order, the same
-    /// nodes found by every path's token, and no self tag, parent tag or
-    /// ciphertext in common.
+    /// different data keys: the same selectors (each in its own random
+    /// order), every path's token finding the node at that path in both, and
+    /// no self tag, parent tag or ciphertext in common.
     #[test]
     fn selectors_and_tokens_follow_the_shape_alone(value in document(), sealed in any::<bool>()) {
         let rt = runtime();
@@ -325,15 +356,21 @@ proptest! {
             let one = seal(&cipher, &value, &options).await;
             let two = seal(&cipher, &revalue(&value), &options).await;
             prop_assert_ne!(one.header().iv(), two.header().iv());
-            let s = |d: &JsonDocument| d.entries().iter().map(|e| *e.selector()).collect::<Vec<_>>();
-            prop_assert_eq!(s(&one), s(&two), "the same selectors, in the same order");
+            let s = |d: &JsonDocument| {
+                let mut s = d.entries().iter().map(|e| *e.selector()).collect::<Vec<_>>();
+                s.sort_unstable();
+                s
+            };
+            prop_assert_eq!(s(&one), s(&two), "the same multiset of selectors");
             for path in node_paths(&value) {
-                let k = key(&cipher, &path, &options, 4).await;
-                prop_assert_eq!(
-                    one.find(&k.token_bytes()[0]).map(|(j, _)| j),
-                    two.find(&k.token_bytes()[0]).map(|(j, _)| j),
-                    "{} at one position in both rows", path
+                let (a, b) = (
+                    slot(&cipher, &one, &path, &options).await,
+                    slot(&cipher, &two, &path, &options).await,
                 );
+                let (Some(a), Some(b)) = (a, b) else {
+                    return Err(TestCaseError::fail(format!("{path} found in both rows")));
+                };
+                prop_assert_eq!(one.entries()[a].selector(), two.entries()[b].selector(), "{}", path);
             }
             let mut tags = BTreeSet::new();
             let mut total = 0;
@@ -353,18 +390,129 @@ proptest! {
         })?;
     }
 
-    /// `x` on every entry, `p` on every entry but the root and the heads.
+    /// `x` on every entry, `p` on every entry but the root and the heads;
+    /// and the entries are a permutation of the nodes, the root at slot 0.
     #[test]
     fn every_entry_carries_a_self_tag_and_only_the_heads_lack_a_parent_tag(value in document(), sealed in any::<bool>()) {
         let rt = runtime();
         rt.block_on(async {
             let cipher = stack_cipher().await;
-            let doc = seal(&cipher, &value, &options(sealed)).await;
+            let options = options(sealed);
+            let doc = seal(&cipher, &value, &options).await;
             let wire = serde_json::to_value(&doc).unwrap();
-            for (j, (entry, path)) in wire["sv"].as_array().unwrap().iter().zip(node_paths(&value)).enumerate() {
+            let sv = wire["sv"].as_array().unwrap();
+            let paths = node_paths(&value);
+            prop_assert_eq!(sv.len(), paths.len(), "one entry per node");
+            let mut slots = Vec::new();
+            for path in &paths {
+                let Some(j) = slot(&cipher, &doc, path, &options).await else {
+                    return Err(TestCaseError::fail(format!("{path} is stored")));
+                };
+                slots.push(j);
+                let entry = &sv[j];
                 prop_assert!(entry.get("x").is_some(), "entry {} has x", j);
                 let head = path.segments().is_empty() || (sealed && path.segments().len() == 1);
                 prop_assert_eq!(entry.get("p").is_none(), head, "entry {} ({}): p absent only on a head", j, path);
+            }
+            prop_assert_eq!(slots[0], 0, "the root at slot 0");
+            slots.sort_unstable();
+            prop_assert_eq!(slots, (0..paths.len()).collect::<Vec<_>>(), "a permutation of the slots");
+            Ok(())
+        })?;
+    }
+
+    /// The rows of a read open to the same value whatever order they arrive
+    /// in: the client places them by the chain, not by their slots or their
+    /// order.
+    #[test]
+    fn a_reads_rows_open_in_any_order(value in document(), sealed in any::<bool>(), pick in any::<prop::sample::Index>(), seed in any::<u64>()) {
+        let rt = runtime();
+        rt.block_on(async {
+            let cipher = stack_cipher().await;
+            let options = options(sealed);
+            let doc = seal(&cipher, &value, &options).await;
+            let paths = node_paths(&value);
+            let path = &paths[pick.index(paths.len())];
+            let k = key(&cipher, path, &options, 4).await;
+            let shuffled = permuted(rows(&doc, &k), seed);
+            let opened = cipher
+                .decrypt_as::<Option<Value>, JsonSubtree>(k.open(shuffled), aead())
+                .await
+                .unwrap_or_else(|error| panic!("{path}: {error}"));
+            prop_assert_eq!(opened, path.select(&value).first().cloned().cloned(), "{}", path);
+            Ok(())
+        })?;
+    }
+
+    /// Any one row of the read of the whole document (the root open, so the
+    /// read walks every entry) changed, dropped, repeated or misreported is
+    /// refused, with the refusal that says how: a changed ciphertext or a
+    /// dropped child by the cipher, since a parent's ciphertext commits to
+    /// its children's tags; a dropped root by the rows no read reaches; a
+    /// repeated row before any key is retrieved; a wrong depth by the depth
+    /// check.
+    #[test]
+    fn any_one_tampered_row_is_refused(value in document(), pick in any::<prop::sample::Index>(), how in 0u8..4, byte in any::<prop::sample::Index>()) {
+        let rt = runtime();
+        rt.block_on(async {
+            let cipher = stack_cipher().await;
+            let options = options(false);
+            let doc = seal(&cipher, &value, &options).await;
+            let k = key(&cipher, &JsonPath::root(), &options, 4).await;
+            let mut rows = rows(&doc, &k);
+            let at = pick.index(rows.len());
+            let top = at == 0;
+            let mut wire = serde_json::to_value(&rows[at]).unwrap();
+            let expected = match how {
+                0 => {
+                    // One byte of the ciphertext, the tag's included, changed.
+                    let c = wire["c"].as_str().unwrap().to_owned();
+                    let mut bytes = c.into_bytes();
+                    // Lowered to base85's zero digit, so the group it sits
+                    // in still decodes: the first character from a random
+                    // place on that is not zero already.
+                    let start = byte.index(bytes.len());
+                    let i = (0..bytes.len())
+                        .map(|k| (start + k) % bytes.len())
+                        .find(|&i| bytes[i] != b'0')
+                        .unwrap();
+                    bytes[i] = b'0';
+                    wire["c"] = json!(String::from_utf8(bytes).unwrap());
+                    rows[at] = serde_json::from_value(wire).unwrap();
+                    "aead"
+                }
+                1 => {
+                    let _ = rows.remove(at);
+                    if top && rows.is_empty() {
+                        // Nothing returned: the database's word that the
+                        // row has no node there (ADR 0010).
+                        "none"
+                    } else if top {
+                        "rows the walked paths reach"
+                    } else {
+                        "aead"
+                    }
+                }
+                2 => {
+                    let copy = rows[at].clone();
+                    rows.push(copy);
+                    "rows of distinct entries"
+                }
+                _ => {
+                    wire["d"] = json!(wire["d"].as_u64().unwrap() + 1);
+                    rows[at] = serde_json::from_value(wire).unwrap();
+                    "a row at the depth the chain gives it"
+                }
+            };
+            let opened = cipher
+                .decrypt_as::<Option<Value>, JsonSubtree>(k.open(rows), aead())
+                .await;
+            match (expected, opened) {
+                ("aead", Err(Error::Aead)) | ("none", Ok(None)) => {}
+                (expected, Err(Error::JsonWrongEntry { expected: got })) if got == expected => {}
+                (expected, got) => {
+                    return Err(TestCaseError::fail(format!("row {at}, tamper {how}: expected {expected}, got {got:?}")));
+                }
             }
             Ok(())
         })?;
@@ -461,15 +609,19 @@ proptest! {
                 .iter()
                 .map(|t| doc.find(t).map(|(j, _)| j).expect("every token names a node of the witness"))
                 .collect();
-            let at: Vec<usize> = expected
-                .iter()
-                .map(|(q, _)| paths.iter().position(|p| p == q).unwrap())
-                .collect();
+            // Where each node of the witness is stored, by its own path's
+            // key: the slots are random, so the read's tokens are checked
+            // against the nodes the paths name, not against positions.
+            let mut stored = std::collections::BTreeMap::new();
+            for p in &paths {
+                let _ = stored.insert(p.clone(), slot(&cipher, &doc, p, &options).await.unwrap());
+            }
+            let at: Vec<usize> = expected.iter().map(|(q, _)| stored[q]).collect();
             prop_assert_eq!(&found, &at, "each token finds the node at its path");
             for (q, _) in &expected {
                 for len in 0..q.segments().len() {
                     let ancestor = q.segments()[..len].iter().fold(JsonPath::root(), |a, s| append(&a, s));
-                    let j = paths.iter().position(|p| *p == ancestor).unwrap();
+                    let j = stored[&ancestor];
                     prop_assert!(!found.contains(&j), "no token of {}, above {}", ancestor, q);
                 }
             }
@@ -554,4 +706,27 @@ async fn the_self_tag_costs_about_a_tenth_of_the_stored_size() {
             high * 100.0
         );
     }
+}
+
+/// The stored order is drawn afresh for every document: ten seals of one
+/// ten-node document do not all store it alike, while each keeps the root
+/// at slot 0. (Two seals agree with probability 1/9!, so ten all agreeing
+/// is never seen.)
+#[tokio::test]
+async fn every_seal_draws_its_own_order() {
+    let cipher = stack_cipher().await;
+    let value =
+        json!({"hello": "w", "nested": {"deep": "c", "list": [{"x": 1}, {"x": 2}]}, "number": 1});
+    let options = options(true);
+    let mut orders = BTreeSet::new();
+    for _ in 0..10 {
+        let doc = seal(&cipher, &value, &options).await;
+        let mut order = Vec::new();
+        for path in node_paths(&value) {
+            order.push(slot(&cipher, &doc, &path, &options).await.unwrap());
+        }
+        assert_eq!(order[0], 0, "the root at slot 0");
+        let _ = orders.insert(order);
+    }
+    assert!(orders.len() > 1, "ten seals, one order: {orders:?}");
 }

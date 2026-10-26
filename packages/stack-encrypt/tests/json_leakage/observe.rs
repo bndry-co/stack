@@ -9,6 +9,10 @@
 //! [`ObservedWorld::from_wire`]. A simulator that wrote a field the real form
 //! lacks, or the other way round, shows in [`ObservedRow::fields`] and
 //! [`ObservedEntry::fields`].
+//!
+//! A world is parsed in its stored order. The distinguishers read it in the
+//! canonical order ([`super::canonical`]), which keeps each entry's stored
+//! slot beside it ([`ObservedRow::slots`]).
 
 use base64ct::{Base64, Encoding};
 use serde_json::Value;
@@ -61,6 +65,10 @@ pub struct ObservedRow {
     pub chars: usize,
     pub header: ObservedHeader,
     pub entries: Vec<ObservedEntry>,
+    /// The slot in `sv` each entry is stored at: `0, 1, 2, …` as parsed,
+    /// and wherever the canonical order took each entry from after
+    /// [`super::canonical::canonical`].
+    pub slots: Vec<usize>,
     pub q: ObservedGroup,
     /// Every key path inside `q` ([`key_paths`]).
     pub q_fields: Vec<String>,
@@ -237,16 +245,18 @@ fn chars(value: &Value) -> usize {
 }
 
 fn row(value: &Value) -> ObservedRow {
+    let entries: Vec<ObservedEntry> = value["sv"]
+        .as_array()
+        .expect("`sv` is a list")
+        .iter()
+        .map(entry)
+        .collect();
     ObservedRow {
         fields: keys(value),
         chars: chars(value),
         header: header(&b64(&value["h"])),
-        entries: value["sv"]
-            .as_array()
-            .expect("`sv` is a list")
-            .iter()
-            .map(entry)
-            .collect(),
+        slots: (0..entries.len()).collect(),
+        entries,
         q: group(&value["q"]),
         q_fields: key_paths(&value["q"]),
     }

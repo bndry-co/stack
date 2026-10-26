@@ -73,6 +73,9 @@ fn shape_queries(sealed_root: bool) -> Vec<Query> {
         Query::Contains(json!("a")),
         Query::Contains(json!({"hello": "world-1"})),
         Query::Contains(json!([{"x": 1}])),
+        // Sibling keys whose byte order is not their order as written, nor
+        // jsonb's: a needle is sent in the walk's order, so it shows which.
+        Query::Contains(json!({"a": "b", "a b": 1, "é": [], "0": {}})),
         Query::Equals("$.hello".into(), json!("world-1")),
         Query::Equals("$.nested.list[*].x".into(), json!(2)),
         Query::Order("$.number".into(), json!(0)),
@@ -168,8 +171,11 @@ fn numbers() -> World {
 }
 
 /// A column with three wide top-level objects, each read whole, so that
-/// whether members' ordinals follow their keys' order is decidable rather
-/// than a coin toss (see `distinguishers::member_ordinals_follow_key_order`).
+/// whether a read's subtree sits at consecutive stored slots is decidable
+/// rather than a coin toss (`distinguishers::walked_subtrees_are_contiguous`),
+/// and an array of twelve like objects, read whole, so that whether their
+/// members' ordinals share one order is
+/// (`distinguishers::member_order_shared_across_parents`).
 fn wide() -> World {
     let object = |prefix: &str, n: usize| {
         Value::Object(
@@ -186,7 +192,8 @@ fn wide() -> World {
         },
         docs: vec![
             json!({"w1": object("a", 8), "w2": object("b", 8), "w3": object("c", 8),
-                   "arr": [{"k": 1}, {"k": {"z": 2}, "m": [3]}]}),
+                   "arr": [{"k": 1}, {"k": {"z": 2}, "m": [3]}],
+                   "objs": (0..12).map(|i| json!({"p": i, "q": i, "r": i, "s": i})).collect::<Vec<_>>()}),
             json!({"w1": object("a", 5), "w3": object("c", 8), "arr": [{"k": 4}]}),
         ],
         // `$.arr[*].k` at a bound of one: the probe `$.arr[1]` finds the
@@ -197,6 +204,7 @@ fn wide() -> World {
             Query::subtree("$.w2"),
             Query::subtree("$.w3"),
             Query::subtree_with("$.arr[*].k", 1, 64),
+            Query::subtree("$.objs"),
         ],
     }
 }

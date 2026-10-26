@@ -17,12 +17,18 @@
 //! ported; `docs/plans/2026-10-25-json-tree-leakage-before-and-after.md`
 //! compares the two profiles clause by clause.
 //!
+//! Since then a document's entries are stored in a uniformly random order
+//! drawn when it is sealed, the root at slot `0`, and `q`'s lists are
+//! shuffled too ([`profile::StoredOrder`]); and each entry's AAD binds its
+//! children's AEAD tags (the cascade), which leaves everything stored as it
+//! was and so changes no clause.
+//!
 //! # The pieces
 //!
 //! ```text
 //!  documents, queries ──► profile::leak ──► Leakage ──► simulator::simulate ──► wire JSON ─┐
 //!   (plaintext)              (L: no key)                 (+ seeded randomness)            │
-//!                                                                                         ├─► observe ──► ObservedWorld ──► distinguishers
+//!                                                                                         ├─► observe ──► canonical ──► distinguishers
 //!  documents, queries ──► real::world ─────────────────────────────────────────► wire JSON ─┘
 //!                          (the crate, under the fake key source)
 //! ```
@@ -38,6 +44,8 @@
 //! - [`simulator`] builds a world in the wire form from a
 //!   [`profile::Leakage`] and randomness, with no plaintext and no key:
 //!   random bytes for every name, random ciphertexts of the stated length,
+//!   each row's entries at a random permutation of their slots with the root
+//!   first and `q`'s lists shuffled, as the crate stores them,
 //!   ordering terms with CLLW's layout under a key of its own, over codes
 //!   that have the stated order, lengths and shared prefixes and nothing
 //!   else of the values, and the chain programmed
@@ -48,12 +56,20 @@
 //!   through the crate's public API, and serializes them.
 //! - [`observe`] parses either world's wire JSON into one
 //!   [`observe::ObservedWorld`].
-//! - [`distinguishers`] are pure functions of an observed world: what an
-//!   observer holding the column and the query terms could compute. Each
-//!   feature is exact (byte strings renamed to integers in order of first
-//!   appearance), so a real and a simulated world are compared for equality,
-//!   with no statistics. One feature needs a probability bound and carries it
-//!   in its doc comment ([`distinguishers::member_ordinals_follow_key_order`]).
+//! - [`canonical`] puts a world's entries and `q`'s lists in an order an
+//!   observer computes without the stored order, keeping each entry's stored
+//!   slot beside it. The stored order is random on both sides, independently,
+//!   so a feature that named an entry by its slot would tell a faithful
+//!   simulation from the real scheme by chance alone.
+//! - [`distinguishers`] are pure functions of an observed world, read in the
+//!   canonical order: what an observer holding the column and the query
+//!   terms could compute. Each feature is exact (byte strings renamed to
+//!   integers in order of first appearance), so a real and a simulated world
+//!   are compared for equality, with no statistics. Two features need a
+//!   probability bound and carry it in their doc comments
+//!   ([`distinguishers::walked_subtrees_are_contiguous`], the one that reads
+//!   the stored order, and
+//!   [`distinguishers::member_order_shared_across_parents`]).
 //! - [`mutants`] are profiles with one clause dropped or coarsened.
 //! - [`corpus`] holds the handcrafted columns and a proptest generator of
 //!   random ones over a shared key vocabulary.
@@ -76,10 +92,11 @@
 //!   [`profile::Clauses::as_published_in_1363`] turns it off, and a test
 //!   holds that the result is then told from the real scheme, by the
 //!   distinguisher that names it and the three its absence breaks.
-//! - **Three readings.** The page states the key order (UTF-8 byte order),
-//!   that strings order folded, and that a number's equality under its term
-//!   is as a 64-bit float; a profile read the other way on any of them is
-//!   told from the real scheme, so each sentence is load-bearing.
+//! - **Three readings.** The key order (UTF-8 byte order, which a needle's
+//!   pairs are sent in), that strings order folded, and that a number's
+//!   equality under its term is as a 64-bit float; a profile read the other
+//!   way on any of them is told from the real scheme, so each is
+//!   load-bearing.
 //! - **The calibration.** Each mutant profile drops one clause. The test
 //!   expects some distinguisher to tell each mutant's world from the real
 //!   one, and prints a table of which (run with `--no-capture`). A mutant
@@ -88,15 +105,14 @@
 //!   clauses describe, so that the positive control passing means something.
 //! - **The harness itself.** The chain functions agree with the crate's own
 //!   walk (`JsonDocument::subtree`) for reads through members, positions,
-//!   wildcards and `$`; the order-only attack in
-//!   [`distinguishers::depth_recovery`] recovers every row's depth sequence
-//!   on a column whose rows vary, which is the page's claim that the stored
-//!   order reveals each row's shape; and on the real scheme a wildcard
-//!   read's token list gives its bound and its probes away
-//!   (`a_read_gives_away_its_bound_and_its_probes`). Two features no mutant
-//!   can reach are shown to fire: `cross_kind_equalities` on a world whose
-//!   token is a stored selector, and `token_derivability` on a read of a
-//!   position past every row's array.
+//!   wildcards and `$`; one document sealed four times stores its root at
+//!   slot `0` each time and the rest of its entries, and `q`'s pairs, in a
+//!   fresh order each time (`the_order_is_drawn_afresh_with_the_root_first`);
+//!   and on the real scheme a wildcard read's token list gives its bound and
+//!   its probes away (`a_read_gives_away_its_bound_and_its_probes`). Two
+//!   features no mutant can reach are shown to fire: `cross_kind_equalities`
+//!   on a world whose token is a stored selector, and `token_derivability`
+//!   on a read of a position past every row's array.
 //!
 //! # What the profile found
 //!
@@ -153,18 +169,39 @@
 //! parts of a ciphertext's length ([`profile::ciphertext_len`]).
 //!
 //! The two issues the profile was first built to check: the stored order
-//! still reveals each row's shape (#1357; the order clause is load-bearing
-//! and the depth attack works), and a subtree read no longer hands over
-//! its top-level field (#1360): the mutant that sends the head's token as
-//! the read before #1363 did (`ancestor_token_sent`) is told apart by
-//! `ancestor_links`, `token_reach` and the token counts.
+//! revealed each row's shape (#1357; the order clause was load-bearing and
+//! an order-only attack recovered every row's depth sequence), and a
+//! subtree read no longer hands over its top-level field (#1360): the
+//! mutant that sends the head's token as the read before #1363 did
+//! (`ancestor_token_sent`) is told apart by `ancestor_links`, `token_reach`
+//! and the token counts. #1357 is now closed by the random stored order:
+//! the clause says the order shows nothing beyond the root's place, the
+//! positive control holds it, and the mutant that states the depth-first
+//! order before it (`stored_order_depth_first`) is told apart by
+//! `walked_subtrees_are_contiguous`.
+//!
+//! Against the page as the random order leaves it:
+//!
+//! 3. **A needle still shows the key order.** A containment or equality
+//!    needle is sent in the walk's order, unshuffled, an object's members
+//!    in their keys' byte order, so a needle with two sibling keys tells the
+//!    database which sorts first, at paths whose selectors it also sees in
+//!    the stored rows. The stored `q` is shuffled; the needle is not. The
+//!    profile states it ([`profile::GroupLeakage::pairs`], the key-order
+//!    reading test, the mutant `needle_pairs_shuffled`, caught by
+//!    `transcripts`), and so does the page, under containment. Shuffling a
+//!    needle on the client, which the server reads as a set, would close
+//!    it; that is left to a decision of its own.
 //!
 //! # When the format changes
 //!
 //! `L` and the real-side adapter are expected to change with the format,
 //! and with the leakage page; the distinguishers mostly should not (the
 //! port to #1363 kept 26 of the 27 the profile had, renamed one and added
-//! eight). To add or change a clause:
+//! eight; the port to the random stored order read them all in the
+//! canonical order, retired the three that read only the stored order,
+//! replaced one that set member ordinals against it, and added the one that
+//! now reads it). To add or change a clause:
 //!
 //! 1. Change the page first, or at least decide what it will say.
 //! 2. Change [`profile`]: a field on the leakage type, with the page's
@@ -184,6 +221,12 @@
 //!   goes in marked as such in [`profile::Clauses`], with a test like the
 //!   one for the hit rule, so the gap stays visible until the page closes
 //!   it.
+//! - **Positive control fails on a feature that names positions, and the
+//!   real and simulated features differ by a swap of two names.** Suspect
+//!   the canonical order before the profile: two entries (or selectors, or
+//!   values) it tied are told apart by something its descriptions leave
+//!   out. Add that to the description in [`canonical`]. The real side's
+//!   stored order is fresh on every run, so such a failure can come and go.
 //! - **Calibration fails for a mutant nothing noticed.** Either the clause
 //!   is not load-bearing on the calibration columns (add a column that
 //!   exercises it, as the wide-objects column does for member ranks and
@@ -198,18 +241,16 @@
 //!   That is what happened when this module first ran against #1363's
 //!   format.
 //!
-//! # A tension this module states and does not resolve
+//! # A tension this module stated, now resolved
 //!
-//! PR #1358's read check (`JsonSubtreeKey::open`) refuses a walk's rows
-//! unless each subtree's rows sit at consecutive positions `j` in `sv`, which
-//! is what a subtree is in a depth-first stored order, and `j` is bound into
-//! every ciphertext's AAD. #1363 keeps it (its decision 8: "each deeper row
-//! must sit at the next consecutive `j` within its subtree"). That
-//! consecutiveness is exactly the property #1357 wants gone: a stored order
-//! independent of the shape (a keyed permutation of `sv`, say) would
-//! scatter a subtree's rows. The check and "order independent of shape"
-//! cannot both hold as written: one of them has to give, and which is the
-//! owner's decision.
+//! PR #1358's read check (`JsonSubtreeKey::open`) refused a walk's rows
+//! unless each subtree's rows sat at consecutive positions `j` in `sv`,
+//! which is what a subtree is in a depth-first stored order, and #1363 kept
+//! it; that consecutiveness was exactly what #1357 wanted gone. The cascade
+//! resolved it: each entry's AAD binds its children's AEAD tags, so the
+//! client checks a read by the chain and the tags rather than by position,
+//! the consecutive-position rule is gone, and the stored order is random.
+//! The AAD still binds each entry's slot.
 //!
 //! # Out of reach
 //!
@@ -237,9 +278,12 @@
 //!   jsonb's (`mixed_kinds_jsonb_order`) is caught because the test key put
 //!   the strings below the numbers.
 //! - **The keyed member rank as a permutation.** Under a token, a member's
-//!   ordinal is a keyed rank. Its relation to the stored (key) order is a
-//!   random permutation, decidable exactly only where enough wide objects sit
-//!   under the tokens sent; elsewhere the feature reports nothing.
+//!   ordinal is a keyed rank, a random permutation of the members. Whether
+//!   two tokens' objects share one order is decidable exactly only where
+//!   enough like objects (an array's elements) sit under the tokens sent;
+//!   elsewhere the feature reports nothing. Likewise whether a walked
+//!   subtree sits at consecutive stored slots, where the subtrees are too
+//!   small for chance to rule it out.
 //! - **The primitives.** Ciphertexts beyond their length, selectors, value
 //!   selectors, head tokens and unlinked self tags beyond their equality
 //!   patterns: the profile assumes AES-GCM, the PRFs and the hash do their
@@ -260,19 +304,24 @@
 //!
 //! Every simulation and every mutant draws from one seeded generator, and
 //! the random columns come from a seeded proptest runner. The real side
-//! draws data keys and nonces from the operating system; those reach a
-//! feature only through equality patterns, which change only on a collision
-//! of random bytes, below `n² / 2^64` for `n` eight-byte tags in a column
-//! (about `10^-13` here). The fake key source's index key is fixed, so the
-//! real member ranks are too.
+//! draws data keys, nonces and every document's stored order from the
+//! operating system. The keys and nonces reach a feature only through
+//! equality patterns, which change only on a collision of random bytes,
+//! below `n² / 2^64` for `n` eight-byte tags in a column (about `10^-13`
+//! here). The stored order reaches none but through the canonical order,
+//! which does not depend on it (ties it leaves are between entries no
+//! feature tells apart), and through `walked_subtrees_are_contiguous`,
+//! whose answer is fixed but with probability below `2^-40`. The fake key
+//! source's index key is fixed, so the real member ranks are too.
 //!
 //! The profile sorts members itself rather than trusting `serde_json`'s
 //! iteration order, so a build that unified serde_json's `preserve_order`
-//! feature on (which would store the application's field order, #1357) fails
-//! the positive control on the handcrafted rows whose keys are written out
-//! of order.
+//! feature on (which would send a needle in the application's field order)
+//! fails the positive control on the handcrafted needle whose keys are
+//! written out of order.
 
 pub mod calibration;
+pub mod canonical;
 pub mod chain;
 pub mod corpus;
 pub mod distinguishers;

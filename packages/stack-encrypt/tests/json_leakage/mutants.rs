@@ -10,7 +10,8 @@
 //! mutant is "the profile without this clause". A few state a format the
 //! code does not have, to show the distinguishers would see it: the
 //! pre-#1363 read's top-level token (`ancestor_token_sent`), the pre-#1363
-//! member rule (`member_tokens_carry_ordinal`).
+//! member rule (`member_tokens_carry_ordinal`), the depth-first stored
+//! order before the random one (`stored_order_depth_first`).
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -19,7 +20,7 @@ use proptest::test_runner::TestRng;
 
 use super::profile::{
     EntryLeakage, GroupLeakage, KindOrder, Leakage, OrderKind, Placement, QueryLeakage, ReadLeak,
-    RowLeakage, Rule, Step, TokenName, TokenStep, AEAD_OVERHEAD,
+    RowLeakage, Rule, Step, StoredOrder, TokenName, TokenStep, AEAD_OVERHEAD,
 };
 
 /// One mutant: its name, the clause it drops (a field or sentence of the
@@ -84,34 +85,6 @@ fn every_read(leakage: &mut Leakage, mut f: impl FnMut(&mut Vec<ReadLeak>)) {
             f(reads);
         }
     }
-}
-
-/// Reorder a row's entries: `order[k]` is the old position of the entry now
-/// at `k`. Parents and every query's positions follow.
-fn reorder(leakage: &mut Leakage, r: usize, order: &[usize]) {
-    let mut new_at = vec![0; order.len()];
-    for (k, &old) in order.iter().enumerate() {
-        new_at[old] = k;
-    }
-    let row = &mut leakage.rows[r];
-    let old = std::mem::take(&mut row.entries);
-    row.entries = order
-        .iter()
-        .map(|&o| EntryLeakage {
-            parent: old[o].parent.map(|p| new_at[p]),
-            ..old[o].clone()
-        })
-        .collect();
-    every_read(leakage, |reads| {
-        for read in reads {
-            if let Some(at) = &mut read.hits[r] {
-                *at = new_at[*at];
-            }
-            for at in &mut read.reach[r] {
-                *at = new_at[*at];
-            }
-        }
-    });
 }
 
 fn children(row: &RowLeakage) -> Vec<Vec<usize>> {
@@ -240,35 +213,11 @@ fn key_tag_shortened(l: &mut Leakage, _: &mut TestRng) {
     l.key_tag_len = 16;
 }
 
-fn order_random_permutation(l: &mut Leakage, rng: &mut TestRng) {
-    for r in 0..l.rows.len() {
-        let mut order: Vec<usize> = (1..l.rows[r].entries.len()).collect();
-        shuffle(&mut order, rng);
-        order.insert(0, 0);
-        reorder(l, r, &order);
-    }
-}
-
-/// Still depth-first, but an object's members in random order rather than
-/// sorted by key.
-fn members_unsorted(l: &mut Leakage, rng: &mut TestRng) {
-    for r in 0..l.rows.len() {
-        let kids = children(&l.rows[r]);
-        let mut order = Vec::new();
-        let mut stack = vec![0];
-        while let Some(i) = stack.pop() {
-            order.push(i);
-            let mut mine = kids[i].clone();
-            if mine
-                .iter()
-                .all(|&k| l.rows[r].entries[k].step == Step::Member)
-            {
-                shuffle(&mut mine, rng);
-            }
-            stack.extend(mine.into_iter().rev());
-        }
-        reorder(l, r, &order);
-    }
+/// The stored order before the random one: depth-first, the root first,
+/// an object's members in key order, and `q` in the same walk's order, which
+/// gave every row's tree away (#1357).
+fn stored_order_depth_first(l: &mut Leakage, _: &mut TestRng) {
+    l.stored_order = StoredOrder::DepthFirst;
 }
 
 fn parent_tag_on_every_entry(l: &mut Leakage, _: &mut TestRng) {
@@ -332,12 +281,6 @@ fn flatten_group(group: &mut GroupLeakage) {
 fn projection_flat(l: &mut Leakage, _: &mut TestRng) {
     for row in &mut l.rows {
         flatten_group(&mut row.projection);
-    }
-}
-
-fn projection_shuffled(l: &mut Leakage, rng: &mut TestRng) {
-    for row in &mut l.rows {
-        groups_mut(&mut row.projection, &mut |g| shuffle(&mut g.pairs, rng));
     }
 }
 
@@ -832,6 +775,18 @@ fn needle_flat(l: &mut Leakage, _: &mut TestRng) {
     }
 }
 
+/// A needle's pairs sent in a random order, as a stored `q`'s are stored:
+/// what the profile would say if a needle's order revealed nothing. The
+/// client sends a needle in the walk's order, an object's members in key
+/// byte order, so a needle with two sibling keys tells their byte order.
+fn needle_pairs_shuffled(l: &mut Leakage, rng: &mut TestRng) {
+    for query in &mut l.queries {
+        if let QueryLeakage::Contains { needle, .. } | QueryLeakage::Equals { needle } = query {
+            groups_mut(needle, &mut |g| shuffle(&mut g.pairs, rng));
+        }
+    }
+}
+
 fn needle_alt_dropped(l: &mut Leakage, _: &mut TestRng) {
     for query in &mut l.queries {
         if let QueryLeakage::Contains { alt, .. } = query {
@@ -881,8 +836,7 @@ mutants!(
     entry_count_padded => "RowLeakage::entries (\"the number of entries\")",
     parents_lifted => "EntryLeakage::parent (each node's parent, which a token's walk links)",
     element_ordinals_reversed => "EntryLeakage::step (\"an element's index is the ordinal it is found at\")",
-    order_random_permutation => "RowLeakage::entries (the stored order)",
-    members_unsorted => "RowLeakage::entries (\"an object's members in the byte order of their key names\")",
+    stored_order_depth_first => "Leakage::stored_order (\"stored in a random order […] with the root first\"): the depth-first order before",
     parent_tag_on_every_entry => "EntryLeakage::has_parent_tag",
     parent_tag_on_no_entry => "EntryLeakage::has_parent_tag",
     self_tags_absent => "EntryLeakage::self_tag (\"the self tag on every entry\")",
@@ -893,7 +847,6 @@ mutants!(
     value_selectors_all_distinct => "GroupLeakage::pairs (value selector equality)",
     value_selectors_path_only => "GroupLeakage::pairs (\"a keyed hash of the path and the value\")",
     projection_flat => "GroupLeakage::elements (\"nested by array element\")",
-    projection_shuffled => "GroupLeakage::pairs (\"in the same order\")",
     ordering_terms_absent => "EntryLeakage::ordering (presence)",
     ordering_terms_unordered => "Leakage::ordering_ranks (\"the order of that leaf's value among every row\")",
     ordering_terms_all_distinct => "OrderingLeak::class (\"which rows hold equal values\")",
@@ -923,6 +876,7 @@ mutants!(
     token_list_padded => "QueryLeakage::Subtree::reads (the tokens' number, which gives N away)",
     budget_not_sent => "QueryLeakage::Subtree::budget (the budget, in the clear)",
     needle_flat => "QueryLeakage::Contains::needle (\"its element grouping\")",
+    needle_pairs_shuffled => "GroupLeakage::pairs of a needle (sent in the walk's order, members in key byte order)",
     needle_alt_dropped => "QueryLeakage::Contains::alt",
     bound_rank_random => "QueryLeakage::Order::bound (\"the bound's place in the order of the stored values\")",
 );
