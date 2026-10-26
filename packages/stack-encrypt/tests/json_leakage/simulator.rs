@@ -32,8 +32,9 @@
 //! nodes at a uniformly random permutation of the slots `1..n`, and every
 //! list of the stored `q` shuffled, each by Fisher–Yates over the
 //! simulator's generator. The profile names nodes, not slots, so the tags
-//! the chain programs follow each node to wherever it is stored. A needle is
-//! sent in the walk's order, unshuffled, as the client sends it.
+//! the chain programs follow each node to wherever it is stored. A needle's
+//! lists are shuffled the same way, afresh for each query
+//! ([`SentOrder::Random`]), as the client shuffles them.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -49,7 +50,7 @@ use super::chain::{
 use super::observe::QueryKind;
 use super::profile::{
     GroupLeakage, KindOrder, Leakage, OrderKind, OrderingLeak, Placement, QueryLeakage, RowLeakage,
-    Step, StoredOrder, TokenName, TokenStep,
+    SentOrder, Step, StoredOrder, TokenName, TokenStep,
 };
 
 /// The version byte `vitaminc-encrypt` writes at the front of every
@@ -332,9 +333,9 @@ impl Simulator<'_> {
         bytes.clone()
     }
 
-    /// A projection's wire form: in the walk's order, as a needle is sent,
-    /// or with every list shuffled, as a stored `q` is under
-    /// [`StoredOrder::Random`].
+    /// A projection's wire form: in the walk's order, or with every list
+    /// shuffled, as a stored `q` is under [`StoredOrder::Random`] and a
+    /// needle under [`SentOrder::Random`].
     fn group(&mut self, group: &GroupLeakage, shuffled: bool) -> Value {
         let mut pairs: Vec<Value> = group
             .pairs
@@ -550,13 +551,17 @@ impl Simulator<'_> {
                 (QueryKind::Subtree, json!({"t": tokens, "budget": budget}))
             }
             QueryLeakage::Contains { needle, alt } => {
-                let mut wire = self.group(needle, false);
+                let shuffled = self.leakage.sent_order == SentOrder::Random;
+                let mut wire = self.group(needle, shuffled);
                 if let Some(alt) = alt {
-                    wire["alt"] = self.group(alt, false);
+                    wire["alt"] = self.group(alt, shuffled);
                 }
                 (QueryKind::Contains, wire)
             }
-            QueryLeakage::Equals { needle } => (QueryKind::Equals, self.group(needle, false)),
+            QueryLeakage::Equals { needle } => {
+                let shuffled = self.leakage.sent_order == SentOrder::Random;
+                (QueryKind::Equals, self.group(needle, shuffled))
+            }
             QueryLeakage::Order { selector, bound } => {
                 let s = self.selector(*selector);
                 let op = self.ordering(bound.class, bound.len);

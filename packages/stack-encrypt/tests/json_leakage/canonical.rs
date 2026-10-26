@@ -1,14 +1,16 @@
-//! The canonical order: each stored row's entries and every list of its
-//! projection `q`, put in an order an observer computes from the column and
-//! the queries without the stored order, so that the distinguishers can
-//! name an entry by its place and still compare a real world with a
-//! simulated one for equality.
+//! The canonical order: each stored row's entries, every list of its
+//! projection `q` and every list of each needle sent, put in an order an
+//! observer computes from the column and the queries without the stored or
+//! sent order, so that the distinguishers can name an entry by its place
+//! and still compare a real world with a simulated one for equality.
 //!
-//! The stored order is random ([`super::profile::StoredOrder::Random`]), in
-//! the real scheme and in a faithful simulation alike, independently. A
-//! feature that named an entry by its slot, or a selector by the slot it
-//! first appears at, would tell the two apart by chance alone. So every
-//! distinguisher reads the world in this order instead:
+//! The stored order is random ([`super::profile::StoredOrder::Random`]), and
+//! so is the order a needle is sent in
+//! ([`super::profile::SentOrder::Random`]), in the real scheme and in a
+//! faithful simulation alike, independently. A feature that named an entry
+//! by its slot, or a selector by the slot it first appears at, or a needle's
+//! pairs in the order they came, would tell the two apart by chance alone.
+//! So every distinguisher reads the world in this order instead:
 //!
 //! - Every name (a selector or a value selector) gets a rank from what is
 //!   attached to it, in tiers compared in turn. At rest: a selector by, per
@@ -18,10 +20,10 @@
 //!   depths it is sent at); a value selector by that colour. Then,
 //!   repeatedly until nothing more splits, the groups of `q` a name's pairs
 //!   sit in, by the ranks of their pairs, of their parent group's and of
-//!   their element groups'. Then the queries that name it (a needle's pairs
-//!   by their place in it, since a needle is sent in the walk's order),
-//!   then where walks reach a selector's entries, then the needles' groups
-//!   as `q`'s were. Names still tied are ones nothing tells apart (`$.a.b`
+//!   their element groups'. Then the queries that name it (an extraction,
+//!   an ordering bound, or a needle and the depth it sits at there), then
+//!   where walks reach a selector's entries, then the needles' groups as
+//!   `q`'s were. Names still tied are ones nothing tells apart (`$.a.b`
 //!   and `$.a.b.c` in a row `{"a": {"b": {"c": {}}}}`, at rest); they are
 //!   set apart one at a time, each followed by the refinement again, so
 //!   that one choice orders the entries and `q` alike.
@@ -35,8 +37,8 @@
 //!   down what the walk shows beneath it and, for an array's elements, the
 //!   ordinal (an object's members' ordinals are a keyed rank, a random
 //!   permutation that would order them differently in every world).
-//! - Every list of `q` is sorted by its pairs' ranks, and its element
-//!   groups by their sorted contents.
+//! - Every list of `q`, and of every needle and `alt`, is sorted by its
+//!   pairs' ranks, and its element groups by their sorted contents.
 //!
 //! Two entries the sort ties agree on everything a distinguisher reads of
 //! them but their random bytes (a ciphertext, a self tag or a parent tag no
@@ -49,11 +51,11 @@
 //! differ (a mutant's) reorders only entries that agree at rest, and a
 //! named node's place does not move with what the walks below it reach.
 //!
-//! Needles are sent in the walk's order, which is part of what they reveal
-//! ([`super::profile::GroupLeakage::pairs`]), and are left as sent. Each
-//! entry's stored slot is kept beside it ([`ObservedRow::slots`]) for the
-//! feature that reads the stored order itself
-//! ([`super::distinguishers::walked_subtrees_are_contiguous`]).
+//! Each entry's stored slot is kept beside it ([`ObservedRow::slots`]), and
+//! each query as sent ([`ObservedWorld::sent`]), for the two features that
+//! read the stored and the sent order themselves
+//! ([`super::distinguishers::walked_subtrees_are_contiguous`],
+//! [`super::distinguishers::repeated_needles_sent_alike`]).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -111,9 +113,24 @@ pub fn canonical(world: &ObservedWorld) -> ObservedWorld {
             }
         })
         .collect();
+    let queries = world
+        .queries
+        .iter()
+        .map(|query| match query {
+            ObservedQuery::Contains { needle, alt } => ObservedQuery::Contains {
+                needle: group(needle, &ranks),
+                alt: alt.as_ref().map(|a| group(a, &ranks)),
+            },
+            ObservedQuery::Equals { needle } => ObservedQuery::Equals {
+                needle: group(needle, &ranks),
+            },
+            other => other.clone(),
+        })
+        .collect();
     ObservedWorld {
         rows,
-        queries: world.queries.clone(),
+        queries,
+        sent: world.sent.clone(),
         query_fields: world.query_fields.clone(),
     }
 }
@@ -510,18 +527,17 @@ fn ranks(
             _ => {}
         }
     }
-    // A needle is sent in the walk's order, so a pair's place in it is
-    // part of what the database sees (`{"list": …, "name": …}` sends the
-    // two in their keys' byte order, which may be all that tells two
-    // selectors apart).
+    // A needle is sent in a random order, so only which needle a name is
+    // in, and at what depth, says anything; the groups it sits in there are
+    // the refinement's.
     for (what, needle) in needles(world) {
         let mut pairs = Vec::new();
         pairs_by_depth(needle, 0, &mut pairs);
-        for (place, (depth, s, vs)) in pairs.into_iter().enumerate() {
+        for (depth, s, vs) in pairs {
             for name in [s, vs] {
                 sent.entry(name)
                     .or_default()
-                    .push(format!("{what} {place} {depth}"));
+                    .push(format!("{what} {depth}"));
             }
         }
     }

@@ -19,9 +19,11 @@
 //!
 //! Since then a document's entries are stored in a uniformly random order
 //! drawn when it is sealed, the root at slot `0`, and `q`'s lists are
-//! shuffled too ([`profile::StoredOrder`]); and each entry's AAD binds its
-//! children's AEAD tags (the cascade), which leaves everything stored as it
-//! was and so changes no clause.
+//! shuffled too ([`profile::StoredOrder`]); a containment or equality
+//! needle's lists are shuffled as well, afresh for each query
+//! ([`profile::SentOrder`]); and each entry's AAD binds its children's AEAD
+//! tags (the cascade), which leaves everything stored as it was and so
+//! changes no clause.
 //!
 //! # The pieces
 //!
@@ -45,7 +47,8 @@
 //!   [`profile::Leakage`] and randomness, with no plaintext and no key:
 //!   random bytes for every name, random ciphertexts of the stated length,
 //!   each row's entries at a random permutation of their slots with the root
-//!   first and `q`'s lists shuffled, as the crate stores them,
+//!   first and `q`'s lists shuffled, as the crate stores them, needles
+//!   shuffled afresh for each query, as the client sends them,
 //!   ordering terms with CLLW's layout under a key of its own, over codes
 //!   that have the stated order, lengths and shared prefixes and nothing
 //!   else of the values, and the chain programmed
@@ -56,19 +59,22 @@
 //!   through the crate's public API, and serializes them.
 //! - [`observe`] parses either world's wire JSON into one
 //!   [`observe::ObservedWorld`].
-//! - [`canonical`] puts a world's entries and `q`'s lists in an order an
-//!   observer computes without the stored order, keeping each entry's stored
-//!   slot beside it. The stored order is random on both sides, independently,
-//!   so a feature that named an entry by its slot would tell a faithful
-//!   simulation from the real scheme by chance alone.
+//! - [`canonical`] puts a world's entries, `q`'s lists and the needles'
+//!   lists in an order an observer computes without the stored or sent
+//!   order, keeping each entry's stored slot and each query as sent beside
+//!   them. Those orders are random on both sides, independently, so a
+//!   feature that named an entry by its slot, or read a needle's pairs as
+//!   sent, would tell a faithful simulation from the real scheme by chance
+//!   alone.
 //! - [`distinguishers`] are pure functions of an observed world, read in the
 //!   canonical order: what an observer holding the column and the query
 //!   terms could compute. Each feature is exact (byte strings renamed to
 //!   integers in order of first appearance), so a real and a simulated world
-//!   are compared for equality, with no statistics. Two features need a
+//!   are compared for equality, with no statistics. Three features need a
 //!   probability bound and carry it in their doc comments
-//!   ([`distinguishers::walked_subtrees_are_contiguous`], the one that reads
-//!   the stored order, and
+//!   ([`distinguishers::walked_subtrees_are_contiguous`], which reads the
+//!   stored order, [`distinguishers::repeated_needles_sent_alike`], which
+//!   reads the sent order, and
 //!   [`distinguishers::member_order_shared_across_parents`]).
 //! - [`mutants`] are profiles with one clause dropped or coarsened.
 //! - [`corpus`] holds the handcrafted columns and a proptest generator of
@@ -92,11 +98,12 @@
 //!   [`profile::Clauses::as_published_in_1363`] turns it off, and a test
 //!   holds that the result is then told from the real scheme, by the
 //!   distinguisher that names it and the three its absence breaks.
-//! - **Three readings.** The key order (UTF-8 byte order, which a needle's
-//!   pairs are sent in), that strings order folded, and that a number's
-//!   equality under its term is as a 64-bit float; a profile read the other
-//!   way on any of them is told from the real scheme, so each is
-//!   load-bearing.
+//! - **Readings.** That strings order folded, and that a number's equality
+//!   under its term is as a 64-bit float: a profile read the other way on
+//!   either is told from the real scheme, so each is load-bearing. The key
+//!   order is the converse: read as UTF-8 bytes or as `jsonb`'s sort, the
+//!   profiles differ and neither is told from the real scheme, since
+//!   nothing the database sees is in key order any more.
 //! - **The calibration.** Each mutant profile drops one clause. The test
 //!   expects some distinguisher to tell each mutant's world from the real
 //!   one, and prints a table of which (run with `--no-capture`). A mutant
@@ -180,18 +187,15 @@
 //! order before it (`stored_order_depth_first`) is told apart by
 //! `walked_subtrees_are_contiguous`.
 //!
-//! Against the page as the random order leaves it:
-//!
-//! 3. **A needle still shows the key order.** A containment or equality
-//!    needle is sent in the walk's order, unshuffled, an object's members
-//!    in their keys' byte order, so a needle with two sibling keys tells the
-//!    database which sorts first, at paths whose selectors it also sees in
-//!    the stored rows. The stored `q` is shuffled; the needle is not. The
-//!    profile states it ([`profile::GroupLeakage::pairs`], the key-order
-//!    reading test, the mutant `needle_pairs_shuffled`, caught by
-//!    `transcripts`), and so does the page, under containment. Shuffling a
-//!    needle on the client, which the server reads as a set, would close
-//!    it; that is left to a decision of its own.
+//! The random order left one place the key order still showed: a
+//! containment or equality needle was sent in the walk's order, an object's
+//! members in their keys' byte order, so a needle with two sibling keys told
+//! the database which sorts first. The client now shuffles a needle as a
+//! stored `q` is shuffled, afresh for each query, which the server reads as
+//! a set anyway; the clause says so ([`profile::SentOrder`]), and the
+//! mutant that states the walk's order before it
+//! (`needles_sent_in_walk_order`) is told apart by
+//! `repeated_needles_sent_alike`.
 //!
 //! # When the format changes
 //!
@@ -304,21 +308,17 @@
 //!
 //! Every simulation and every mutant draws from one seeded generator, and
 //! the random columns come from a seeded proptest runner. The real side
-//! draws data keys, nonces and every document's stored order from the
+//! draws data keys, nonces, every document's stored order and every
+//! needle's sent order from the
 //! operating system. The keys and nonces reach a feature only through
 //! equality patterns, which change only on a collision of random bytes,
 //! below `n² / 2^64` for `n` eight-byte tags in a column (about `10^-13`
-//! here). The stored order reaches none but through the canonical order,
-//! which does not depend on it (ties it leaves are between entries no
-//! feature tells apart), and through `walked_subtrees_are_contiguous`,
-//! whose answer is fixed but with probability below `2^-40`. The fake key
+//! here). The stored and sent orders reach none but through the canonical
+//! order, which does not depend on them (ties it leaves are between names
+//! and entries no feature tells apart), and through
+//! `walked_subtrees_are_contiguous` and `repeated_needles_sent_alike`, whose
+//! answers are fixed but with probability below `2^-40`. The fake key
 //! source's index key is fixed, so the real member ranks are too.
-//!
-//! The profile sorts members itself rather than trusting `serde_json`'s
-//! iteration order, so a build that unified serde_json's `preserve_order`
-//! feature on (which would send a needle in the application's field order)
-//! fails the positive control on the handcrafted needle whose keys are
-//! written out of order.
 
 pub mod calibration;
 pub mod canonical;

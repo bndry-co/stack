@@ -109,6 +109,14 @@ impl JsonProjection {
 /// stored root array holding it. Serializes to the `query_json_tree`
 /// operand: `{"sv": [{"s": "…", "vs": "…"}, …], "el": [{"sv": …, "el": …},
 /// …], "alt": {…}}`.
+///
+/// The projection is sent in a random order of its own, drawn for each
+/// query as a stored `q`'s order is drawn for each document: every pair
+/// list and element-group list shuffled, recursively. `jsonb @>` is set
+/// containment over arrays, so the order changes no answer, and a needle
+/// shows no more of the order of its keys than a stored row does. Two
+/// queries for one value therefore serialize differently and compare equal
+/// (equality is as sets).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonQuery {
     group: JsonProjection,
@@ -122,7 +130,7 @@ impl JsonQuery {
     /// `("$", 1)` asks for the scalar `1`, not for an array holding it.
     pub(crate) fn at_path(terms: &JsonTerms) -> Self {
         Self {
-            group: group_of(terms.nodes(), None),
+            group: needle(terms),
             alt: None,
         }
     }
@@ -133,7 +141,7 @@ impl JsonQuery {
             el: Vec::new(),
         });
         Self {
-            group: group_of(terms.nodes(), None),
+            group: needle(terms),
             alt,
         }
     }
@@ -150,6 +158,19 @@ impl JsonQuery {
     pub fn matches(&self, stored: &JsonProjection) -> bool {
         stored.contains(&self.group) || self.alt.as_ref().is_some_and(|alt| stored.contains(alt))
     }
+}
+
+/// The projection a needle sends: the terms' group, its pair lists and
+/// element groups shuffled, recursively, with the generator the terms carry
+/// ([`JsonProjection::shuffle`]), as a stored `q` is shuffled. `jsonb @>`
+/// is set containment over arrays, so the order changes no answer; in the
+/// walk's order a needle would show which of two sibling keys sorts first.
+fn needle(terms: &JsonTerms) -> JsonProjection {
+    let mut group = group_of(terms.nodes(), None);
+    if let Some(mut order) = terms.needle_order() {
+        group.shuffle(&mut order);
+    }
+    group
 }
 
 /// The group of the nodes that sit directly in `parent` (`None` is the top

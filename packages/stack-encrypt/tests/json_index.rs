@@ -1744,6 +1744,41 @@ mod given_the_design_corpus {
         .collect()
     }
 
+    /// A needle is sent in a random order of its own, drawn for each query:
+    /// two needles for one value, under the operating system's entropy,
+    /// carry their pairs in different orders and are equal as sets. Twelve
+    /// top-level pairs, so the two orders agree with probability 1 / 12!.
+    #[tokio::test]
+    async fn sends_each_needle_in_an_order_of_its_own() {
+        let Scenario { cipher, plan } = scenario().await;
+        let value: Value = (0..11)
+            .map(|i| (format!("k{i}"), json!(i)))
+            .collect::<Map<String, Value>>()
+            .into();
+        let one: JsonQuery = cipher.query(op::Contains, &value).on(&plan).await.unwrap();
+        let two: JsonQuery = cipher.query(op::Contains, &value).on(&plan).await.unwrap();
+        let (a, b) = (
+            serde_json::to_value(&one).unwrap(),
+            serde_json::to_value(&two).unwrap(),
+        );
+        assert_eq!(
+            a["sv"].as_array().unwrap().len(),
+            12,
+            "the root and eleven members"
+        );
+        assert_ne!(a, b, "two orders");
+        assert_eq!(as_set(&a), as_set(&b), "one set");
+        assert_eq!(one, two, "equal as sets");
+        let at: JsonQuery = cipher
+            .query(op::AtPath(op::Eq), &("$.k3", 3))
+            .on(&plan)
+            .await
+            .unwrap();
+        let doc = cipher.encrypt(&value).using(&plan).await.unwrap();
+        assert!(one.matches(doc.projection()) && two.matches(doc.projection()));
+        assert!(at.matches(doc.projection()), "an equality needle too");
+    }
+
     /// Every pair of the corpus, both ways round: `@>` over the projections
     /// is `jsonb @>`, and `<@` is `jsonb <@` but for a stored root scalar in
     /// a needle root array.
@@ -2183,6 +2218,26 @@ mod given_generated_documents {
                 query.matches(doc.projection()),
                 pg_contains(&case.stored, &needle, true),
                 "{} @> {}",
+                &case.stored,
+                &needle
+            );
+            // Every query sends its needle in a random order of its own: a
+            // second derivation is the same set of pairs and groups, and
+            // matches exactly what the first did.
+            let again: JsonQuery = runtime
+                .block_on(
+                    scenario
+                        .cipher
+                        .query(op::Contains, &needle)
+                        .on(&scenario.plan)
+                        .into_future(),
+                )
+                .unwrap();
+            prop_assert_eq!(&again, &query, "one needle, as sets");
+            prop_assert_eq!(
+                again.matches(doc.projection()),
+                query.matches(doc.projection()),
+                "{} @> {}, sent in another order",
                 &case.stored,
                 &needle
             );

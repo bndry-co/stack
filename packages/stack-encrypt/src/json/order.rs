@@ -65,15 +65,22 @@ impl OrderSource {
                 let mut stream = stream
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let seed = Protected::generate(|| {
-                    let mut seed = [0u8; 32];
-                    stream.fill_bytes(&mut seed);
-                    seed
-                });
-                Ok(SafeRand::from_controlled_seed(seed))
+                Ok(SafeRand::from_controlled_seed(seed(&mut stream)))
             }
         }
     }
+}
+
+/// Thirty-two bytes drawn from `rng`, as the seed of another generator:
+/// one document's order from a controlled stream, or the order a query's
+/// needle is sent in, which its terms carry until the needle is built
+/// ([`JsonTerms`](super::JsonTerms)).
+pub(crate) fn seed(rng: &mut SafeRand) -> Protected<[u8; 32]> {
+    Protected::generate(|| {
+        let mut seed = [0u8; 32];
+        rng.fill_bytes(&mut seed);
+        seed
+    })
 }
 
 /// A uniform shuffle of `items` (Fisher–Yates), each swap index drawn with

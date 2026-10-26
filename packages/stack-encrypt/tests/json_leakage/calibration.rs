@@ -307,32 +307,45 @@ mod given_integers_ordered_exactly {
 mod given_the_jsonb_reading_of_the_key_order {
     use super::*;
 
-    /// The stored order no longer shows the key order, but a containment
-    /// needle is sent in the walk's order, an object's members sorted by
-    /// their keys' UTF-8 bytes. Read as `jsonb`'s sort (shorter keys first),
-    /// the profile is told from the real scheme by a needle whose keys sort
-    /// differently the two ways (`{"a": …, "a b": …, "é": …, "0": …}`): a
-    /// needle with sibling keys tells the database their byte order, and a
-    /// reader inferring key names from it needs to know which sort it is.
+    /// The page once had to say which sort "the order of their key names"
+    /// meant, because the stored order showed it, and then a needle did. Now
+    /// neither does: the entries are stored in a random order, a needle is
+    /// sent in one, and a member's ordinal is a keyed rank. So the two
+    /// readings, the keys' UTF-8 bytes and `jsonb`'s (shorter keys first),
+    /// give different profiles on a column whose keys sort differently the
+    /// two ways (a row and a needle `{"a": …, "a b": …, "é": …, "0": …}`),
+    /// and no distinguisher tells either from the real scheme: the key order
+    /// is nothing the database learns, and the page need not say which.
     #[test]
-    fn a_needle_tells_it_apart() {
+    fn nothing_tells_it_apart() {
         let runtime = runtime();
         let cipher = runtime.block_on(stack_cipher());
-        let clauses = Clauses {
+        let jsonb = Clauses {
             key_order: KeyOrder::JsonbLengthFirst,
             ..Clauses::default()
         };
-        let world = &handcrafted()[0];
-        let real = real_world(&runtime, &cipher, world);
-        let leakage = leak(&world.column, clauses, &world.docs, &world.queries);
-        let fired: Vec<&str> = separating(&features(&real), &leakage, &mut rng())
-            .into_iter()
-            .map(|(n, _, _)| n)
-            .collect();
-        assert!(
-            fired.contains(&"transcripts"),
-            "the order of a needle's pairs tells byte order from jsonb order: {fired:?}"
-        );
+        for world in &handcrafted()[..2] {
+            let real = real_world(&runtime, &cipher, world);
+            let bytes = leak(
+                &world.column,
+                Clauses::default(),
+                &world.docs,
+                &world.queries,
+            );
+            let leakage = leak(&world.column, jsonb, &world.docs, &world.queries);
+            assert_ne!(
+                leakage, bytes,
+                "{}: the two readings differ in the profile",
+                world.name
+            );
+            let separated = separating(&features(&real), &leakage, &mut rng());
+            assert!(
+                separated.is_empty(),
+                "{}: the key order shows after all:\n{}",
+                world.name,
+                report(&separated)
+            );
+        }
     }
 }
 

@@ -217,6 +217,12 @@ pub struct JsonTerms {
     /// scalar has as an element of a root array, so a containment needle
     /// can match a stored `["a"]` as `jsonb @>` does.
     alt: Option<(Tag, Tag)>,
+    /// The seed of the order a needle built from these terms is sent in,
+    /// drawn from the cipher's [`OrderSource`](super::order::OrderSource)
+    /// when the terms are derived for a query ([`terms_pending`]); `None`
+    /// for the terms a document is sealed from, which no needle is built
+    /// from. A seed decides a permutation of public pairs and nothing else.
+    needle_order: Option<Protected<[u8; 32]>>,
 }
 
 /// The key names and the tokens are what the terms must not leak, so the
@@ -256,6 +262,14 @@ impl JsonTerms {
 
     pub(crate) fn alt(&self) -> Option<(Tag, Tag)> {
         self.alt
+    }
+
+    /// The generator a needle built from these terms is shuffled with, if
+    /// the terms were derived for a query.
+    pub(crate) fn needle_order(&self) -> Option<SafeRand> {
+        self.needle_order
+            .clone()
+            .map(SafeRand::from_controlled_seed)
     }
 
     /// The last node of the walk: in a needle built from one path, the
@@ -587,6 +601,7 @@ fn walk(
         terms: JsonTerms {
             nodes: walker.nodes,
             alt,
+            needle_order: None,
         },
         plain: walker.plain,
     })
@@ -749,8 +764,17 @@ pub(crate) fn terms_pending<'a, K>(
 ) -> Pending<'a, JsonTerms, K> {
     let context = context.into_prf_context().into_owned();
     let terms = walk(value, options, cipher.prf(), &context)
-        .map(|w| w.terms)
-        .map_err(Error::from);
+        .map_err(Error::from)
+        .and_then(|w| {
+            // A needle is sent in a random order of its own, drawn as a
+            // document's stored order is ([`order`]): fresh entropy per
+            // query outside tests.
+            let mut order = cipher.cipher().json_order().document()?;
+            Ok(JsonTerms {
+                needle_order: Some(order::seed(&mut order)),
+                ..w.terms
+            })
+        });
     Pending::ready(cipher, terms)
 }
 
@@ -2595,6 +2619,32 @@ mod tests {
                     let key = subtree_key_for(Selectors::for_tests(), &options, &n.positional, 4).unwrap();
                     prop_assert_eq!(key.token_bytes(), vec![n.token], "{}", n.positional);
                 }
+            }
+        }
+
+        proptest! {
+            /// A needle sent in a shuffled order matches exactly the stored
+            /// projections the needle in the walk's order matched, stored
+            /// in either order: `jsonb @>` is set containment over arrays.
+            #[test]
+            fn a_shuffled_needle_matches_what_the_unshuffled_one_did(
+                stored in arbitrary_json(),
+                needle in arbitrary_json(),
+                seed in any::<[u8; 32]>(),
+            ) {
+                let options = JsonOptions::default();
+                let project = |value: &Value| super::super::super::query::group_of(terms(value, &options).nodes(), None);
+                let mut rng = SafeRand::from_controlled_seed(Protected::new(seed));
+                let walked = project(&needle);
+                let mut shuffled = walked.clone();
+                shuffled.shuffle(&mut rng);
+                let mut stored_shuffled = project(&stored);
+                stored_shuffled.shuffle(&mut rng);
+                prop_assert_eq!(&shuffled, &walked, "one needle, as sets");
+                for target in [project(&stored), stored_shuffled] {
+                    prop_assert_eq!(target.contains(&shuffled), target.contains(&walked));
+                }
+                prop_assert!(project(&needle).contains(&shuffled), "a needle contains itself in any order");
             }
         }
 

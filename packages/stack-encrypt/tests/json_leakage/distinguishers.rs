@@ -11,15 +11,18 @@
 //! say), which changes a feature with probability below `n² / 2^64` for `n`
 //! tags in a world, about `10^-13` at the harness's sizes.
 //!
-//! The entries are stored in a random order, so each distinguisher reads a
-//! world in its canonical order ([`super::canonical`]): a row's root at
-//! position `0` and its other entries, and every list of `q`, sorted by what
-//! an observer sees of them without the stored order. A *position* below is
-//! a place in that order, and a selector's name is its first appearance in
-//! it. One feature reads the stored order itself, through the slot each
-//! entry came from ([`walked_subtrees_are_contiguous`]), and like
-//! [`member_order_shared_across_parents`] it carries its probability bound
-//! in its doc comment.
+//! The entries are stored in a random order, and a needle is sent in one, so
+//! each distinguisher reads a world in its canonical order
+//! ([`super::canonical`]): a row's root at position `0` and its other
+//! entries, every list of `q` and every list of a needle, sorted by what an
+//! observer sees of them without the stored or sent order. A *position*
+//! below is a place in that order, and a selector's name is its first
+//! appearance in it. Two features read the orders themselves: the stored
+//! one, through the slot each entry came from
+//! ([`walked_subtrees_are_contiguous`]), and the sent one, through the
+//! queries as sent ([`repeated_needles_sent_alike`]). Like
+//! [`member_order_shared_across_parents`] they carry their probability
+//! bounds in their doc comments.
 //!
 //! What is deliberately not here, and why, is in the module docs
 //! (`mod.rs`, "Out of reach").
@@ -82,6 +85,7 @@ registry!(
     token_derivability,
     subtree_results,
     transcripts,
+    repeated_needles_sent_alike,
     extraction_matches,
     containment_matches,
     ordering_term_order,
@@ -1217,6 +1221,62 @@ pub fn transcripts(world: &ObservedWorld) -> Vec<NamedQuery> {
             }
         })
         .collect()
+}
+
+/// Whether a needle sent more than once is sent in one order every time:
+/// what a needle sent in the walk's order does, and what one shuffled
+/// afresh for each query does not. This reads the needles as sent
+/// ([`ObservedWorld::sent`]); a needle's identity is its content, read in
+/// the canonical order. Reported only where chance cannot answer it.
+///
+/// The bound: a needle's pair list of `m` pairs, `c_1, c_2, …` of them
+/// alike, is sent in one of `m! / Π c_i!` arrangements, uniformly and
+/// independently for each query, and so is its list of `k` element groups,
+/// `d_1, d_2, …` of them alike, in one of `k! / Π d_j!`. Two sends of one
+/// needle agree everywhere only if those two lists agree, which they do with
+/// probability `Π c_i! / m! · Π d_j! / k!` (deeper lists only make it
+/// smaller), and `t` sends agree with the first with that to the power
+/// `t − 1`. The feature is `None` unless the product over the repeated
+/// needles is below `2^-40`.
+pub fn repeated_needles_sent_alike(world: &ObservedWorld) -> Option<bool> {
+    fn needle(query: &ObservedQuery) -> Option<(&ObservedGroup, Option<&ObservedGroup>)> {
+        match query {
+            ObservedQuery::Contains { needle, alt } => Some((needle, alt.as_ref())),
+            ObservedQuery::Equals { needle } => Some((needle, None)),
+            _ => None,
+        }
+    }
+    fn ln_arrangements<T: Ord>(items: &[T]) -> f64 {
+        let ln_factorial = |n: usize| -> f64 { (2..=n).map(|k| (k as f64).ln()).sum() };
+        let mut sorted: Vec<&T> = items.iter().collect();
+        sorted.sort_unstable();
+        let alike: f64 = sorted
+            .chunk_by(|a, b| a == b)
+            .map(|run| ln_factorial(run.len()))
+            .sum();
+        ln_factorial(items.len()) - alike
+    }
+    let mut repeats: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, query) in world.queries.iter().enumerate() {
+        if let Some(content) = needle(query) {
+            repeats.entry(format!("{content:?}")).or_default().push(i);
+        }
+    }
+    let mut chance = 0.0f64;
+    let mut alike = true;
+    for sent in repeats.values().filter(|sent| sent.len() > 1) {
+        let (canonical, _) = needle(&world.queries[sent[0]]).expect("a needle");
+        let elements: Vec<String> = canonical
+            .elements
+            .iter()
+            .map(|g| format!("{g:?}"))
+            .collect();
+        let once = ln_arrangements(&canonical.pairs) + ln_arrangements(&elements);
+        chance -= once * (sent.len() - 1) as f64;
+        let first = needle(&world.sent[sent[0]]);
+        alike &= sent.iter().all(|&i| needle(&world.sent[i]) == first);
+    }
+    (chance < -40.0 * 2f64.ln()).then_some(alike)
 }
 
 /// For every extraction, the positions in each row whose selector it sent:

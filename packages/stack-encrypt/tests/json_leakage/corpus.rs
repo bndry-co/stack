@@ -74,7 +74,7 @@ fn shape_queries(sealed_root: bool) -> Vec<Query> {
         Query::Contains(json!({"hello": "world-1"})),
         Query::Contains(json!([{"x": 1}])),
         // Sibling keys whose byte order is not their order as written, nor
-        // jsonb's: a needle is sent in the walk's order, so it shows which.
+        // jsonb's: the needle is shuffled, so it shows neither.
         Query::Contains(json!({"a": "b", "a b": 1, "é": [], "0": {}})),
         Query::Equals("$.hello".into(), json!("world-1")),
         Query::Equals("$.nested.list[*].x".into(), json!(2)),
@@ -173,9 +173,11 @@ fn numbers() -> World {
 /// A column with three wide top-level objects, each read whole, so that
 /// whether a read's subtree sits at consecutive stored slots is decidable
 /// rather than a coin toss (`distinguishers::walked_subtrees_are_contiguous`),
-/// and an array of twelve like objects, read whole, so that whether their
+/// an array of twelve like objects, read whole, so that whether their
 /// members' ordinals share one order is
-/// (`distinguishers::member_order_shared_across_parents`).
+/// (`distinguishers::member_order_shared_across_parents`), and a wide needle
+/// sent twice, so that whether a needle is sent in one order every time is
+/// (`distinguishers::repeated_needles_sent_alike`).
 fn wide() -> World {
     let object = |prefix: &str, n: usize| {
         Value::Object(
@@ -205,6 +207,10 @@ fn wide() -> World {
             Query::subtree("$.w3"),
             Query::subtree_with("$.arr[*].k", 1, 64),
             Query::subtree("$.objs"),
+            // One needle of nineteen pairs, sent twice: shuffled afresh for
+            // each query, the two sends differ but by a chance of 1 / 19!.
+            Query::Contains(json!({"w1": object("a", 8), "w3": object("c", 8)})),
+            Query::Contains(json!({"w1": object("a", 8), "w3": object("c", 8)})),
         ],
     }
 }

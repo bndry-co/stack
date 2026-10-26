@@ -11,7 +11,9 @@
 //! code does not have, to show the distinguishers would see it: the
 //! pre-#1363 read's top-level token (`ancestor_token_sent`), the pre-#1363
 //! member rule (`member_tokens_carry_ordinal`), the depth-first stored
-//! order before the random one (`stored_order_depth_first`).
+//! order before the random one (`stored_order_depth_first`), the walk's
+//! order a needle was sent in before it was shuffled
+//! (`needles_sent_in_walk_order`).
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -20,7 +22,7 @@ use proptest::test_runner::TestRng;
 
 use super::profile::{
     EntryLeakage, GroupLeakage, KindOrder, Leakage, OrderKind, Placement, QueryLeakage, ReadLeak,
-    RowLeakage, Rule, Step, StoredOrder, TokenName, TokenStep, AEAD_OVERHEAD,
+    RowLeakage, Rule, SentOrder, Step, StoredOrder, TokenName, TokenStep, AEAD_OVERHEAD,
 };
 
 /// One mutant: its name, the clause it drops (a field or sentence of the
@@ -775,16 +777,12 @@ fn needle_flat(l: &mut Leakage, _: &mut TestRng) {
     }
 }
 
-/// A needle's pairs sent in a random order, as a stored `q`'s are stored:
-/// what the profile would say if a needle's order revealed nothing. The
-/// client sends a needle in the walk's order, an object's members in key
-/// byte order, so a needle with two sibling keys tells their byte order.
-fn needle_pairs_shuffled(l: &mut Leakage, rng: &mut TestRng) {
-    for query in &mut l.queries {
-        if let QueryLeakage::Contains { needle, .. } | QueryLeakage::Equals { needle } = query {
-            groups_mut(needle, &mut |g| shuffle(&mut g.pairs, rng));
-        }
-    }
+/// Every needle sent in the walk's order, an object's members in key byte
+/// order: how the client sent a needle before it shuffled it, which told
+/// the database which of two sibling keys sorts first, and sent one needle
+/// in one order every time.
+fn needles_sent_in_walk_order(l: &mut Leakage, _: &mut TestRng) {
+    l.sent_order = SentOrder::Walk;
 }
 
 fn needle_alt_dropped(l: &mut Leakage, _: &mut TestRng) {
@@ -876,7 +874,7 @@ mutants!(
     token_list_padded => "QueryLeakage::Subtree::reads (the tokens' number, which gives N away)",
     budget_not_sent => "QueryLeakage::Subtree::budget (the budget, in the clear)",
     needle_flat => "QueryLeakage::Contains::needle (\"its element grouping\")",
-    needle_pairs_shuffled => "GroupLeakage::pairs of a needle (sent in the walk's order, members in key byte order)",
+    needles_sent_in_walk_order => "Leakage::sent_order (\"A needle is sent in a random order too, drawn afresh for each query\"): the walk's order before",
     needle_alt_dropped => "QueryLeakage::Contains::alt",
     bound_rank_random => "QueryLeakage::Order::bound (\"the bound's place in the order of the stored values\")",
 );
