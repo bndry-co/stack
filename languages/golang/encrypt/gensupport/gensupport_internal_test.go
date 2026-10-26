@@ -181,6 +181,15 @@ func TestConvertStaysWithinAFamily(t *testing.T) {
 	if err := Opaque(Values{OpaqueField: future}, &back); !errors.Is(err, encrypt.ErrEncoding) || !errors.Is(err, vcffi.ErrUnsupportedVersion) {
 		t.Fatalf("Opaque of a version %d blob: %v", vcffi.StorageVersion+1, err)
 	}
+	// A value that is neither a storage blob nor a JSON object (a JSON
+	// array, a header cut short of its "S", nothing at all) is refused as
+	// such, by neither reader.
+	for _, neither := range [][]byte{[]byte("[]"), []byte("VC"), []byte("VC\x01"), {}, []byte("null")} {
+		err := Opaque(Values{OpaqueField: neither}, &back)
+		if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "neither a storage blob nor a JSON document") {
+			t.Fatalf("Opaque of %q: %v", neither, err)
+		}
+	}
 	if err := Opaque(Values{OpaqueField: "not bytes"}, &back); err == nil {
 		t.Fatal("Opaque accepted a string")
 	}
@@ -337,6 +346,28 @@ func TestDecryptErrorsHoldNoPlaintext(t *testing.T) {
 	var nan struct{ F float64 }
 	if err := Opaque(Values{OpaqueField: blob}, &nan); err != nil || !math.IsNaN(nan.F) {
 		t.Fatalf("NaN came back as %v, %v", nan.F, err)
+	}
+}
+
+// A pointer to a type with MarshalText and UnmarshalText (*time.Time) is
+// written as its element's text, nil as null, and read back into a new
+// element: what stashgen accepts such a field on the strength of.
+func TestAnOpaqueStructCarriesAPointerToATextType(t *testing.T) {
+	at := time.Date(2026, 10, 26, 5, 3, 16, 0, time.UTC)
+	type stamped struct {
+		At  *time.Time   `vc:"at,default"`
+		Ats []*time.Time `vc:"ats,default"`
+	}
+	blob, err := opaqueBytes(stamped{At: &at, Ats: []*time.Time{&at, nil}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got stamped
+	if err := Opaque(Values{OpaqueField: blob}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.At == nil || !got.At.Equal(at) || len(got.Ats) != 2 || got.Ats[0] == nil || !got.Ats[0].Equal(at) || got.Ats[1] != nil {
+		t.Fatalf("*time.Time came back as %+v", got)
 	}
 }
 

@@ -108,6 +108,7 @@ func TestRefusals(t *testing.T) {
 		{"an opaque struct with a decimal", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAmount encrypt.Decimal"), stashgen.Request{Type: "User"}, "Amount", "has no storage form"},
 		{"an opaque struct with a date in a slice", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tDays []encrypt.Date"), stashgen.Request{Type: "User"}, "Days", "has no storage form"},
 		{"an opaque struct with a type that writes text it cannot read", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tL level") + "\ntype level int\n\nfunc (l level) MarshalText() ([]byte, error) { return nil, nil }\n", stashgen.Request{Type: "User"}, "L", "MarshalText but no UnmarshalText"},
+		{"an opaque struct with a pointer to a type that writes text it cannot read", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tL *level") + "\ntype level int\n\nfunc (l level) MarshalText() ([]byte, error) { return nil, nil }\n", stashgen.Request{Type: "User"}, "L", "MarshalText but no UnmarshalText"},
 		{"an opaque struct with a type that reads text it does not write", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tL level") + "\ntype level int\n\nfunc (l *level) UnmarshalText([]byte) error { return nil }\n", stashgen.Request{Type: "User"}, "L", "UnmarshalText but no MarshalText"},
 		{"an opaque struct with a JSON-only type keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tE ev") + "\ntype k struct{ A int }\n\ntype ev struct{ M map[k]int }\n\nfunc (e ev) MarshalJSON() ([]byte, error) { return nil, nil }\n\nfunc (e *ev) UnmarshalJSON([]byte) error { return nil }\n", stashgen.Request{Type: "User"}, "E", "map key that is not an integer, a string, bytes or text"},
 		{"an opaque struct with a map keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tM map[hidden]int") + "\ntype hidden struct{ A int }\n", stashgen.Request{Type: "User"}, "M", "map key that is not a string or an integer"},
@@ -404,6 +405,18 @@ func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
 // opaque struct, as they did as JSON.
 func TestOpaqueStructAcceptsEmptyStructs(t *testing.T) {
 	src := user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tSeen map[string]struct{}\n\tMark marker") + "\ntype marker struct{}\n"
+	if _, err := generate(t, src, stashgen.Request{Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A pointer to a type with MarshalText and UnmarshalText (*time.Time, and
+// a slice, a map value or a pointer to a pointer of one) is written as its
+// element's text and read back into a new element. The pair is looked up on
+// the element: the method set of **time.Time holds neither method, and
+// asking it there refused the field as writing text it could not read.
+func TestOpaqueStructAcceptsPointersToTextTypes(t *testing.T) {
+	src := user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAt *time.Time\n\tAts []*time.Time\n\tByName map[string]*time.Time\n\tDeep **time.Time")
 	if _, err := generate(t, src, stashgen.Request{Type: "User"}); err != nil {
 		t.Fatal(err)
 	}
