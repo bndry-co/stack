@@ -683,7 +683,9 @@ pub struct MatchOptions {
     /// long as an n-gram is found by its n-grams as before. A word is a run
     /// of characters between the separators [`Tokenizer::Standard`] splits
     /// on (space, comma, semicolon, colon, exclamation mark), so "Ng, Mike"
-    /// holds the word `ng`; length is counted in characters.
+    /// holds the word `ng`, and "Ng." or "Ng-Smith" does not (a full stop, a
+    /// hyphen, a tab or a newline is part of a word); length is counted in
+    /// characters of the case-folded text.
     ///
     /// The word token is PRF'd under a domain of its own, so it never
     /// derives the bits of an n-gram of the same characters, and folds into
@@ -1269,10 +1271,13 @@ fn match_term<O>(
         tokenizer,
         short_words,
     } = tokenize::tokens(text, &options)?;
+    // Held wiped-on-drop until the PRF takes them, so a failure deriving
+    // the tokenizer's tokens does not free the words unwiped.
+    let mut short_words = Zeroizing::new(short_words);
     let mut positions = bloom_positions(prf, tokenizer, MATCH_DOMAIN, &context, options.k, mask)?;
     positions.extend(bloom_positions(
         prf,
-        short_words,
+        std::mem::take(&mut *short_words),
         MATCH_WORD_DOMAIN,
         &context,
         options.k,

@@ -140,10 +140,14 @@ mod given_short_words {
             ("Long", false),
         ] {
             let stored = store(&cipher, &plan, text).await;
+            // The filter alone: a row without the word could hold its bits
+            // by chance, but under the test key and these rows none does,
+            // so a stored side that set the word's bits for a longer word
+            // fails here.
             assert_eq!(
-                stored.matches(&ng) && ng.verify(text),
+                stored.matches(&ng),
                 found,
-                "the query \"ng\" on {text:?}"
+                "the filter of the query \"ng\" on {text:?}"
             );
             assert_eq!(
                 ng.verify(text),

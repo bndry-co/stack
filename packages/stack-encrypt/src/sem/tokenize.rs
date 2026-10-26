@@ -76,8 +76,9 @@ pub(crate) struct Tokens {
     /// [`Tokenizer::Standard`] splits on (space, comma, semicolon, colon and
     /// exclamation mark), so a short word is exactly a token the standard
     /// tokenizer would cut, of that length: "Ng, Mike" holds the word `ng`.
-    /// Length is counted in characters of the NFC text, so `李明` is a word
-    /// of two.
+    /// Length is counted in characters of the NFC text after case folding
+    /// (the text the n-grams are cut from), so `李明` is a word of two, and
+    /// `İz`, which folds to three characters, is not.
     pub(crate) short_words: Vec<String>,
 }
 
@@ -177,20 +178,24 @@ pub(crate) fn tokenize(text: &str, options: &MatchOptions) -> Tokens {
 /// Every word of `text` at least [`SHORTEST_WORD`] characters long and
 /// shorter than `length`, whole, in order (see [`Tokens::short_words`]).
 fn short_words(text: &str, length: usize) -> Vec<String> {
-    text.split(STANDARD_SEPARATORS)
+    words(text)
         .filter(|word| (SHORTEST_WORD..length).contains(&word.chars().count()))
         .map(str::to_string)
         .collect()
 }
 
+/// The words of `text`: the runs between [`STANDARD_SEPARATORS`], empty runs
+/// dropped. The standard tokenizer's tokens and the short-word filter's
+/// words are both these, so a short word is exactly a standard token.
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(STANDARD_SEPARATORS)
+        .filter(|word| !word.is_empty())
+}
+
 /// The tokens `tokenizer` cuts from `text`, already case folded.
 fn tokenizer_tokens(text: &str, tokenizer: Tokenizer) -> Vec<String> {
     match tokenizer {
-        Tokenizer::Standard => text
-            .split(STANDARD_SEPARATORS)
-            .filter(|token| !token.is_empty())
-            .map(str::to_string)
-            .collect(),
+        Tokenizer::Standard => words(text).map(str::to_string).collect(),
         Tokenizer::Ngram { length } => {
             // `collect` would size the buffer from `Chars::size_hint`, about
             // a quarter of the text, and grow it, leaving plaintext in each

@@ -490,7 +490,7 @@ The EQL types the engine produces, and the Go field types each takes:
 | EQL type | Go field | Queries |
 |---|---|---|
 | `TextEq` | `string` | `=`, `<>` |
-| `TextMatch` | `string` | `@@` (substring match, 3-grams and two-letter words, case-insensitive) |
+| `TextMatch` | `string` | `@@` (3-grams and whole two-letter words, case-insensitive; see below) |
 | `TextOrd`, `TextOrdOpe`, `TextOrdOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `TextSearch`, `TextSearchOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY`, `@@` |
 | `Text` | `string` | none: stored and read only |
