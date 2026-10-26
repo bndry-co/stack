@@ -16,6 +16,11 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   cached and refreshed tokens. This catches wrong credentials; it does not
   verify JWT signatures or authorize operations.
 
+- Workspace administration through `control`: CTS actors, access-key metadata
+  and memberships, and ZeroKMS keysets, clients and grants. Creation secrets
+  support one-shot typed transfer or byte export. Administrative writes are
+  not retried, redirects are refused, and malformed inventories fail closed.
+
 - **A two-letter word is searchable in `TextMatch`, `TextSearch` and
   `TextSearchOre` (#1309).** The EQL v4 match types index each two-letter
   word whole, beside the 3-grams of the text, so a two-letter surname such
