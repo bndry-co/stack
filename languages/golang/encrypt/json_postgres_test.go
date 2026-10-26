@@ -1,6 +1,7 @@
 package encrypt_test
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -306,6 +307,97 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	want("children rows", ids(`SELECT id FROM customers, eql_v4.json_tree_children(profile, $1::text) AS e ORDER BY id`, children), 1, 1, 2)
+
+	// Sorting by an ordered path, in the form EQL documents:
+	// ORDER BY eql_v4.ord_term(col -> sel). Ordering by the entry itself
+	// would sort by its ciphertext. Two more rows give each path a tie,
+	// broken by id, and Eve's visits (first 2, last 9) tell the first match
+	// `->` takes at the wildcard path from the least or greatest element.
+	more := []testusers.Customer{
+		{ID: 5, Profile: json.RawMessage(`{"name":"Eve","age":34,"visits":[{"at":2},{"at":9}]}`)},
+		{ID: 6, Profile: json.RawMessage(`{"name":"Fay","age":7,"visits":[{"at":3}]}`)},
+	}
+	extra, err := testusers.EncryptCustomer(ctx, cipher, more)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range extra {
+		exec(`INSERT INTO customers VALUES ($1, $2, $3)`, e.ID, e.Profile, e.Prefs)
+	}
+	type plain struct {
+		Age    *float64 `json:"age"`
+		Visits []struct {
+			At *float64 `json:"at"`
+		} `json:"visits"`
+	}
+	ageOf := func(p plain) *float64 { return p.Age }
+	firstAtOf := func(p plain) *float64 {
+		for _, v := range p.Visits {
+			if v.At != nil {
+				return v.At
+			}
+		}
+		return nil
+	}
+	// The ids in the order PostgreSQL's defaults put the plaintexts in: a
+	// row with no value at the path has a NULL term, which sorts as the
+	// greatest value, so last ascending and first descending; ties by id.
+	plaintextOrder := func(key func(plain) *float64, desc bool) []int64 {
+		type row struct {
+			id int64
+			v  *float64
+		}
+		var rows []row
+		for _, cust := range append(slices.Clone(jsonCustomers), more...) {
+			var p plain
+			if err := json.Unmarshal(cust.Profile, &p); err != nil {
+				t.Fatal(err)
+			}
+			rows = append(rows, row{cust.ID, key(p)})
+		}
+		slices.SortFunc(rows, func(a, b row) int {
+			var c int
+			switch {
+			case a.v == nil && b.v == nil:
+			case a.v == nil:
+				c = 1
+			case b.v == nil:
+				c = -1
+			default:
+				c = cmp.Compare(*a.v, *b.v)
+			}
+			if desc {
+				c = -c
+			}
+			if c == 0 {
+				c = cmp.Compare(a.id, b.id)
+			}
+			return c
+		})
+		out := make([]int64, len(rows))
+		for i, r := range rows {
+			out[i] = r.id
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name      string
+		selector  encrypt.JSONSelector
+		key       func(plain) *float64
+		asc, desc []int64 // what plaintextOrder gives, written out
+	}{
+		// Bob and Fay tie at 7, Alice and Eve at 34; Dan has no age.
+		{"$.age", age.Selector(), ageOf, []int64{2, 6, 1, 5, 3, 4}, []int64{4, 3, 1, 5, 2, 6}},
+		// First visits: Eve 2, Alice and Fay 3, Bob 5; Carol's visits are
+		// empty and Dan has none.
+		{"$.visits[*].at", at.Selector(), firstAtOf, []int64{5, 1, 6, 2, 3, 4}, []int64{3, 4, 2, 1, 6, 5}},
+	} {
+		asc, desc := plaintextOrder(tc.key, false), plaintextOrder(tc.key, true)
+		want("plaintext order by "+tc.name, asc, tc.asc...)
+		want("plaintext order by "+tc.name+" DESC", desc, tc.desc...)
+		want("ORDER BY "+tc.name, ids(`SELECT id FROM customers ORDER BY eql_v4.ord_term(profile -> $1::text), id`, tc.selector), asc...)
+		want("ORDER BY "+tc.name+" DESC", ids(`SELECT id FROM customers ORDER BY eql_v4.ord_term(profile -> $1::text) DESC, id`, tc.selector), desc...)
+	}
 }
 
 func slicesEqual2(a, b [][]string) bool {
