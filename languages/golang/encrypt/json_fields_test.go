@@ -122,9 +122,19 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 		t.Fatal("the accessor's selector is another path's")
 	}
 	// OpenOne refuses a wildcard read before anything is opened, whatever
-	// the rows hold; a zero selector or token binds nothing.
-	if _, err := read.OpenOne(ctx, nil); !errors.Is(err, encrypt.ErrEncoding) {
+	// the rows hold, and its error does not name the path, which can hold
+	// a customer's key. A quoted key that spells [*] names one member: the
+	// engine derives one token for it, and OpenOne takes it. A zero
+	// selector or token binds nothing.
+	if _, err := read.OpenOne(ctx, nil); !errors.Is(err, encrypt.ErrEncoding) || strings.Contains(err.Error(), "visits") {
 		t.Fatalf("OpenOne on a wildcard read: %v", err)
+	}
+	quoted, err := f.Subtree(ctx, cipher, `$["a[*]"]`, encrypt.JSONReadOptions{})
+	if err != nil || len(quoted.Tokens()) != 1 {
+		t.Fatalf("Subtree at a quoted key: %v %v", quoted.Tokens(), err)
+	}
+	if v, err := quoted.OpenOne(ctx, nil); err != nil || v.Found {
+		t.Fatalf("OpenOne at a quoted key that spells [*]: %+v %v", v, err)
 	}
 	if _, err := (encrypt.JSONSelector("")).Value(); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("a zero selector binds: %v", err)

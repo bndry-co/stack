@@ -246,7 +246,6 @@ type JSONRead[E ~[]byte] struct {
 	cipher *Cipher
 	plan   *record.Plan
 	field  string
-	path   string
 	// input is the subtree operator's input the tokens were derived from;
 	// opening sends it back as the read's request, unchanged.
 	input  vcvalue.Object
@@ -255,8 +254,8 @@ type JSONRead[E ~[]byte] struct {
 
 // NewJSONRead is a read prepared by [Cipher.QueryTerm]'s subtree operator
 // from input, its {"path", "wildcard_bound"?} object. For generated code.
-func NewJSONRead[E ~[]byte](c *Cipher, plan *record.Plan, field, path string, input vcvalue.Object, tokens []string) JSONRead[E] {
-	return JSONRead[E]{cipher: c, plan: plan, field: field, path: path, input: input, tokens: JSONTokens(tokens)}
+func NewJSONRead[E ~[]byte](c *Cipher, plan *record.Plan, field string, input vcvalue.Object, tokens []string) JSONRead[E] {
+	return JSONRead[E]{cipher: c, plan: plan, field: field, input: input, tokens: JSONTokens(tokens)}
 }
 
 // Tokens are the tokens to bind:
@@ -301,17 +300,26 @@ func (r JSONRead[E]) Open(ctx context.Context, rows [][]E) ([][]json.RawMessage,
 	return out, nil
 }
 
-// OpenOne opens one row's rows to the one value at the read's path: Found
-// with its JSON, or not Found where the row has no node there. A read that
-// reaches more than one value (a wildcard) is [ErrEncoding]; open it with
-// [JSONRead.Open].
-func (r JSONRead[E]) OpenOne(ctx context.Context, rows []E) (JSONValue, error) {
-	// A wildcard reaches a value per element: refused before anything is
-	// opened, not only for the rows that happen to hold two.
-	if strings.Contains(r.path, "[*]") {
-		return JSONValue{}, fmt.Errorf("%w: OpenOne reads one value, and %s has a wildcard; open it with Open", ErrEncoding, r.path)
+// OpenOne opens one database row's entries to the one value at the read's
+// path: Found with its JSON, or not Found where the row has no node there.
+// A read that reaches more than one value (a wildcard) is [ErrEncoding];
+// open it with [JSONRead.Open].
+func (r JSONRead[E]) OpenOne(ctx context.Context, entries []E) (JSONValue, error) {
+	// The engine derives one token for a path that names one node, and for
+	// a wildcard one per element below the bound plus a probe at it: two
+	// or more at any bound of 1 or more. The generated Subtree never sends
+	// a bound of 0 (WildcardBound 0 sends none, and the engine's default
+	// is 64). So the count is the engine's own answer to whether the path
+	// names one node: a quoted key that spells [*] is one member. A
+	// wildcard is refused here, before anything is opened, not only for
+	// the rows that happen to hold two values. A read prepared with a
+	// bound of 0 expands a wildcard to the probe alone and passes this
+	// check, but it reaches no value: a row with an element there is
+	// refused as truncated, and any other opens to none.
+	if r.cipher != nil && len(r.tokens) != 1 {
+		return JSONValue{}, fmt.Errorf("%w: OpenOne reads one value, and this read's path has a wildcard; open it with Open", ErrEncoding)
 	}
-	opened, err := r.Open(ctx, [][]E{rows})
+	opened, err := r.Open(ctx, [][]E{entries})
 	if err != nil {
 		return JSONValue{}, err
 	}
