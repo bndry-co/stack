@@ -216,8 +216,18 @@ fn read_frame<T: for<'de> Deserialize<'de>>(input: &ValueFrame) -> Result<T, Err
     })
 }
 
+/// A path from an input. A path with more steps than a document has
+/// levels names no node, and the operators that build the document
+/// holding a value there (`eq_at`, the orderings) would build one as deep
+/// as the path, whose recursive drop could overflow the stack: it is
+/// refused as too deep before anything is built, for every operator.
 fn path(text: &str) -> Result<JsonPath, Error> {
-    JsonPath::parse(text).map_err(|error| Error::Cipher(TermError::JsonPath(error).into()))
+    let path =
+        JsonPath::parse(text).map_err(|error| Error::Cipher(TermError::JsonPath(error).into()))?;
+    if path.segments().len() > crate::json::MAX_DEPTH {
+        return Err(term(TermError::JsonTooDeep));
+    }
+    Ok(path)
 }
 
 /// A path whose operand is a selector, which reads a position as the
@@ -233,6 +243,8 @@ fn selector_path(text: &str) -> Result<JsonPath, Error> {
 /// A path that names one node: no wildcard.
 fn node_path(text: &str) -> Result<JsonPath, Error> {
     let path = path(text)?;
+    // `is_positional`: every array step names a position, so the path
+    // has no wildcard and names at most one node.
     if path.is_positional() {
         Ok(path)
     } else {
@@ -303,6 +315,14 @@ fn read_between(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Erro
 }
 
 /// A path the index orders, which names no position.
+///
+/// A position here is the index's own refusal,
+/// [`TermError::JsonOrderingAtPosition`], the one the typed
+/// `op::AtPath` orderings and [`JsonOptions::ordering`] give, so a
+/// binding and a Rust caller see one error for one mistake. `eq_at` and
+/// `selector` have no such refusal in the index (a typed equality reads a
+/// position as the wildcard), so the data plan's own,
+/// [`Reason::JsonPathPosition`], is what refuses one there.
 fn ordered_path(options: &JsonOptions, text: &str) -> Result<JsonPath, Error> {
     let path = path(text)?;
     if path.names_a_position() {
@@ -323,7 +343,11 @@ fn leaf(value: &Value) -> Result<(), Error> {
 }
 
 /// Check a JSON operator's input without a cipher: what [`derive`]
-/// refuses before it derives anything.
+/// refuses from the input alone (its shape, its paths and values, a path
+/// deeper than a document). The limits a subtree read's key hits as it is
+/// built, a wildcard expanding too wide or a path too deep for its
+/// tokens (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`), are
+/// [`derive`]'s, after the keyset is resolved.
 pub(super) fn check(op: OpSpec, options: &JsonOptions, input: &ValueFrame) -> Result<(), Error> {
     read_input(op, options, input).map(drop)
 }
@@ -462,7 +486,9 @@ fn read_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(Read, Vec<Vec<J
 }
 
 /// Check a read's request and rows without a cipher: what [`open`] refuses
-/// before it derives anything.
+/// from the request and rows alone. The limits the read's key hits as it
+/// is built (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`) are
+/// [`open`]'s, after the keyset is resolved.
 pub(super) fn check_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(), Error> {
     read_open(request, rows).map(drop)
 }

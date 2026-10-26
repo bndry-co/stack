@@ -241,7 +241,13 @@ impl OpSpec {
     }
 
     /// How far the server's answer to this operator can be trusted: what
-    /// the typed path says by the trait the term implements.
+    /// the typed path says by the trait the term implements. For the JSON
+    /// reads and tokens (`selector`, `subtree`, `children`, `child_count`),
+    /// which are not predicates, `exact` says only that the server finds
+    /// the nodes the operand names, not that it returns them all (a read
+    /// opens what the rows hold; see [`json_open`]). Equality at a wildcard
+    /// path matches when any element does, and an ordering compared through
+    /// `col -> sel` at one sees an unspecified element of each row.
     pub fn fidelity(self) -> Fidelity {
         match self {
             OpSpec::Matches => Fidelity::Probabilistic,
@@ -1005,9 +1011,11 @@ pub fn check_json_open(
 /// # Errors
 ///
 /// As [`query_term`] refuses a field that does not answer the read's
-/// operator, and [`Error::Source`] naming the field for a request or rows
-/// that do not parse ([`Reason::JsonInput`]). A row that is not one the
-/// read asked for fails the pending
+/// operator, and a plan whose context comes from a field of each record
+/// ([`Reason::QueryContextField`]): a read names no record, so it has no
+/// context to derive under. [`Error::Source`] names the field for a
+/// request or rows that do not parse ([`Reason::JsonInput`]). A row that
+/// is not one the read asked for fails the pending
 /// ([`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)), as does a
 /// wildcard read of an array longer than its bound
 /// ([`Error::JsonWildcardTruncated`](crate::Error::JsonWildcardTruncated)).

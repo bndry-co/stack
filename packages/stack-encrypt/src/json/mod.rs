@@ -150,7 +150,7 @@ pub fn wipe_value(value: &mut serde_json::Value) {
     plain::wipe(value);
 }
 
-pub(crate) use derive::{seal_pending, terms_pending};
+pub(crate) use derive::{seal_pending, terms_pending, MAX_DEPTH};
 pub(crate) use plain::PlainJson;
 pub(crate) use shuffle::Randomness;
 

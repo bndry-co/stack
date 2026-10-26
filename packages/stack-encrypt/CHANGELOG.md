@@ -82,7 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prepared it: the engine derives the selector or the read key again from
   the request, the field's options and the keyset, checks every row with
   the index's own checks, and opens each database row's group on its own,
-  in one key request. `check_json_open` is its cipher-free check.
+  in one key request. `check_json_open` is its cipher-free check. A plan
+  whose context comes from a field of each record (`context_field`) is
+  refused by both (`query_context_field`), as it is by `query_term`: a read
+  through the data plan names no record to take a context from.
 
 - **A JSON document through a data plan** (#1349). A plan field may
   declare the new `json` value kind and name a target that stores a
