@@ -624,7 +624,10 @@ row of the column, and a path's keys can be your customer's data, so
 the tokens, the selector and the path redacted. A `JSONValue` holds the
 plaintext a read opened, and prints it. Numbers order as `float64`,
 so integers past 2^53 can tie at an ordered path; containment and `EqAt`
-compare them exactly.
+compare them exactly. At a wildcard path, `->` returns an unspecified
+element of each row, so an ordering over every element is written over
+`eql_v4.json_tree_path_query(col, $sel)`, its matches (the stashgen README
+shows the SQL).
 
 ## Building
 

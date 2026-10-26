@@ -1182,29 +1182,31 @@ func (w *writer) jsonEntry(g genField) {
 	}
 	w.p("}")
 	w.nl()
-	w.b.WriteString(wrapComment(fmt.Sprintf("%sPath is one ordered path of %s: its orderings compare the first value `->` extracts there, by the leaf's ordering term. Numbers order as float64, so integers past 2^53 can tie; text orders case- and accent-folded.", g.fieldType, g.GoName), 80))
+	w.b.WriteString(wrapComment(fmt.Sprintf("%sPath is one ordered path of %s. Its orderings derive the leaf operand (eql_v4.query_json_leaf) a stored leaf's ordering term is compared with, and Selector the path's selector. At a path with no array step, compare col -> Selector() with the operand, and order by eql_v4.ord_term(col -> Selector()). At a wildcard path ([*]) col -> Selector() is an unspecified element of each row, so write the comparison over every match, EXISTS (SELECT 1 FROM eql_v4.json_tree_path_query(col, $sel) e WHERE e < $1::eql_v4.query_json_leaf), and order by the least or greatest match's term: (SELECT eql_v4.ord_term(e) FROM eql_v4.json_tree_path_query(col, $sel) e ORDER BY 1 LIMIT 1). Numbers order as float64, so integers past 2^53 can tie; text orders case- and accent-folded.", g.fieldType, g.GoName), 80))
 	w.p("type %sPath struct {", g.fieldType)
 	w.p("\tfield %s", field)
 	w.p("\tpath  string")
 	w.p("}")
-	for _, op := range []struct{ name, method string }{{"lt_at", "Lt"}, {"lte_at", "Lte"}, {"gt_at", "Gt"}, {"gte_at", "Gte"}} {
+	for _, op := range []struct{ name, method, sign, words string }{{"lt_at", "Lt", "<", "less than"}, {"lte_at", "Lte", "<=", "at most"}, {"gt_at", "Gt", ">", "greater than"}, {"gte_at", "Gte", ">=", "at least"}} {
 		if !answered[op.name] {
 			continue
 		}
 		w.nl()
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s derives the operand that finds a leaf at this path %s v: (col -> $sel) %s $1::eql_v4.query_json_leaf, or at a wildcard path the same comparison over every match (see %sPath).", op.method, op.words, op.sign, g.fieldType), 80))
 		w.p("func (p %sPath) %s(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (%s, error) {", g.fieldType, op.method, leaf)
 		w.p("\treturn gensupport.JSONQueryAt[%s](ctx, p.field, c, %q, p.path, v)", leaf, op.name)
 		w.p("}")
 	}
 	if answered["between_at"] {
 		w.nl()
+		w.b.WriteString(wrapComment(fmt.Sprintf("Between derives the two operands that find a leaf at this path from lo to hi, inclusive: (col -> $sel) >= Low AND (col -> $sel) <= High, or at a wildcard path the same over every match, with both bounds on one element (see %sPath).", g.fieldType), 80))
 		w.p("func (p %sPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi json.RawMessage) (encrypt.JSONRange[%s], error) {", g.fieldType, leaf)
 		w.p("\treturn gensupport.JSONBetweenAt[%s](ctx, p.field, c, p.path, lo, hi)", leaf)
 		w.p("}")
 	}
 	if answered["selector"] {
 		w.nl()
-		w.b.WriteString(wrapComment("Selector prepares `->` at this path: the value an ordering here compares is col -> Selector(), so bind it beside the ordering's operand, from the same path.", 80))
+		w.b.WriteString(wrapComment("Selector prepares `->` at this path: bind Selector() beside the ordering's operand, from the same path, as col -> $sel, or at a wildcard path as eql_v4.json_tree_path_query(col, $sel), whose matches are every element.", 80))
 		w.p("func (p %sPath) Selector(ctx context.Context, c *encrypt.Cipher) (encrypt.JSONSelection[%s], error) {", g.fieldType, entry)
 		w.p("\treturn gensupport.JSONSelect[%s](ctx, p.field, c, p.path)", entry)
 		w.p("}")

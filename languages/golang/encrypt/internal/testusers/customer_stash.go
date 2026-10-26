@@ -192,38 +192,62 @@ type CustomerProfileFieldAt struct {
 	VisitsAt CustomerProfileFieldPath // $.visits[*].at
 }
 
-// CustomerProfileFieldPath is one ordered path of Profile: its orderings
-// compare the first value `->` extracts there, by the leaf's ordering term.
-// Numbers order as float64, so integers past 2^53 can tie; text orders case-
-// and accent-folded.
+// CustomerProfileFieldPath is one ordered path of Profile. Its orderings derive
+// the leaf operand (eql_v4.query_json_leaf) a stored leaf's ordering term is
+// compared with, and Selector the path's selector. At a path with no array
+// step, compare col -> Selector() with the operand, and order by
+// eql_v4.ord_term(col -> Selector()). At a wildcard path ([*]) col ->
+// Selector() is an unspecified element of each row, so write the comparison
+// over every match, EXISTS (SELECT 1 FROM eql_v4.json_tree_path_query(col,
+// $sel) e WHERE e < $1::eql_v4.query_json_leaf), and order by the least or
+// greatest match's term: (SELECT eql_v4.ord_term(e) FROM
+// eql_v4.json_tree_path_query(col, $sel) e ORDER BY 1 LIMIT 1). Numbers order
+// as float64, so integers past 2^53 can tie; text orders case- and
+// accent-folded.
 type CustomerProfileFieldPath struct {
 	field gensupport.Field[json.RawMessage]
 	path  string
 }
 
+// Lt derives the operand that finds a leaf at this path less than v: (col ->
+// $sel) < $1::eql_v4.query_json_leaf, or at a wildcard path the same comparison
+// over every match (see CustomerProfileFieldPath).
 func (p CustomerProfileFieldPath) Lt(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearchLeafQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchLeafQuery](ctx, p.field, c, "lt_at", p.path, v)
 }
 
+// Lte derives the operand that finds a leaf at this path at most v: (col ->
+// $sel) <= $1::eql_v4.query_json_leaf, or at a wildcard path the same
+// comparison over every match (see CustomerProfileFieldPath).
 func (p CustomerProfileFieldPath) Lte(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearchLeafQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchLeafQuery](ctx, p.field, c, "lte_at", p.path, v)
 }
 
+// Gt derives the operand that finds a leaf at this path greater than v: (col ->
+// $sel) > $1::eql_v4.query_json_leaf, or at a wildcard path the same comparison
+// over every match (see CustomerProfileFieldPath).
 func (p CustomerProfileFieldPath) Gt(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearchLeafQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchLeafQuery](ctx, p.field, c, "gt_at", p.path, v)
 }
 
+// Gte derives the operand that finds a leaf at this path at least v: (col ->
+// $sel) >= $1::eql_v4.query_json_leaf, or at a wildcard path the same
+// comparison over every match (see CustomerProfileFieldPath).
 func (p CustomerProfileFieldPath) Gte(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearchLeafQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchLeafQuery](ctx, p.field, c, "gte_at", p.path, v)
 }
 
+// Between derives the two operands that find a leaf at this path from lo to hi,
+// inclusive: (col -> $sel) >= Low AND (col -> $sel) <= High, or at a wildcard
+// path the same over every match, with both bounds on one element (see
+// CustomerProfileFieldPath).
 func (p CustomerProfileFieldPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi json.RawMessage) (encrypt.JSONRange[eql.JSONSearchLeafQuery], error) {
 	return gensupport.JSONBetweenAt[eql.JSONSearchLeafQuery](ctx, p.field, c, p.path, lo, hi)
 }
 
-// Selector prepares `->` at this path: the value an ordering here compares is
-// col -> Selector(), so bind it beside the ordering's operand, from the same
-// path.
+// Selector prepares `->` at this path: bind Selector() beside the ordering's
+// operand, from the same path, as col -> $sel, or at a wildcard path as
+// eql_v4.json_tree_path_query(col, $sel), whose matches are every element.
 func (p CustomerProfileFieldPath) Selector(ctx context.Context, c *encrypt.Cipher) (encrypt.JSONSelection[eql.JSONEntry], error) {
 	return gensupport.JSONSelect[eql.JSONEntry](ctx, p.field, c, p.path)
 }

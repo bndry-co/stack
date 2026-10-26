@@ -137,6 +137,18 @@ The field's `Fields` entry has a method per operation:
 
 `At` has one accessor per ordered path, named for its keys (`$.visits[*].at` is `At.VisitsAt`, `$.a.1` is `At.A1`); two paths with one name, or one path given twice, stop `stashgen`.
 An ordering compares the value `->` extracts at its path, and EQL's `<` compares ordering terms alone, so take the selector from the same accessor (`At.Age.Selector`) rather than spelling the path again.
+At a wildcard path (`$.visits[*].at`), `->` returns an unspecified element of each row (the entries are stored in a random order), so write the comparison over every match and order by the least or greatest one:
+
+```sql
+-- rows with some visit after $2
+SELECT id FROM customers WHERE EXISTS (
+  SELECT 1 FROM eql_v4.json_tree_path_query(profile, $1::text) AS e WHERE e > $2::eql_v4.query_json_leaf)
+-- rows by their earliest visit
+SELECT id FROM customers ORDER BY (
+  SELECT eql_v4.ord_term(e) FROM eql_v4.json_tree_path_query(profile, $1::text) AS e ORDER BY 1 LIMIT 1)
+```
+
+with `$1` from `At.VisitsAt.Selector(ctx, c)` and `$2` from `At.VisitsAt.Gt(ctx, c, v)`; for the latest visit, order by `ORDER BY 1 DESC NULLS LAST` inside and `DESC` outside.
 `OpenOne` reads one value and refuses a read whose path has a wildcard before anything is opened; open a wildcard read with `Open`.
 The needle and the values are `json.RawMessage`: write the JSON you mean, such as `json.RawMessage(`+"`"+`{"active":true}`+"`"+`)`.
 A position in a path is refused for `EqAt` and `Selector`, whose selector reads every position as the wildcard; read a position with `Subtree`.
