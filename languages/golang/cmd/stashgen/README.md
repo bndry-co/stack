@@ -182,13 +182,15 @@ An ordering compares the value `->` extracts at its path, and EQL's `<` compares
 `OpenOne` reads one value and refuses a read whose path has a wildcard before anything is opened; open a wildcard read with `Open`.
 A needle and a value are Go values: a `json.RawMessage` of JSON text crosses as it is, and anything else is marshalled with `encoding/json`.
 `EqAt` and the orderings take a scalar: a string, a number, a bool, or `nil` for JSON `null`.
-A `[]byte`, or a type defined over one, is refused rather than written as base64.
-A Go string is refused as a `Contains` or `ContainedBy` needle, since it would be one JSON string: pass JSON text as `json.RawMessage`.
+A `[]byte`, a type defined over one, or a pointer to either, is refused rather than written as base64.
+A Go string, or a pointer to one, is refused as a `Contains` or `ContainedBy` needle, since it would be one JSON string: pass JSON text as `json.RawMessage`.
+So is a needle that writes JSON `null` (`nil`, or a nil pointer, map or slice), which only a null document contains.
 For `EqAt` and the orderings a Go string is the string value itself.
 A document contains a needle when it holds every member the needle writes, and `encoding/json` writes a struct field that has no `omitempty` even when it is zero.
 So a zero field narrows the query to the documents that hold that zero: `Profile{Name: "Alice"}` also asks for `"age": 0`.
 Give a needle struct pointer fields with `omitempty`, as `ProfileNeedle` above, or use a map.
 `Contains` refuses a needle of the field's own type when that type holds a struct, since that is the likeliest way to make the mistake; a type defined over it (`type wholeProfile Profile`) states that you mean every field.
+That includes a slice or map of structs: a `[]Visit` document refuses a `[]Visit` needle, since each `Visit` writes its zero fields; pass a `[]VisitNeedle`, a slice of a needle type with pointer fields and `omitempty`.
 `ContainedBy` takes the field's own type: there a zero field widens the query.
 Each value a selection or read opens is JSON text; `encrypt.DecodeJSON[T]` reads one into a Go type, with the same rules as a whole document.
 A position in a path is refused for `EqAt` and `Selector`, whose selector reads every position as the wildcard; read a position with `Subtree`.

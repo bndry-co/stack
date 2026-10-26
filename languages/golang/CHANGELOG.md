@@ -32,8 +32,9 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   values now: `Contains`, `ContainedBy`, `EqAt`, `Lt`, `Lte`, `Gt`, `Gte`
   and `Between` take `any`,
   a `json.RawMessage` crossing as the JSON text it is and anything else
-  marshalled (`gensupport.JSONText`); a `[]byte` or a type defined over
-  one is refused, and so is a Go string as a containment needle. A zero
+  marshalled (`gensupport.JSONText`); a `[]byte`, a type defined over
+  one, or a pointer to either is refused, and so is a containment needle
+  that is a Go string, a pointer to one, or writes JSON `null`. A zero
   struct field without `omitempty` narrows a containment query, so
   `Contains` on a field whose type holds a struct refuses a needle of that
   type (`gensupport.NewDocumentField`); the generated doc comments say how

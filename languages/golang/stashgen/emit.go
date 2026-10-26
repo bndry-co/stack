@@ -1123,9 +1123,12 @@ func (w *writer) jsonEntry(g genField) {
 	recv := "func (f " + g.fieldType + ") "
 	if answered["contains"] {
 		w.nl()
-		doc := "Contains derives the query for documents that contain needle: col @> query. needle is a json.RawMessage of JSON text, or a map, struct or slice that encoding/json writes; a Go string is refused, as one JSON string is not JSON text. Each member it writes must be in the document, so a zero-valued struct field narrows the query to documents holding that zero: give a needle struct pointer fields, or omitempty, or use a map. Each array element of the needle must sit inside one element of the document's array."
-		if g.holdsStruct {
-			doc += " A needle of the field's own type, " + g.valueExpr + ", is refused for that reason."
+		doc := "Contains derives the query for documents that contain needle: col @> query. needle is a json.RawMessage of JSON text, or a map, struct or slice that encoding/json writes; a Go string or a pointer to one is refused, as one JSON string is not JSON text, and so is a needle that writes JSON null (nil, or a nil pointer, map or slice). Each member it writes must be in the document, so a zero-valued struct field narrows the query to documents holding that zero: give a needle struct pointer fields, or omitempty, or use a map. Each array element of the needle must sit inside one element of the document's array."
+		switch {
+		case g.structElems:
+			doc += " A needle of the field's own type, " + g.valueExpr + ", is refused for that reason, and so is a pointer to it: each struct it holds writes its zero fields too. Write a needle type whose fields are pointers with omitempty, and pass a slice or map of it in place of " + g.valueExpr + " (a []VisitNeedle for a []Visit)."
+		case g.holdsStruct:
+			doc += " A needle of the field's own type, " + g.valueExpr + ", is refused for that reason, and so is a pointer to it: write a needle type whose fields are pointers with omitempty, or use a map."
 		}
 		w.b.WriteString(wrapComment(doc, 80))
 		w.p("%sContains(ctx context.Context, c *encrypt.Cipher, needle any) (%s, error) {", recv, needle)
@@ -1134,7 +1137,7 @@ func (w *writer) jsonEntry(g genField) {
 	}
 	if answered["contained_by"] {
 		w.nl()
-		w.b.WriteString(wrapComment("ContainedBy derives the query for documents contained by needle: col <@ query. needle is a json.RawMessage of JSON text, or a map, struct or slice that encoding/json writes (not a Go string); here a zero-valued field widens the query, admitting documents that hold that zero.", 80))
+		w.b.WriteString(wrapComment("ContainedBy derives the query for documents contained by needle: col <@ query. needle is a json.RawMessage of JSON text, or a map, struct or slice that encoding/json writes (not a Go string or a pointer to one, nor a needle that writes JSON null); here a zero-valued field widens the query, admitting documents that hold that zero.", 80))
 		w.p("%sContainedBy(ctx context.Context, c *encrypt.Cipher, needle any) (%s, error) {", recv, needle)
 		w.p("\treturn gensupport.JSONQuery[%s](ctx, f.field, c, \"contained_by\", needle)", needle)
 		w.p("}")

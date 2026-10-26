@@ -1,6 +1,7 @@
 package gensupport
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
@@ -144,5 +145,42 @@ func TestPointersToCodecTypesRoundTrip(t *testing.T) {
 	}
 	if out.At == nil || !out.At.Equal(at) || out.Raw == nil || string(*out.Raw) != string(raw) || out.Code == nil || out.Code.v != "x" || out.None != nil {
 		t.Fatalf("read back %+v", out)
+	}
+}
+
+func TestJSONQueryRefusesAStringOrNullNeedle(t *testing.T) {
+	f := Field[map[string]string]{name: "labels"}
+	s, n := `{"team":"secret-value"}`, json.Number("1")
+	var nilPtr *numbers
+	var nilMap map[string]string
+	var nilSlice []string
+	b := []byte(`{"team":"secret-value"}`)
+	for name, c := range map[string]struct {
+		needle any
+		want   string
+	}{
+		"*string":        {&s, "one JSON string"},
+		"*json.Number":   {&n, "one JSON string"},
+		"nil":            {nil, "nil needle"},
+		"a nil pointer":  {nilPtr, "writes JSON null"},
+		"a nil map":      {nilMap, "writes JSON null"},
+		"a nil slice":    {nilSlice, "writes JSON null"},
+		"null JSON text": {json.RawMessage(`null`), "writes JSON null"},
+		"*[]byte":        {&b, "base64"},
+	} {
+		for _, operator := range []string{"contains", "contained_by"} {
+			_, err := JSONQuery[[]byte](context.Background(), f, nil, operator, c.needle)
+			if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), "secret-value") {
+				t.Errorf("%s %s: %v, want %q", operator, name, err, c.want)
+			}
+		}
+	}
+	// A needle that writes itself, a pointer to one included, and an empty
+	// map pass the checks and reach the cipher, which this test has none of.
+	raw := json.RawMessage(`{"team":"red"}`)
+	for name, needle := range map[string]any{"*json.RawMessage": &raw, "an empty map": map[string]string{}, "a map": map[string]string{"team": "red"}} {
+		if _, err := JSONQuery[[]byte](context.Background(), f, nil, "contains", needle); err == nil || !strings.Contains(err.Error(), "needs a cipher") {
+			t.Errorf("%s: %v, want it to reach the cipher", name, err)
+		}
 	}
 }

@@ -1,6 +1,7 @@
 package gensupport
 
 import (
+	"bytes"
 	"context"
 	"encoding"
 	"encoding/json"
@@ -28,6 +29,13 @@ import (
 // write it as a base64 string, which is never what JSON text in a []byte
 // means; convert it, json.RawMessage(b).
 //
+// The []byte rule is by kind: a value of a type whose kind is a slice of a
+// byte-kind element, or a pointer to one, is refused unless the value's
+// own type writes itself (json.Marshaler or encoding.TextMarshaler). So a
+// []B is refused even when B or *B has MarshalJSON, though encoding/json
+// would then write an array: refusing it is safe, and telling the two
+// apart would mean asking for the element's methods.
+//
 // An error wraps encrypt.ErrEncoding and names a Go type, never the value:
 // encoding/json's own text quotes a NaN, and a MarshalJSON's error may hold
 // anything.
@@ -35,9 +43,11 @@ func JSONText(v any) ([]byte, error) {
 	if raw, ok := v.(json.RawMessage); ok {
 		return raw, nil
 	}
-	if writesItself(v) == "" && kindOf(v) == reflect.Slice && reflect.TypeOf(v).Elem().Kind() == reflect.Uint8 {
+	if t := throughPointer(v); writesItself(v) == "" && t != nil && t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
 		// A []byte, or a type defined over one (type Doc []byte, or
-		// json.RawMessage redefined, which drops its MarshalJSON).
+		// json.RawMessage redefined, which drops its MarshalJSON), or a
+		// pointer to either, which encoding/json writes as what it
+		// points to.
 		return nil, fmt.Errorf("%w: a %T is not JSON text to encoding/json, which writes it as a base64 string; convert JSON text to json.RawMessage", encrypt.ErrEncoding, v)
 	}
 	text, err := json.Marshal(v)
@@ -70,15 +80,18 @@ func writesItself(v any) string {
 	return ""
 }
 
-// kindOf is the kind of v's dynamic type, or reflect.Invalid for nil: the
-// one place the JSON operands look at a type by kind, since a type switch
-// cannot name every type defined over []byte or string.
-func kindOf(v any) reflect.Kind {
+// throughPointer is v's dynamic type, or what it points to when it is a
+// pointer, or nil for nil: the one place the JSON operands look at a type
+// by kind, since a type switch cannot name every type defined over []byte
+// or string. encoding/json writes a non-nil pointer as the value it points
+// to, so a *string is one JSON string as a string is. Only the type is
+// read, never the value.
+func throughPointer(v any) reflect.Type {
 	t := reflect.TypeOf(v)
-	if t == nil {
-		return reflect.Invalid
+	if t != nil && t.Kind() == reflect.Pointer {
+		return t.Elem()
 	}
-	return t.Kind()
+	return t
 }
 
 // GetDocument reads one opened document field into the Go type T the struct
@@ -156,16 +169,21 @@ func (f Field[T]) jsonOperand(v any) ([]byte, error) {
 
 // JSONQuery derives a containment operator's query on a JSON field
 // (contains, contained_by): the needle's projection, Q. The needle is any
-// value [JSONText] writes, other than a string, which is refused: one JSON
-// string is never what a containment needle means, and JSON text in a Go
-// string is the likely mistake. Contains on a field of [NewDocumentField]
-// refuses a needle of the field's own type, T or *T: its zero-valued
-// fields would narrow the query.
+// value [JSONText] writes, other than a string or a pointer to one, which
+// is refused: one JSON string is never what a containment needle means,
+// and JSON text in a Go string is the likely mistake. A needle that writes
+// JSON null (nil, or a nil pointer, map or slice) is refused too: it
+// matches only a document that is itself null. Contains on a field of
+// [NewDocumentField] refuses a needle of the field's own type, T or *T:
+// its zero-valued fields would narrow the query.
 func JSONQuery[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, operator string, needle any) (Q, error) {
 	// A Go string is one JSON string, and a document of members never
 	// contains one: it is almost always JSON text meant as the needle.
-	if kindOf(needle) == reflect.String && writesItself(needle) == "" {
+	if t := throughPointer(needle); t != nil && t.Kind() == reflect.String && writesItself(needle) == "" {
 		return nil, fmt.Errorf("%w: gensupport: %s: a %T needle is one JSON string, not JSON text; pass JSON text as json.RawMessage, or a map or struct", encrypt.ErrEncoding, f.name, needle)
+	}
+	if needle == nil {
+		return nil, fmt.Errorf("%w: gensupport: %s: a nil needle is JSON null, which only a null document contains; pass a map, a struct or JSON text", encrypt.ErrEncoding, f.name)
 	}
 	if f.holdsStruct && operator == "contains" {
 		switch needle.(type) {
@@ -176,6 +194,11 @@ func JSONQuery[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cip
 	text, err := f.jsonOperand(needle)
 	if err != nil {
 		return nil, err
+	}
+	// A nil pointer, map or slice: the text says so without a look at the
+	// value.
+	if bytes.Equal(text, []byte("null")) {
+		return nil, fmt.Errorf("%w: gensupport: %s: a %T needle that writes JSON null (a nil one) matches only a null document; pass a map, a struct or JSON text", encrypt.ErrEncoding, f.name, needle)
 	}
 	term, err := f.jsonTerm(ctx, c, operator, "eql", 1, vcvalue.Object{{Key: "json", Value: text}})
 	if err != nil {

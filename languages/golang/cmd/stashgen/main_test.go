@@ -327,7 +327,7 @@ func TestRunGeneratesTypedJSONDocuments(t *testing.T) {
 	if _, stderr, code := generate("\tProfile PtrShared `stash:\"profile,encrypt_into=JsonSearch\"`"); code != 0 {
 		t.Fatalf("an embedded pointer to an exported struct: exit %d\n%s", code, stderr)
 	}
-	written, stderr, code := generate("\tProfile Profile `stash:\"profile,encrypt_into=JsonSearch(ordered=$.age)\"`\n\tPrefs *Prefs `stash:\"prefs,encrypt_into=JsonSearch,null=sql\"`\n\tLabels map[string]string `stash:\"labels,encrypt_into=JsonSearch\"`\n\tScores []int64 `stash:\"scores,encrypt_into=JsonSearch\"`")
+	written, stderr, code := generate("\tProfile Profile `stash:\"profile,encrypt_into=JsonSearch(ordered=$.age)\"`\n\tPrefs *Prefs `stash:\"prefs,encrypt_into=JsonSearch,null=sql\"`\n\tLabels map[string]string `stash:\"labels,encrypt_into=JsonSearch\"`\n\tScores []int64 `stash:\"scores,encrypt_into=JsonSearch\"`\n\tVisits []Visit `stash:\"visits,encrypt_into=JsonSearch\"`")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -351,7 +351,9 @@ func TestRunGeneratesTypedJSONDocuments(t *testing.T) {
 		`Scores:  newScoresField(gensupport.NewField[[]int64](declaration, "scores")),`,
 		"func (f ProfileField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Profile) (eql.JSONSearch, error)",
 		"func (f ProfileField) Contains(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error)",
-		"A needle of the field's own type, Profile, is refused for that reason.",
+		"A needle of the field's own type, Profile, is refused for that reason, and so is a pointer to it: write a needle type",
+		// A slice of structs refuses itself too, and says what to pass.
+		"A needle of the field's own type, []Visit, is refused for that reason, and so is a pointer to it: each struct it holds writes its zero fields too.",
 		"func (p ProfileFieldPath) Gt(ctx context.Context, c *encrypt.Cipher, v any) (eql.JSONSearchLeafQuery, error)",
 	} {
 		// A doc comment is wrapped: read it as one line.

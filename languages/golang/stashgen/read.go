@@ -111,6 +111,9 @@ type genField struct {
 	// holdsStruct is set for a document field (KindJSONValue) whose type
 	// holds a struct: its Contains refuses a needle of that type.
 	holdsStruct bool
+	// structElems is set with holdsStruct when the type is a slice, array
+	// or map whose elements hold the struct, for the Contains comment.
+	structElems bool
 }
 
 // definedScalar reports whether the field's type is a named type over a
@@ -724,7 +727,7 @@ func (r *reader) buildFields(c *collected) error {
 		// writes and reads: a struct, map or slice, or a pointer to one.
 		// What encoding/json cannot carry both ways is refused here, when
 		// the code is generated.
-		holdsStruct := false
+		holdsStruct, structElems := false, false
 		if eqlType := r.eqlType(field.EQLType); field.Verb == VerbEncryptInto && eqlType != nil && eqlType.wire == record.JSON {
 			doc, docType := &field.GoType, cf.typ
 			if doc.Kind == KindPointer && doc.Elem != nil {
@@ -735,6 +738,8 @@ func (r *reader) buildFields(c *collected) error {
 				if reason, holdsStruct = notDocument(docType); reason != "" {
 					return fieldErr(typeName, cf.goName, "%s seals a json document, and %s %s; %s", field.EQLType, r.typeExpr(docType), reason, documentTypes)
 				}
+				_, isStruct := docType.Underlying().(*types.Struct)
+				structElems = holdsStruct && !isStruct
 				*doc = GoType{Name: doc.Name, Kind: KindJSONValue}
 			}
 		}
@@ -772,7 +777,7 @@ func (r *reader) buildFields(c *collected) error {
 		if t.Omit {
 			continue
 		}
-		g := genField{Field: field, typeExpr: r.typeExpr(cf.typ), via: cf.via, tags: cf.tags, pathType: pathType(cf.typ), holdsStruct: holdsStruct}
+		g := genField{Field: field, typeExpr: r.typeExpr(cf.typ), via: cf.via, tags: cf.tags, pathType: pathType(cf.typ), holdsStruct: holdsStruct, structElems: structElems}
 		g.valueExpr = g.typeExpr
 		if pointer {
 			g.valueExpr = field.GoType.Name

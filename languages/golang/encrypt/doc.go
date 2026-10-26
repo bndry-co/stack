@@ -225,15 +225,19 @@
 //	older, err := customers.Fields.Profile.At.Age.Gt(ctx, cipher, 40)
 //
 // A Go string is the string value itself, never parsed. So Contains and
-// ContainedBy refuse a string needle; put JSON text in a json.RawMessage.
+// ContainedBy refuse a string needle, or a pointer to one; put JSON text in
+// a json.RawMessage. They refuse a needle that writes JSON null (nil, or a
+// nil pointer, map or slice) too: only a null document contains it.
 //
 // A document contains a needle when it holds every member the needle writes.
 // encoding/json writes a struct field that has no omitempty even when the
 // field is zero. So a zero field narrows the query to documents that hold
 // that zero. Give a needle struct pointer fields with omitempty, or use a
 // map. Contains refuses a needle of the field's own type when that type
-// holds a struct, the likeliest way to make this mistake. ContainedBy takes
-// one: there a zero field widens the query.
+// holds a struct, the likeliest way to make this mistake, a slice of
+// structs included: for a []Visit document, pass a slice of a needle type
+// with pointer fields. ContainedBy takes one: there a zero field widens
+// the query.
 //
 // A selection or a subtree read opens values as JSON text ([JSONValue],
 // [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
