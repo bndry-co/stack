@@ -236,9 +236,10 @@ type JSONSelection[E ~[]byte] struct {
 }
 
 // NewJSONSelection is a selection prepared by [Cipher.QueryTerm]'s
-// selector operator. For generated code.
-func NewJSONSelection[E ~[]byte](c *Cipher, plan *record.Plan, field, path, selector string) JSONSelection[E] {
-	return JSONSelection[E]{cipher: c, plan: plan, field: field, path: path, selector: JSONSelector(selector)}
+// selector operator on field of the record type that declaration
+// declares, at path. For generated code.
+func NewJSONSelection[E ~[]byte](c *Cipher, declaration *record.Plan, field, path, selector string) JSONSelection[E] {
+	return JSONSelection[E]{cipher: c, plan: declaration, field: field, path: path, selector: JSONSelector(selector)}
 }
 
 // Selector is the selector to bind: `col -> $1::text`.
@@ -324,9 +325,10 @@ type JSONRead[E ~[]byte] struct {
 }
 
 // NewJSONRead is a read prepared by [Cipher.QueryTerm]'s subtree operator
-// from input, its {"path", "wildcard_bound"?} object. For generated code.
-func NewJSONRead[E ~[]byte](c *Cipher, plan *record.Plan, field string, input vcvalue.Object, tokens []string) JSONRead[E] {
-	return JSONRead[E]{cipher: c, plan: plan, field: field, input: input, tokens: JSONTokens(tokens)}
+// on field of the record type that declaration declares, from input, its
+// {"path", "wildcard_bound"?} object. For generated code.
+func NewJSONRead[E ~[]byte](c *Cipher, declaration *record.Plan, field string, input vcvalue.Object, tokens []string) JSONRead[E] {
+	return JSONRead[E]{cipher: c, plan: declaration, field: field, input: input, tokens: JSONTokens(tokens)}
 }
 
 // Tokens are the tokens to bind:
