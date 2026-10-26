@@ -39,7 +39,7 @@ func NewField[T any](d Declaration, name string) Field[T] {
 	return f
 }
 
-// NewDocumentField makes the entry for a document field (EncryptedJson)
+// NewDocumentField makes the entry for a document field (JsonSearch)
 // whose Go type T holds a struct, as [NewField] does, and its Contains
 // refuses a needle of type T or *T: encoding/json writes each struct field
 // that has no omitempty or omitzero, zero or not, and a zero one narrows the

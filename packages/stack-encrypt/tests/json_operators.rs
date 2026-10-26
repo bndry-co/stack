@@ -28,7 +28,7 @@ use stack_kms::FakeDataKeySource;
 
 type Keyset<'c> = KeysetCipher<'c, FakeDataKeySource>;
 
-/// A resolver holding one type, `EncryptedJson`, sealed with the engine's
+/// A resolver holding one type, `JsonSearch`, sealed with the engine's
 /// JSON index under the options the plan resolved. It stores the
 /// `JsonDocument` as JSON and needs no query twin: the JSON operators are
 /// derived by the engine, not the resolver.
@@ -37,18 +37,18 @@ struct Documents;
 impl TargetResolver for Documents {
     fn targets(&self) -> Vec<TargetDescriptor> {
         vec![TargetDescriptor::new(
-            "EncryptedJson",
+            "JsonSearch",
             "json",
             "",
             Some(ValueKind::Json),
-            "public.eql_v4_json_tree",
+            "public.eql_v4_json_search",
             vec!["json".to_string()],
-            Some("EncryptedJsonQuery".to_string()),
-            Some("eql_v4.query_json_tree".to_string()),
+            Some("JsonSearchQuery".to_string()),
+            Some("eql_v4.query_json".to_string()),
             true,
             None,
         )
-        .with_leaf_query_sql_domain("eql_v4.query_json_tree_leaf")]
+        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")]
     }
 
     fn encrypt<'a, K: 'static>(
@@ -102,7 +102,7 @@ impl TargetResolver for Documents {
 /// `at`, as a binding writes it.
 fn plan() -> record::Plan {
     plan_of(json!({
-        "name": "EncryptedJson",
+        "name": "JsonSearch",
         "options": {"ordered": ["$.age", "$.visits[*].at"]}
     }))
 }
@@ -272,7 +272,7 @@ async fn every_operator_derives_its_tagged_operand() {
     ] {
         let term = term(&keyset, &plan, operator, input).await;
         assert_eq!(term.encoding(), "eql", "{operator}");
-        assert_eq!(term.domain(), Some("eql_v4.query_json_tree"), "{operator}");
+        assert_eq!(term.domain(), Some("eql_v4.query_json"), "{operator}");
         assert!(needle(&term).is_object(), "{operator}");
     }
     // Equality at a path is a containment needle, the shape `contains`
@@ -300,7 +300,7 @@ async fn every_operator_derives_its_tagged_operand() {
             json!({"path": "$.age", "json": "40"}),
         )
         .await;
-        assert_eq!(term.domain(), Some("eql_v4.query_json_tree_leaf"));
+        assert_eq!(term.domain(), Some("eql_v4.query_json_leaf"));
         assert!(needle(&term).is_object(), "{operator}");
     }
     let between = term(
@@ -311,7 +311,7 @@ async fn every_operator_derives_its_tagged_operand() {
     )
     .await;
     assert!(matches!(between.operand(), Operand::Range { .. }));
-    assert_eq!(between.domain(), Some("eql_v4.query_json_tree_leaf"));
+    assert_eq!(between.domain(), Some("eql_v4.query_json_leaf"));
 
     let selector = term(&keyset, &plan, "selector", json!({"path": "$.name"})).await;
     assert_eq!(
@@ -371,7 +371,7 @@ fn the_orderings_follow_the_resolved_options() {
             .collect()
     };
     assert!(names(&plan()).contains(&"lt_at"));
-    let unordered = plan_of(json!("EncryptedJson"));
+    let unordered = plan_of(json!("JsonSearch"));
     assert_eq!(
         names(&unordered),
         [

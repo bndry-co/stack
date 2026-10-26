@@ -1,7 +1,7 @@
 //! The JSON operators of a document field, for a binding: queries named by
 //! operator, and reads opened against the request that prepared them.
 //!
-//! A field that names a target storing a document (`EncryptedJson`) runs
+//! A field that names a target storing a document (`JsonSearch`) runs
 //! under the JSON index's options its plan resolved
 //! ([`TargetOptions::Json`](super::TargetOptions::Json)). Each operator
 //! takes an object of named inputs and gives a tagged operand
@@ -9,9 +9,9 @@
 //!
 //! | operator | input | operand |
 //! |---|---|---|
-//! | `contains`, `contained_by` | `{"json"}`: a JSON needle | EQL: the needle's projection (`eql_v4.query_json_tree`) |
+//! | `contains`, `contained_by` | `{"json"}`: a JSON needle | EQL: the needle's projection (`eql_v4.query_json`) |
 //! | `eq_at` | `{"path", "json"}`: a scalar at a path | EQL: the needle holding the scalar there |
-//! | `lt_at`, `lte_at`, `gt_at`, `gte_at` | `{"path", "json"}`: a number or string at an ordered path | EQL: the path's selector and the leaf's ordering term (`eql_v4.query_json_tree_leaf`) |
+//! | `lt_at`, `lte_at`, `gt_at`, `gte_at` | `{"path", "json"}`: a number or string at an ordered path | EQL: the path's selector and the leaf's ordering term (`eql_v4.query_json_leaf`) |
 //! | `between_at` | `{"path", "low", "high"}` | EQL, two of them: the low bound's then the high's |
 //! | `selector` | `{"path"}` | text: the selector `->` takes |
 //! | `subtree` | `{"path", "wildcard_bound"?}` | text array: the tokens `json_tree_subtree` takes |
@@ -64,9 +64,9 @@ use crate::{KeysetCipher, Label, NonEmpty, Pending};
 /// The SQL type a JSON operand binds as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Binds {
-    /// The target's needle domain (`eql_v4.query_json_tree`).
+    /// The target's needle domain (`eql_v4.query_json`).
     Needle,
-    /// The target's leaf operand domain (`eql_v4.query_json_tree_leaf`).
+    /// The target's leaf operand domain (`eql_v4.query_json_leaf`).
     Leaf,
     /// `text`.
     Text,
@@ -410,7 +410,7 @@ struct ReadRequest {
 }
 
 /// The groups of rows a read returned: one list of entries per database
-/// row, each entry the `public.eql_v4_json_tree_entry` JSON the SQL
+/// row, each entry the `public.eql_v4_json_entry` JSON the SQL
 /// returned, as text or bytes.
 #[derive(Deserialize)]
 #[serde(transparent)]

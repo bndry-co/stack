@@ -14,7 +14,7 @@ import (
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
 )
 
-// Generated code for json.RawMessage fields stored as EncryptedJson:
+// Generated code for json.RawMessage fields stored as JsonSearch:
 // testusers.Customer's Profile, ordered at $.age and $.visits[*].at, and its
 // optional Prefs.
 
@@ -134,7 +134,7 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 	}
 	// A selection over rows with no entry opens to no value without a
 	// request.
-	none, err := sel.Open(ctx, make([]*eql.EncryptedJSONEntry, 3))
+	none, err := sel.Open(ctx, make([]*eql.JSONEntry, 3))
 	if err != nil || len(none) != 3 || none[0].Found || none[2].Found {
 		t.Fatalf("an empty page: %+v %v", none, err)
 	}

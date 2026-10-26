@@ -13,15 +13,16 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 ### Added
 
 - **Encrypted JSON documents of Go types** (#1351). A struct, map or slice
-  field tagged `encrypt_into=EncryptedJson` is a document: the generated code
+  field tagged `encrypt_into=JsonSearch` is a document: the generated code
   marshals it with `encoding/json` when it seals it, and reads the opened
   document back into the declared type (`gensupport.GetDocument`,
   `GetDocumentPtr`), so 64-bit integers and finite `float64`s round-trip
   exactly. A pointer to one takes `null=sql`. `stashgen` refuses, when it
   runs, a type `encoding/json` cannot carry both ways: an interface such as
   `any`, an unexported struct field or one tagged `json:"-"`, a channel, a
-  function, a scalar, or a `[]byte`. The `Fields` entry's operands are Go values now: `Contains`,
-  `ContainedBy`, `EqAt`, `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `any`,
+  function, a scalar, or a `[]byte`. The `Fields` entry's operands are Go
+  values now: `Contains`, `ContainedBy`, `EqAt`, `Lt`, `Lte`, `Gt`, `Gte`
+  and `Between` take `any`,
   a `json.RawMessage` crossing as the JSON text it is and anything else
   marshalled (`gensupport.JSONText`); a plain `[]byte` is refused. A zero
   struct field without `omitempty` narrows a containment query, so
@@ -33,9 +34,9 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   the value.
 
 - **Encrypted JSON documents with `stashgen`** (#1351, #1352). A
-  `json.RawMessage` field tagged `encrypt_into=EncryptedJson` (options:
+  `json.RawMessage` field tagged `encrypt_into=JsonSearch` (options:
   `ordered=$.a;$.b[*].c`, `sealed_root=false`) is stored as an
-  `eql.EncryptedJSON` in a `public.eql_v4_json_tree` column; a
+  `eql.JSONSearch` in a `public.eql_v4_json_search` column; a
   `*json.RawMessage` field takes `null=sql`. Its `Fields` entry has
   `Contains`, `ContainedBy`, `EqAt`, `Selector`, `Subtree`, `Children` and
   `ChildCount`, and `At.<Path>` per ordered path with `Lt`, `Lte`, `Gt`,
@@ -57,11 +58,13 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   operator's input. Generated methods follow with `stashgen`.
 
 - **The EQL types for an encrypted JSON document** (#1348):
-  `eql.EncryptedJSON` (`public.eql_v4_json_tree`), its containment needle
-  `eql.EncryptedJSONQuery`, its ordering operand
-  `eql.EncryptedJSONLeafQuery` and its entry `eql.EncryptedJSONEntry`,
-  generated from the EQL catalog. The engine stores one from the
-  module's own plans; `stashgen` does not generate a field of it yet.
+  `eql.JSONSearch` (`public.eql_v4_json_search`), its containment needle
+  `eql.JSONSearchQuery`, its ordering operand
+  `eql.JSONSearchLeafQuery` and its entry `eql.JSONEntry`,
+  generated from the EQL catalog. The names are the ones EQL v3 gives its
+  searchable JSON document; `eql.JSON` stays the storage-only type. The
+  engine stores one from the module's own plans; `stashgen` does not
+  generate a field of it yet.
 
 - **Decimals, dates and timestamps take an order index (#1236).** An
   `encrypt.Decimal`, `encrypt.Date` or `time.Time` field takes `ore` and
@@ -92,6 +95,12 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   map a `null=sql` field yet.
 
 ### Breaking
+
+- **`eql.SteVecDocument` and `eql.SteVecQuery` are gone.** They named
+  EQL v4's SteVec domains, which the engine never produced and the v4
+  bundle no longer carries: in v4, `public.eql_v4_json_search` is the
+  JSON tree document, `eql.JSONSearch`, and `eql.Types` lists it in
+  their place.
 
 - **An opaque struct seals as a storage blob, and reads the JSON it used
   to (#1347).** `stash:"context=...,opaque"` now seals the struct as one

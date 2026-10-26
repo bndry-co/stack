@@ -987,7 +987,7 @@ pub fn check_json_open(
 /// [`JsonSubtreeKey::open`], for a binding. `request` is the read as the
 /// binding prepared it, `{"operation": "selector" | "subtree", "path",
 /// "wildcard_bound"?}`, and `rows` a list per database row of the entries
-/// the SQL returned for it (`public.eql_v4_json_tree_entry` JSON, as text
+/// the SQL returned for it (`public.eql_v4_json_entry` JSON, as text
 /// or bytes): for `selector`, the one entry `->` returned or none, and for
 /// `subtree`, the rows `json_tree_subtree` returned. The engine derives
 /// the selector or the read key again, under `cipher`'s keyset and the

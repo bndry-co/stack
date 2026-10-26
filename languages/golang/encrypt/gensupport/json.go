@@ -11,7 +11,7 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// The operators of a field stored as an EncryptedJSON document, for the
+// The operators of a field stored as a JSONSearch document, for the
 // generated methods of its Fields entry. Each sends the operator's named
 // inputs, JSON values as their JSON text ([JSONText]), and checks the
 // engine answered in the encoding and with the number of parts the method

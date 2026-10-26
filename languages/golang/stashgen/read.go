@@ -156,8 +156,8 @@ type modelField struct {
 
 // EQLGoName is the Go type name in encrypt/eql of an EQL type the engine
 // names: the same name in every language, save that the word Json is JSON,
-// as Go spells initialisms (Json is JSON, EncryptedJsonQuery is
-// EncryptedJSONQuery; Json is a word where the name ends or the next
+// as Go spells initialisms (Json is JSON, JsonSearchQuery is
+// JSONSearchQuery; Json is a word where the name ends or the next
 // letter is upper case). The
 // generated encrypt/eql package follows the same rule (eql-codegen's go_eql
 // renderer), and its Types table records both names, which is what holds
@@ -779,7 +779,7 @@ func (r *reader) buildFields(c *collected) error {
 		if g.Sealed() && !g.GoType.Kind.Scalar() {
 			// The engine seals a composite as a tree of leaves, and a column
 			// holds one leaf; only an opaque struct seals a whole value.
-			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128 or encrypt.Uint128, or a type defined over a string, number, bool or []byte); a %s seals only as part of an opaque struct, or as a JSON document with encrypt_into=EncryptedJson", g.typeExpr)
+			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128 or encrypt.Uint128, or a type defined over a string, number, bool or []byte); a %s seals only as part of an opaque struct, or as a JSON document with encrypt_into=JsonSearch", g.typeExpr)
 		}
 		switch field.Verb {
 		case VerbPassthrough, VerbContextField:

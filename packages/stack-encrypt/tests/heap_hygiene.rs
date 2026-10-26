@@ -322,25 +322,25 @@ fn verify_leaves_no_plaintext_on_the_heap() {
     });
 }
 
-/// A resolver holding `EncryptedJson` alone, for checking a document
+/// A resolver holding `JsonSearch` alone, for checking a document
 /// field's operators: a check derives nothing, so nothing here runs.
 struct Documents;
 
 impl stack_encrypt::dynamic::TargetResolver for Documents {
     fn targets(&self) -> Vec<stack_encrypt::dynamic::TargetDescriptor> {
         vec![stack_encrypt::dynamic::TargetDescriptor::new(
-            "EncryptedJson",
+            "JsonSearch",
             "json",
             "",
             Some(stack_encrypt::dynamic::ValueKind::Json),
-            "public.eql_v4_json_tree",
+            "public.eql_v4_json_search",
             vec!["json".to_string()],
-            Some("EncryptedJsonQuery".to_string()),
-            Some("eql_v4.query_json_tree".to_string()),
+            Some("JsonSearchQuery".to_string()),
+            Some("eql_v4.query_json".to_string()),
             true,
             None,
         )
-        .with_leaf_query_sql_domain("eql_v4.query_json_tree_leaf")]
+        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")]
     }
     fn encrypt<'a, K: 'static>(
         &self,
@@ -381,7 +381,7 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
 fn a_json_operators_input_leaves_no_plaintext_on_the_heap() {
     let wire = serde_json::json!({
         "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
-                    "target": {"name": "EncryptedJson", "options": {"ordered": ["$.age"]}}}
+                    "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
     });
     let plan = record::plan_with(
         &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),

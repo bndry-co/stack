@@ -32,7 +32,7 @@ func TestJSONTypedDocumentsInPostgres(t *testing.T) {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
-	exec(`CREATE TEMP TABLE subscribers (id bigint PRIMARY KEY, profile public.eql_v4_json_tree NOT NULL, prefs public.eql_v4_json_tree, labels public.eql_v4_json_tree NOT NULL)`)
+	exec(`CREATE TEMP TABLE subscribers (id bigint PRIMARY KEY, profile public.eql_v4_json_search NOT NULL, prefs public.eql_v4_json_search, labels public.eql_v4_json_search NOT NULL)`)
 	t.Cleanup(func() { _, _ = conn.ExecContext(context.Background(), `DROP TABLE IF EXISTS subscribers`) })
 	encrypted, err := testusers.EncryptSubscriber(ctx, cipher, subscribers)
 	if err != nil {
@@ -104,25 +104,25 @@ func TestJSONTypedDocumentsInPostgres(t *testing.T) {
 
 	// Containment with a needle struct of pointer and omitempty fields: a
 	// field left nil is not in the needle.
-	contains := `SELECT id FROM subscribers WHERE profile @> $1::eql_v4.query_json_tree ORDER BY id`
-	want("contains tier", ids(contains, eql.EncryptedJSONQuery(must(f.Contains(ctx, cipher, testusers.ProfileNeedle{Tier: ptr("gold")})))), 1)
-	want("contains name and age", ids(contains, eql.EncryptedJSONQuery(must(f.Contains(ctx, cipher, testusers.ProfileNeedle{Name: ptr("Bob"), Age: ptr(int64(7))})))), 2)
+	contains := `SELECT id FROM subscribers WHERE profile @> $1::eql_v4.query_json ORDER BY id`
+	want("contains tier", ids(contains, eql.JSONSearchQuery(must(f.Contains(ctx, cipher, testusers.ProfileNeedle{Tier: ptr("gold")})))), 1)
+	want("contains name and age", ids(contains, eql.JSONSearchQuery(must(f.Contains(ctx, cipher, testusers.ProfileNeedle{Name: ptr("Bob"), Age: ptr(int64(7))})))), 2)
 	// A map needle names only what it holds; the needle struct's Visit has
 	// no omitempty, so its zero Place is in the needle and narrows it: no
 	// visit at 3 has an empty place. The narrowing the docs warn of.
-	want("contains a visit, map", ids(contains, eql.EncryptedJSONQuery(must(f.Contains(ctx, cipher, map[string]any{"visits": []map[string]any{{"at": 3}}})))), 1)
-	want("contains a visit, zero place", ids(contains, eql.EncryptedJSONQuery(must(f.Contains(ctx, cipher, testusers.ProfileNeedle{Visits: []testusers.Visit{{At: 3}}})))))
+	want("contains a visit, map", ids(contains, eql.JSONSearchQuery(must(f.Contains(ctx, cipher, map[string]any{"visits": []map[string]any{{"at": 3}}})))), 1)
+	want("contains a visit, zero place", ids(contains, eql.JSONSearchQuery(must(f.Contains(ctx, cipher, testusers.ProfileNeedle{Visits: []testusers.Visit{{At: 3}}})))))
 	// Contained by the document type itself: its zero fields widen, so
 	// Bob's whole profile contains no other row's.
-	want("contained by", ids(`SELECT id FROM subscribers WHERE profile <@ $1::eql_v4.query_json_tree ORDER BY id`, eql.EncryptedJSONQuery(must(f.ContainedBy(ctx, cipher, subscribers[1].Profile)))), 2)
+	want("contained by", ids(`SELECT id FROM subscribers WHERE profile <@ $1::eql_v4.query_json ORDER BY id`, eql.JSONSearchQuery(must(f.ContainedBy(ctx, cipher, subscribers[1].Profile)))), 2)
 	// Equality at a path with Go scalars, the integer extremes included.
-	want("eq_at umax", ids(contains, eql.EncryptedJSONQuery(must(f.EqAt(ctx, cipher, "$.big", uint64(math.MaxUint64))))), 1)
-	want("eq_at min", ids(contains, eql.EncryptedJSONQuery(must(f.EqAt(ctx, cipher, "$.small", int64(math.MinInt64))))), 1)
-	want("eq_at name", ids(contains, eql.EncryptedJSONQuery(must(f.EqAt(ctx, cipher, "$.name", "Carol")))), 3)
-	want("eq_at a visit", ids(contains, eql.EncryptedJSONQuery(must(f.EqAt(ctx, cipher, "$.visits[*].at", 5)))), 2)
+	want("eq_at umax", ids(contains, eql.JSONSearchQuery(must(f.EqAt(ctx, cipher, "$.big", uint64(math.MaxUint64))))), 1)
+	want("eq_at min", ids(contains, eql.JSONSearchQuery(must(f.EqAt(ctx, cipher, "$.small", int64(math.MinInt64))))), 1)
+	want("eq_at name", ids(contains, eql.JSONSearchQuery(must(f.EqAt(ctx, cipher, "$.name", "Carol")))), 3)
+	want("eq_at a visit", ids(contains, eql.JSONSearchQuery(must(f.EqAt(ctx, cipher, "$.visits[*].at", 5)))), 2)
 	// The optional and the map columns.
-	want("prefs contains", ids(`SELECT id FROM subscribers WHERE prefs @> $1::eql_v4.query_json_tree ORDER BY id`, eql.EncryptedJSONQuery(must(testusers.SubscriberFields.Prefs.Contains(ctx, cipher, map[string]string{"theme": "dark"})))), 1)
-	want("labels contains", ids(`SELECT id FROM subscribers WHERE labels @> $1::eql_v4.query_json_tree ORDER BY id`, eql.EncryptedJSONQuery(must(testusers.SubscriberFields.Labels.Contains(ctx, cipher, map[string]string{"team": "red"})))), 1)
+	want("prefs contains", ids(`SELECT id FROM subscribers WHERE prefs @> $1::eql_v4.query_json ORDER BY id`, eql.JSONSearchQuery(must(testusers.SubscriberFields.Prefs.Contains(ctx, cipher, map[string]string{"theme": "dark"})))), 1)
+	want("labels contains", ids(`SELECT id FROM subscribers WHERE labels @> $1::eql_v4.query_json ORDER BY id`, eql.JSONSearchQuery(must(testusers.SubscriberFields.Labels.Contains(ctx, cipher, map[string]string{"team": "red"})))), 1)
 
 	// Orderings with Go numbers.
 	age, err := f.At.Age.Selector(ctx, cipher)
@@ -133,24 +133,24 @@ func TestJSONTypedDocumentsInPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want("age > 30", ids(`SELECT id FROM subscribers WHERE (profile -> $1::text) > $2::eql_v4.query_json_tree_leaf ORDER BY id`, age.Selector(), gt), 1, 3)
+	want("age > 30", ids(`SELECT id FROM subscribers WHERE (profile -> $1::text) > $2::eql_v4.query_json_leaf ORDER BY id`, age.Selector(), gt), 1, 3)
 	rng, err := f.At.Age.Between(ctx, cipher, int64(5), 40.5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want("age between", ids(`SELECT id FROM subscribers WHERE (profile -> $1::text) >= $2::eql_v4.query_json_tree_leaf AND (profile -> $1::text) <= $3::eql_v4.query_json_tree_leaf ORDER BY id`, age.Selector(), rng.Low, rng.High), 1, 2)
+	want("age between", ids(`SELECT id FROM subscribers WHERE (profile -> $1::text) >= $2::eql_v4.query_json_leaf AND (profile -> $1::text) <= $3::eql_v4.query_json_leaf ORDER BY id`, age.Selector(), rng.Low, rng.High), 1, 2)
 
 	// `->` opened, and each value decoded into a Go type.
-	selected := func(sel encrypt.JSONSelection[eql.EncryptedJSONEntry]) []encrypt.JSONValue {
+	selected := func(sel encrypt.JSONSelection[eql.JSONEntry]) []encrypt.JSONValue {
 		t.Helper()
 		rows, err := conn.QueryContext(ctx, `SELECT profile -> $1::text FROM subscribers ORDER BY id`, sel.Selector())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer rows.Close()
-		var entries []*eql.EncryptedJSONEntry
+		var entries []*eql.JSONEntry
 		for rows.Next() {
-			var e *eql.EncryptedJSONEntry
+			var e *eql.JSONEntry
 			if err := rows.Scan(&e); err != nil {
 				t.Fatal(err)
 			}
@@ -202,16 +202,16 @@ func TestJSONTypedDocumentsInPostgres(t *testing.T) {
 
 	// A subtree read, each value decoded: every visit of each row, then one
 	// row's visits as one slice.
-	subtree := func(read encrypt.JSONRead[eql.EncryptedJSONEntry], id int64) []eql.EncryptedJSONEntry {
+	subtree := func(read encrypt.JSONRead[eql.JSONEntry], id int64) []eql.JSONEntry {
 		t.Helper()
 		rows, err := conn.QueryContext(ctx, `SELECT e FROM subscribers, eql_v4.json_tree_subtree(profile, $2::text[]) AS e WHERE id = $1`, id, read.Tokens())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer rows.Close()
-		var entries []eql.EncryptedJSONEntry
+		var entries []eql.JSONEntry
 		for rows.Next() {
-			var e eql.EncryptedJSONEntry
+			var e eql.JSONEntry
 			if err := rows.Scan(&e); err != nil {
 				t.Fatal(err)
 			}
@@ -226,7 +226,7 @@ func TestJSONTypedDocumentsInPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	groups := make([][]eql.EncryptedJSONEntry, len(subscribers))
+	groups := make([][]eql.JSONEntry, len(subscribers))
 	for i, s := range subscribers {
 		groups[i] = subtree(each, s.ID)
 	}

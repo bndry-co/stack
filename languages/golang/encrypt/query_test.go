@@ -457,18 +457,18 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 			if !slices.Equal(target.Operators, want) {
 				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
 			}
-		case target.Name == "EncryptedJson":
+		case target.Name == "JsonSearch":
 			// A document's operators, under the index's defaults: no
 			// ordering without an ordered path. Each through the JSON index.
 			var names []string
 			for _, op := range target.Operators {
 				if op.Index != record.JSONIndex || op.Fidelity != record.Exact {
-					t.Fatalf("EncryptedJson answers %+v", op)
+					t.Fatalf("JsonSearch answers %+v", op)
 				}
 				names = append(names, op.Name)
 			}
 			if want := []string{"contains", "contained_by", "eq_at", "selector", "subtree", "children", "child_count"}; !slices.Equal(names, want) {
-				t.Fatalf("EncryptedJson answers %v, want %v", names, want)
+				t.Fatalf("JsonSearch answers %v, want %v", names, want)
 			}
 		case len(target.Operators) != 0:
 			// Every other type is storage-only or not produced.

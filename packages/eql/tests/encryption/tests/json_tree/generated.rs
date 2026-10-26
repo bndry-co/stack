@@ -500,7 +500,7 @@ fn scenario() -> Scenario {
     // sequential scans off the planner has no other index to walk whole
     // and filter.
     db.batch_execute(
-        "CREATE TEMP TABLE json_tree_generated (id int NOT NULL, plain jsonb NOT NULL, doc public.eql_v4_json_tree NOT NULL);
+        "CREATE TEMP TABLE json_tree_generated (id int NOT NULL, plain jsonb NOT NULL, doc public.eql_v4_json_search NOT NULL);
          CREATE INDEX json_tree_generated_doc ON json_tree_generated USING gin ((eql_v4.json_tree_query(doc)) jsonb_path_ops);",
     )
     .unwrap();
@@ -529,7 +529,7 @@ impl Scenario {
         let _ = db
             .execute(
                 "INSERT INTO json_tree_generated
-                 SELECT id, plain::jsonb, doc::jsonb::public.eql_v4_json_tree
+                 SELECT id, plain::jsonb, doc::jsonb::public.eql_v4_json_search
                  FROM unnest($1::int[], $2::text[], $3::text[]) AS u(id, plain, doc)",
                 &[&ids, &plains, &sealed],
             )
@@ -577,10 +577,7 @@ impl Scenario {
         scan: Scan,
         operands: &[String],
     ) -> (String, Vec<Vec<i32>>) {
-        let predicate = format!(
-            "g.doc {} n.t::jsonb::eql_v4.query_json_tree",
-            containment.sql()
-        );
+        let predicate = format!("g.doc {} n.t::jsonb::eql_v4.query_json", containment.sql());
         self.db.borrow_mut().batch_execute(scan.settings()).unwrap();
         let explain = self
             .db

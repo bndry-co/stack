@@ -2,16 +2,16 @@ package testusers
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Subscriber -name Subscriber
 
-// Subscriber holds encrypted JSON documents (the EQL type EncryptedJson) of Go
+// Subscriber holds encrypted JSON documents (the EQL type JsonSearch) of Go
 // types: encoding/json writes each to JSON text when it is sealed and reads
 // it back when it is opened. Its profile orders $.age and each visit's $.at,
 // its preferences are SQL NULL when nil, and its labels are a map.
 type Subscriber struct {
 	_       struct{}          `stash:"context=subscribers"`
 	ID      int64             `stash:"id,passthrough"`
-	Profile SubscriberProfile `stash:"profile,encrypt_into=EncryptedJson(ordered=$.age;$.visits[*].at)"`
-	Prefs   *SubscriberPrefs  `stash:"prefs,encrypt_into=EncryptedJson,null=sql"`
-	Labels  map[string]string `stash:"labels,encrypt_into=EncryptedJson"`
+	Profile SubscriberProfile `stash:"profile,encrypt_into=JsonSearch(ordered=$.age;$.visits[*].at)"`
+	Prefs   *SubscriberPrefs  `stash:"prefs,encrypt_into=JsonSearch,null=sql"`
+	Labels  map[string]string `stash:"labels,encrypt_into=JsonSearch"`
 }
 
 // SubscriberProfile is a subscriber's profile document. Big, Small and Score hold

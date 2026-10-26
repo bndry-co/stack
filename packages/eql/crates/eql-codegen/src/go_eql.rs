@@ -36,7 +36,7 @@ pub const GO_GENERATED_MARKER: &str =
 
 /// The Go type name of a catalog name: the same, save that the word
 /// `Json` is spelled `JSON`, as Go spells initialisms: `Json` is `JSON`,
-/// `EncryptedJsonQuery` is `EncryptedJSONQuery`. `Json` is a word where
+/// `JsonSearchQuery` is `JSONSearchQuery`. `Json` is a word where
 /// it ends the name or the next letter starts another (upper case).
 pub fn go_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
@@ -252,8 +252,9 @@ mod tests {
         assert_eq!(go_name("TextEqQuery"), "TextEqQuery");
         assert_eq!(go_name("Json"), "JSON");
         assert_eq!(go_name("SteVecDocument"), "SteVecDocument");
-        assert_eq!(go_name("EncryptedJson"), "EncryptedJSON");
-        assert_eq!(go_name("EncryptedJsonLeafQuery"), "EncryptedJSONLeafQuery");
+        assert_eq!(go_name("JsonSearch"), "JSONSearch");
+        assert_eq!(go_name("JsonSearchLeafQuery"), "JSONSearchLeafQuery");
+        assert_eq!(go_name("JsonEntry"), "JSONEntry");
         assert_eq!(go_name("Jsonify"), "Jsonify", "a word, not a prefix");
         assert_eq!(
             go_name("Jsonécrit"),
@@ -267,10 +268,10 @@ mod tests {
     fn the_document_family_has_its_go_types() {
         let out = render_go_eql();
         for go in [
-            "EncryptedJSON",
-            "EncryptedJSONQuery",
-            "EncryptedJSONLeafQuery",
-            "EncryptedJSONEntry",
+            "JSONSearch",
+            "JSONSearchQuery",
+            "JSONSearchLeafQuery",
+            "JSONEntry",
         ] {
             assert_eq!(
                 out.matches(&format!("\ntype {go} []byte\n")).count(),
@@ -279,9 +280,9 @@ mod tests {
             );
         }
         assert!(out.contains(
-            "Name: \"EncryptedJson\", GoName: \"EncryptedJSON\", Family: \"json_tree\", Suffix: \"\", \
-             Plaintext: \"json\", SQLDomain: \"public.eql_v4_json_tree\", Indexes: []string{\"json\"}, \
-             Query: \"EncryptedJsonQuery\", QuerySQLDomain: \"eql_v4.query_json_tree\", Producible: true"
+            "Name: \"JsonSearch\", GoName: \"JSONSearch\", Family: \"json_tree\", Suffix: \"\", \
+             Plaintext: \"json\", SQLDomain: \"public.eql_v4_json_search\", Indexes: []string{\"json\"}, \
+             Query: \"JsonSearchQuery\", QuerySQLDomain: \"eql_v4.query_json\", Producible: true"
         ));
     }
 
@@ -310,11 +311,10 @@ mod tests {
                 );
             }
         }
-        // The one query type two rows share (text_ord and text_ord_ope
-        // have distinct names; the SteVec needle belongs to one document),
-        // so no type is declared twice.
+        // No type is declared twice, and the SteVec document, EQL v3 only,
+        // has no v4 type.
         assert_eq!(out.matches("\ntype JSON []byte\n").count(), 1);
-        assert_eq!(out.matches("\ntype SteVecQuery []byte\n").count(), 1);
+        assert!(!out.contains("SteVec"));
         // TextEq is producible and says so; Json is not and says why.
         assert!(out.contains("// TextEq is the EQL type stored in public.eql_v4_text_eq"));
         assert!(out.contains("Producible: true, Reason: \"\""));

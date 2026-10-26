@@ -47,11 +47,11 @@
 //! |---|---|
 //! | `name` | The type's name, one across Rust, TypeScript and Go: the catalog struct identifier. The data plan's target form names this. (Go spells the `Json` family's types `JSON`; that rename is the Go generator's.) |
 //! | `family` | The catalog family, lower case: `text`, `integer`, `json`, … |
-//! | `suffix` | What a query can do, as the plan's table of suffixes spells it: `""` (stored and read only), `Eq`, `Ord`, `OrdOpe`, `OrdOre`, `Match`, `Search`, `SearchOre`; `Search` for the SteVec document. |
+//! | `suffix` | What a query can do, as the plan's table of suffixes spells it: `""` (stored and read only), `Eq`, `Ord`, `OrdOpe`, `OrdOre`, `Match`, `Search`, `SearchOre`; `""` too for a document family's stored type, whose queries are the JSON index's operators. |
 //! | `plaintext` | The vitaminc [`ValueKind`] name the type is produced from — the same names a plan field's `"type"` key uses — or `null` while the family's plaintext encoding for the stack-encrypt producer profile is unspecified. |
 //! | `sql_domain` | The schema-qualified PostgreSQL domain the stored value inhabits. |
-//! | `indexes` | The indexes the type carries, by the engine's `IndexSpec::key()` names: `eq`, `match`, `ore`, `ope`, and `json` for the SteVec document. A query may ask a field typed with this target for exactly these. |
-//! | `query` | The query twin's type name (`TextEqQuery`, `SteVecQuery`), or `null` for a storage-only type, which answers no query. |
+//! | `indexes` | The indexes the type carries, by the engine's `IndexSpec::key()` names: `eq`, `match`, `ore`, `ope`, and `json` for a document family's stored type. A query may ask a field typed with this target for exactly these. |
+//! | `query` | The query twin's type name (`TextEqQuery`, `JsonSearchQuery`), or `null` for a storage-only type, which answers no query. |
 //! | `query_sql_domain` | The query twin's PostgreSQL domain, `null` likewise. |
 //! | `producible` | Whether the engine can produce this type today. [`encrypt`] and [`query`] refuse a type that is not, and a generator should too. |
 //! | `reason` | Why not, when `producible` is `false`; `null` when it is. |
@@ -143,8 +143,8 @@ impl Target {
     }
 
     /// The PostgreSQL domain of the type's ordering operand at a path, for
-    /// a type that stores a JSON document (`EncryptedJson`:
-    /// `eql_v4.query_json_tree_leaf`); `None` for every other type. Stack
+    /// a type that stores a JSON document (`JsonSearch`:
+    /// `eql_v4.query_json_leaf`); `None` for every other type. Stack
     /// Encrypt binds an ordering at a path as it
     /// (`TargetDescriptor::with_leaf_query_sql_domain`).
     pub fn leaf_query_sql_domain(&self) -> Option<&'static str> {
@@ -359,7 +359,7 @@ pub fn encrypt<'a, K: 'static>(
 
 /// [`encrypt`], under the options the plan gives the field
 /// ([`TargetOptions`]): a type that stores a JSON document
-/// (`EncryptedJson`) seals under the JSON index's options, the defaults
+/// (`JsonSearch`) seals under the JSON index's options, the defaults
 /// when `options` is `None`. Every other type takes none.
 ///
 /// # Errors
@@ -422,7 +422,7 @@ fn document(name: &str) -> Option<&'static Target> {
     target(name).filter(|target| crate::v4::targets::DOCUMENT_FAMILIES.contains(&target.family))
 }
 
-/// Seal one `EncryptedJson` value: the document the field's text holds,
+/// Seal one `JsonSearch` value: the document the field's text holds,
 /// parsed by the engine's rules, laid out by the JSON index under
 /// `options`, under the column. The parsed document is wiped when this
 /// returns; the pending has taken what it seals.
@@ -449,7 +449,7 @@ fn encrypt_document<'a, K: 'static>(
         .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))
 }
 
-/// Open one stored `EncryptedJson` value to the document's text, checking
+/// Open one stored `JsonSearch` value to the document's text, checking
 /// it was stored under the column.
 fn decrypt_document<'a, K: 'static>(
     name: &'static str,

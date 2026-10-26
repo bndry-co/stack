@@ -75,7 +75,7 @@ type JSONOption interface {
 // by stashgen, and at run time by the engine.
 //
 // Deprecated: store a JSON document as a struct, map, slice or
-// json.RawMessage field with `encrypt_into=EncryptedJson`, whose EQL type
+// json.RawMessage field with `encrypt_into=JsonSearch`, whose EQL type
 // carries the JSON index.
 func JSON(options ...JSONOption) Index {
 	_ = options
@@ -159,8 +159,8 @@ func (t OpeTerm) Less(other OpeTerm) bool { return t.Compare(other) < 0 }
 // derive it; the type exists so a generated declaration that names [JSON]
 // has a Go type to fail into.
 //
-// Deprecated: an EncryptedJson field's queries are eql.EncryptedJSONQuery
-// and eql.EncryptedJSONLeafQuery.
+// Deprecated: a JsonSearch field's queries are eql.JSONSearchQuery
+// and eql.JSONSearchLeafQuery.
 type JSONTerm []byte
 
 // compareCLLW is cllw-ore's compare_lex: compare_slice over the common

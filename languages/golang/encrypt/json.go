@@ -21,7 +21,7 @@ import (
 // rows holds one group per database row: for selector, the entry col ->
 // selector returned, or none for SQL NULL; for subtree, the rows
 // eql_v4.json_tree_subtree returned. Each entry is the
-// public.eql_v4_json_tree_entry JSON the database sent.
+// public.eql_v4_json_entry JSON the database sent.
 //
 // The engine derives the selector or the read's key again from the request,
 // the field's declaration and this cipher's keyset, and checks every row
@@ -99,7 +99,7 @@ func (cph *Cipher) JSONOpen(ctx context.Context, plan *record.Plan, field string
 }
 
 // JSONSelector is a JSON path's selector: what `->`, `->>` and the path
-// functions of an EncryptedJSON column take. It binds as SQL text; cast it,
+// functions of a JSONSearch column take. It binds as SQL text; cast it,
 // `col -> $1::text`, so PostgreSQL picks EQL's operator and not jsonb's.
 // It is column-wide: the same path has the same selector in every row.
 type JSONSelector string
@@ -177,12 +177,12 @@ type JSONRange[Q ~[]byte] struct {
 	High Q
 }
 
-// JSONSelection is a prepared `->` on an EncryptedJSON field: the selector
+// JSONSelection is a prepared `->` on a JSONSearch field: the selector
 // to bind, and what opens the entries the database returns for it. It keeps
 // the request it was prepared from (the field's declaration, the path and
 // the cipher's keyset), so the entries open only as answers to it: the
 // engine derives the selector again and refuses an entry that does not
-// carry it. E is the column's entry type, eql.EncryptedJSONEntry.
+// carry it. E is the column's entry type, eql.JSONEntry.
 type JSONSelection[E ~[]byte] struct {
 	cipher   *Cipher
 	plan     *record.Plan
@@ -239,12 +239,12 @@ func (s JSONSelection[E]) Open(ctx context.Context, rows []*E) ([]JSONValue, err
 	return out, nil
 }
 
-// JSONRead is a prepared subtree read of an EncryptedJSON field: the tokens
+// JSONRead is a prepared subtree read of a JSONSearch field: the tokens
 // to bind, and what opens the rows eql_v4.json_tree_subtree returns for
 // them. It keeps the request it was prepared from (the field's declaration,
 // the path, the bound and the cipher's keyset); the engine derives the read
 // again from it, and checks every row against it. E is the column's entry
-// type, eql.EncryptedJSONEntry.
+// type, eql.JSONEntry.
 type JSONRead[E ~[]byte] struct {
 	cipher *Cipher
 	plan   *record.Plan

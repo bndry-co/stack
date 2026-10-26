@@ -993,7 +993,7 @@ func joinNames(names []string) string {
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
-// isJSON reports whether the field is stored as an EncryptedJSON document:
+// isJSON reports whether the field is stored as a JSONSearch document:
 // a json.RawMessage, or a struct, map or slice type, sealed into an EQL type.
 func (g genField) isJSON() bool {
 	return g.Verb == VerbEncryptInto && (g.GoType.Kind == KindJSON || g.GoType.Kind == KindJSONValue)
@@ -1020,7 +1020,7 @@ func planJSON(f *genFile, g *genField) error {
 	// The engine answers selector for a field whose type stores a json_tree
 	// document; the leaf and entry types below are that family's.
 	if !document {
-		return fieldErr(f.typeName, g.GoName, "the engine answers no document operator on %s, and the generator writes document fields of EncryptedJson only", g.EQLType)
+		return fieldErr(f.typeName, g.GoName, "the engine answers no document operator on %s, and the generator writes document fields of JsonSearch only", g.EQLType)
 	}
 	g.jsonPaths = nil
 	seen := map[string]string{}
@@ -1085,10 +1085,14 @@ func (w *writer) jsonEntry(g genField) {
 	for _, op := range g.operators {
 		answered[op.Name] = true
 	}
-	eqlName := strings.TrimPrefix(g.outputType, "eql.")
 	needle := g.queryType
-	leaf := "eql." + eqlName + "LeafQuery"
-	entry := "eql." + eqlName + "Entry"
+	// The document's companion types carry the names EQL v3 gives its own
+	// (eql_domains::JSON_TREE): the leaf operand puts Leaf before the
+	// needle's Query (JSONSearchQuery, JSONSearchLeafQuery), and the entry
+	// is named for the plaintext it holds one node of (JSONEntry, over
+	// public.eql_v4_json_entry), not for the stored type.
+	leaf := strings.TrimSuffix(needle, "Query") + "LeafQuery"
+	entry := "eql." + EQLGoName("JsonEntry")
 	ordered := len(g.jsonPaths) > 0 && answered["lt_at"]
 	field := "gensupport.Field[" + g.valueExpr + "]"
 

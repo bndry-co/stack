@@ -48,7 +48,7 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
-	// JSON is a field stored as an EncryptedJSON document: it crosses as
+	// JSON is a field stored as a JSONSearch document: it crosses as
 	// its JSON text, which the engine parses. A json.RawMessage is that
 	// text; a field of another Go type is marshalled with encoding/json
 	// ([Field.Encrypt]) and opened with [GetDocument].
@@ -87,7 +87,7 @@ type field struct {
 }
 
 // TargetOptions are the options an EncryptInto field gives its EQL type:
-// for EncryptedJson, the JSON index's. The engine checks them when the
+// for JsonSearch, the JSON index's. The engine checks them when the
 // declaration is first used (stashgen asked it when the file was written).
 type TargetOptions struct {
 	// SealedRoot says whether the document's root is sealed; nil is the
@@ -189,7 +189,7 @@ func (d Declaration) EncryptInto(name string, kind Kind, eqlType string) Declara
 }
 
 // Options gives the named EncryptInto field's EQL type its options: the
-// `encrypt_into=EncryptedJson(ordered=...)` tag.
+// `encrypt_into=JsonSearch(ordered=...)` tag.
 func (d Declaration) Options(name string, options TargetOptions) Declaration {
 	if d.err != nil {
 		return d

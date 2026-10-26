@@ -202,7 +202,7 @@
 //
 // # Encrypted JSON documents
 //
-// A field tagged encrypt_into=EncryptedJson is stored as one encrypted JSON
+// A field tagged encrypt_into=JsonSearch is stored as one encrypted JSON
 // document. Declare it as a json.RawMessage, which holds the document's JSON
 // text, or as a struct, map or slice type. The generated code marshals such
 // a type with encoding/json when it seals the field. It unmarshals the

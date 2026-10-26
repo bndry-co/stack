@@ -26,7 +26,7 @@ const tagKey = "stash"
 //	stash:"tenant,context_field"              Name, VerbContextField
 //	stash:",passthrough"                      VerbPassthrough with no Name, on an embedded struct
 //	stash:"dob,encrypt_into=Date,null=sql"    Null, on a sealed field declared over a pointer
-//	stash:"profile,encrypt_into=EncryptedJson(ordered=$.age;$.visits[*].at,sealed_root=false)"
+//	stash:"profile,encrypt_into=JsonSearch(ordered=$.age;$.visits[*].at,sealed_root=false)"
 //	                                          EQLType and EQLOptions
 type tag struct {
 	Omit    bool

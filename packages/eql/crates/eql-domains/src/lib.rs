@@ -577,7 +577,7 @@ pub struct DocumentDomain {
     pub role: DocumentRole,
     /// The type's name across languages: what a data plan names as a
     /// target, and what eql-codegen derives the Go name from
-    /// (`EncryptedJson` is `eql.EncryptedJSON`). A contract identifier,
+    /// (`JsonSearch` is `eql.JSONSearch`). A contract identifier,
     /// not the Rust struct's name.
     pub name: &'static str,
     /// The hand-written Rust struct in `eql_bindings::v4::<family>`.
@@ -616,9 +616,15 @@ impl DocumentFamily {
 
 /// `json_tree`: an encrypted JSON document stored as one entry per node,
 /// with exact containment, equality and ordering at paths, `->` extraction
-/// and subtree walks (`docs/plans/2026-10-17-json-tree-index.md`). The
-/// stored type is named for its role, `EncryptedJson`, over the SQL domain
-/// `public.eql_v4_json_tree`; the Rust struct keeps its family name.
+/// and subtree walks (`docs/plans/2026-10-17-json-tree-index.md`). It is
+/// EQL v4's searchable JSON document, so its types take the names EQL v3
+/// gives its own (`public.eql_v3_json_search`, the SteVec document):
+/// `JsonSearch` over `public.eql_v4_json_search`, its needle
+/// `JsonSearchQuery` (`eql_v4.query_json`), its ordering operand
+/// `JsonSearchLeafQuery` (`eql_v4.query_json_leaf`) and its entry
+/// `JsonEntry` (`public.eql_v4_json_entry`). The storage-only `Json`
+/// (`public.eql_v4_json`) is the `json` family's. The Rust structs keep the
+/// implementation's name, as v3's `SteVecDocument` does.
 pub const JSON_TREE: DocumentFamily = DocumentFamily {
     name: "json_tree",
     plaintext: "json",
@@ -626,27 +632,27 @@ pub const JSON_TREE: DocumentFamily = DocumentFamily {
     domains: &[
         DocumentDomain {
             role: DocumentRole::Stored,
-            name: "EncryptedJson",
+            name: "JsonSearch",
             rust: "JsonTreeDocument",
-            sql_domain: "public.eql_v4_json_tree",
+            sql_domain: "public.eql_v4_json_search",
         },
         DocumentDomain {
             role: DocumentRole::Query,
-            name: "EncryptedJsonQuery",
+            name: "JsonSearchQuery",
             rust: "JsonTreeQuery",
-            sql_domain: "eql_v4.query_json_tree",
+            sql_domain: "eql_v4.query_json",
         },
         DocumentDomain {
             role: DocumentRole::LeafQuery,
-            name: "EncryptedJsonLeafQuery",
+            name: "JsonSearchLeafQuery",
             rust: "JsonTreeLeafQuery",
-            sql_domain: "eql_v4.query_json_tree_leaf",
+            sql_domain: "eql_v4.query_json_leaf",
         },
         DocumentDomain {
             role: DocumentRole::Entry,
-            name: "EncryptedJsonEntry",
+            name: "JsonEntry",
             rust: "JsonTreeEntry",
-            sql_domain: "public.eql_v4_json_tree_entry",
+            sql_domain: "public.eql_v4_json_entry",
         },
     ],
 };

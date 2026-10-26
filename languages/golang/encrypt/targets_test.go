@@ -142,7 +142,7 @@ func TestParseQueryTermTakesOnlyWhatTheEngineWrites(t *testing.T) {
 // The encoding, the term's shape and the domain must agree as the engine
 // writes them; a term that mixes them is a wire bug, refused.
 func TestParseQueryTermRefusesAMixedShape(t *testing.T) {
-	domain := "eql_v4.query_json_tree"
+	domain := "eql_v4.query_json"
 	shaped := func(encoding string, domain any, term any) vcvalue.Object {
 		return vcvalue.Object{
 			{Key: "operator", Value: "contains"}, {Key: "fidelity", Value: "exact"}, {Key: "index", Value: "json"},

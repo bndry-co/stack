@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **A document field's queries and reads through a data plan** (#1350,
-  #1352). A field naming `EncryptedJson` answers `contains`,
+  #1352). A field naming `JsonSearch` answers `contains`,
   `contained_by`, `eq_at`, `selector`, `subtree`, `children` and
   `child_count`, and, when it orders a path, `lt_at`, `lte_at`, `gt_at`,
   `gte_at` and `between_at`, each taking an object of named inputs
@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{"path"}`, `{"path", "wildcard_bound"}`; JSON values as JSON text).
   `query_term` derives the typed chain's operands, bit for bit: the
   containment needle and the leaf ordering operand as EQL JSON (bound as
-  `eql_v4.query_json_tree` and `eql_v4.query_json_tree_leaf`), the
+  `eql_v4.query_json` and `eql_v4.query_json_leaf`), the
   selector as `text` and a read's tokens as `text[]`. A position in a
   path is refused where the operand is a selector (`json_path_position`),
   a wildcard where the operator names one node (`json_path_wildcard`).
@@ -65,8 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A JSON document through a data plan** (#1349). A plan field may
   declare the new `json` value kind and name a target that stores a
-  document, `EncryptedJson`, with the JSON index's options:
-  `"target": {"name": "EncryptedJson", "options": {"sealed_root": true,
+  document, `JsonSearch`, with the JSON index's options:
+  `"target": {"name": "JsonSearch", "options": {"sealed_root": true,
   "ordered": ["$.age"]}}`, or the bare name for the defaults. The plan
   resolves the options once when it is built (`FieldPlan::target_options`,
   `TargetOptions::Json`), so writes, queries and reads of the field run
