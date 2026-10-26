@@ -161,6 +161,7 @@ A `json.RawMessage` comes back as JSON text that holds the same values; key orde
 A pointer field (`*Profile`, `*json.RawMessage`) is optional and must say `null=sql`: a document has no fixed length to hide a missing one behind.
 A nil pointer is SQL `NULL`; a non-nil `*json.RawMessage` holding `null` is a stored JSON `null`.
 A `json.RawMessage` sealed any other way (`encrypt`, `index=equality`) is bytes, as any type defined over `[]byte` is.
+`JsonSearch` takes `json.RawMessage` itself, or an alias of it (`type Doc = json.RawMessage`), and refuses a type defined over it (`type Doc json.RawMessage`): `stashgen` knows a document by the `json.RawMessage` type, where a scalar type is accepted with any type defined over it.
 
 The type takes options in parentheses: `ordered=` names the paths whose numbers and strings carry an ordering term, separated by `;`, and `sealed_root=false` turns off the sealed root (on by default).
 `encrypt_into=JsonSearch(ordered=$.age;$.visits[*].at)` orders two paths.
@@ -179,6 +180,18 @@ The field's `Fields` entry has a method per operation:
 
 `At` has one accessor per ordered path, named for its keys (`$.visits[*].at` is `At.VisitsAt`, `$.a.1` is `At.A1`); two paths with one name, or one path given twice, stop `stashgen`.
 An ordering compares the value `->` extracts at its path, and EQL's `<` compares ordering terms alone, so take the selector from the same accessor (`At.Age.Selector`) rather than spelling the path again.
+At a wildcard path (`$.visits[*].at`), `->` returns an unspecified element of each row (the entries are stored in a random order), so write the comparison over every match and order by the least or greatest one:
+
+```sql
+-- rows with some visit after $2
+SELECT id FROM customers WHERE EXISTS (
+  SELECT 1 FROM eql_v4.json_tree_path_query(profile, $1::text) AS e WHERE e > $2::eql_v4.query_json_leaf)
+-- rows by their earliest visit
+SELECT id FROM customers ORDER BY (
+  SELECT eql_v4.ord_term(e) FROM eql_v4.json_tree_path_query(profile, $1::text) AS e ORDER BY 1 LIMIT 1)
+```
+
+with `$1` from `At.VisitsAt.Selector(ctx, c)` and `$2` from `At.VisitsAt.Gt(ctx, c, v)`; for the latest visit, order by `ORDER BY 1 DESC NULLS LAST` inside and `DESC` outside.
 `OpenOne` reads one value and refuses a read whose path has a wildcard before anything is opened; open a wildcard read with `Open`.
 A needle and a value are Go values: a `json.RawMessage` of JSON text crosses as it is, and anything else is marshalled with `encoding/json`.
 `EqAt` and the orderings take a scalar: a string, a number, a bool, or `nil` for JSON `null`.

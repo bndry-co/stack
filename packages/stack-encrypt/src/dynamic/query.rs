@@ -76,7 +76,7 @@ use serde::{Serialize, Serializer};
 use super::WireBytes;
 use std::fmt;
 
-use stack_kms::DataKeySource;
+use stack_kms::{DataKeySource, IndexKeySource};
 
 use super::record::{FieldPlan, Plan};
 use super::term::OneScalar;
@@ -120,13 +120,13 @@ pub enum OpSpec {
     /// the field's match index fixes.
     Matches,
     /// `"contains"`: [`op::Contains`](crate::op::Contains), a stored
-    /// document containing a JSON needle (`@>`). Answered by the JSON index
+    /// document containing a JSON document (`@>`). Answered by the JSON index
     /// of a field that stores a document. The inputs of this and the
     /// operators below are named by [`OpSpec::input`]; [`query_term`]
     /// derives their operands and [`json_open`] opens their reads.
     Contains,
     /// `"contained_by"`: [`op::ContainedBy`](crate::op::ContainedBy), a
-    /// stored document contained by a JSON needle (`<@`).
+    /// stored document contained by a JSON document (`<@`).
     ContainedBy,
     /// `"eq_at"`: [`op::AtPath`](crate::op::AtPath)`(op::Eq)`, a scalar at
     /// a path.
@@ -241,7 +241,13 @@ impl OpSpec {
     }
 
     /// How far the server's answer to this operator can be trusted: what
-    /// the typed path says by the trait the term implements.
+    /// the typed path says by the trait the term implements. For the JSON
+    /// reads and tokens (`selector`, `subtree`, `children`, `child_count`),
+    /// which are not predicates, `exact` says only that the server finds
+    /// the nodes the operand names, not that it returns them all (a read
+    /// opens what the rows hold; see [`json_open`]). Equality at a wildcard
+    /// path matches when any element does, and an ordering compared through
+    /// `col -> sel` at one sees an unspecified element of each row.
     pub fn fidelity(self) -> Fidelity {
         match self {
             OpSpec::Matches => Fidelity::Probabilistic,
@@ -1005,12 +1011,18 @@ pub fn check_json_open(
 /// # Errors
 ///
 /// As [`query_term`] refuses a field that does not answer the read's
-/// operator, and [`Error::Source`] naming the field for a request or rows
-/// that do not parse ([`Reason::JsonInput`]). A row that is not one the
-/// read asked for fails the pending
+/// operator, and a plan whose context comes from a field of each record
+/// ([`Reason::QueryContextField`]): a read names no record, so it has no
+/// context to derive under. [`Error::Source`] names the field for a
+/// request or rows that do not parse ([`Reason::JsonInput`]). A row that
+/// is not one the read asked for fails the pending
 /// ([`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)), as does a
 /// wildcard read of an array longer than its bound
 /// ([`Error::JsonWildcardTruncated`](crate::Error::JsonWildcardTruncated)).
+/// A `selector` entry that does not open alone, a container with members
+/// or an altered entry, fails it as
+/// [`Error::JsonNotALeaf`](crate::Error::JsonNotALeaf); a container is read
+/// with `subtree`.
 pub fn json_open<'a, K>(
     cipher: &'a KeysetCipher<'_, K>,
     plan: &Plan,
@@ -1111,7 +1123,7 @@ pub fn query_term<'a, K>(
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, QueryTerm, K>, Error>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let answer = answer(plan, field, operator, resolver)?;
     has_context(plan, field)?;

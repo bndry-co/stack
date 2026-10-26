@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/cipherstash/stack/languages/golang/internal/record"
@@ -27,7 +28,11 @@ import (
 // the field's declaration and this cipher's keyset, and checks every row
 // against it; the rows never say which path they are for. A row that is not
 // one the read asked for is [ErrEncoding]; a wildcard read of an array
-// longer than its bound is too. What comes back is, per group, the JSON
+// longer than its bound is too, and so is a selector entry that does not
+// open alone: a container with members, whose entry commits to children
+// col -> does not return, or an altered entry, which the client cannot
+// tell apart (code stack_encrypt::json_not_a_leaf). Read a container with a
+// subtree read. What comes back is, per group, the JSON
 // text of each value the read reached, in document order: plaintext, which
 // the caller owns. One ZeroKMS request for every group. For generated code.
 //
@@ -116,7 +121,8 @@ func (s JSONSelector) Value() (driver.Value, error) {
 // JSONToken is one node's token: what eql_v4.json_tree_children and
 // eql_v4.json_tree_child_count take. It binds as SQL text. A token is a
 // capability over the node's subtree in every row of the column: send it
-// to the database for a query, and do not log it.
+// to the database for a query, and nowhere else. It prints and logs
+// redacted.
 type JSONToken string
 
 // Value binds the token as text. A zero JSONToken is refused, as a zero
@@ -128,14 +134,41 @@ func (t JSONToken) Value() (driver.Value, error) {
 	return string(t), nil
 }
 
+// redacted stands in for a token, a selector or a path in what the JSON
+// read types print and log.
+const redacted = "[redacted]"
+
+// String hides the token: it is a capability, so it does not print.
+func (t JSONToken) String() string {
+	if t == "" {
+		return "encrypt.JSONToken{}"
+	}
+	return "encrypt.JSONToken{" + redacted + "}"
+}
+
+// GoString is what %#v prints: [JSONToken.String].
+func (t JSONToken) GoString() string { return t.String() }
+
+// Format prints [JSONToken.String] for every verb fmt hands it.
+func (t JSONToken) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, t.String()) }
+
+// LogValue is what slog records: [redacted], never the token.
+func (t JSONToken) LogValue() slog.Value { return slog.StringValue(redacted) }
+
 // JSONTokens are a subtree read's tokens: what eql_v4.json_tree_subtree
 // takes. They bind as a PostgreSQL text[] literal; cast the parameter,
-// `$2::text[]`. Like a [JSONToken], each is a capability: do not log them.
+// `$2::text[]`. Like a [JSONToken], each is a capability, and they print
+// and log redacted.
 type JSONTokens []string
 
 // Value binds the tokens as a text[] literal. A token is base64, so it
-// needs no escape inside the quotes.
+// needs no escape inside the quotes. Empty JSONTokens (a zero JSONRead's)
+// are refused, as a zero [JSONToken] is: bound as {}, they would read
+// nothing from every row.
 func (t JSONTokens) Value() (driver.Value, error) {
+	if len(t) == 0 {
+		return nil, fmt.Errorf("%w: empty JSONTokens: prepare a read with the field's Subtree", ErrEncoding)
+	}
 	var b strings.Builder
 	b.WriteByte('{')
 	for i, token := range t {
@@ -150,10 +183,27 @@ func (t JSONTokens) Value() (driver.Value, error) {
 	return b.String(), nil
 }
 
+// String counts the tokens and hides them: each is a capability.
+func (t JSONTokens) String() string {
+	return fmt.Sprintf("encrypt.JSONTokens{%d tokens: %s}", len(t), redacted)
+}
+
+// GoString is what %#v prints: [JSONTokens.String].
+func (t JSONTokens) GoString() string { return t.String() }
+
+// Format prints [JSONTokens.String] for every verb fmt hands it.
+func (t JSONTokens) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, t.String()) }
+
+// LogValue is what slog records: how many tokens, never the tokens.
+func (t JSONTokens) LogValue() slog.Value {
+	return slog.GroupValue(slog.Int("tokens", len(t)))
+}
+
 // JSONValue is one value a read reached, or none. Found is false for no
 // value at the path (the row has no node there, or SQL NULL); a JSON null
 // that is there is Found, with JSON "null". JSON is the value's JSON text:
-// plaintext, which the caller owns.
+// plaintext, which the caller owns. JSONValue prints its JSON in the
+// clear: it has no String or LogValue method, so do not log one.
 type JSONValue struct {
 	Found bool
 	JSON  json.RawMessage
@@ -192,13 +242,38 @@ type JSONSelection[E ~[]byte] struct {
 }
 
 // NewJSONSelection is a selection prepared by [Cipher.QueryTerm]'s
-// selector operator. For generated code.
-func NewJSONSelection[E ~[]byte](c *Cipher, plan *record.Plan, field, path, selector string) JSONSelection[E] {
-	return JSONSelection[E]{cipher: c, plan: plan, field: field, path: path, selector: JSONSelector(selector)}
+// selector operator on field of the record type that declaration
+// declares, at path. For generated code.
+func NewJSONSelection[E ~[]byte](c *Cipher, declaration *record.Plan, field, path, selector string) JSONSelection[E] {
+	return JSONSelection[E]{cipher: c, plan: declaration, field: field, path: path, selector: JSONSelector(selector)}
 }
 
 // Selector is the selector to bind: `col -> $1::text`.
 func (s JSONSelection[E]) Selector() JSONSelector { return s.selector }
+
+// String names the field and hides the path and the selector: a path's
+// keys can be a customer's data.
+func (s JSONSelection[E]) String() string {
+	if s.cipher == nil {
+		return "encrypt.JSONSelection{}"
+	}
+	return fmt.Sprintf("encrypt.JSONSelection{field: %q, path: %s, selector: %s}", s.field, redacted, redacted)
+}
+
+// GoString is what %#v prints: [JSONSelection.String].
+func (s JSONSelection[E]) GoString() string { return s.String() }
+
+// Format prints [JSONSelection.String] for every verb fmt hands it.
+func (s JSONSelection[E]) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, s.String()) }
+
+// LogValue is what slog records: the field, and [redacted] for the path
+// and the selector.
+func (s JSONSelection[E]) LogValue() slog.Value {
+	if s.cipher == nil {
+		return slog.GroupValue()
+	}
+	return slog.GroupValue(slog.String("field", s.field), slog.String("path", redacted), slog.String("selector", redacted))
+}
 
 // Open opens the entries `col -> selector` returned, one per database row,
 // nil for a row where it returned SQL NULL, with one ZeroKMS request. Each
@@ -249,7 +324,6 @@ type JSONRead[E ~[]byte] struct {
 	cipher *Cipher
 	plan   *record.Plan
 	field  string
-	path   string
 	// input is the subtree operator's input the tokens were derived from;
 	// opening sends it back as the read's request, unchanged.
 	input  vcvalue.Object
@@ -257,14 +331,40 @@ type JSONRead[E ~[]byte] struct {
 }
 
 // NewJSONRead is a read prepared by [Cipher.QueryTerm]'s subtree operator
-// from input, its {"path", "wildcard_bound"?} object. For generated code.
-func NewJSONRead[E ~[]byte](c *Cipher, plan *record.Plan, field, path string, input vcvalue.Object, tokens []string) JSONRead[E] {
-	return JSONRead[E]{cipher: c, plan: plan, field: field, path: path, input: input, tokens: JSONTokens(tokens)}
+// on field of the record type that declaration declares, from input, its
+// {"path", "wildcard_bound"?} object. For generated code.
+func NewJSONRead[E ~[]byte](c *Cipher, declaration *record.Plan, field string, input vcvalue.Object, tokens []string) JSONRead[E] {
+	return JSONRead[E]{cipher: c, plan: declaration, field: field, input: input, tokens: JSONTokens(tokens)}
 }
 
 // Tokens are the tokens to bind:
 // `eql_v4.json_tree_subtree(col, $1::text[], 64)`.
 func (r JSONRead[E]) Tokens() JSONTokens { return r.tokens }
+
+// String names the field and counts the tokens, and hides the path and
+// the tokens: a path's keys can be a customer's data, and a token is a
+// capability.
+func (r JSONRead[E]) String() string {
+	if r.cipher == nil {
+		return "encrypt.JSONRead{}"
+	}
+	return fmt.Sprintf("encrypt.JSONRead{field: %q, path: %s, tokens: %d}", r.field, redacted, len(r.tokens))
+}
+
+// GoString is what %#v prints: [JSONRead.String].
+func (r JSONRead[E]) GoString() string { return r.String() }
+
+// Format prints [JSONRead.String] for every verb fmt hands it.
+func (r JSONRead[E]) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, r.String()) }
+
+// LogValue is what slog records: the field, [redacted] for the path, and
+// how many tokens.
+func (r JSONRead[E]) LogValue() slog.Value {
+	if r.cipher == nil {
+		return slog.GroupValue()
+	}
+	return slog.GroupValue(slog.String("field", r.field), slog.String("path", redacted), slog.Int("tokens", len(r.tokens)))
+}
 
 // Open opens the rows the read returned, one group per database row, with
 // one ZeroKMS request: per row, the value at each concrete path the read
@@ -304,17 +404,26 @@ func (r JSONRead[E]) Open(ctx context.Context, rows [][]E) ([][]json.RawMessage,
 	return out, nil
 }
 
-// OpenOne opens one row's rows to the one value at the read's path: Found
-// with its JSON, or not Found where the row has no node there. A read that
-// reaches more than one value (a wildcard) is [ErrEncoding]; open it with
-// [JSONRead.Open].
-func (r JSONRead[E]) OpenOne(ctx context.Context, rows []E) (JSONValue, error) {
-	// A wildcard reaches a value per element: refused before anything is
-	// opened, not only for the rows that happen to hold two.
-	if strings.Contains(r.path, "[*]") {
-		return JSONValue{}, fmt.Errorf("%w: OpenOne reads one value, and %s has a wildcard; open it with Open", ErrEncoding, r.path)
+// OpenOne opens one database row's entries to the one value at the read's
+// path: Found with its JSON, or not Found where the row has no node there.
+// A read that reaches more than one value (a wildcard) is [ErrEncoding];
+// open it with [JSONRead.Open].
+func (r JSONRead[E]) OpenOne(ctx context.Context, entries []E) (JSONValue, error) {
+	// The engine derives one token for a path that names one node, and for
+	// a wildcard one per element below the bound plus a probe at it: two
+	// or more at any bound of 1 or more. The generated Subtree never sends
+	// a bound of 0 (WildcardBound 0 sends none, and the engine's default
+	// is 64). So the count is the engine's own answer to whether the path
+	// names one node: a quoted key that spells [*] is one member. A
+	// wildcard is refused here, before anything is opened, not only for
+	// the rows that happen to hold two values. A read prepared with a
+	// bound of 0 expands a wildcard to the probe alone and passes this
+	// check, but it reaches no value: a row with an element there is
+	// refused as truncated, and any other opens to none.
+	if r.cipher != nil && len(r.tokens) != 1 {
+		return JSONValue{}, fmt.Errorf("%w: OpenOne reads one value, and this read's path has a wildcard; open it with Open", ErrEncoding)
 	}
-	opened, err := r.Open(ctx, [][]E{rows})
+	opened, err := r.Open(ctx, [][]E{entries})
 	if err != nil {
 		return JSONValue{}, err
 	}

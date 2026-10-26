@@ -599,9 +599,12 @@ column, from a struct, map or slice field, or a `json.RawMessage`
 stashgen README). A struct is marshalled with `encoding/json` when it is
 sealed and read back into its type when it is opened. Its numbers come back
 exactly; the stashgen README lists what `encoding/json` does not keep
-(invalid UTF-8, a nil map or slice, a time's zone). One entry per node is
-encrypted, so the database can test containment, equality and ordering at a
-path, return one node with `->`, and walk a subtree, without decrypting:
+(invalid UTF-8, a nil map or slice, a time's zone). Unlike the types above,
+a type defined over `json.RawMessage` (`type Doc json.RawMessage`) is
+refused; an alias of it (`type Doc = json.RawMessage`) is accepted. One
+entry per node is encrypted, so the database can test containment, equality
+and ordering at a path, return one node with `->`, and walk a subtree,
+without decrypting:
 
 ```go
 q, err := users.Fields.Profile.Contains(ctx, cipher, map[string]any{"plan": "pro"})
@@ -629,9 +632,17 @@ path and the cipher's keyset, and refuses a row that is not one it asked
 for. It does not prove the database returned every row, or rows of the
 database row you meant. `encrypt.JSONTokens` binds as a `text[]` literal,
 and a selector or token as `text`; cast each parameter, as above, so
-PostgreSQL picks EQL's operator and not `jsonb`'s. Numbers order as `float64`,
+PostgreSQL picks EQL's operator and not `jsonb`'s; a zero one is refused
+rather than bound. A token is a capability over its node's subtree in every
+row of the column, and a path's keys can be your customer's data, so
+`JSONToken`, `JSONTokens`, `JSONSelection` and `JSONRead` print and log with
+the tokens, the selector and the path redacted. A `JSONValue` holds the
+plaintext a read opened, and prints it. Numbers order as `float64`,
 so integers past 2^53 can tie at an ordered path; containment and `EqAt`
-compare them exactly.
+compare them exactly. At a wildcard path, `->` returns an unspecified
+element of each row, so an ordering over every element is written over
+`eql_v4.json_tree_path_query(col, $sel)`, its matches (the stashgen README
+shows the SQL).
 
 ## Building
 

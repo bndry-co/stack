@@ -406,7 +406,7 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 	}
 	_ = checker.Close()
 	source := func(fields string) string {
-		return "package users\n\nimport \"encoding/json\"\n\nvar _ json.RawMessage\n\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n" + fields + "\n}\n"
+		return "package users\n\nimport \"encoding/json\"\n\ntype Doc json.RawMessage\n\ntype DocAlias = json.RawMessage\n\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n" + fields + "\n}\n"
 	}
 	generate := func(fields string) (string, string, int) {
 		dir := writeModule(t, map[string]string{"model.go": source(fields)})
@@ -453,8 +453,28 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 			t.Errorf("the generated file lacks %q", want)
 		}
 	}
+	// An alias of json.RawMessage is the type itself, and is a document; a
+	// type defined over it is refused below.
+	written, stderr, code = generate("\tProfile DocAlias `stash:\"profile,encrypt_into=JsonSearch\"`")
+	if code != 0 || !strings.Contains(written, "Profile eql.JSONSearch") {
+		t.Fatalf("an alias of json.RawMessage: exit %d\n%s", code, stderr)
+	}
+	// An engine that answers no ordering on a field whose tag orders paths
+	// disagrees with the generator: refused by name, not written as a field
+	// with no At.
+	dir := writeModule(t, map[string]string{"model.go": source("\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.age)\"`")})
+	stderrBuf := bytes.Buffer{}
+	if code := run([]string{"-type", "Customer"}, dir, &bytes.Buffer{}, &stderrBuf, withoutOperator("lt_at")); code != 1 {
+		t.Fatalf("exit %d, want 1\n%s", code, stderrBuf.String())
+	}
+	if got := stderrBuf.String(); !strings.Contains(got, "Customer.Profile") || !strings.Contains(got, "the engine answers no ordering (lt_at)") {
+		t.Fatalf("stderr = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "customer_stash.go")); !os.IsNotExist(err) {
+		t.Fatal("a file was written after the refusal")
+	}
 	for _, c := range []struct{ name, fields, want string }{
-		{"a sealed null", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=JsonSearch,null=sealed\"`", "Customer.Prefs"},
+		{"a sealed null", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=JsonSearch,null=sealed\"`", "Customer.Prefs: a nil has an equality term and no other, so another index's column would show which values are absent; write null=sql"},
 		{"a nil document that does not say null=sql", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=JsonSearch\"`", "null=sql"},
 		{"a position in an ordered path", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.scores[2])\"`", "the engine refuses the declaration"},
 		{"a quoted key in a tag", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$[\\\"a b\\\"])\"`", "not a plain JSONPath"},
@@ -463,6 +483,7 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 		{"two paths, one accessor", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.a_b;$.aB)\"`", "both name the accessor At.AB"},
 		{"the same ordered path twice", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.a;$.a)\"`", "the ordered path $.a is given twice"},
 		{"a path with no accessor name", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.__)\"`", "no Go accessor name"},
+		{"a type defined over json.RawMessage", "\tProfile Doc `stash:\"profile,encrypt_into=JsonSearch\"`", "Customer.Profile: JsonSearch seals a json document: declare the field json.RawMessage"},
 		{"a string into a document", "\tProfile string `stash:\"profile,encrypt_into=JsonSearch\"`", "JsonSearch seals a json"},
 		{"options on a type that takes none", "\tEmail string `stash:\"email,encrypt_into=TextEq(ordered=$.a)\"`", "the engine refuses the declaration"},
 	} {
@@ -476,4 +497,32 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withoutOperator is the embedded engine with op removed from every field's
+// answer: an engine that disagrees with the generator.
+func withoutOperator(op string) func(context.Context) (stashgen.Engine, error) {
+	return func(ctx context.Context) (stashgen.Engine, error) {
+		engine, err := stashgen.GuestEngine(ctx)
+		return droppingEngine{Engine: engine, op: op}, err
+	}
+}
+
+type droppingEngine struct {
+	stashgen.Engine
+	op string
+}
+
+func (e droppingEngine) Check(ctx context.Context, d stashgen.Declaration) (map[string][]stashgen.Operator, error) {
+	answered, err := e.Engine.Check(ctx, d)
+	for field, ops := range answered {
+		kept := ops[:0]
+		for _, o := range ops {
+			if o.Name != e.op {
+				kept = append(kept, o)
+			}
+		}
+		answered[field] = kept
+	}
+	return answered, err
 }

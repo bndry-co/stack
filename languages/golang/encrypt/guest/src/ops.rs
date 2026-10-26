@@ -51,7 +51,7 @@ use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::ErrorPayload;
 use stack_encrypt::{CipherText, KeysetCipher, Label, Node, SealedValue, StackCipherText};
-use stack_kms::DataKeySource;
+use stack_kms::{DataKeySource, IndexKeySource};
 use zeroize::Zeroizing;
 
 use stack_guest_abi::last_error;
@@ -101,7 +101,7 @@ pub async fn term<K>(
     kind: u32,
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     // The same proof every stack-encrypt leaf demands: an empty context is
     // `STATUS_ENCODING` here, before any derivation.
@@ -178,7 +178,7 @@ pub async fn encrypt_record<K>(
     plan: &[u8],
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
     let tree =
@@ -213,7 +213,7 @@ pub async fn decrypt_record<K>(
     expected: Option<Label>,
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
     let value =
@@ -249,7 +249,7 @@ where
 /// that names an EQL type runs the type's query twin through this build's
 /// resolver, and `term` holds the twin's JSON bytes and `domain` its
 /// PostgreSQL domain. A document's operator gives `encoding` `eql` (a
-/// needle or leaf operand), `text` (a selector or node token) or
+/// containment query or leaf operand), `text` (a selector or node token) or
 /// `text_array` (a subtree read's tokens). No data key is minted.
 pub async fn query_term<K>(
     cipher: &KeysetCipher<'_, K>,
@@ -259,7 +259,7 @@ pub async fn query_term<K>(
     operator: &[u8],
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let (plan, field, operator) = parse_query(plan, field, operator)?;
     let term = dynamic::query_term(
@@ -295,7 +295,7 @@ pub async fn json_open<K>(
     request: &[u8],
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let (plan, field) = parse_field(plan, field)?;
     let opened = dynamic::json_open(

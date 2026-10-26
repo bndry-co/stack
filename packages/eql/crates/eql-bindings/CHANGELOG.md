@@ -16,7 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`TargetDescriptor::with_leaf_query_sql_domain`).
 
 - **`JsonSearch`, the `json_tree` document, by name** (`targets`
-- **`JsonSearch`, the `json_tree` document, by name** (`targets`
   feature, #1348, #1349). The target table has a row for it, generated
   from the catalog's document family (`eql_domains::DOCUMENT_FAMILIES`):
   produced from the `json` kind, carrying the `json` index, with

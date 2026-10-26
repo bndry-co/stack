@@ -24,8 +24,9 @@
 //!   `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`, below the chain's heads, which
 //!   lets the server enumerate the subtree under a node from its token and
 //!   nothing else: the ordinals `o` under a node are dense from zero (an
-//!   element's is its index, a member's its keyed rank among its
-//!   siblings), so the server probes them in turn until the first miss.
+//!   element's is its index, an object's members' a random permutation
+//!   drawn when the document is sealed), so the server probes them in turn
+//!   until the first miss.
 //!   Nothing stored says whether a hit is a member or an element, so the
 //!   server derives the member rule's token for it, keeps it if the hit's
 //!   self tag is that token's, and otherwise tries the element rule's;
@@ -34,11 +35,12 @@
 //!   same OPE term the scalar [`Ope`](crate::target::Ope) index derives,
 //!   keyed by the column. No path is ordered by default.
 //!
-//! Beside the entries the document stores its containment **projection**
-//! `q`: one `(s, vs)` pair per node, `vs` being a PRF of the node's kind
-//! and, for a scalar, its canonical value, bound to `s`, nested by array
-//! element so that PostgreSQL's own `jsonb @>` over two projections is
-//! exact containment. The value selectors live there and nowhere else.
+//! Beside the entries the document stores its **selector set** `q` (the
+//! design's containment projection, [`JsonSelectorSet`]): one `(s, vs)`
+//! pair per node, `vs` being a PRF of the node's kind and, for a scalar,
+//! its canonical value, bound to `s`, nested by array element so that
+//! PostgreSQL's own `jsonb @>` over two sets is exact containment. The
+//! value selectors live there and nowhere else.
 //!
 //! By default the root is **sealed** ([`JsonOptions::sealed_root`]): the root
 //! entry's ciphertext is the whole document and the top-level fields are
@@ -62,9 +64,12 @@
 //! client derived for the read: [`JsonSelector::open`] for the one entry
 //! `->` returns ([`JsonExtracted`]), [`JsonSubtreeKey::open`] for the rows
 //! of a walk ([`JsonSubtree`]). Each checks that the rows are the ones the
-//! read asked for, which their ciphertexts alone do not say: an entry is
-//! sealed under its own selector and position, so any entry of the row
-//! opens.
+//! read asked for. Every entry's AAD binds its selector, the slot it is
+//! stored at and the digest of its children's AEAD tags (the cascade), so
+//! the rows beneath the node a read names open only as they were sealed;
+//! the node itself is checked against the path the client derived, since
+//! nothing above it is read. The entries are stored in a random order, root
+//! first, and no check reads a slot as a position in the document.
 //!
 //! # Where this deviates from the design
 //!
@@ -78,9 +83,10 @@
 //!   ciphertext), so there is one leaf cipher in the crate and no second
 //!   AES-GCM call site. Uniqueness under one document key is probabilistic
 //!   rather than structural: at `N` entries the collision probability is
-//!   `N² / 2^97`, negligible for any document. The ordinal still binds the
-//!   entry to its place through the AAD, so a moved or reordered entry fails
-//!   to open as the design requires. The cost is twelve bytes per entry.
+//!   `N² / 2^97`, negligible for any document. The AAD still binds the
+//!   entry to its slot, and its parent's AAD to its tag, so a moved or
+//!   reordered entry fails to open as the design requires. The cost is
+//!   twelve bytes per entry.
 //! - **Tokens chain by selector, and nothing stores a token.** The design
 //!   wraps each child's label-derived token under its parent's (`w`) and
 //!   stores the ordinal (`o`) so the server can find and unmask it. Here a
@@ -118,16 +124,18 @@ use vitaminc_protected::OpaqueDebug;
 
 use crate::target::{DecryptField, DecryptInto, Decryptable, Decryption};
 
+mod cascade;
 mod derive;
 mod path;
 mod plain;
 mod query;
+mod shuffle;
 mod text;
 
 pub use derive::JsonTerms;
 pub use path::{JsonPath, JsonPathError, Segment};
 pub use query::{
-    AtPathTerms, JsonLeafQuery, JsonProjection, JsonQuery, JsonSelector, JsonSubtreeKey,
+    AtPathTerms, JsonLeafQuery, JsonQuery, JsonSelector, JsonSelectorSet, JsonSubtreeKey,
 };
 pub use text::{parse_text, to_text, JsonTextError};
 
@@ -142,7 +150,13 @@ pub fn wipe_value(value: &mut serde_json::Value) {
     plain::wipe(value);
 }
 
+/// The deepest a document nests: the data plan refuses a path with more
+/// steps, which names no node.
+#[cfg(feature = "dynamic")]
+pub(crate) use derive::MAX_DEPTH;
 pub(crate) use derive::{seal_pending, terms_pending};
+pub(crate) use plain::PlainJson;
+pub(crate) use shuffle::Randomness;
 
 /// A sixteen-byte tag: a selector or a token.
 pub type Tag = [u8; 16];
@@ -185,9 +199,10 @@ pub struct JsonOptions {
     /// (`$.scores[2]`) is refused, here and in an ordering query
     /// ([`TermError::JsonOrderingAtPosition`](crate::sem::TermError::JsonOrderingAtPosition)):
     /// an ordering compares the leaf `->` extracts by the path's selector,
-    /// which reads every position as the wildcard, so it reaches the first
-    /// element at the path and never the one a position names. An ordering
-    /// asked at a path no entry here covers is refused
+    /// which reads every position as the wildcard, so it reaches an
+    /// unspecified element at the path (entries are stored in a random
+    /// order) and never the one a position names. An ordering asked at a
+    /// path no entry here covers is refused
     /// ([`TermError::JsonPathNotOrdered`](crate::sem::TermError::JsonPathNotOrdered)).
     pub ordered: BTreeSet<JsonPath>,
 }
@@ -431,20 +446,21 @@ impl JsonEntry {
 }
 
 /// A stored JSON document: its [`JsonHeader`] and its entries, one per
-/// node, in depth-first pre-order with the root first. What
+/// node, in a random order drawn for the document when it was sealed, with
+/// the root first. What
 /// [`json_document`](crate::target::json_document) produces and
 /// [`DecryptInto<Value>`](crate::DecryptInto) opens.
 ///
 /// Serializes to the wire form the EQL domain stores: `{"h": "…", "sv":
 /// [{"s": "…", "c": "…", …}, …], "q": {"sv": [{"s", "vs"}, …], "el":
-/// […]}}`, where `q` is the document's containment
-/// [projection](Self::projection); see the [module docs](self#byte-encodings).
+/// […]}}`, where `q` is the document's [selector set](Self::selector_set);
+/// see the [module docs](self#byte-encodings).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "DocumentWire", into = "DocumentWire")]
 pub struct JsonDocument {
     header: JsonHeader,
     entries: Vec<JsonEntry>,
-    projection: JsonProjection,
+    selectors: JsonSelectorSet,
 }
 
 impl JsonDocument {
@@ -453,18 +469,21 @@ impl JsonDocument {
         &self.header
     }
 
-    /// The entries, in depth-first pre-order; the root is first.
+    /// The entries, in their stored order: the root first, the rest in a
+    /// uniformly random order drawn when the document was sealed, which says
+    /// nothing of the tree. A node's children are found by the chain
+    /// ([`children`](Self::children)), not by position.
     pub fn entries(&self) -> &[JsonEntry] {
         &self.entries
     }
 
-    /// The document's containment projection: what a [`JsonQuery`] is
-    /// matched against, stored as `q`. Computed from the plaintext when the
+    /// The document's selector set: what a [`JsonQuery`] is matched
+    /// against, stored as `q`. Computed from the plaintext when the
     /// document is sealed and read back as stored: like every search field
     /// it is unauthenticated (only `c` is), and a tampered `q` changes
     /// which rows a containment query returns and nothing else.
-    pub fn projection(&self) -> &JsonProjection {
-        &self.projection
+    pub fn selector_set(&self) -> &JsonSelectorSet {
+        &self.selectors
     }
 
     /// The entry whose self tag is `token`'s, as the server finds the node
@@ -522,7 +541,9 @@ impl JsonDocument {
 
     /// The rows the server's read returns for `tokens` with no budget:
     /// for each token in order, the node it names at depth `0` and every
-    /// entry beneath it with its depth below that node, in document order.
+    /// entry beneath it with its depth below that node, each node followed
+    /// by its children in ordinal order. (The SQL returns the rows of a
+    /// token by slot instead, which the client does not rely on.)
     /// A token that names no node yields nothing. What
     /// `json_tree_subtree(doc, tokens, 0)` returns.
     ///
@@ -565,13 +586,14 @@ impl JsonDocument {
         }
     }
 
-    /// The node at ordinal `j` as an extraction returns it: the entry with
-    /// the header beside it, which opens on its own.
-    pub fn node(&self, j: usize) -> Option<JsonNode> {
-        self.entries.get(j).map(|entry| JsonNode {
+    /// The node stored at `slot` as an extraction returns it: the entry
+    /// with the header beside it. A scalar or an empty container opens on
+    /// its own; a container with children opens only with its subtree.
+    pub fn node(&self, slot: usize) -> Option<JsonNode> {
+        self.entries.get(slot).map(|entry| JsonNode {
             entry: entry.clone(),
             header: self.header.clone(),
-            j: j as u64,
+            slot: slot as u64,
             depth: None,
         })
     }
@@ -579,12 +601,12 @@ impl JsonDocument {
     pub(crate) fn new(
         header: JsonHeader,
         entries: Vec<JsonEntry>,
-        projection: JsonProjection,
+        selectors: JsonSelectorSet,
     ) -> Self {
         Self {
             header,
             entries,
-            projection,
+            selectors,
         }
     }
 }
@@ -603,8 +625,9 @@ where
 }
 
 /// One entry as an extraction returns it: the entry, the document's header
-/// grafted beside it, and the entry's ordinal `j` in the document, which
-/// its ciphertext is bound to. What `->` and the walk return per row.
+/// grafted beside it, and the slot the entry is stored at in the document
+/// (`j` on the wire), which its ciphertext is bound to. What `->` and the
+/// walk return per row.
 ///
 /// A row is the database's word, so it does not open on its own: the
 /// selector the client derived opens the entry `->` returned
@@ -619,7 +642,7 @@ where
 pub struct JsonNode {
     entry: JsonEntry,
     header: JsonHeader,
-    j: u64,
+    slot: u64,
     depth: Option<u32>,
 }
 
@@ -632,9 +655,11 @@ impl JsonNode {
     pub fn header(&self) -> &JsonHeader {
         &self.header
     }
-    /// The entry's ordinal in the document.
-    pub fn ordinal(&self) -> u64 {
-        self.j
+    /// The slot the entry is stored at in the document, `j` on the wire.
+    /// The stored order is random, so it is not the node's place in the
+    /// document.
+    pub fn slot(&self) -> u64 {
+        self.slot
     }
     /// The entry's depth below the walk's start, when the walk reported one.
     pub fn depth(&self) -> Option<u32> {
@@ -741,7 +766,7 @@ impl JsonSubtree {
     pub fn is_sealed_root(&self) -> bool {
         matches!(
             self.nodes.as_slice(),
-            [node] if node.j == 0 && node.depth == Some(0) && node.header.sealed_root()
+            [node] if node.slot == 0 && node.depth == Some(0) && node.header.sealed_root()
         )
     }
 }
@@ -801,7 +826,7 @@ fn unbase85(text: &str) -> Result<Vec<u8>, WireError> {
 #[error("a JSON index wire field does not decode: {0}")]
 pub struct WireError(&'static str);
 
-/// `h`, `sv` and `q`, as stored. All three are required: the projection
+/// `h`, `sv` and `q`, as stored. All three are required: the selector set
 /// `q` is the only place the value selectors live.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -857,7 +882,7 @@ impl From<JsonDocument> for DocumentWire {
         Self {
             h: base64(&doc.header.to_bytes()),
             sv: doc.entries.iter().map(EntryWire::from).collect(),
-            q: query::GroupWire::from(&doc.projection),
+            q: query::GroupWire::from(&doc.selectors),
         }
     }
 }
@@ -872,11 +897,11 @@ impl TryFrom<DocumentWire> for JsonDocument {
             w.sv.into_iter()
                 .map(JsonEntry::try_from)
                 .collect::<Result<_, _>>()?;
-        let projection = JsonProjection::try_from(w.q)?;
+        let selectors = JsonSelectorSet::try_from(w.q)?;
         Ok(Self {
             header,
             entries,
-            projection,
+            selectors,
         })
     }
 }
@@ -902,7 +927,7 @@ impl From<JsonNode> for NodeWire {
         Self {
             entry: EntryWire::from(&node.entry),
             h: base64(&node.header.to_bytes()),
-            j: node.j,
+            j: node.slot,
             d: node.depth,
             i: None,
             v: None,
@@ -918,7 +943,7 @@ impl TryFrom<NodeWire> for JsonNode {
             entry: JsonEntry::try_from(w.entry)?,
             header: JsonHeader::from_bytes(&unbase64(&w.h)?)
                 .map_err(|_| WireError("not a header"))?,
-            j: w.j,
+            slot: w.j,
             depth: w.d,
         })
     }
@@ -1052,7 +1077,7 @@ mod tests {
         let chain = JsonDocument::new(
             JsonHeader::new(Uuid::from_u128(7), iv, vec![], true),
             entries,
-            JsonProjection::default(),
+            JsonSelectorSet::default(),
         );
         let walked = chain.subtree(&[token]);
         assert_eq!(

@@ -264,7 +264,7 @@ func JSONSubtree[E ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.C
 	if err != nil {
 		return encrypt.JSONRead[E]{}, err
 	}
-	return encrypt.NewJSONRead[E](c, f.plan, f.name, path, input, term.Text), nil
+	return encrypt.NewJSONRead[E](c, f.plan, f.name, input, term.Text), nil
 }
 
 // JSONNodeToken derives the token of the node at a path with no wildcard

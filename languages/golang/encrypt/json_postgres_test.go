@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"testing"
@@ -155,7 +157,16 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want("first visit > 2", ids(`SELECT id FROM customers WHERE (profile -> $1::text) > $2::eql_v4.query_json_leaf ORDER BY id`, at.Selector(), gt), 1, 2)
+	// At a wildcard path `->` sees an unspecified element of each row, so a
+	// comparison over the elements is written over every match.
+	some := `SELECT id FROM customers WHERE EXISTS (SELECT 1 FROM eql_v4.json_tree_path_query(profile, $1::text) AS e WHERE e %s $2::eql_v4.query_json_leaf) ORDER BY id`
+	want("some visit > 2", ids(fmt.Sprintf(some, ">"), at.Selector(), gt), 1, 2)
+	lt2, err := f.At.VisitsAt.Lt(ctx, cipher, json.RawMessage(`2`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Alice's second visit, at 1, is the only one before 2.
+	want("some visit < 2", ids(fmt.Sprintf(some, "<"), at.Selector(), lt2), 1)
 
 	// `->` opened against the selection that asked for it: each row's
 	// value, and no value where the row has none.
@@ -248,6 +259,29 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 		}
 	}
 
+	// A wildcard read of an array longer than its bound is refused, not
+	// opened to the elements below the bound: Alice has two visits.
+	short, err := f.Subtree(ctx, cipher, "$.visits[*].at", encrypt.JSONReadOptions{WildcardBound: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shortRows []eql.JSONEntry
+	sr, err := conn.QueryContext(ctx, `SELECT e FROM customers, eql_v4.json_tree_subtree(profile, $1::text[]) AS e WHERE id = 1`, short.Tokens())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for sr.Next() {
+		var e eql.JSONEntry
+		if err := sr.Scan(&e); err != nil {
+			t.Fatal(err)
+		}
+		shortRows = append(shortRows, e)
+	}
+	_ = sr.Close()
+	if _, err := short.Open(ctx, [][]eql.JSONEntry{shortRows}); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("a wildcard read past its bound: %v, want ErrEncoding", err)
+	}
+
 	// A concrete read of a container, opened to one value or none.
 	visits, err := f.Subtree(ctx, cipher, "$.visits", encrypt.JSONReadOptions{})
 	if err != nil {
@@ -309,10 +343,12 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 	want("children rows", ids(`SELECT id FROM customers, eql_v4.json_tree_children(profile, $1::text) AS e ORDER BY id`, children), 1, 1, 2)
 
 	// Sorting by an ordered path, in the form EQL documents:
-	// ORDER BY eql_v4.ord_term(col -> sel). Ordering by the entry itself
-	// would sort by its ciphertext. Two more rows give each path a tie,
-	// broken by id, and Eve's visits (first 2, last 9) tell the first match
-	// `->` takes at the wildcard path from the least or greatest element.
+	// ORDER BY eql_v4.ord_term(col -> sel) at a path with no array step.
+	// Ordering by the entry itself would sort by its ciphertext. At the
+	// wildcard path `->` sees an unspecified element, so a row is ordered by
+	// its least match's term ascending and its greatest descending, over
+	// json_tree_path_query. Two more rows give each path a tie, broken by
+	// id, and Eve's visits (2 and 9) tell the least from the greatest.
 	more := []testusers.Customer{
 		{ID: 5, Profile: json.RawMessage(`{"name":"Eve","age":34,"visits":[{"at":2},{"at":9}]}`)},
 		{ID: 6, Profile: json.RawMessage(`{"name":"Fay","age":7,"visits":[{"at":3}]}`)},
@@ -331,13 +367,17 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 		} `json:"visits"`
 	}
 	ageOf := func(p plain) *float64 { return p.Age }
-	firstAtOf := func(p plain) *float64 {
-		for _, v := range p.Visits {
-			if v.At != nil {
-				return v.At
+	// The least or greatest `at` of a row's visits, nil for none.
+	atOf := func(greatest bool) func(plain) *float64 {
+		return func(p plain) *float64 {
+			var out *float64
+			for _, v := range p.Visits {
+				if v.At != nil && (out == nil || (*v.At > *out) == greatest) {
+					out = v.At
+				}
 			}
+			return out
 		}
-		return nil
 	}
 	// The ids in the order PostgreSQL's defaults put the plaintexts in: a
 	// row with no value at the path has a NULL term, which sorts as the
@@ -380,23 +420,27 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 		}
 		return out
 	}
+	byTerm := `SELECT id FROM customers ORDER BY eql_v4.ord_term(profile -> $1::text) %[1]s, id`
+	byMatch := `SELECT id FROM customers ORDER BY (SELECT eql_v4.ord_term(e) FROM eql_v4.json_tree_path_query(profile, $1::text) AS e ORDER BY 1 %[1]s NULLS LAST LIMIT 1) %[1]s, id`
 	for _, tc := range []struct {
 		name      string
+		sql       string
 		selector  encrypt.JSONSelector
-		key       func(plain) *float64
+		ascKey    func(plain) *float64
+		descKey   func(plain) *float64
 		asc, desc []int64 // what plaintextOrder gives, written out
 	}{
 		// Bob and Fay tie at 7, Alice and Eve at 34; Dan has no age.
-		{"$.age", age.Selector(), ageOf, []int64{2, 6, 1, 5, 3, 4}, []int64{4, 3, 1, 5, 2, 6}},
-		// First visits: Eve 2, Alice and Fay 3, Bob 5; Carol's visits are
-		// empty and Dan has none.
-		{"$.visits[*].at", at.Selector(), firstAtOf, []int64{5, 1, 6, 2, 3, 4}, []int64{3, 4, 2, 1, 6, 5}},
+		{"$.age", byTerm, age.Selector(), ageOf, ageOf, []int64{2, 6, 1, 5, 3, 4}, []int64{4, 3, 1, 5, 2, 6}},
+		// Least visits: Alice 1, Eve 2, Fay 3, Bob 5; greatest: Eve 9,
+		// Bob 5, Alice and Fay 3. Carol's visits are empty and Dan has none.
+		{"$.visits[*].at", byMatch, at.Selector(), atOf(false), atOf(true), []int64{1, 5, 6, 2, 3, 4}, []int64{3, 4, 5, 2, 1, 6}},
 	} {
-		asc, desc := plaintextOrder(tc.key, false), plaintextOrder(tc.key, true)
+		asc, desc := plaintextOrder(tc.ascKey, false), plaintextOrder(tc.descKey, true)
 		want("plaintext order by "+tc.name, asc, tc.asc...)
 		want("plaintext order by "+tc.name+" DESC", desc, tc.desc...)
-		want("ORDER BY "+tc.name, ids(`SELECT id FROM customers ORDER BY eql_v4.ord_term(profile -> $1::text), id`, tc.selector), asc...)
-		want("ORDER BY "+tc.name+" DESC", ids(`SELECT id FROM customers ORDER BY eql_v4.ord_term(profile -> $1::text) DESC, id`, tc.selector), desc...)
+		want("ORDER BY "+tc.name, ids(fmt.Sprintf(tc.sql, "ASC"), tc.selector), asc...)
+		want("ORDER BY "+tc.name+" DESC", ids(fmt.Sprintf(tc.sql, "DESC"), tc.selector), desc...)
 	}
 }
 

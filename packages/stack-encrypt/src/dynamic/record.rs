@@ -1410,6 +1410,14 @@ impl TryFrom<FieldSpecWire> for FieldSpec {
 /// defaults, or an object of its name and its options, which are the
 /// options of the index the target carries (the JSON index's options
 /// object, as an output spells it).
+///
+/// The options are read in the JSON index's grammar whatever the target,
+/// since that is the only grammar any target takes, and the target is
+/// resolved after: options that are not that grammar (`{"x": 1}`) make
+/// the target unreadable ([`Reason::InvalidTarget`]), and well-formed
+/// options on a target that takes none (`{}` on `TextEq`) are
+/// [`Reason::TargetOptions`]. Both refuse the plan before anything is
+/// sealed.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum TargetWire {
@@ -2393,7 +2401,13 @@ fn check_field(value: &ValueFrame, field: &FieldPlan) -> Result<(), Error> {
         }
     }
     // A document is read by the engine's rules here, before any key, so a
-    // check refuses what encrypt refuses, and no resolver has to.
+    // check refuses what encrypt refuses, and no resolver has to. The
+    // parse is kept to a check and the document dropped (wiped, as every
+    // `JsonPlaintext` is): the resolver parses it again when it seals, so
+    // a large document is parsed twice. Deliberate: the check runs before
+    // any key or keyset load and needs no resolver, and a resolver takes
+    // the field's value as a frame, as it does for every target, so it
+    // reads the text it is handed.
     if field.field_type == Some(ValueKind::Json) {
         if let Err(error) = super::read_json(value) {
             return Err(Error::Target(TargetError::Json {
