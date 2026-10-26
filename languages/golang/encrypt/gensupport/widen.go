@@ -1,7 +1,6 @@
 package gensupport
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -34,14 +33,9 @@ func asKind(kind Kind, v any) (any, error) {
 	}
 	if kind == JSON {
 		// A document crosses as its JSON text, in a bytes value; the
-		// engine parses it.
-		switch raw := v.(type) {
-		case json.RawMessage:
-			return []byte(raw), nil
-		case []byte:
-			return raw, nil
-		}
-		return nil, fmt.Errorf("%w: a JSON field takes a json.RawMessage, not a %T", encrypt.ErrEncoding, v)
+		// engine parses it. A json.RawMessage is that text; a field of
+		// another Go type (a struct, say) is marshalled, explicitly, here.
+		return JSONText(v)
 	}
 	if !isInteger(kind) {
 		return v, nil

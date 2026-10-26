@@ -3,6 +3,7 @@ package stashgen
 import (
 	"fmt"
 	"go/types"
+	"reflect"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -107,6 +108,9 @@ type genField struct {
 	fieldType  string        // "EmailField"
 	pathType   string        // the type with its package path, for model checks
 	jsonPaths  []jsonPath    // a document field's ordered paths, each with its accessor
+	// holdsStruct is set for a document field (KindJSONValue) whose type
+	// holds a struct: its Contains refuses a needle of that type.
+	holdsStruct bool
 }
 
 // definedScalar reports whether the field's type is a named type over a
@@ -714,6 +718,25 @@ func (r *reader) buildFields(c *collected) error {
 		if t.Omit {
 			field.Verb = VerbOmit
 		}
+		// A field that names an EQL type storing a JSON document, of a Go
+		// type other than json.RawMessage, is a document that encoding/json
+		// writes and reads: a struct, map or slice, or a pointer to one.
+		// What encoding/json cannot carry both ways is refused here, when
+		// the code is generated.
+		holdsStruct := false
+		if field.Verb == VerbEncryptInto && r.storesDocument(field.EQLType) {
+			doc, docType := &field.GoType, cf.typ
+			if doc.Kind == KindPointer && doc.Elem != nil {
+				doc, docType = doc.Elem, docType.Underlying().(*types.Pointer).Elem()
+			}
+			if doc.Kind != KindJSON {
+				if reason := notDocument(docType); reason != "" {
+					return fieldErr(typeName, cf.goName, "%s seals a json document, and %s %s; %s", field.EQLType, r.typeExpr(docType), reason, documentTypes)
+				}
+				holdsStruct = reaches(docType, func(u types.Type) bool { _, ok := u.(*types.Struct); return ok }, map[types.Type]bool{})
+				*doc = GoType{Name: doc.Name, Kind: KindJSONValue}
+			}
+		}
 		// A json.RawMessage is a document only where it names an EQL type
 		// that stores one; sealed or indexed any other way it is bytes, as
 		// it was before documents were.
@@ -748,7 +771,7 @@ func (r *reader) buildFields(c *collected) error {
 		if t.Omit {
 			continue
 		}
-		g := genField{Field: field, typeExpr: r.typeExpr(cf.typ), via: cf.via, tags: cf.tags, pathType: pathType(cf.typ)}
+		g := genField{Field: field, typeExpr: r.typeExpr(cf.typ), via: cf.via, tags: cf.tags, pathType: pathType(cf.typ), holdsStruct: holdsStruct}
 		g.valueExpr = g.typeExpr
 		if pointer {
 			g.valueExpr = field.GoType.Name
@@ -756,7 +779,7 @@ func (r *reader) buildFields(c *collected) error {
 		if g.Sealed() && !g.GoType.Kind.Scalar() {
 			// The engine seals a composite as a tree of leaves, and a column
 			// holds one leaf; only an opaque struct seals a whole value.
-			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128 or encrypt.Uint128, or a type defined over a string, number, bool or []byte); a %s seals only as part of an opaque struct", g.typeExpr)
+			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128 or encrypt.Uint128, or a type defined over a string, number, bool or []byte); a %s seals only as part of an opaque struct, or as a JSON document with encrypt_into=EncryptedJson", g.typeExpr)
 		}
 		switch field.Verb {
 		case VerbPassthrough, VerbContextField:
@@ -1140,6 +1163,117 @@ func notJSONEncodable(t types.Type, seen map[types.Type]bool) string {
 		return ""
 	}
 	return "is not a type JSON carries"
+}
+
+// storesDocument reports whether the engine's EQL type of that name stores
+// a JSON document.
+func (r *reader) storesDocument(name string) bool {
+	for _, t := range r.eql {
+		if t.Name == name {
+			return t.wire == record.JSON
+		}
+	}
+	return false
+}
+
+// notDocument says why a Go type other than json.RawMessage is not a JSON
+// document that encoding/json writes and reads back to the same value, or
+// "" when it is: a struct, map, slice or array whose every part
+// encoding/json carries ([notJSONEncodable]) and holds no interface.
+func notDocument(t types.Type) string {
+	if _, ok := valueKind(t); ok {
+		return "is one value, not a document"
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		return "is one JSON scalar, not a document (a string is a JSON string to encoding/json, not the JSON text it may hold)"
+	case *types.Slice:
+		if b, ok := u.Elem().Underlying().(*types.Basic); ok && b.Kind() == types.Byte {
+			return "is written by encoding/json as a base64 string, not as JSON text"
+		}
+	case *types.Pointer:
+		return "is a pointer to a pointer"
+	case *types.Struct, *types.Map, *types.Array:
+	default:
+		return "is not a type JSON carries"
+	}
+	if reaches(t, func(u types.Type) bool { _, ok := u.(*types.Interface); return ok }, map[types.Type]bool{}) {
+		return "holds an interface, which encoding/json reads back as a map or a float64, not the value written"
+	}
+	if name := droppedField(t, map[types.Type]bool{}); name != "" {
+		return "has a field " + name + ` tagged json:"-", which encoding/json drops, so the stored document would not hold it`
+	}
+	return notJSONEncodable(t, map[types.Type]bool{})
+}
+
+// droppedField names the first exported struct field that t, or a type it
+// reaches, tags json:"-", or "" for none: encoding/json writes no such
+// field, so a document of the type would come back without it. A type that
+// writes and reads itself is not looked into.
+func droppedField(t types.Type, seen map[types.Type]bool) string {
+	if seen[t] {
+		return ""
+	}
+	seen[t] = true
+	if hasMethod(types.NewPointer(t), "UnmarshalJSON") && hasMethod(t, "MarshalJSON") {
+		return ""
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Slice:
+		return droppedField(u.Elem(), seen)
+	case *types.Array:
+		return droppedField(u.Elem(), seen)
+	case *types.Pointer:
+		return droppedField(u.Elem(), seen)
+	case *types.Map:
+		return droppedField(u.Elem(), seen)
+	case *types.Struct:
+		for i := range u.NumFields() {
+			fld := u.Field(i)
+			if fld.Exported() && reflect.StructTag(u.Tag(i)).Get("json") == "-" {
+				return fld.Name()
+			}
+			if name := droppedField(fld.Type(), seen); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// reaches reports whether t, or a type its fields, elements or pointers
+// reach, has an underlying type that match reports: a document type that
+// holds a struct, say. A type that writes and reads itself (MarshalJSON and
+// UnmarshalJSON) is not looked into, as encoding/json does not.
+func reaches(t types.Type, match func(types.Type) bool, seen map[types.Type]bool) bool {
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+	if hasMethod(types.NewPointer(t), "UnmarshalJSON") && hasMethod(t, "MarshalJSON") {
+		return match(t.Underlying())
+	}
+	u := t.Underlying()
+	if match(u) {
+		return true
+	}
+	switch u := u.(type) {
+	case *types.Slice:
+		return reaches(u.Elem(), match, seen)
+	case *types.Array:
+		return reaches(u.Elem(), match, seen)
+	case *types.Pointer:
+		return reaches(u.Elem(), match, seen)
+	case *types.Map:
+		return reaches(u.Elem(), match, seen)
+	case *types.Struct:
+		for i := range u.NumFields() {
+			if reaches(u.Field(i).Type(), match, seen) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // notStorable says why the storage profile (vcffi.MarshalStorage and

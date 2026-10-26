@@ -7,7 +7,6 @@ package gensupport
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
@@ -131,6 +130,10 @@ type Field[T any] struct{ _ struct{} }
 // NewField makes the entry for one field of a declaration.
 func NewField[T any](Declaration, string) Field[T] { return Field[T]{} }
 
+// NewDocumentField makes the entry for a document field whose type holds a
+// struct.
+func NewDocumentField[T any](Declaration, string) Field[T] { return Field[T]{} }
+
 func (Field[T]) Encrypt(context.Context, *encrypt.Cipher, T) (Output, error)      { return Output{}, nil }
 func (Field[T]) Term(context.Context, *encrypt.Cipher, string, T) ([]byte, error) { return nil, nil }
 func (Field[T]) Range(context.Context, *encrypt.Cipher, string, T, T) ([]byte, []byte, error) {
@@ -200,6 +203,15 @@ func (f Field[T]) NullTerm(context.Context, *encrypt.Cipher, string) ([]byte, er
 // GetPtr reads one opened field declared over a pointer.
 func GetPtr[T any](Values, string) (*T, error) { return nil, nil }
 
+// GetDocument reads one opened document field into its Go type.
+func GetDocument[T any](Values, string) (T, error) { var z T; return z, nil }
+
+// GetDocumentPtr reads one opened document field declared over a pointer.
+func GetDocumentPtr[T any](Values, string) (*T, error) { return nil, nil }
+
+// JSONText is a Go value as JSON text.
+func JSONText(any) ([]byte, error) { return nil, nil }
+
 // TargetOptions are the options an EncryptInto field gives its EQL type.
 type TargetOptions struct {
 	SealedRoot *bool
@@ -210,17 +222,17 @@ type TargetOptions struct {
 func Ptr[T any](v T) *T { return &v }
 
 // JSONQuery derives a containment operator's query on a JSON field.
-func JSONQuery[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, json.RawMessage) (Q, error) {
+func JSONQuery[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, any) (Q, error) {
 	return nil, nil
 }
 
 // JSONQueryAt derives an operator at a path on a JSON field.
-func JSONQueryAt[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, string, json.RawMessage) (Q, error) {
+func JSONQueryAt[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, string, any) (Q, error) {
 	return nil, nil
 }
 
 // JSONBetweenAt derives between_at on a JSON field.
-func JSONBetweenAt[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, json.RawMessage, json.RawMessage) (encrypt.JSONRange[Q], error) {
+func JSONBetweenAt[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, any, any) (encrypt.JSONRange[Q], error) {
 	return encrypt.JSONRange[Q]{}, nil
 }
 

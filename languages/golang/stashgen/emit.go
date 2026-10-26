@@ -590,6 +590,18 @@ func (w *writer) value(f *genFile) {
 				// for it: the struct gets the field's zero value.
 				continue
 			}
+			if g.GoType.Kind == KindJSONValue {
+				// A document of a Go type is read back with encoding/json,
+				// explicitly, into the type the struct declares.
+				call := "GetDocument"
+				if g.nullable() {
+					call = "GetDocumentPtr"
+				}
+				w.p("\t\tif v.%s, err = gensupport.%s[%s](vals, %q); err != nil {", g.GoName, call, g.valueExpr, g.Name)
+				fail()
+				w.p("\t\t}")
+				continue
+			}
 			if g.nullable() && g.definedScalar() {
 				// The engine returns the underlying type, or nil; the
 				// conversion to the defined type is the struct's own.
@@ -672,7 +684,11 @@ func (w *writer) fieldEntries(f *genFile) {
 	w.p("}{")
 	for _, g := range sealed {
 		if g.isJSON() {
-			w.p("\t%s: new%s(gensupport.NewField[%s](%s, %q)),", g.GoName, g.fieldType, g.valueExpr, f.declVar, g.Name)
+			constructor := "NewField"
+			if g.holdsStruct {
+				constructor = "NewDocumentField"
+			}
+			w.p("\t%s: new%s(gensupport.%s[%s](%s, %q)),", g.GoName, g.fieldType, constructor, g.valueExpr, f.declVar, g.Name)
 			continue
 		}
 		w.p("\t%s: %s{gensupport.NewField[%s](%s, %q)},", g.GoName, g.fieldType, g.valueExpr, f.declVar, g.Name)
@@ -978,9 +994,9 @@ func joinNames(names []string) string {
 }
 
 // isJSON reports whether the field is stored as an EncryptedJSON document:
-// a json.RawMessage sealed into an EQL type.
+// a json.RawMessage, or a struct, map or slice type, sealed into an EQL type.
 func (g genField) isJSON() bool {
-	return g.Verb == VerbEncryptInto && g.GoType.Kind == KindJSON
+	return g.Verb == VerbEncryptInto && (g.GoType.Kind == KindJSON || g.GoType.Kind == KindJSONValue)
 }
 
 // jsonOperators are the operators a document field answers, and what each
@@ -1004,7 +1020,7 @@ func planJSON(f *genFile, g *genField) error {
 	// The engine answers selector for a field whose type stores a json_tree
 	// document; the leaf and entry types below are that family's.
 	if !document {
-		return fieldErr(f.typeName, g.GoName, "the engine answers no document operator on %s, and the generator writes json.RawMessage fields of EncryptedJson only", g.EQLType)
+		return fieldErr(f.typeName, g.GoName, "the engine answers no document operator on %s, and the generator writes document fields of EncryptedJson only", g.EQLType)
 	}
 	g.jsonPaths = nil
 	seen := map[string]string{}
@@ -1026,7 +1042,6 @@ func planJSON(f *genFile, g *genField) error {
 			g.jsonPaths = append(g.jsonPaths, jsonPath{name: name, path: path})
 		}
 	}
-	f.imports.add("encoding/json", "json")
 	return nil
 }
 
@@ -1104,35 +1119,39 @@ func (w *writer) jsonEntry(g genField) {
 	recv := "func (f " + g.fieldType + ") "
 	if answered["contains"] {
 		w.nl()
-		w.b.WriteString(wrapComment("Contains derives the query for documents that contain needle, a JSON value: col @> query. Each array element of the needle must sit inside one element of the document's array.", 80))
-		w.p("%sContains(ctx context.Context, c *encrypt.Cipher, needle json.RawMessage) (%s, error) {", recv, needle)
+		doc := "Contains derives the query for documents that contain needle: col @> query. needle is a json.RawMessage of JSON text, or any value encoding/json writes, such as a map or a struct. Each member it writes must be in the document, so a zero-valued struct field narrows the query to documents holding that zero: give a needle struct pointer fields, or omitempty, or use a map. Each array element of the needle must sit inside one element of the document's array."
+		if g.holdsStruct {
+			doc += " A needle of the field's own type, " + g.valueExpr + ", is refused for that reason."
+		}
+		w.b.WriteString(wrapComment(doc, 80))
+		w.p("%sContains(ctx context.Context, c *encrypt.Cipher, needle any) (%s, error) {", recv, needle)
 		w.p("\treturn gensupport.JSONQuery[%s](ctx, f.field, c, \"contains\", needle)", needle)
 		w.p("}")
 	}
 	if answered["contained_by"] {
 		w.nl()
-		w.b.WriteString(wrapComment("ContainedBy derives the query for documents contained by needle, a JSON value: col <@ query.", 80))
-		w.p("%sContainedBy(ctx context.Context, c *encrypt.Cipher, needle json.RawMessage) (%s, error) {", recv, needle)
+		w.b.WriteString(wrapComment("ContainedBy derives the query for documents contained by needle: col <@ query. needle is a json.RawMessage of JSON text, or any value encoding/json writes; here a zero-valued field widens the query, admitting documents that hold that zero.", 80))
+		w.p("%sContainedBy(ctx context.Context, c *encrypt.Cipher, needle any) (%s, error) {", recv, needle)
 		w.p("\treturn gensupport.JSONQuery[%s](ctx, f.field, c, \"contained_by\", needle)", needle)
 		w.p("}")
 	}
 	if answered["eq_at"] {
 		w.nl()
-		w.b.WriteString(wrapComment("EqAt derives the query for documents holding the scalar v at path: col @> query. A wildcard step matches when any element holds it; a position ([2]) is refused, since the stored selector reads every position as the wildcard.", 80))
-		w.p("%sEqAt(ctx context.Context, c *encrypt.Cipher, path string, v json.RawMessage) (%s, error) {", recv, needle)
+		w.b.WriteString(wrapComment("EqAt derives the query for documents holding the scalar v at path: col @> query. v is a Go string, number or bool, nil for JSON null, or a json.RawMessage of JSON text. A wildcard step matches when any element holds it; a position ([2]) is refused, since the stored selector reads every position as the wildcard.", 80))
+		w.p("%sEqAt(ctx context.Context, c *encrypt.Cipher, path string, v any) (%s, error) {", recv, needle)
 		w.p("\treturn gensupport.JSONQueryAt[%s](ctx, f.field, c, \"eq_at\", path, v)", needle)
 		w.p("}")
 	}
 	if answered["selector"] {
 		w.nl()
-		w.b.WriteString(wrapComment("Selector prepares `->` at path: bind Selector() as col -> $1::text, and open the entries it returns with Open. A position ([2]) is refused; read one with Subtree.", 80))
+		w.b.WriteString(wrapComment("Selector prepares `->` at path: bind Selector() as col -> $1::text, and open the entries it returns with Open; encrypt.DecodeJSON reads each value into a Go type. A position ([2]) is refused; read one with Subtree.", 80))
 		w.p("%sSelector(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONSelection[%s], error) {", recv, entry)
 		w.p("\treturn gensupport.JSONSelect[%s](ctx, f.field, c, path)", entry)
 		w.p("}")
 	}
 	if answered["subtree"] {
 		w.nl()
-		w.b.WriteString(wrapComment("Subtree prepares a read of the value at path: bind Tokens() as eql_v4.json_tree_subtree(col, $1::text[], budget), and open the rows it returns with Open or OpenOne.", 80))
+		w.b.WriteString(wrapComment("Subtree prepares a read of the value at path: bind Tokens() as eql_v4.json_tree_subtree(col, $1::text[], budget), and open the rows it returns with Open or OpenOne; encrypt.DecodeJSON reads each value into a Go type.", 80))
 		w.p("%sSubtree(ctx context.Context, c *encrypt.Cipher, path string, opts encrypt.JSONReadOptions) (encrypt.JSONRead[%s], error) {", recv, entry)
 		w.p("\treturn gensupport.JSONSubtree[%s](ctx, f.field, c, path, opts)", entry)
 		w.p("}")
@@ -1161,7 +1180,7 @@ func (w *writer) jsonEntry(g genField) {
 	}
 	w.p("}")
 	w.nl()
-	w.b.WriteString(wrapComment(fmt.Sprintf("%sPath is one ordered path of %s: its orderings compare the first value `->` extracts there, by the leaf's ordering term. Numbers order as float64, so integers past 2^53 can tie; text orders case- and accent-folded.", g.fieldType, g.GoName), 80))
+	w.b.WriteString(wrapComment(fmt.Sprintf("%sPath is one ordered path of %s: its orderings compare the first value `->` extracts there, by the leaf's ordering term. Each operand is a Go number or string, or a json.RawMessage of JSON text. Numbers order as float64, so integers past 2^53 can tie; text orders case- and accent-folded.", g.fieldType, g.GoName), 80))
 	w.p("type %sPath struct {", g.fieldType)
 	w.p("\tfield %s", field)
 	w.p("\tpath  string")
@@ -1171,13 +1190,13 @@ func (w *writer) jsonEntry(g genField) {
 			continue
 		}
 		w.nl()
-		w.p("func (p %sPath) %s(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (%s, error) {", g.fieldType, op.method, leaf)
+		w.p("func (p %sPath) %s(ctx context.Context, c *encrypt.Cipher, v any) (%s, error) {", g.fieldType, op.method, leaf)
 		w.p("\treturn gensupport.JSONQueryAt[%s](ctx, p.field, c, %q, p.path, v)", leaf, op.name)
 		w.p("}")
 	}
 	if answered["between_at"] {
 		w.nl()
-		w.p("func (p %sPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi json.RawMessage) (encrypt.JSONRange[%s], error) {", g.fieldType, leaf)
+		w.p("func (p %sPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi any) (encrypt.JSONRange[%s], error) {", g.fieldType, leaf)
 		w.p("\treturn gensupport.JSONBetweenAt[%s](ctx, p.field, c, p.path, lo, hi)", leaf)
 		w.p("}")
 	}

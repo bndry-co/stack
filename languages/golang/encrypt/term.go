@@ -74,8 +74,9 @@ type JSONOption interface {
 // which the engine does not derive: a declaration that names it is refused
 // by stashgen, and at run time by the engine.
 //
-// Deprecated: store a JSON document as a json.RawMessage field with
-// `encrypt_into=EncryptedJson`, whose EQL type carries the JSON index.
+// Deprecated: store a JSON document as a struct, map, slice or
+// json.RawMessage field with `encrypt_into=EncryptedJson`, whose EQL type
+// carries the JSON index.
 func JSON(options ...JSONOption) Index {
 	_ = options
 	return index("json")
