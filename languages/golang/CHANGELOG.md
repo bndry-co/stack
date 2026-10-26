@@ -291,12 +291,13 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   these types: it is not a tag word.
 - **`TextSearch`**: a `string` field tagged `encrypt_into=TextSearch` gets
   `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, one column for all of them.
-  The stored value keeps all three terms. Text shorter than three
-  characters, an empty string included, is stored with an empty match
+  The stored value keeps all three terms. Text that cuts no match token,
+  such as an empty string or one letter, is stored with an empty match
   filter, where `TextMatch` refuses it with `ErrTerm`: `Eq`, `Lt`, `Lte`,
   `Gt` and `Gte` find the row, and no `Matches` query does. Each query
   carries only the term its operator reads, so `Eq` and `Lt` take a
-  two-letter value and `Matches` refuses one (`ErrTerm`). Needs the EQL v4
+  one-letter value and `Matches` refuses one (`ErrTerm`). A two-letter
+  word has its own match token, as described above. Needs the EQL v4
   SQL from this release, whose `eql_v4.query_text_search` accepts one term.
 - **Ordering methods on text.** A string field with `index=ore` or
   `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`. Text orders by its
