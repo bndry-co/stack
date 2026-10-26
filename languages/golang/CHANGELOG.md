@@ -78,8 +78,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `eql.JSONSearchLeafQuery` and its entry `eql.JSONEntry`,
   generated from the EQL catalog. The names are the ones EQL v3 gives its
   searchable JSON document; `eql.JSON` stays the storage-only type. The
-  engine stores one from the module's own plans; `stashgen` does not
-  generate a field of it yet.
+  engine stores one from the module's own plans, and `stashgen` generates
+  fields tagged `encrypt_into=JsonSearch`.
 
 - **Decimals, dates and timestamps take an order index (#1236).** An
   `encrypt.Decimal`, `encrypt.Date` or `time.Time` field takes `ore` and
@@ -238,7 +238,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   implements `driver.Valuer`, `sql.Scanner` and JSON like the other query
   types. They are not in
   `eql.Types`, which lists stored types, and no generated method returns one
-  yet: the ordered EQL types are not producible.
+  yet: `stashgen` does not construct a range query operand, although the
+  ordered EQL types are producible and expose single-bound comparisons.
 - **`encrypt.MatchQuery` and `encrypt.EQLMatchQuery`**: what a `Matches`
   method returns. Each carries the term or EQL query value to bind,
   `Verify` (check decrypted rows, since a match can return false positives)

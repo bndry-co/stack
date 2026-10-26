@@ -114,6 +114,7 @@ These words are the same as the Rust API's words for the same behaviour, with tw
 ### Encrypted JSON documents
 
 A field with `encrypt_into=JsonSearch` is stored as one encrypted JSON document, an `eql.JSONSearch` in a `public.eql_v4_json_search` column.
+For a complete generated model and PostgreSQL query flow, see the [runnable typed-document example](../../encrypt/example/json/README.md).
 Declare it as a struct, map or slice type, or as a `json.RawMessage` that holds the document's JSON text:
 
 ```go
@@ -289,12 +290,15 @@ The engine produces these EQL types today, each from one Go field type:
 | `Real`, `RealEq`, `RealOrd`, `RealOrdOpe`, `RealOrdOre` | `float32` |
 | `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe`, `DoubleOrdOre` | `float64` |
 | `Date`, `DateEq` | `encrypt.Date` |
+| `DateOrd`, `DateOrdOpe`, `DateOrdOre` | `encrypt.Date` |
 | `Timestamp`, `TimestampEq` | `time.Time` |
+| `TimestampOrd`, `TimestampOrdOpe`, `TimestampOrdOre` | `time.Time` |
 | `Numeric`, `NumericEq` | `encrypt.Decimal` |
+| `NumericOrd`, `NumericOrdOpe`, `NumericOrdOre` | `encrypt.Decimal` |
+| `JsonSearch` | struct, map, slice, or `json.RawMessage`; see [Encrypted JSON documents](#encrypted-json-documents) |
 
 The `Eq` types answer `Eq`; the `Ord`, `OrdOpe` and `OrdOre` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `TextMatch` answers `Matches`, and `TextSearch` and `TextSearchOre` all of `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, each query carrying only the term its operator reads; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp` and `Numeric` are stored and read only, with no query method.
-The ordered date, timestamp and numeric types are refused: the engine derives no order term for these kinds yet.
-An ordered type has no `Between` method yet, because a `BETWEEN` operand needs EQL v4's range query domains.
+The ordered date, timestamp and numeric types answer the four comparisons, as do the other ordered EQL types. The generated EQL fields have no `Between` method yet: EQL v4 has range query domains, but `stashgen` does not construct their operands. A JSON document's declared ordered paths have their own `Between` method, which returns two leaf query values; see [Encrypted JSON documents](#encrypted-json-documents).
 
 Any built-in Go integer field takes an integer type (ADR-0002) and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.
 A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index; its query refuses such text too.
