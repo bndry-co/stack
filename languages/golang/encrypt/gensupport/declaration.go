@@ -14,7 +14,7 @@ import (
 // derives; every field seals as vitaminc's tagged leaf whatever its kind,
 // which a Rust record opens when its field is a Value. Every sealed field has a
 // scalar kind: stashgen refuses a struct, slice or map outside an opaque
-// struct, and an opaque struct seals as Bytes (one JSON document). Untyped
+// struct, and an opaque struct seals as Bytes (one storage blob). Untyped
 // names a field with no declared type; generated code never writes it, and
 // the engine refuses a plan whose indexed field has no type.
 type Kind string
@@ -52,9 +52,10 @@ const (
 
 // OpaqueField is the one field of an opaque declaration: the whole struct,
 // sealed as one value under <context>/value. The struct crosses the binding
-// as one JSON document — the engine seals a composite value as a tree of
-// leaves, and an opaque struct is one column — so its field types are what
-// JSON carries: scalars, []byte (base64), slices and maps of them.
+// as one storage blob (vitaminc's storage profile, version 1) — the engine
+// seals a composite value as a tree of leaves, and an opaque struct is one
+// column. A value an earlier release sealed is a JSON document, which
+// [Opaque] still reads.
 const OpaqueField = "value"
 
 type verb uint8

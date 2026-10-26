@@ -42,6 +42,43 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Breaking
 
+- **An opaque struct seals as a storage blob, and reads the JSON it used
+  to (#1347).** `stash:"context=...,opaque"` now seals the struct as one
+  blob in vitaminc's storage profile, version 1 (`vcffi.MarshalStorage`),
+  the format vitaminc keeps readable across releases and languages, where
+  it sealed the JSON document `encoding/json` wrote. Rows sealed before
+  still decrypt: `Decrypt` reads a value that is not a blob as JSON.
+  **Run stashgen again:** generated files name
+  `gensupport.GeneratedVersion2`, so a file generated before does not
+  compile against this release (it would seal blobs keyed by Go field
+  names that the regenerated file could not read). The generated shape
+  struct names each field `vc:"name,default"`, so a field added to the
+  struct later reads as its zero value from a blob sealed before it, as
+  it did from JSON. A field added to a nested struct type has no such
+  tag: give it a pointer type, or rows sealed before it do not decrypt.
+  **Upgrade every reader before any writer:** an earlier release cannot
+  read a blob, so a rolling deploy or a rollback that runs an earlier
+  release after this one has sealed a row fails to decrypt that row.
+  What else changes for a program: a NaN or infinite float now seals
+  (JSON refused it with `ErrEncoding`); a nil slice or map comes back
+  empty, not nil, from a blob; `Encrypt` refuses, as `ErrEncoding`
+  wrapping `vcffi.ErrUnwritable`, a string that is not UTF-8 (JSON wrote
+  U+FFFD), a value nested more than 128 levels deep, and two map keys
+  whose `MarshalText` spells alike. `stashgen` refuses in an opaque
+  struct `encrypt.Decimal` and `encrypt.Date` (the storage profile has no
+  form for them), a type with only one of `MarshalText` and
+  `UnmarshalText`, a map key that is not an integer, a string, bytes or
+  text, and a type that only `MarshalJSON` carries over a struct with
+  unexported fields. **Rows already sealed with an `encrypt.Decimal` or
+  `encrypt.Date` in an opaque struct do not decrypt under this release**,
+  since no generated file can name the field: before upgrading, decrypt
+  them with the earlier release, change the field to a string (or to its
+  parts), and encrypt them again; the earlier release writes JSON, which
+  this release reads. A blob a later release writes is
+  `encrypt.ErrStorageVersion`. This takes vcffi from the unreleased
+  cipherstash/vitaminc#526 by pseudo-version; the storage format is a
+  compatibility commitment only once vitaminc releases it, so no Go
+  release should be cut while the pin is a pseudo-version.
 - **Every order term changes: re-derive stored `ore`, `ope` and
   `ore_block` index terms.** The engine moved to vitaminc 0.8, clww-ore 0.6
   (formerly cllw-ore) and ore-rs 0.10, and both order schemes now derive
