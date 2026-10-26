@@ -691,6 +691,14 @@ monorepo, which is where the silent failures are.
   `jsonb @>` over the plaintexts, is `packages/eql/tests/encryption/tests/json_tree.rs`,
   run by `mise run test:encryption:postgres`. The design and its
   implementation notes are `docs/plans/2026-10-17-json-tree-index.md`.
+  In v4 it carries v3's names for the searchable JSON document: the target
+  `JsonSearch` stores `public.eql_v4_json_search`, queried with
+  `eql_v4.query_json` and `eql_v4.query_json_leaf`, with entries
+  `public.eql_v4_json_entry`; `json_tree` names the implementation only (the
+  SQL directory, the Rust structs, the SQL functions). The v3 SteVec SQL
+  that owns those names in v3 (`src/v3/json/` and the generated
+  `json_entry_<T>` cross files) is `-- ONLY EQL VERSION: 3`, so no bundle
+  carries both.
   A change to the derivations on one side (a PAE domain, the header layout,
   the projection shape) is a change to the other: the Postgres suite is
   what holds them together.

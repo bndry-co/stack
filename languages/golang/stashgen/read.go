@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/types"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"golang.org/x/tools/go/packages"
@@ -148,17 +150,33 @@ type modelField struct {
 }
 
 // EQLGoName is the Go type name in encrypt/eql of an EQL type the engine
-// names: the same name in every language, save the JSON family, whose Go
-// names start with JSON (Json is JSON), as Go spells initialisms. The
+// names: the same name in every language, save that the word Json is JSON,
+// as Go spells initialisms (Json is JSON, JsonSearchQuery is
+// JSONSearchQuery; Json is a word where the name ends or the next
+// letter is upper case). The
 // generated encrypt/eql package follows the same rule (eql-codegen's go_eql
 // renderer), and its Types table records both names, which is what holds
 // the two in agreement (a test in cmd/stashgen reads it; this package's own
 // tests cannot link encrypt/eql without changing the engine they test).
 func EQLGoName(name string) string {
-	if strings.HasPrefix(name, "Json") {
-		return "JSON" + strings.TrimPrefix(name, "Json")
+	var out strings.Builder
+	rest := name
+	for {
+		at := strings.Index(rest, "Json")
+		if at < 0 {
+			break
+		}
+		after := rest[at+4:]
+		out.WriteString(rest[:at])
+		if next, _ := utf8.DecodeRuneInString(after); after == "" || unicode.IsUpper(next) {
+			out.WriteString("JSON")
+		} else {
+			out.WriteString("Json")
+		}
+		rest = after
 	}
-	return name
+	out.WriteString(rest)
+	return out.String()
 }
 
 // reader builds a genFile from a loaded package.

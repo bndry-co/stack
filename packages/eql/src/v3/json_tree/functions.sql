@@ -200,7 +200,7 @@ $$;
 --!        `{{prefix}}_internal.ope_cllw(jsonb)` reads hex, so the family
 --!        has its own extractor.
 --! @internal
---! @param val jsonb An entry or a `query_json_tree_leaf`, as jsonb.
+--! @param val jsonb An entry or a `query_json_leaf`, as jsonb.
 --! @return {{prefix}}_internal.ope_cllw The term; NULL when there is none.
 CREATE FUNCTION {{prefix}}_internal.json_tree_ope_cllw(val jsonb)
   RETURNS {{prefix}}_internal.ope_cllw
@@ -273,12 +273,12 @@ COMMENT ON FUNCTION {{prefix}}.json_tree_meta(jsonb) IS
 --! @param val jsonb The document.
 --! @param elem jsonb The entry, as it sits in `sv`.
 --! @param j integer The entry's ordinal in `sv`, from zero.
---! @return public.{{prefix}}_json_tree_entry The entry with `i`, `v`, `h` and `j`.
+--! @return public.{{prefix}}_json_entry The entry with `i`, `v`, `h` and `j`.
 CREATE FUNCTION {{prefix}}_internal.json_tree_graft(val jsonb, elem jsonb, j integer)
-  RETURNS public.{{prefix}}_json_tree_entry
+  RETURNS public.{{prefix}}_json_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT ({{prefix}}.json_tree_meta(val) || elem || jsonb_build_object('j', j))::public.{{prefix}}_json_tree_entry
+  SELECT ({{prefix}}.json_tree_meta(val) || elem || jsonb_build_object('j', j))::public.{{prefix}}_json_entry
 $$;
 
 ------------------------------------------------------------------------------
@@ -293,12 +293,12 @@ $$;
 --!
 --! @param val jsonb The document.
 --! @param selector text The path selector, base64.
---! @return SETOF public.{{prefix}}_json_tree_entry The matching entries, in
+--! @return SETOF public.{{prefix}}_json_entry The matching entries, in
 --!         stored order, which says nothing about the document: entries
 --!         are stored in a random order, and the client puts an array's
 --!         elements back in order from their decrypted labels.
 CREATE FUNCTION {{prefix}}.json_tree_path_query(val jsonb, selector text)
-  RETURNS SETOF public.{{prefix}}_json_tree_entry
+  RETURNS SETOF public.{{prefix}}_json_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   SELECT {{prefix}}_internal.json_tree_graft(val, elem, (ord - 1)::integer)
@@ -321,10 +321,10 @@ COMMENT ON FUNCTION {{prefix}}.json_tree_path_query(jsonb, text) IS
 --!
 --! @param val jsonb The document.
 --! @param selector text The path selector, base64.
---! @return public.{{prefix}}_json_tree_entry The entry, or NULL when the document
+--! @return public.{{prefix}}_json_entry The entry, or NULL when the document
 --!         has no node at that path.
 CREATE FUNCTION {{prefix}}.json_tree_path_query_first(val jsonb, selector text)
-  RETURNS public.{{prefix}}_json_tree_entry
+  RETURNS public.{{prefix}}_json_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
   COST 1000
 AS $$
@@ -360,7 +360,7 @@ COMMENT ON FUNCTION {{prefix}}.json_tree_path_exists(jsonb, text) IS
 ------------------------------------------------------------------------------
 
 --! @brief The stored document's containment projection: the needle shape
---!        `{{prefix}}.query_json_tree` holds, as the client wrote it in `q`.
+--!        `{{prefix}}.query_json` holds, as the client wrote it in `q`.
 --!
 --! The projection is the document's `{s, vs}` pairs nested by array
 --! element, `{"sv": [{"s", "vs"}, …], "el": [group, …]}`: the pairs outside
@@ -377,8 +377,8 @@ COMMENT ON FUNCTION {{prefix}}.json_tree_path_exists(jsonb, text) IS
 --! the index engages; GIN is lossy and the executor rechecks the real
 --! operator on the heap tuple, which is the exact containment.
 --!
---! @param e public.{{prefix}}_json_tree The stored document.
---! @return jsonb Its projection, the shape of `{{prefix}}.query_json_tree`.
+--! @param e public.{{prefix}}_json_search The stored document.
+--! @return jsonb Its projection, the shape of `{{prefix}}.query_json`.
 --! @note Returns raw jsonb rather than the needle domain: a domain cast
 --!       runs the needle's recursive CHECK, and the recheck would pay it
 --!       once per candidate row. The document's own CHECK validated `q`
@@ -391,7 +391,7 @@ COMMENT ON FUNCTION {{prefix}}.json_tree_path_exists(jsonb, text) IS
 --!       decompressed to read `q`. Un-inlined, the call keeps its cost, the
 --!       index expression still matches it, and the planner takes the
 --!       index. The call itself is a few microseconds per recheck row.
-CREATE FUNCTION {{prefix}}.json_tree_query(e public.{{prefix}}_json_tree)
+CREATE FUNCTION {{prefix}}.json_tree_query(e public.{{prefix}}_json_search)
   RETURNS jsonb
   LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
   COST 1000
@@ -408,8 +408,8 @@ $$;
 --! probes are over `{{prefix}}.json_tree_query(a)`, so a GIN index on that
 --! expression serves them as one bitmap OR.
 --!
---! @param a public.{{prefix}}_json_tree The stored document.
---! @param b {{prefix}}.query_json_tree The needle.
+--! @param a public.{{prefix}}_json_search The stored document.
+--! @param b {{prefix}}.query_json The needle.
 --! @return boolean True when `a` contains `b` as `jsonb @>` would contain the
 --!         plaintexts; NULL when either is NULL.
 --! @note Deliberately not STRICT. The planner inlines a STRICT SQL function
@@ -418,7 +418,7 @@ $$;
 --!       filter and the GIN index never engages. The body returns NULL for
 --!       a NULL argument on its own: a NULL side of `@>` is NULL, and NULL
 --!       OR NULL is NULL.
-CREATE FUNCTION {{prefix}}.json_tree_contains(a public.{{prefix}}_json_tree, b {{prefix}}.query_json_tree)
+CREATE FUNCTION {{prefix}}.json_tree_contains(a public.{{prefix}}_json_search, b {{prefix}}.query_json)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
 AS $$
@@ -432,10 +432,10 @@ $$;
 --! so a stored root scalar inside a needle root array is the one case this
 --! answers false where `jsonb <@` answers true.
 --!
---! @param a public.{{prefix}}_json_tree The stored document.
---! @param b {{prefix}}.query_json_tree The needle.
+--! @param a public.{{prefix}}_json_search The stored document.
+--! @param b {{prefix}}.query_json The needle.
 --! @return boolean True when `b` contains `a`.
-CREATE FUNCTION {{prefix}}.json_tree_contained_by(a public.{{prefix}}_json_tree, b {{prefix}}.query_json_tree)
+CREATE FUNCTION {{prefix}}.json_tree_contained_by(a public.{{prefix}}_json_search, b {{prefix}}.query_json)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -443,10 +443,10 @@ AS $$
 $$;
 
 --! @brief Does the stored document `a` contain the stored document `b`?
---! @param a public.{{prefix}}_json_tree The container.
---! @param b public.{{prefix}}_json_tree The contained document.
+--! @param a public.{{prefix}}_json_search The container.
+--! @param b public.{{prefix}}_json_search The contained document.
 --! @return boolean True when `a`'s projection contains `b`'s.
-CREATE FUNCTION {{prefix}}.json_tree_document_contains(a public.{{prefix}}_json_tree, b public.{{prefix}}_json_tree)
+CREATE FUNCTION {{prefix}}.json_tree_document_contains(a public.{{prefix}}_json_search, b public.{{prefix}}_json_search)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -530,15 +530,15 @@ $$;
 --! subtree. Enumerating one level needs no child's token, so the rows are
 --! the same whichever rule each child's token takes.
 --!
---! @param e public.{{prefix}}_json_tree The stored document.
+--! @param e public.{{prefix}}_json_search The stored document.
 --! @param token text The node's token, base64: derived by the client from
 --!        the node's path alone, and never stored.
---! @return SETOF public.{{prefix}}_json_tree_entry The children, each with
+--! @return SETOF public.{{prefix}}_json_entry The children, each with
 --!         `d = 1`; no rows for a token that names no node, for a scalar or
 --!         an empty container, and for the root of a document whose root is
 --!         sealed, whose top-level fields chain from nothing.
-CREATE FUNCTION {{prefix}}.json_tree_children(e public.{{prefix}}_json_tree, token text)
-  RETURNS SETOF public.{{prefix}}_json_tree_entry
+CREATE FUNCTION {{prefix}}.json_tree_children(e public.{{prefix}}_json_search, token text)
+  RETURNS SETOF public.{{prefix}}_json_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   WITH RECURSIVE
@@ -570,7 +570,7 @@ AS $$
     visited AS MATERIALIZED (
       SELECT p.* FROM probe AS p LIMIT (SELECT doc.entries + 1 FROM doc)
     )
-  SELECT (doc.meta || (doc.sv -> p.j) || jsonb_build_object('j', p.j, 'd', 1))::public.{{prefix}}_json_tree_entry
+  SELECT (doc.meta || (doc.sv -> p.j) || jsonb_build_object('j', p.j, 'd', 1))::public.{{prefix}}_json_entry
   FROM visited AS p, doc
   WHERE p.j IS NOT NULL
   ORDER BY p.o
@@ -583,14 +583,14 @@ $$;
 --! built once, where calling that function after finding the node would
 --! build it twice.
 --!
---! @param e public.{{prefix}}_json_tree The stored document.
+--! @param e public.{{prefix}}_json_search The stored document.
 --! @param token text The node's token, base64.
 --! @return integer The count; `0` for a scalar or an empty container; NULL
 --!         for a token that names no node, as `jsonb_array_length` of a
 --!         missing path is, and for the root of a document whose root is
 --!         sealed, whose top-level fields chain from nothing and so cannot
 --!         be counted from its token.
-CREATE FUNCTION {{prefix}}.json_tree_child_count(e public.{{prefix}}_json_tree, token text)
+CREATE FUNCTION {{prefix}}.json_tree_child_count(e public.{{prefix}}_json_search, token text)
   RETURNS integer
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -666,16 +666,16 @@ $$;
 --! is not sealed is always read in full, since its root holds no document
 --! to return.
 --!
---! @param e public.{{prefix}}_json_tree The stored document.
+--! @param e public.{{prefix}}_json_search The stored document.
 --! @param tokens text[] The tokens of the nodes to read, base64, each
 --!        derived by the client from a concrete path alone.
 --! @param budget integer The most rows to return before falling back to
 --!        the sealed root; `0` to always read in full. Default 64.
---! @return SETOF public.{{prefix}}_json_tree_entry The rows, each with its
+--! @return SETOF public.{{prefix}}_json_entry The rows, each with its
 --!         depth `d` below the node its token named; or the root entry
 --!         alone, with `j = 0` and `d = 0`, past the budget.
-CREATE FUNCTION {{prefix}}.json_tree_subtree(e public.{{prefix}}_json_tree, tokens text[], budget integer DEFAULT 64)
-  RETURNS SETOF public.{{prefix}}_json_tree_entry
+CREATE FUNCTION {{prefix}}.json_tree_subtree(e public.{{prefix}}_json_search, tokens text[], budget integer DEFAULT 64)
+  RETURNS SETOF public.{{prefix}}_json_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   WITH RECURSIVE
@@ -757,12 +757,12 @@ AS $$
   SELECT rows.entry
   FROM (
     SELECT 0::bigint AS k, 0 AS j,
-           (doc.meta || (doc.sv -> 0) || '{"j": 0, "d": 0}'::jsonb)::public.{{prefix}}_json_tree_entry AS entry
+           (doc.meta || (doc.sv -> 0) || '{"j": 0, "d": 0}'::jsonb)::public.{{prefix}}_json_entry AS entry
     FROM doc, over
     WHERE over.fallback
     UNION ALL
     SELECT f.k, f.j,
-           (doc.meta || f.entry || jsonb_build_object('j', f.j, 'd', f.depth))::public.{{prefix}}_json_tree_entry
+           (doc.meta || f.entry || jsonb_build_object('j', f.j, 'd', f.depth))::public.{{prefix}}_json_entry
     FROM found AS f, doc, over
     WHERE NOT over.fallback
   ) AS rows
@@ -774,9 +774,9 @@ $$;
 ------------------------------------------------------------------------------
 
 --! @brief The path selector of an entry.
---! @param entry public.{{prefix}}_json_tree_entry The entry.
+--! @param entry public.{{prefix}}_json_entry The entry.
 --! @return text Its `s`, base64.
-CREATE FUNCTION {{prefix}}.selector(entry public.{{prefix}}_json_tree_entry)
+CREATE FUNCTION {{prefix}}.selector(entry public.{{prefix}}_json_entry)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -797,9 +797,9 @@ $$;
 --! the entry object, which sorts by ciphertext, and an operator class that
 --! would redirect it needs a superuser to install.
 --!
---! @param entry public.{{prefix}}_json_tree_entry The entry.
+--! @param entry public.{{prefix}}_json_entry The entry.
 --! @return {{prefix}}_internal.ope_cllw The term, or NULL.
-CREATE FUNCTION {{prefix}}.ord_term(entry public.{{prefix}}_json_tree_entry)
+CREATE FUNCTION {{prefix}}.ord_term(entry public.{{prefix}}_json_entry)
   RETURNS {{prefix}}_internal.ope_cllw
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -807,9 +807,9 @@ AS $$
 $$;
 
 --! @brief The leaf ordering term of an ordering operand.
---! @param q {{prefix}}.query_json_tree_leaf The operand.
+--! @param q {{prefix}}.query_json_leaf The operand.
 --! @return {{prefix}}_internal.ope_cllw Its `op`, base64-decoded.
-CREATE FUNCTION {{prefix}}.ord_term(q {{prefix}}.query_json_tree_leaf)
+CREATE FUNCTION {{prefix}}.ord_term(q {{prefix}}.query_json_leaf)
   RETURNS {{prefix}}_internal.ope_cllw
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -818,9 +818,9 @@ $$;
 
 --! @brief The path selector of an ordering operand: what `->` takes to reach
 --!        the leaf the operand compares against.
---! @param q {{prefix}}.query_json_tree_leaf The operand.
+--! @param q {{prefix}}.query_json_leaf The operand.
 --! @return text Its `s`, base64.
-CREATE FUNCTION {{prefix}}.selector(q {{prefix}}.query_json_tree_leaf)
+CREATE FUNCTION {{prefix}}.selector(q {{prefix}}.query_json_leaf)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$

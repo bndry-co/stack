@@ -2444,6 +2444,7 @@ mod tests {
         fn encrypt<'a, K: 'static>(
             &self,
             _: &str,
+            _: Option<&crate::dynamic::TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: ValueFrame,
@@ -2621,6 +2622,7 @@ mod tests {
         fn encrypt<'a, K: 'static>(
             &self,
             _: &str,
+            _: Option<&crate::dynamic::TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: ValueFrame,

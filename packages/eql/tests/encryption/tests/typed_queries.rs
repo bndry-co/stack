@@ -72,11 +72,12 @@ impl TargetResolver for Eql {
     fn encrypt<'a, K: 'static>(
         &self,
         name: &str,
+        options: Option<&dynamic::TargetOptions>,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::encrypt(name, keyset, label, plaintext).map_err(convert)
+        eql_targets::encrypt_with(name, options, keyset, label, plaintext).map_err(convert)
     }
     fn decrypt<'a, K: 'static>(
         &self,

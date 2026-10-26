@@ -130,12 +130,25 @@ mod path;
 mod plain;
 mod query;
 mod shuffle;
+mod text;
 
 pub use derive::JsonTerms;
 pub use path::{JsonPath, JsonPathError, Segment};
 pub use query::{
     AtPathTerms, JsonLeafQuery, JsonQuery, JsonSelector, JsonSelectorSet, JsonSubtreeKey,
 };
+pub use text::{parse_text, to_text, JsonTextError};
+
+/// Wipe a JSON value's plaintext in place: every string (object keys too)
+/// is overwritten, every number set to zero and every boolean to `false`,
+/// and the containers emptied. For a binding that holds a document it
+/// parsed ([`parse_text`]) or opened, once it is done with it: a
+/// `serde_json::Value` has no `Zeroize` of its own. Numbers and booleans
+/// are overwritten best-effort, as [`Zeroize`](zeroize::Zeroize) on the
+/// engine's own JSON plaintext does.
+pub fn wipe_value(value: &mut serde_json::Value) {
+    plain::wipe(value);
+}
 
 pub(crate) use derive::{seal_pending, terms_pending};
 pub(crate) use plain::PlainJson;
@@ -934,6 +947,24 @@ impl TryFrom<NodeWire> for JsonNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wipe_value_leaves_no_plaintext_in_the_value() {
+        let mut value =
+            serde_json::json!({"name": "Alice", "n": 34, "ok": true, "list": ["x", 1.5]});
+        wipe_value(&mut value);
+        assert_eq!(value, serde_json::json!({}), "the containers are emptied");
+        let mut text = serde_json::json!("secret");
+        wipe_value(&mut text);
+        assert_eq!(
+            text,
+            serde_json::json!(""),
+            "a string is overwritten and cleared"
+        );
+        let mut number = serde_json::json!(42);
+        wipe_value(&mut number);
+        assert_eq!(number, serde_json::json!(0));
+    }
 
     #[test]
     fn the_header_round_trips_its_frozen_layout() {

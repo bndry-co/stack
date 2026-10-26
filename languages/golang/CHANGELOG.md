@@ -12,6 +12,15 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **The EQL types for an encrypted JSON document** (#1348):
+  `eql.JSONSearch` (`public.eql_v4_json_search`), its containment needle
+  `eql.JSONSearchQuery`, its ordering operand
+  `eql.JSONSearchLeafQuery` and its entry `eql.JSONEntry`,
+  generated from the EQL catalog. The names are the ones EQL v3 gives its
+  searchable JSON document; `eql.JSON` stays the storage-only type. The
+  engine stores one from the module's own plans; `stashgen` does not
+  generate a field of it yet.
+
 - **Decimals, dates and timestamps take an order index (#1236).** An
   `encrypt.Decimal`, `encrypt.Date` or `time.Time` field takes `ore` and
   `ope`, and the generated code gives it `Lt`, `Lte`, `Gt`, `Gte` and
@@ -41,6 +50,12 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   map a `null=sql` field yet.
 
 ### Breaking
+
+- **`eql.SteVecDocument` and `eql.SteVecQuery` are gone.** They named
+  EQL v4's SteVec domains, which the engine never produced and the v4
+  bundle no longer carries: in v4, `public.eql_v4_json_search` is the
+  JSON tree document, `eql.JSONSearch`, and `eql.Types` lists it in
+  their place.
 
 - **An opaque struct seals as a storage blob, and reads the JSON it used
   to (#1347).** `stash:"context=...,opaque"` now seals the struct as one

@@ -134,7 +134,7 @@ impl JsonSelectorSet {
 /// The query term of [`Contains`], [`ContainedBy`] and `AtPath<Eq>`: the
 /// [`JsonSelectorSet`] of the document the query asks about, and, for a
 /// document whose root is a scalar, the alternative set that matches a
-/// stored root array holding it. Serializes to the `query_json_tree`
+/// stored root array holding it. Serializes to the `query_json`
 /// operand: `{"sv": [{"s": "…", "vs": "…"}, …], "el": [{"sv": …, "el": …},
 /// …], "alt": {…}}`.
 ///
@@ -322,7 +322,7 @@ impl<'de> Deserialize<'de> for JsonQuery {
 /// The query term of `AtPath<Lt | Lte | Gt | Gte>`: the selector of the
 /// path and the leaf ordering term of the value, which the SQL compares
 /// against the stored leaf's: `col -> $1 >= $2`. Serializes to the
-/// `query_json_tree_leaf` operand, `{"s": "…", "op": "…"}`. `Between`
+/// `query_json_leaf` operand, `{"s": "…", "op": "…"}`. `Between`
 /// sends two as one [`RangeQuery`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonLeafQuery {

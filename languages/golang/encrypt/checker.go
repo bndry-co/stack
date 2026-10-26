@@ -176,7 +176,7 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 					return t, fmt.Errorf("an index is %T, not a string", item)
 				}
 				switch o := record.Output(s); o {
-				// "json" is the SteVec document index, which no plan output
+				// "json" is the JSON index a document type carries, which no plan output
 				// carries.
 				case record.Equality, record.Match, record.Ore, record.Ope, record.OreBlock, "json":
 					t.Indexes = append(t.Indexes, o)
