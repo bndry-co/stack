@@ -74,7 +74,8 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"notes,encrypt"` | seal the field, with no index |
 | `stash:"email,encrypt,index=equality;match"` | seal the field, and derive each index beside it |
 | `stash:"score,index=ore"` | derive the index alone; no ciphertext is stored, so `Decrypt` leaves the field at its zero value |
-| `stash:"attrs,index=json"` | refused in this build: the engine does not derive the `json` index yet |
+| `stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"` | on a `json.RawMessage`: store the field as an encrypted JSON document; see "Encrypted JSON documents" |
+| `stash:"attrs,index=json"` | refused: a JSON document is stored with `encrypt_into=JsonSearch`, not as an index beside a ciphertext |
 | `stash:"id,passthrough"` | store the field as it is |
 | `stash:"tenant,context_field"` | the field's value is the context of every other field in the struct, in place of a `context=` tag; stored as it is |
 | `stash:"-"` | leave the field out |
@@ -108,7 +109,49 @@ An index takes its options in parentheses after its name, separated by commas: `
 This build refuses an index with options: a query term is derived with the default options only, so a stored term with other options would never match one.
 These words are the same as the Rust API's words for the same behaviour, with two that only Go has.
 `opaque` seals the whole struct as one `bytes` field holding a storage blob (see "What crosses the binding").
-`json` names the JSON index, which the Rust API does not declare yet; this build refuses it.
+`json` names the JSON index, which a field reaches only through `encrypt_into=JsonSearch`.
+
+### Encrypted JSON documents
+
+A `json.RawMessage` field with `encrypt_into=JsonSearch` is stored as one encrypted JSON document, an `eql.JSONSearch` in a `public.eql_v4_json_search` column.
+The field holds the document's JSON text; the engine parses it, so an object that names a member twice, an integer outside the 64-bit range and text that is not JSON are refused with `encrypt.ErrEncoding`.
+Values come back as JSON text holding the same values; key order and the spelling of numbers are not kept.
+A `*json.RawMessage` field is optional and must say `null=sql`: a document has no fixed length to hide a missing one behind. A non-nil pointer to `null` is a stored JSON `null`.
+A `json.RawMessage` sealed any other way (`encrypt`, `index=equality`) is bytes, as any type defined over `[]byte` is.
+`JsonSearch` takes `json.RawMessage` itself, or an alias of it (`type Doc = json.RawMessage`), and refuses a type defined over it (`type Doc json.RawMessage`): `stashgen` knows a document by the `json.RawMessage` type, where a scalar type is accepted with any type defined over it.
+
+The type takes options in parentheses: `ordered=` names the paths whose numbers and strings carry an ordering term, separated by `;`, and `sealed_root=false` turns off the sealed root (on by default).
+`encrypt_into=JsonSearch(ordered=$.age;$.visits[*].at)` orders two paths.
+A path in a tag is plain JSONPath: `$`, then `.key` steps of letters, digits and underscores, and `[n]` or `[*]` steps; an ordered path names no position. The engine checks every path when `stashgen` runs.
+
+The field's `Fields` entry has a method per operation:
+
+| Method | Returns | SQL |
+|---|---|---|
+| `Contains(ctx, c, needle)`, `ContainedBy(ctx, c, needle)` | `eql.JSONSearchQuery` | `col @> $1::eql_v4.query_json`, `col <@ $1::eql_v4.query_json` |
+| `EqAt(ctx, c, path, v)` | `eql.JSONSearchQuery` | `col @> $1::eql_v4.query_json` |
+| `At.Age.Lt(ctx, c, v)`, `Lte`, `Gt`, `Gte`, `Between` | `eql.JSONSearchLeafQuery` | `(col -> $sel::text) < $1::eql_v4.query_json_leaf`, `$sel` from `At.Age.Selector(ctx, c)` |
+| `Selector(ctx, c, path)` | `encrypt.JSONSelection`: `Selector()` and `Open` | `col -> $1::text` |
+| `Subtree(ctx, c, path, opts)` | `encrypt.JSONRead`: `Tokens()`, `Open` and `OpenOne` | `eql_v4.json_tree_subtree(col, $1::text[], 64)` |
+| `Children(ctx, c, path)`, `ChildCount(ctx, c, path)` | `encrypt.JSONToken` | `eql_v4.json_tree_children(col, $1::text)`, `eql_v4.json_tree_child_count(col, $1::text)` |
+
+`At` has one accessor per ordered path, named for its keys (`$.visits[*].at` is `At.VisitsAt`, `$.a.1` is `At.A1`); two paths with one name, or one path given twice, stop `stashgen`.
+An ordering compares the value `->` extracts at its path, and EQL's `<` compares ordering terms alone, so take the selector from the same accessor (`At.Age.Selector`) rather than spelling the path again.
+At a wildcard path (`$.visits[*].at`), `->` returns an unspecified element of each row (the entries are stored in a random order), so write the comparison over every match and order by the least or greatest one:
+
+```sql
+-- rows with some visit after $2
+SELECT id FROM customers WHERE EXISTS (
+  SELECT 1 FROM eql_v4.json_tree_path_query(profile, $1::text) AS e WHERE e > $2::eql_v4.query_json_leaf)
+-- rows by their earliest visit
+SELECT id FROM customers ORDER BY (
+  SELECT eql_v4.ord_term(e) FROM eql_v4.json_tree_path_query(profile, $1::text) AS e ORDER BY 1 LIMIT 1)
+```
+
+with `$1` from `At.VisitsAt.Selector(ctx, c)` and `$2` from `At.VisitsAt.Gt(ctx, c, v)`; for the latest visit, order by `ORDER BY 1 DESC NULLS LAST` inside and `DESC` outside.
+`OpenOne` reads one value and refuses a read whose path has a wildcard before anything is opened; open a wildcard read with `Open`.
+The needle and the values are `json.RawMessage`: write the JSON you mean, such as `json.RawMessage(`+"`"+`{"active":true}`+"`"+`)`.
+A position in a path is refused for `EqAt` and `Selector`, whose selector reads every position as the wildcard; read a position with `Subtree`.
 
 ### Optional fields
 

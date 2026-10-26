@@ -142,6 +142,16 @@ impl Target {
         self.plaintext.and_then(|name| name.parse().ok())
     }
 
+    /// The PostgreSQL domain of the type's ordering operand at a path, for
+    /// a type that stores a JSON document (`JsonSearch`:
+    /// `eql_v4.query_json_leaf`); `None` for every other type. Stack
+    /// Encrypt binds an ordering at a path as it
+    /// (`TargetDescriptor::with_leaf_query_sql_domain`).
+    pub fn leaf_query_sql_domain(&self) -> Option<&'static str> {
+        use crate::v4::DomainType;
+        document(self.name).map(|_| crate::v4::json_tree::JsonTreeLeafQuery::sql_domain_static())
+    }
+
     /// The options this type's match index is built under, for a type that
     /// carries one (`TextMatch`): [`EqlMatch`](super::EqlMatch)'s, the one
     /// match configuration every EQL type's filter is built under. `None`

@@ -73,7 +73,7 @@ func TestDeclarationRefusals(t *testing.T) {
 		"identity of no field":      Declare("u").Encrypt("a", String).Identity("b", "x"),
 		"seals nothing":             Declare("u").Passthrough("id"),
 		"EQL type unnamed":          Declare("u").EncryptInto("email", String, ""),
-		"json index":                Declare("u").EncryptIndex("a", String, encrypt.JSON()),
+		"json index":                Declare("u").EncryptIndex("a", String, encrypt.JSON()), //nolint:staticcheck // the deprecated index is still refused
 		"name not a label":          Declare("u").Encrypt("1a", String),
 	}
 	for name, d := range cases {

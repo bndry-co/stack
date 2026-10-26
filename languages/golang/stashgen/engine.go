@@ -225,10 +225,10 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 				// intoKind takes every built-in integer except into a
 				// 128-bit kind, which gensupport does not convert to.
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and the built-in integer %s is not converted to it", f.EQLType, eqlType.wire, f.GoType)}
-			} else if eqlType.wire == record.JSON {
-				// A document's kind is no Go scalar's: say what is
-				// missing, not a kind mismatch.
-				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a json document, and stashgen does not generate a field of it yet", f.EQLType)}
+			} else if eqlType.wire == record.JSON && f.GoType.Kind != KindJSON {
+				// A document's kind is no Go scalar's: name the Go types
+				// that carry one, not a kind mismatch.
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a json document: declare the field json.RawMessage, or *json.RawMessage with null=sql", f.EQLType)}
 			} else {
 				// The engine checks the kind too (se_plan_check refuses a
 				// "type" other than the EQL type's plaintext); saying it
@@ -254,6 +254,7 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s is stored under a table and a column, and the context %q has %d segments, not one", f.EQLType, d.Context, len(plan.Context))}
 			}
 			rf.Target = f.EQLType
+			rf.TargetOptions = f.TargetOptions
 		case VerbEncrypt, VerbEncryptIndex:
 			rf.Outputs = append(rf.Outputs, record.Ciphertext)
 		}
@@ -268,7 +269,11 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 			}
 			out, ok := outputOfIndex[idx.Name]
 			if !ok {
-				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine does not derive the %s index yet", idx.Name)}
+				reason := fmt.Sprintf("the engine does not derive the %s index yet", idx.Name)
+				if idx.Name == IndexJSON {
+					reason = "the json index is not an output beside a ciphertext: store a JSON document as a json.RawMessage field with encrypt_into=JsonSearch, whose EQL type carries the index"
+				}
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: reason}
 			}
 			rf.Outputs = append(rf.Outputs, out)
 		}
@@ -285,7 +290,7 @@ var outputOfIndex = map[IndexName]record.Output{
 // no entry in outputOfIndex, so no tag asks for it.
 var indexOfOutput = map[record.Output]IndexName{
 	record.Equality: IndexEquality, record.Match: IndexMatch, record.Ore: IndexOre, record.Ope: IndexOpe,
-	record.OreBlock: IndexOreBlock,
+	record.OreBlock: IndexOreBlock, record.JSONIndex: IndexJSON,
 }
 
 // wireKind is the record kind of a Go type: the same mapping the emitter
@@ -334,6 +339,8 @@ func wireKind(t GoType) record.Kind {
 		return record.Timestamp
 	case KindDecimal:
 		return record.Decimal
+	case KindJSON:
+		return record.JSON
 	}
 	return record.Untyped
 }
@@ -364,6 +371,8 @@ func kindOfWire(k record.Kind) Kind {
 		return KindTimestamp
 	case record.Decimal:
 		return KindDecimal
+	case record.JSON:
+		return KindJSON
 	}
 	return KindOther
 }

@@ -2112,16 +2112,26 @@ impl<K> KeysetCipher<'_, K> {
         path: &JsonPath,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSelector, K> {
+        Pending::ready(self, self.json_selector_now(path, descriptor))
+    }
+
+    /// [`json_selector`](Self::json_selector), derived and returned now:
+    /// for the engine's own callers, which derive locally and want a
+    /// refusal as a plain error.
+    pub(crate) fn json_selector_now<'c>(
+        &self,
+        path: &JsonPath,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Result<JsonSelector, Error> {
         let context = descriptor.into_prf_context().into_owned();
-        let selector = prf16(
+        prf16(
             self.prf(),
             SELECTOR_DOMAIN,
             &context,
             &path.selector_bytes(),
         )
         .map(JsonSelector)
-        .map_err(Error::from);
-        Pending::ready(self, selector)
+        .map_err(Error::from)
     }
 
     /// The key that reads the node at `path`, under the field `descriptor`
@@ -2172,10 +2182,24 @@ impl<K> KeysetCipher<'_, K> {
         bound: u32,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSubtreeKey, K> {
+        Pending::ready(
+            self,
+            self.json_subtree_key_now(path, options, bound, descriptor),
+        )
+    }
+
+    /// [`json_subtree_key_with_bound`](Self::json_subtree_key_with_bound),
+    /// derived and returned now, for the engine's own callers.
+    pub(crate) fn json_subtree_key_now<'c>(
+        &self,
+        path: &JsonPath,
+        options: &JsonOptions,
+        bound: u32,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Result<JsonSubtreeKey, Error> {
         let context = descriptor.into_prf_context().into_owned();
         let selectors = Selectors::new(Arc::clone(self.state()), context);
-        let key = subtree_key_for(selectors, options, path, bound);
-        Pending::ready(self, key.map_err(Error::from))
+        subtree_key_for(selectors, options, path, bound).map_err(Error::from)
     }
 }
 

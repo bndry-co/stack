@@ -103,6 +103,13 @@ pub struct TargetDescriptor {
     /// [`with_match_options`]: Self::with_match_options
     /// [`verify`]: super::verify
     pub match_options: Option<MatchOptions>,
+    /// The PostgreSQL domain of the type's ordering operand at a path, for
+    /// a type that stores a JSON document
+    /// ([`with_leaf_query_sql_domain`](Self::with_leaf_query_sql_domain)):
+    /// what an ordering at a path binds as, beside the containment query
+    /// [`query_sql_domain`](Self::query_sql_domain) names. Not on the
+    /// wire; a generator reads it from the operators' terms.
+    pub leaf_query_sql_domain: Option<String>,
 }
 
 /// The descriptor in its wire form: the object a guest's `se_targets`
@@ -170,7 +177,16 @@ impl TargetDescriptor {
             producible,
             reason,
             match_options: None,
+            leaf_query_sql_domain: None,
         }
+    }
+
+    /// The descriptor of a type that stores a JSON document, whose
+    /// ordering operand at a path is the domain `domain`.
+    #[must_use]
+    pub fn with_leaf_query_sql_domain(mut self, domain: impl Into<String>) -> Self {
+        self.leaf_query_sql_domain = Some(domain.into());
+        self
     }
 
     /// The descriptor of a type whose match index is built under `options`:
