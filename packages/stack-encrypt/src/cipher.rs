@@ -535,39 +535,6 @@ pub struct StackCipher<K> {
     /// order, the order a query's selectors are sent in): fresh entropy per
     /// document or query, outside tests.
     json_randomness: crate::json::Randomness,
-    /// The backend's [`IndexKeySource::load_index_key`], captured at
-    /// [`init`](StackCipherBuilder::init), where `K` is known to implement
-    /// it. Settling a [`Pending`](crate::target::Pending) asks only for a
-    /// [`DataKeySource`]; a keyset request reaches the index key through
-    /// this, so the settling path's bounds stay what they were.
-    index_keys: IndexKeyLoader<K>,
-}
-
-/// The future of one index-key load, `Send` on native targets as every
-/// pending's future is ([`MaybeSend`](crate::kms::MaybeSend)).
-#[cfg(not(target_arch = "wasm32"))]
-type IndexKeyFuture<'k> = std::pin::Pin<
-    Box<
-        dyn std::future::Future<Output = Result<(Uuid, stack_kms::IndexKey), stack_kms::Error>>
-            + Send
-            + 'k,
-    >,
->;
-
-/// See the native definition above; identical minus the `Send` bound.
-#[cfg(target_arch = "wasm32")]
-type IndexKeyFuture<'k> = std::pin::Pin<
-    Box<
-        dyn std::future::Future<Output = Result<(Uuid, stack_kms::IndexKey), stack_kms::Error>>
-            + 'k,
-    >,
->;
-
-/// [`IndexKeySource::load_index_key`] for one `K`, as a plain function.
-type IndexKeyLoader<K> = for<'k> fn(&'k K, IdentifiedBy) -> IndexKeyFuture<'k>;
-
-fn load_index_key_of<K: IndexKeySource>(kms: &K, keyset: IdentifiedBy) -> IndexKeyFuture<'_> {
-    Box::pin(kms.load_index_key(Some(keyset)))
 }
 
 #[cfg(feature = "http")]
@@ -627,31 +594,6 @@ impl<K> StackCipher<K> {
     /// The underlying data-key source.
     pub fn kms(&self) -> &K {
         &self.kms
-    }
-
-    /// The loaded state of the keyset `id`: from the cache, or loaded from
-    /// ZeroKMS and cached on a miss, exactly as [`keyset`](Self::keyset)
-    /// selects a keyset by id. What a keyset request settles to
-    /// ([`Request::load_keyset`](crate::target::Request)).
-    pub(crate) async fn keyset_state(&self, id: Uuid) -> Result<Arc<KeysetState>, Error> {
-        // Bound first, so the cache's lock is released before the await.
-        let lookup = self.keysets().get(&IdentifiedBy::Uuid(id));
-        let resolution = match lookup {
-            Lookup::Hit(state) => return Ok(state),
-            Lookup::Stale(resolution) | Lookup::Miss(resolution) => resolution,
-        };
-        let (loaded, index_key) = (self.index_keys)(&self.kms, IdentifiedBy::Uuid(id)).await?;
-        // Asked by id, ZeroKMS answers for that id. A source that answers for
-        // another would have the document walked under another keyset's PRF,
-        // and cached under an id no later lookup asks for.
-        if loaded != id {
-            return Err(Error::KeysetMismatch {
-                left: id,
-                right: loaded,
-            });
-        }
-        let state = keyset_state_of(loaded, None, &index_key);
-        Ok(self.keysets().insert(state, resolution))
     }
 
     /// Where this cipher draws the JSON index's permutations from.
@@ -739,6 +681,37 @@ impl<K: IndexKeySource> StackCipher<K> {
         };
         let state = self.keysets().insert(state, resolution);
         Ok(KeysetCipher::new(self, state))
+    }
+
+    /// The loaded state of the keyset `id`: from the cache, or loaded from
+    /// ZeroKMS and cached on a miss, as [`keyset`](Self::keyset) selects a
+    /// keyset by id. What a keyset request settles to
+    /// ([`Request::load_keyset`](crate::target::Request)).
+    pub(crate) async fn keyset_state(&self, id: Uuid) -> Result<Arc<KeysetState>, Error> {
+        // Bound first, so the cache's lock is released before the await.
+        let lookup = self.keysets().get(&IdentifiedBy::Uuid(id));
+        let resolution = match lookup {
+            Lookup::Hit(state) => return Ok(state),
+            Lookup::Stale(resolution) | Lookup::Miss(resolution) => resolution,
+        };
+        // Boxed on its own rather than inlined into the pending's future: a
+        // pending settles through a boxed future of its own (`IntoFuture`),
+        // and a generator is built on the stack and copied into its box with
+        // every byte it does not initialise, so the larger that generator,
+        // the more stack residue its box carries to the heap. The load path
+        // is the deepest thing a settle can await; `tests/heap_hygiene.rs`
+        // is what notices.
+        let state = Box::pin(load_keyset(&self.kms, IdentifiedBy::Uuid(id))).await?;
+        // Asked by id, ZeroKMS answers for that id. A source that answers for
+        // another would have the document walked under another keyset's PRF,
+        // and cached under an id no later lookup asks for.
+        if state.id != id {
+            return Err(Error::KeysetMismatch {
+                left: id,
+                right: state.id,
+            });
+        }
+        Ok(self.keysets().insert(state, resolution))
     }
 }
 
@@ -984,7 +957,6 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
             )),
             default,
             json_randomness,
-            index_keys: load_index_key_of::<K>,
         })
     }
 }
@@ -1003,7 +975,7 @@ fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::Hm
     prf
 }
 
-impl<K: DataKeySource> KeysetCipher<'_, K> {
+impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     /// Encrypt a value, binding `aad`, and seal it against fresh ZeroKMS data
     /// keys in a single batched `generate_keys` call under this keyset.
     /// Every key is requested under the [`Descriptor`] of `aad`.
@@ -1040,7 +1012,7 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
 /// is a derivation of the descriptor its key was minted under —
 /// `for_sequence_element`, `for_map_entry`, `for_leaf` — and that
 /// derivation is the library's to compute, never the caller's to supply.
-async fn decrypt_through<'s, 'a, T, K: DataKeySource + 's>(
+async fn decrypt_through<'s, 'a, T, K: DataKeySource + IndexKeySource + 's>(
     scope: impl crate::target::CipherScope<'s, K>,
     ciphertext: StackCipherText,
     aad: impl IntoContext<'a>,
@@ -1055,7 +1027,7 @@ where
     open_keyed(keyed, context)
 }
 
-impl<K: DataKeySource> StackCipher<K> {
+impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// Decrypt a [`StackCipherText`] into `T`, authenticating against `aad`.
     ///
     /// One batched `retrieve_keys` call per keyset the leaves were sealed
@@ -1498,7 +1470,7 @@ impl PendingStackCipherText {
     /// ([`seal_pending`](crate::target)), so this and
     /// `encrypt_into_with_context` into a `StackCipherText` share one definition of how a tree
     /// is sealed and one path to ZeroKMS.
-    pub async fn seal<'a, K: DataKeySource>(
+    pub async fn seal<'a, K: DataKeySource + IndexKeySource>(
         self,
         cipher: &KeysetCipher<'_, K>,
         aad: impl IntoContext<'a>,

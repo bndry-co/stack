@@ -44,8 +44,14 @@ pub(super) enum RequestKind {
     /// The loaded state of the keyset `keyset_id`, its index-key PRF: from
     /// the cipher's keyset cache, or loaded from ZeroKMS and cached on a
     /// miss, as [`StackCipher::keyset`](crate::StackCipher::keyset) loads
-    /// one. What opening a JSON document with its root open derives the
-    /// root's token with.
+    /// one.
+    ///
+    /// A request kind rather than a call: opening a JSON document whose
+    /// root is open derives the root's token under the keyset's PRF, and
+    /// that open runs inside a pending's fulfilment, after dispatch, with
+    /// no way to await a ZeroKMS round trip of its own. Dispatch is the one
+    /// place a pending reaches ZeroKMS, so the keyset is asked for as a
+    /// request and answered beside the document's data key.
     LoadKeyset { keyset_id: Uuid },
 }
 

@@ -16,7 +16,9 @@ use std::future::{Future, IntoFuture};
 use std::pin::Pin;
 use std::sync::Arc;
 
-use stack_kms::{DataKey, DataKeySource, GenerateKeyPayload, Iv, MaybeSend, RetrieveKeyPayload};
+use stack_kms::{
+    DataKey, DataKeySource, GenerateKeyPayload, IndexKeySource, Iv, MaybeSend, RetrieveKeyPayload,
+};
 use uuid::Uuid;
 
 use super::request::{tally, Request, RequestKind, Responses};
@@ -374,7 +376,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
 
 impl<'a, T: 'a, K> Pending<'a, T, K>
 where
-    K: DataKeySource,
+    K: DataKeySource + IndexKeySource,
 {
     /// Settle: one batched ZeroKMS call per request kind (none at all for an
     /// all-[`ready`](Pending::ready) assembly), then the fulfilments shape the
@@ -430,7 +432,7 @@ fn check_scope(keyset: Option<Uuid>, requests: &[Request]) -> Result<(), Error> 
 #[cfg(not(target_arch = "wasm32"))]
 impl<'a, T: 'a, K> IntoFuture for Pending<'a, T, K>
 where
-    K: DataKeySource + Sync,
+    K: DataKeySource + IndexKeySource + Sync,
 {
     type Output = Result<T, Error>;
     type IntoFuture = PendingFuture<'a, T>;
@@ -444,7 +446,7 @@ where
 #[cfg(target_arch = "wasm32")]
 impl<'a, T: 'a, K> IntoFuture for Pending<'a, T, K>
 where
-    K: DataKeySource,
+    K: DataKeySource + IndexKeySource,
 {
     type Output = Result<T, Error>;
     type IntoFuture = PendingFuture<'a, T>;
@@ -469,7 +471,7 @@ struct Retrieve {
 /// keyset the retrieved leaves were sealed under, whatever the request
 /// count. When ZeroKMS grows a combined operation (data keys + PRF
 /// derivations in one round-trip), this is the one place that changes.
-async fn dispatch<K: DataKeySource>(
+async fn dispatch<K: DataKeySource + IndexKeySource>(
     cipher: &StackCipher<K>,
     keyset: Option<Uuid>,
     requests: Vec<Request>,
