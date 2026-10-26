@@ -14,6 +14,7 @@ use serde_json::Value;
 
 use super::derive::{JsonTerms, Selectors, TermNode};
 use super::path::JsonPath;
+use super::plain::PlainJson;
 use super::{base64, JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::op::{
     Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
@@ -22,6 +23,7 @@ use crate::op::{
 use crate::sem::{RangeQuery, TermError};
 use crate::target::{DeclaredContext, Index, Json, Owned, Pending};
 use crate::{Error, KeysetCipher, Label, NonEmpty};
+use vitaminc_protected::{Controlled, Protected};
 
 /// One selector pair of a projection.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -706,7 +708,7 @@ where
     type Verifier = ();
     fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
         let _ = parse_path(path.as_ref())?;
-        wiped_after(value.clone().into(), scalar)
+        scalar(&copy_of(value))
     }
     fn verifier(&self, _: &(P, V)) {}
     fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonQuery {
@@ -728,19 +730,14 @@ where
     type Via = Json;
 }
 
-/// Whether `value` is a scalar, which equality at a path compares.
-/// `check` over `value`, a copy this crate made of the caller's plaintext,
-/// which is wiped afterwards rather than dropped.
-fn wiped_after(
-    mut value: Value,
-    check: impl FnOnce(&Value) -> Result<(), Error>,
-) -> Result<(), Error> {
-    let checked = check(&value);
-    super::wipe_value(&mut value);
-    checked
+/// The copy of the caller's plaintext a check reads: wiped when it drops.
+fn copy_of<V: Into<Value> + Clone>(value: &V) -> Protected<PlainJson> {
+    PlainJson::protect(value.clone().into())
 }
 
-fn scalar(value: &Value) -> Result<(), Error> {
+/// Whether `value` is a scalar, which equality at a path compares.
+fn scalar(value: &Protected<PlainJson>) -> Result<(), Error> {
+    let value = value.risky_ref().value();
     match value {
         Value::Object(_) | Value::Array(_) => Err(TermError::JsonValueNotScalar.into()),
         _ => Ok(()),
@@ -748,7 +745,8 @@ fn scalar(value: &Value) -> Result<(), Error> {
 }
 
 /// Whether `value` is a leaf the index orders: a number or a string.
-fn ordered(value: &Value) -> Result<(), Error> {
+fn ordered(value: &Protected<PlainJson>) -> Result<(), Error> {
+    let value = value.risky_ref().value();
     match value {
         Value::Number(_) | Value::String(_) => Ok(()),
         _ => Err(TermError::JsonLeafNotOrdered.into()),
@@ -787,7 +785,7 @@ macro_rules! orderings {
             fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
                 let path = parse_path(path.as_ref())?;
                 orders(self, &path)?;
-                wiped_after(value.clone().into(), ordered)
+                ordered(&copy_of(value))
             }
             fn verifier(&self, _: &(P, V)) {}
             fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonLeafQuery {
@@ -822,8 +820,8 @@ where
     fn check(&self, (path, (lo, hi)): &(P, (V, V))) -> Result<(), Error> {
         let path = parse_path(path.as_ref())?;
         orders(self, &path)?;
-        wiped_after(lo.clone().into(), ordered)?;
-        wiped_after(hi.clone().into(), ordered)
+        ordered(&copy_of(lo))?;
+        ordered(&copy_of(hi))
     }
     fn verifier(&self, _: &(P, (V, V))) {}
     fn query(

@@ -582,7 +582,7 @@ pub fn json_terms<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
             };
             // The terms are derived by now; a document this description
             // owns (a query's needle) is wiped rather than dropped.
-            M::release(source, |mut value| crate::json::wipe_value(&mut value));
+            M::release(source, |value| drop(crate::json::PlainJson::protect(value)));
             pending
         }),
     }

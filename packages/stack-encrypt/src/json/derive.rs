@@ -20,7 +20,7 @@ use vitaminc_encrypt::{Aes256Cipher, Key as AesKey};
 use vitaminc_hmac::HmacSha256Prf;
 use vitaminc_prf::{BlockVisitor, IntoPrfContext, PrfValue};
 use vitaminc_protected::{AsProtectedRef, Controlled, Protected};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use super::cascade::{self, ChildrenDigest};
 use super::path::{key_step_len, push_key, JsonPath, Segment, ARRAY_STEP};
@@ -810,15 +810,20 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         return Pending::failed(cipher, error);
     }
     // The caller's document, owned here: wiped when this returns.
-    let value = Wiped(value);
+    let value = PlainJson::protect(value);
     let prf_context = piece.clone().into_prf_context().into_owned();
     let aad = piece.into_aad().into_owned();
-    let walked = match walk(&value, options, cipher.prf(), &prf_context) {
+    let walked = match walk(
+        value.risky_ref().value(),
+        options,
+        cipher.prf(),
+        &prf_context,
+    ) {
         Ok(walked) => walked,
         Err(error) => return Pending::failed(cipher, error.into()),
     };
     let whole = if options.sealed_root {
-        match sealed_root_plaintext(&value) {
+        match sealed_root_plaintext(value.risky_ref().value()) {
             Ok(bytes) => Some(bytes),
             Err(error) => return Pending::failed(cipher, Error::Other(Box::new(error))),
         }
@@ -839,39 +844,6 @@ pub(crate) fn seal_pending<'a, K: 'static>(
             seal(walked, whole, keyset_id, key, &aad, sealed_root, rng)
         },
     )
-}
-
-/// A document this crate owns, its strings and key names wiped when it
-/// drops.
-pub(crate) struct Wiped(pub(crate) Value);
-
-impl std::ops::Deref for Wiped {
-    type Target = Value;
-    fn deref(&self) -> &Value {
-        &self.0
-    }
-}
-
-impl Drop for Wiped {
-    fn drop(&mut self) {
-        wipe_value(&mut self.0);
-    }
-}
-
-/// Wipe every string and key name in `value`, leaving it empty: numbers,
-/// booleans and nulls hold nothing outside the value itself.
-pub(crate) fn wipe_value(value: &mut Value) {
-    match value {
-        Value::String(text) => text.zeroize(),
-        Value::Array(items) => items.iter_mut().for_each(wipe_value),
-        Value::Object(map) => {
-            for (mut key, mut child) in std::mem::take(map) {
-                wipe_value(&mut child);
-                key.zeroize();
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
-    }
 }
 
 /// An entry's AAD: the domain, the keyset, the column's AAD, the key tag,
@@ -2237,19 +2209,6 @@ mod tests {
             assert_eq!(&wiped[..], Context::pae(&pieces).as_bytes());
             assert_eq!(wiped.len(), wiped.capacity(), "sized before it is written");
         }
-    }
-
-    #[test]
-    fn wiping_a_value_empties_its_strings_and_keys() {
-        let mut value = json!({"key": ["text", 1, null, {"inner": "more"}], "n": 2.5});
-        wipe_value(&mut value);
-        assert_eq!(value, json!({}), "every member taken and wiped");
-        let mut text = json!("text");
-        wipe_value(&mut text);
-        assert_eq!(text, json!(""));
-        let mut list = json!(["a", ["b"], true]);
-        wipe_value(&mut list);
-        assert_eq!(list, json!(["", [""], true]));
     }
 
     #[test]
