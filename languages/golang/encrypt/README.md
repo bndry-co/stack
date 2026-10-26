@@ -617,7 +617,12 @@ path and the cipher's keyset, and refuses a row that is not one it asked
 for. It does not prove the database returned every row, or rows of the
 database row you meant. `encrypt.JSONTokens` binds as a `text[]` literal,
 and a selector or token as `text`; cast each parameter, as above, so
-PostgreSQL picks EQL's operator and not `jsonb`'s. Numbers order as `float64`,
+PostgreSQL picks EQL's operator and not `jsonb`'s; a zero one is refused
+rather than bound. A token is a capability over its node's subtree in every
+row of the column, and a path's keys can be your customer's data, so
+`JSONToken`, `JSONTokens`, `JSONSelection` and `JSONRead` print and log with
+the tokens, the selector and the path redacted. A `JSONValue` holds the
+plaintext a read opened, and prints it. Numbers order as `float64`,
 so integers past 2^53 can tie at an ordered path; containment and `EqAt`
 compare them exactly.
 
