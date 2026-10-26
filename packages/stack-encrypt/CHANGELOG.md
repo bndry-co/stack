@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`KeysetCipher::json_subtree_key`). Decrypting a JSON document whose root
   is open loads the keyset it was sealed under, beside its data key; a load
   that fails is `Error::KeysetLoad` on those documents alone.
+- **Awaiting a `Pending` needs an `IndexKeySource` as well as a
+  `DataKeySource`.** A root-open JSON document's keyset is loaded through
+  the cipher's own keyset path when the pending settles, so `IntoFuture for
+  Pending`, `StackCipher::decrypt`, `KeysetCipher::encrypt` and the other
+  settling entry points bound `K: DataKeySource + IndexKeySource`. Every
+  `StackCipher` is built over a source that implements both
+  (`StackCipherBuilder::init` requires it), so a concrete call site is
+  unchanged; generic code written over `K: DataKeySource` alone adds the
+  second bound.
 
 ### Fixed
 

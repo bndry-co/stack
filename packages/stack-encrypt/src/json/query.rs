@@ -107,8 +107,8 @@ impl JsonSelectorSet {
     /// Put the pairs of every group, and the groups of every element list,
     /// in a uniformly random order ([`shuffle`](super::shuffle::shuffle)).
     /// The server reads `q` as sets (`jsonb @>` over `sv` and `el`), so the
-    /// order changes no answer; shuffled, it no longer restates the
-    /// document's depth-first order.
+    /// order changes no answer, and the stored order says nothing of the
+    /// document's.
     pub(crate) fn shuffle(&mut self, rng: &mut vitaminc::random::SafeRand) {
         super::shuffle::shuffle(&mut self.sv, rng);
         super::shuffle::shuffle(&mut self.el, rng);
@@ -139,7 +139,7 @@ impl JsonSelectorSet {
 /// …], "alt": {…}}`.
 ///
 /// The set is sent in a random order of its own, drawn when the terms were
-/// derived ([`terms_pending`](super::derive::terms_pending)) as a stored
+/// derived, as a stored
 /// `q`'s order is drawn when its document is sealed: every pair list and
 /// element-group list shuffled, recursively. `jsonb @>` is set containment
 /// over arrays, so the order changes no answer, and a query shows no more

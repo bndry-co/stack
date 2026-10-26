@@ -5,10 +5,34 @@
 //! [`ChildrenDigest`] of its children: SHA-256 over the AEAD tags of the
 //! node's children, in ordinal order (an element's index, a member's place
 //! in the random permutation its object drew). A node's AEAD tag covers its
-//! own AAD, so it covers its children's
-//! tags, which cover theirs: the tag of a node commits to every ciphertext
-//! beneath it, in its place. Sealing therefore runs from the leaves up, and
-//! opening a node needs its children's tags first.
+//! own AAD, so it covers its children's tags, which cover theirs: the tag of
+//! a node commits to every ciphertext beneath it, in its place. Sealing
+//! therefore runs from the leaves up, and opening a node needs its
+//! children's tags first.
+//!
+//! ```text
+//!   {"a": 1, "b": [2, 3]}         each node's AAD binds, beside its own
+//!                                 fields, the digest of its children's tags:
+//!          root
+//!         /    \                   root      : H("k" ‖ tag(a) ‖ tag(b))
+//!        a      b                 b         : H("k" ‖ tag(b0) ‖ tag(b1))
+//!              / \                 a, b0, b1 : H("k")             (leaves)
+//!            b0   b1
+//!
+//!   sealing, leaves up:   b0, b1 ─→ tag(b0), tag(b1) ─→ b ─→ tag(b) ─┐
+//!                         a ─────────────────────────────→ tag(a) ─┴→ root
+//!
+//!   opening, root down:   the root's children are the rows at its parent
+//!                         tags, b's the rows at b's; each node opens under
+//!                         the digest of the tags of the children found
+//!                         beneath it, so a change anywhere below fails the
+//!                         node above it.
+//! ```
+//!
+//! `tag(x)` is the last sixteen bytes of `x`'s ciphertext, and `H` is
+//! SHA-256. Because `tag(root)` covers `tag(a)` and `tag(b)`, and `tag(b)`
+//! covers `tag(b0)` and `tag(b1)`, the root's tag commits to all five
+//! ciphertexts in their places.
 //!
 //! What that proves, for a read that returns a node and everything beneath
 //! it: the rows beneath the node are exactly the ones sealed there, complete,
