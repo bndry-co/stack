@@ -23,13 +23,13 @@ use vitaminc_protected::{AsProtectedRef, Controlled, Protected};
 use zeroize::{Zeroize, Zeroizing};
 
 use super::cascade::{self, ChildrenDigest};
-use super::order;
 use super::path::{key_step_len, push_key, JsonPath, Segment, ARRAY_STEP};
 use super::plain::{
     insert_member, protected_array, protected_object, push_element, read_protected, take_protected,
     PlainJson,
 };
-use super::query::{JsonSelector, JsonSubtreeKey, Read};
+use super::query::{group_of, JsonProjection, JsonSelector, JsonSubtreeKey, Read};
+use super::shuffle;
 use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag};
 use crate::keyset::KeysetState;
 use crate::sem::TermError;
@@ -218,12 +218,11 @@ pub struct JsonTerms {
     /// scalar has as an element of a root array, so a containment needle
     /// can match a stored `["a"]` as `jsonb @>` does.
     alt: Option<(Tag, Tag)>,
-    /// The seed of the order a needle built from these terms is sent in,
-    /// drawn from the cipher's [`OrderSource`](super::order::OrderSource)
-    /// when the terms are derived for a query ([`terms_pending`]); `None`
-    /// for the terms a document is sealed from, which no needle is built
-    /// from. A seed decides a permutation of public pairs and nothing else.
-    needle_order: Option<Protected<[u8; 32]>>,
+    /// The projection a containment query built from these terms sends,
+    /// its pair lists and element groups in a random order drawn when the
+    /// terms were derived for a query ([`terms_pending`]). `None` for the
+    /// terms a document is sealed from, which no query is built from.
+    needle: Option<JsonProjection>,
 }
 
 /// The key names and the tokens are what the terms must not leak, so the
@@ -257,6 +256,7 @@ impl JsonTerms {
         self.nodes.is_empty()
     }
 
+    #[cfg(test)]
     pub(crate) fn nodes(&self) -> &[TermNode] {
         &self.nodes
     }
@@ -265,12 +265,11 @@ impl JsonTerms {
         self.alt
     }
 
-    /// The generator a needle built from these terms is shuffled with, if
-    /// the terms were derived for a query.
-    pub(crate) fn needle_order(&self) -> Option<SafeRand> {
-        self.needle_order
-            .clone()
-            .map(SafeRand::from_controlled_seed)
+    /// The projection a containment query sends: the one drawn when the
+    /// terms were derived for a query, or, for terms no query was derived
+    /// for, the nodes' projection in the walk's order.
+    pub(crate) fn into_needle(self) -> JsonProjection {
+        self.needle.unwrap_or_else(|| group_of(&self.nodes, None))
     }
 
     /// The last node of the walk: in a needle built from one path, the
@@ -615,7 +614,7 @@ fn walk(
         terms: JsonTerms {
             nodes: walker.nodes,
             alt,
-            needle_order: None,
+            needle: None,
         },
         plain: walker.plain,
     })
@@ -769,7 +768,11 @@ fn shuffled_ordinals<'m>(
 // =============================================================================
 
 /// The one-way terms of `value` under `context`, as the index's operation
-/// derives them: no key is requested.
+/// derives them for a query: no key is requested. The projection a
+/// containment query sends is drawn here, in a random order of its own
+/// ([`shuffle`]), so a needle shows no more of the order of its keys than a
+/// stored `q` does; `jsonb @>` reads both as sets, so the order changes no
+/// answer.
 pub(crate) fn terms_pending<'a, K>(
     value: &Value,
     options: &JsonOptions,
@@ -779,14 +782,13 @@ pub(crate) fn terms_pending<'a, K>(
     let context = context.into_prf_context().into_owned();
     let terms = walk(value, options, cipher.prf(), &context)
         .map_err(Error::from)
-        .and_then(|w| {
-            // A needle is sent in a random order of its own, drawn as a
-            // document's stored order is ([`order`]): fresh entropy per
-            // query outside tests.
-            let mut order = cipher.cipher().json_order().document()?;
+        .and_then(|walked| {
+            let mut rng = cipher.cipher().json_randomness().generator()?;
+            let mut needle = group_of(&walked.terms.nodes, None);
+            needle.shuffle(&mut rng);
             Ok(JsonTerms {
-                needle_order: Some(order::seed(&mut order)),
-                ..w.terms
+                needle: Some(needle),
+                ..walked.terms
             })
         });
     Pending::ready(cipher, terms)
@@ -825,8 +827,8 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     };
     let keyset_id = cipher.keyset_id();
     let sealed_root = options.sealed_root;
-    let order = match cipher.cipher().json_order().document() {
-        Ok(order) => order,
+    let rng = match cipher.cipher().json_randomness().generator() {
+        Ok(rng) => rng,
         Err(error) => return Pending::failed(cipher, error),
     };
     Pending::request(
@@ -834,7 +836,7 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         vec![Request::generate_under(descriptor)],
         move |responses| {
             let key = responses.next_generated_key()?;
-            seal(walked, whole, keyset_id, key, &aad, sealed_root, order)
+            seal(walked, whole, keyset_id, key, &aad, sealed_root, rng)
         },
     )
 }
@@ -986,7 +988,7 @@ fn sealed_root_plaintext(value: &Value) -> Result<Protected<Vec<u8>>, serde_json
 }
 
 /// Seal the walked nodes under `key`, from the leaves up, each at the slot
-/// `order` draws for it ([`order::slots`]), and shuffle the projection with
+/// `rng` draws for it ([`shuffle::slots`]), and shuffle the projection with
 /// the same generator.
 fn seal(
     walked: Walked,
@@ -995,7 +997,7 @@ fn seal(
     key: stack_kms::DataKeyWithTag,
     aad: &Context<'_>,
     sealed_root: bool,
-    mut order: SafeRand,
+    mut rng: SafeRand,
 ) -> Result<JsonDocument, Error> {
     if key.tag.len() > usize::from(u16::MAX) {
         return Err(Error::Other(
@@ -1012,7 +1014,7 @@ fn seal(
     // root commits to no children and opens under the empty digest.
     let children = cascade::children_of(nodes.iter().map(|n| n.parent.zip(n.ordinal)));
     // Where each node is stored, by its index in the walk; the AAD binds it.
-    let slots = order::slots(nodes.len(), &mut order);
+    let slots = shuffle::slots(nodes.len(), &mut rng);
     let mut sealed: Vec<Vec<u8>> = vec![Vec::new(); nodes.len()];
     // From the leaves up: the walk is pre-order, so every descendant of a
     // node has a larger index, and the reverse order seals a node's children
@@ -1051,8 +1053,8 @@ fn seal(
     }
     // `slots` is a permutation, so every slot was filled once.
     let entries: Vec<JsonEntry> = entries.into_iter().flatten().collect();
-    let mut projection = super::query::group_of(nodes, None);
-    projection.shuffle(&mut order);
+    let mut projection = group_of(nodes, None);
+    projection.shuffle(&mut rng);
     Ok(JsonDocument::new(
         JsonHeader::new(keyset_id, iv, tag, sealed_root),
         entries,

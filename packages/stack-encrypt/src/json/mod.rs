@@ -124,10 +124,10 @@ use crate::target::{DecryptField, DecryptInto, Decryptable, Decryption};
 
 mod cascade;
 mod derive;
-pub(crate) mod order;
 mod path;
 mod plain;
 mod query;
+mod shuffle;
 
 pub use derive::JsonTerms;
 pub use path::{JsonPath, JsonPathError, Segment};
@@ -136,6 +136,7 @@ pub use query::{
 };
 
 pub(crate) use derive::{seal_pending, terms_pending, wipe_value};
+pub(crate) use shuffle::Randomness;
 
 /// A sixteen-byte tag: a selector or a token.
 pub type Tag = [u8; 16];

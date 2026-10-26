@@ -42,8 +42,14 @@ vitaminc-normalize = { workspace = true }
 vitaminc-ore = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
-# The generator that draws a JSON document's stored order (`json::order`).
+# The generator the JSON index draws its permutations from (`json::shuffle`):
+# `vitaminc::random::SafeRand`, seeded from the operating system.
 vitaminc = { workspace = true }
+# `rand::seq::SliceRandom::shuffle`, the Fisher–Yates shuffle `SafeRand`
+# drives. The version is vitaminc-random's, so the `Rng` it asks for is the
+# one `SafeRand` implements. No default features: `std`, the OS and thread
+# generators are not used.
+rand = { version = "0.10.1", default-features = false }
 # `dynamic` only: serde over the transport frame, which reads a binding's
 # control data (statistics, options, a plan) into typed messages.
 vitaminc-aead-frame = { workspace = true, optional = true, features = ["serde"] }

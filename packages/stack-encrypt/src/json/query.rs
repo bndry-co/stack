@@ -77,13 +77,13 @@ impl JsonProjection {
     }
 
     /// Put the pairs of every group, and the groups of every element list,
-    /// in a uniformly random order ([`order::shuffle`](super::order::shuffle)).
+    /// in a uniformly random order ([`shuffle`](super::shuffle::shuffle)).
     /// The server reads `q` as sets (`jsonb @>` over `sv` and `el`), so the
     /// order changes no answer; shuffled, it no longer restates the
     /// document's depth-first order.
     pub(crate) fn shuffle(&mut self, rng: &mut vitaminc::random::SafeRand) {
-        super::order::shuffle(&mut self.sv, rng);
-        super::order::shuffle(&mut self.el, rng);
+        super::shuffle::shuffle(&mut self.sv, rng);
+        super::shuffle::shuffle(&mut self.el, rng);
         for group in &mut self.el {
             group.shuffle(rng);
         }
@@ -110,13 +110,14 @@ impl JsonProjection {
 /// operand: `{"sv": [{"s": "…", "vs": "…"}, …], "el": [{"sv": …, "el": …},
 /// …], "alt": {…}}`.
 ///
-/// The projection is sent in a random order of its own, drawn for each
-/// query as a stored `q`'s order is drawn for each document: every pair
-/// list and element-group list shuffled, recursively. `jsonb @>` is set
+/// The projection is sent in a random order of its own, drawn when the
+/// terms were derived ([`terms_pending`](super::derive::terms_pending)) as a
+/// stored `q`'s order is drawn when its document is sealed: every pair list
+/// and element-group list shuffled, recursively. `jsonb @>` is set
 /// containment over arrays, so the order changes no answer, and a needle
 /// shows no more of the order of its keys than a stored row does. Two
-/// queries for one value therefore serialize differently and compare equal
-/// (equality is as sets).
+/// derivations of one value therefore serialize differently and compare
+/// equal (equality is as sets).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonQuery {
     group: JsonProjection,
@@ -128,20 +129,20 @@ impl JsonQuery {
     /// the value at the path, with no `alt`. The alternative matches a root
     /// array that holds a root scalar, which is containment; at a path,
     /// `("$", 1)` asks for the scalar `1`, not for an array holding it.
-    pub(crate) fn at_path(terms: &JsonTerms) -> Self {
+    pub(crate) fn at_path(terms: JsonTerms) -> Self {
         Self {
-            group: needle(terms),
+            group: terms.into_needle(),
             alt: None,
         }
     }
 
-    pub(crate) fn of_terms(terms: &JsonTerms) -> Self {
+    pub(crate) fn of_terms(terms: JsonTerms) -> Self {
         let alt = terms.alt().map(|(s, vs)| JsonProjection {
             sv: vec![Pair16 { s, vs }],
             el: Vec::new(),
         });
         Self {
-            group: needle(terms),
+            group: terms.into_needle(),
             alt,
         }
     }
@@ -158,19 +159,6 @@ impl JsonQuery {
     pub fn matches(&self, stored: &JsonProjection) -> bool {
         stored.contains(&self.group) || self.alt.as_ref().is_some_and(|alt| stored.contains(alt))
     }
-}
-
-/// The projection a needle sends: the terms' group, its pair lists and
-/// element groups shuffled, recursively, with the generator the terms carry
-/// ([`JsonProjection::shuffle`]), as a stored `q` is shuffled. `jsonb @>`
-/// is set containment over arrays, so the order changes no answer; in the
-/// walk's order a needle would show which of two sibling keys sorts first.
-fn needle(terms: &JsonTerms) -> JsonProjection {
-    let mut group = group_of(terms.nodes(), None);
-    if let Some(mut order) = terms.needle_order() {
-        group.shuffle(&mut order);
-    }
-    group
 }
 
 /// The group of the nodes that sit directly in `parent` (`None` is the top
@@ -689,7 +677,7 @@ macro_rules! containment {
             }
             fn verifier(&self, _: &Value) {}
             fn query((): (), terms: JsonTerms, _: QueryToken) -> JsonQuery {
-                JsonQuery::of_terms(&terms)
+                JsonQuery::of_terms(terms)
             }
         }
         impl Answers<$op, Value> for JsonDocument {
@@ -722,7 +710,7 @@ where
     }
     fn verifier(&self, _: &(P, V)) {}
     fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonQuery {
-        JsonQuery::at_path(&terms.terms)
+        JsonQuery::at_path(terms.terms)
     }
 }
 impl<P, V> Answers<AtPath<Eq>, (P, V)> for JsonDocument

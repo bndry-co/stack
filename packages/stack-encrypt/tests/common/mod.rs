@@ -226,13 +226,14 @@ pub async fn recording_cipher() -> (StackCipher<RecordingSource>, Arc<Mutex<Sent
 pub use stack_kms::DeterministicSource;
 
 /// A cipher over [`DeterministicSource`] with `seed`. With the crate's
-/// `test-support` feature, a JSON document's stored order is drawn from a
-/// generator started at the same seed, so it repeats between runs too;
-/// without it the order is random per document, as in production.
+/// `test-support` feature, the JSON index's permutations (a document's
+/// stored order, a needle's order) are drawn from a
+/// generator started at the same seed, so they repeat between runs too;
+/// without it they are random per document, as in production.
 pub async fn deterministic_cipher(seed: [u8; 32]) -> StackCipher<DeterministicSource> {
     let builder = StackCipher::builder().kms(DeterministicSource::new(seed));
     #[cfg(feature = "test-support")]
-    let builder = builder.json_order_seed(seed);
+    let builder = builder.json_seed(seed);
     builder.init().await.expect("build cipher")
 }
 

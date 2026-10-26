@@ -13,7 +13,7 @@
 //!
 //! Sealed under the deterministic key source, whose index key is fixed and
 //! whose `iv` follows from its seed, with the stored order drawn from a
-//! generator started at the same seed (`StackCipherBuilder::json_order_seed`,
+//! generator started at the same seed (`StackCipherBuilder::json_seed`,
 //! behind the `test-support` feature, which this file needs), so every one
 //! of them is the same in every run. The ciphertexts carry a fresh nonce
 //! each and are not pinned. In production the order is drawn from the
@@ -192,7 +192,7 @@ async fn the_derivations_are_pinned_under_the_deterministic_source() {
     for root in ["sealed_root", "open_root"] {
         assert_eq!(
             pinned[root]["order"], actual[root]["order"],
-            "{root}: the stored order the seeded generator draws moved: a change to how the order is drawn (json::order) or to the generator, not a stored-data break"
+            "{root}: the stored order the seeded generator draws moved: a change to how the order is drawn (json::shuffle) or to the generator, not a stored-data break"
         );
     }
     assert_eq!(pinned, actual, "{DRIFT}");

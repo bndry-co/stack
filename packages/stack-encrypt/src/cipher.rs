@@ -531,9 +531,10 @@ pub struct StackCipher<K> {
     /// Every other keyset this cipher has selected, least recently used
     /// first out. See [`keyset`](Self::keyset).
     keysets: Mutex<KeysetCache>,
-    /// Where the stored orders of the JSON documents this cipher seals are
-    /// drawn from: fresh entropy per document, outside tests.
-    json_order: crate::json::order::OrderSource,
+    /// Where the JSON index draws its permutations from (a document's stored
+    /// order, a query's needle order): fresh entropy per document or query,
+    /// outside tests.
+    json_randomness: crate::json::Randomness,
     /// The backend's [`IndexKeySource::load_index_key`], captured at
     /// [`init`](StackCipherBuilder::init), where `K` is known to implement
     /// it. Settling a [`Pending`](crate::target::Pending) asks only for a
@@ -653,9 +654,9 @@ impl<K> StackCipher<K> {
         Ok(self.keysets().insert(state, resolution))
     }
 
-    /// Where this cipher draws a JSON document's stored order from.
-    pub(crate) fn json_order(&self) -> &crate::json::order::OrderSource {
-        &self.json_order
+    /// Where this cipher draws the JSON index's permutations from.
+    pub(crate) fn json_randomness(&self) -> &crate::json::Randomness {
+        &self.json_randomness
     }
 
     fn keysets(&self) -> std::sync::MutexGuard<'_, KeysetCache> {
@@ -843,7 +844,8 @@ pub struct StackCipherBuilder<K = FromEnv> {
     kms: K,
     cache_size: NonZeroUsize,
     name_ttl: Duration,
-    json_order_seed: Option<Protected<[u8; 32]>>,
+    #[cfg(feature = "test-support")]
+    json_seed: Option<Protected<[u8; 32]>>,
 }
 
 impl StackCipherBuilder<FromEnv> {
@@ -857,7 +859,8 @@ impl StackCipherBuilder<FromEnv> {
             kms: FromEnv,
             cache_size: KeysetCache::DEFAULT_CAPACITY,
             name_ttl: DEFAULT_NAME_TTL,
-            json_order_seed: None,
+            #[cfg(feature = "test-support")]
+            json_seed: None,
         }
     }
 }
@@ -893,19 +896,19 @@ impl<K> StackCipherBuilder<K> {
         self
     }
 
-    /// Test support: draw the stored order of every JSON document the
-    /// cipher seals from one generator started at `seed`, so that a run
-    /// sealing the same documents in the same sequence stores them in the
-    /// same orders, and a fixture can pin them. What the deterministic key
-    /// source (`kms::DeterministicSource`) is paired with.
+    /// Test support: draw every permutation the JSON index needs (the
+    /// stored order of each document it seals, the order of each query's
+    /// needle) from one generator started at `seed`,
+    /// so that a run sealing the same documents in the same sequence draws
+    /// the same permutations and a fixture can pin them. Paired with the
+    /// deterministic key source (`kms::DeterministicSource`).
     ///
-    /// Never for data: a document's stored order is drawn from the
-    /// operating system's entropy precisely so that it says nothing, and an
-    /// order that follows from a known seed hides nothing of the document's
-    /// shape (see `json::order`).
+    /// Never for data: the permutations are drawn from the operating
+    /// system's entropy so that they say nothing, and one that follows from
+    /// a known seed hides nothing of a document's shape.
     #[cfg(feature = "test-support")]
-    pub fn json_order_seed(mut self, seed: [u8; 32]) -> Self {
-        self.json_order_seed = Some(Protected::new(seed));
+    pub fn json_seed(mut self, seed: [u8; 32]) -> Self {
+        self.json_seed = Some(Protected::new(seed));
         self
     }
 }
@@ -923,7 +926,8 @@ impl StackCipherBuilder<FromEnv> {
             kms,
             cache_size: self.cache_size,
             name_ttl: self.name_ttl,
-            json_order_seed: self.json_order_seed,
+            #[cfg(feature = "test-support")]
+            json_seed: self.json_seed,
         }
     }
 
@@ -951,6 +955,18 @@ impl StackCipherBuilder<FromEnv> {
     }
 }
 
+impl<K> StackCipherBuilder<K> {
+    /// The randomness the cipher's JSON index draws from: the seeded stream
+    /// under `test-support` when one was given, entropy otherwise.
+    fn json_randomness(&self) -> crate::json::Randomness {
+        #[cfg(feature = "test-support")]
+        if let Some(seed) = &self.json_seed {
+            return crate::json::Randomness::seeded(seed.clone());
+        }
+        crate::json::Randomness::from_entropy()
+    }
+}
+
 impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
     /// Resolve the default keyset and load its index key, producing a
     /// cipher whose [`default_keyset`](StackCipher::default_keyset) can both
@@ -958,6 +974,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
     /// always pays; every other keyset loads on first selection.
     pub async fn init(self) -> Result<StackCipher<K>, Error> {
         let default = load_default_keyset(&self.kms).await?;
+        let json_randomness = self.json_randomness();
         Ok(StackCipher {
             kms: self.kms,
             keysets: Mutex::new(KeysetCache::new(
@@ -966,11 +983,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
                 Arc::clone(&default),
             )),
             default,
-            json_order: self
-                .json_order_seed
-                .map_or(crate::json::order::OrderSource::Entropy, |seed| {
-                    crate::json::order::OrderSource::controlled(seed)
-                }),
+            json_randomness,
             index_keys: load_index_key_of::<K>,
         })
     }
