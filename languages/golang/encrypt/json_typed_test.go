@@ -1,12 +1,12 @@
 package encrypt_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"math"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -83,8 +83,9 @@ func TestASubscribersTypedNeedlesDeriveTheRawQuery(t *testing.T) {
 	cipher := c.DefaultKeyset()
 	f := testusers.SubscriberFields.Profile
 	// same derives a query twice, once from a Go value and once from the
-	// JSON text encoding/json writes for it, and wants the same bytes: a
-	// typed needle is that text, nothing more.
+	// JSON text encoding/json writes for it, and wants the same selector
+	// set: a typed needle is that text, nothing more. Each derivation sends
+	// its set in a random order of its own, so the two compare as sets.
 	same := func(name string, typed, raw func() ([]byte, error)) {
 		t.Helper()
 		a, err := typed()
@@ -95,7 +96,7 @@ func TestASubscribersTypedNeedlesDeriveTheRawQuery(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s raw: %v", name, err)
 		}
-		if !bytes.Equal(a, b) {
+		if !sameSelectorSet(t, a, b) {
 			t.Errorf("%s: the typed needle derives another query than its JSON text", name)
 		}
 	}
@@ -188,4 +189,62 @@ func TestASubscribersTypedNeedlesDeriveTheRawQuery(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
+}
+
+// sameSelectorSet reports whether two containment queries hold the same
+// selector set: the same {s, vs} pairs in the same element groups, and the
+// same alternative, whatever order their lists are in (the engine shuffles
+// each query's set, as it does a stored document's).
+func sameSelectorSet(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	canonical := func(text []byte) string {
+		var query any
+		if err := json.Unmarshal(text, &query); err != nil {
+			t.Fatalf("a query is JSON: %v", err)
+		}
+		out, err := json.Marshal(sortedSet(query))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	return canonical(a) == canonical(b)
+}
+
+// sortedSet is a query's JSON with every list sorted by its members'
+// text, recursively: one spelling for one set.
+func sortedSet(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, member := range v {
+			out[k] = sortedSet(member)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		keys := make([]string, len(v))
+		for i, member := range v {
+			out[i] = sortedSet(member)
+			text, _ := json.Marshal(out[i])
+			keys[i] = string(text)
+		}
+		sort.Sort(byKey{out, keys})
+		return out
+	default:
+		return v
+	}
+}
+
+// byKey sorts a list by a key per member.
+type byKey struct {
+	items []any
+	keys  []string
+}
+
+func (b byKey) Len() int           { return len(b.items) }
+func (b byKey) Less(i, j int) bool { return b.keys[i] < b.keys[j] }
+func (b byKey) Swap(i, j int) {
+	b.items[i], b.items[j] = b.items[j], b.items[i]
+	b.keys[i], b.keys[j] = b.keys[j], b.keys[i]
 }
