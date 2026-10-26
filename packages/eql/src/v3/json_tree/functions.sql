@@ -160,7 +160,8 @@ COMMENT ON FUNCTION {{prefix}}_internal.json_tree_element_token(bytea, bytea, in
 --! @param iv bytea The document's iv.
 --! @param token bytea The parent's token, sixteen bytes.
 --! @param s bytea The child's selector, sixteen bytes.
---! @param o integer The child's ordinal: an element's index, a member's rank.
+--! @param o integer The child's ordinal: an element's index, or a member's
+--!        place in the random permutation its object's members were given.
 --! @param x text The child's stored self tag.
 --! @return bytea The child's token, or NULL when neither rule's self tag is
 --!         `x`, and the walk does not descend into it.

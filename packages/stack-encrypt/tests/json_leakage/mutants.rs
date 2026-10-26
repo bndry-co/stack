@@ -415,8 +415,8 @@ fn ordering_prefixes_hidden(l: &mut Leakage, _: &mut TestRng) {
     l.ordering_prefixes.clear();
 }
 
-/// A member's ordinal is its place in the stored (key) order rather than a
-/// keyed rank: what the chain would be without decision 11.
+/// A member's ordinal is its place in the key order rather than in a random
+/// permutation: what the chain would be if the ordinals ranked the keys.
 fn member_ranks_follow_key_order(l: &mut Leakage, _: &mut TestRng) {
     for row in &mut l.rows {
         let kids = children(row);
@@ -690,8 +690,8 @@ fn tokens_not_chained(l: &mut Leakage, _: &mut TestRng) {
     });
 }
 
-/// The member rule before #1363, `H16("t" ‖ t(parent) ‖ s ‖ LE32(o))`
-/// with `o` the member's keyed rank: the client cannot derive a member's
+/// A member rule that hashes the ordinal, `H16("t" ‖ t(parent) ‖ s ‖
+/// LE32(o))`: the client cannot derive a member's
 /// token from the path, so a read through a key step below its head sends a
 /// token that names nothing.
 fn member_tokens_carry_ordinal(l: &mut Leakage, _: &mut TestRng) {
@@ -852,7 +852,7 @@ mutants!(
     ordering_terms_per_path => "OrderingLeak::class across paths (\"two ordered paths holding equal values carry equal terms\")",
     mixed_kinds_jsonb_order => "Leakage::kind_order (\"the order between a number and a string depends on the column key and is not jsonb's\")",
     ordering_prefixes_hidden => "Leakage::ordering_prefixes (\"the term also shows how long that common prefix is\")",
-    member_ranks_follow_key_order => "EntryLeakage::step (a member's ordinal is its keyed rank)",
+    member_ranks_follow_key_order => "EntryLeakage::step (a member's ordinal is a random permutation's)",
     hit_rule_uniform => "EntryLeakage::rule (the member or element rule a walk's hit matches; added to the page by #1362)",
     sealed_flag_flipped => "RowLeakage::sealed_root",
     data_key_shared => "RowLeakage::data_key (\"the data key's identifier (unique to the row)\")",

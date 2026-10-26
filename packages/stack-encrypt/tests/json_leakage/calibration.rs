@@ -310,7 +310,8 @@ mod given_the_jsonb_reading_of_the_key_order {
     /// The page once had to say which sort "the order of their key names"
     /// meant, because the stored order showed it, and then a needle did. Now
     /// neither does: the entries are stored in a random order, a needle is
-    /// sent in one, and a member's ordinal is a keyed rank. So the two
+    /// sent in one, and a member's ordinal is a random permutation's. So the
+    /// two
     /// readings, the keys' UTF-8 bytes and `jsonb`'s (shorter keys first),
     /// give different profiles on a column whose keys sort differently the
     /// two ways (a row and a needle `{"a": …, "a b": …, "é": …, "0": …}`),

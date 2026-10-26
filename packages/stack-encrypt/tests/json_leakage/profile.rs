@@ -219,8 +219,8 @@ pub type SelfTagId = usize;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
     Root,
-    /// An object member: its ordinal is its keyed rank among its siblings,
-    /// under its parent's token.
+    /// An object member: its ordinal is its place in a random permutation
+    /// of its object's members, drawn when the row was sealed.
     Member,
     /// An array element at this position, which is its ordinal.
     Element(u64),
@@ -303,11 +303,10 @@ pub struct EntryLeakage {
     pub parent: Option<usize>,
     /// The node's ordinal under its parent, which a token's holder sees in
     /// the ordinals it probes: "each element's index: […] an element's index
-    /// is the ordinal it is found at". A member's ordinal is its keyed rank,
-    /// which the page does not mention; under one token it is a fixed
-    /// permutation of the members that the holder sees and cannot read, and
-    /// under two tokens two unrelated ones
-    /// (`member_order_shared_across_parents`).
+    /// is the ordinal it is found at". A member's ordinal is its place in a
+    /// random permutation of its object's members, drawn per row, which the
+    /// holder sees and which says nothing about the member: two objects give
+    /// two unrelated ones (`member_order_shared_across_parents`).
     pub step: Step,
     /// The rule this node's token takes under its parent's: "whether each
     /// node beneath is an object member or an array element […] the

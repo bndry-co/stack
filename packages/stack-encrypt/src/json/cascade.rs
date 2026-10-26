@@ -3,8 +3,9 @@
 //! Every entry is sealed under an AAD that binds, beside its keyset, its
 //! column, its key tag, its selector and its stored slot, the
 //! [`ChildrenDigest`] of its children: SHA-256 over the AEAD tags of the
-//! node's children, in ordinal order (an element's index, a member's keyed
-//! rank). A node's AEAD tag covers its own AAD, so it covers its children's
+//! node's children, in ordinal order (an element's index, a member's place
+//! in the random permutation its object drew). A node's AEAD tag covers its
+//! own AAD, so it covers its children's
 //! tags, which cover theirs: the tag of a node commits to every ciphertext
 //! beneath it, in its place. Sealing therefore runs from the leaves up, and
 //! opening a node needs its children's tags first.

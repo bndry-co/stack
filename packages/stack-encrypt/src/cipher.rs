@@ -903,8 +903,9 @@ impl<K> StackCipherBuilder<K> {
     }
 
     /// Test support: draw every permutation the JSON index needs (the
-    /// stored order of each document it seals, the order each query's
-    /// selectors are sent in) from one generator started at `seed`,
+    /// stored order of each document it seals, its objects' member
+    /// ordinals, the order each query's selectors are sent in) from one
+    /// generator started at `seed`,
     /// so that a run sealing the same documents in the same sequence draws
     /// the same permutations and a fixture can pin them. Paired with the
     /// deterministic key source (`kms::DeterministicSource`).

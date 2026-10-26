@@ -74,7 +74,8 @@
 //!   probability bound and carry it in their doc comments
 //!   ([`distinguishers::walked_subtrees_are_contiguous`], which reads the
 //!   stored order, [`distinguishers::repeated_needles_sent_alike`], which
-//!   reads the sent order, and
+//!   reads the sent order,
+//!   [`distinguishers::member_order_shared_across_rows`] and
 //!   [`distinguishers::member_order_shared_across_parents`]).
 //! - [`mutants`] are profiles with one clause dropped or coarsened.
 //! - [`corpus`] holds the handcrafted columns and a proptest generator of
@@ -171,7 +172,8 @@
 //! `ordering_prefixes_hidden`), and the page says bits, not bytes.
 //!
 //! Where the page is vague and `L` is as precise as the code forces, the
-//! clause says so: a member's ordinal under a token (its keyed rank), the
+//! clause says so: a member's ordinal under a token (a random permutation
+//! of its object's members), the
 //! needle's `alt` ([`profile::QueryLeakage::Contains`]), and the fixed
 //! parts of a ciphertext's length ([`profile::ciphertext_len`]).
 //!
@@ -281,8 +283,8 @@
 //!   chose numbers first" from jsonb's fixed order: the mutant that states
 //!   jsonb's (`mixed_kinds_jsonb_order`) is caught because the test key put
 //!   the strings below the numbers.
-//! - **The keyed member rank as a permutation.** Under a token, a member's
-//!   ordinal is a keyed rank, a random permutation of the members. Whether
+//! - **The member ordinals as a permutation.** Under a token, a member's
+//!   ordinal is its place in a random permutation of the members. Whether
 //!   two tokens' objects share one order is decidable exactly only where
 //!   enough like objects (an array's elements) sit under the tokens sent;
 //!   elsewhere the feature reports nothing. Likewise whether a walked

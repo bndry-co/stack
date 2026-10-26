@@ -45,10 +45,6 @@ const VALUE_DOMAIN: &[u8] = b"stack-encrypt/json/value/v1";
 const TOKEN_DOMAIN: &[u8] = b"stack-encrypt/json/token/v1";
 /// PAE domain of an entry's AAD ([`entry_aad`]).
 const ENTRY_AAD_DOMAIN: &[u8] = b"stack-encrypt/json/entry/v1";
-/// PAE domain of an object member's rank under its parent's token, which
-/// orders the members' ordinals. Keyed, so a token does not let its holder
-/// test key names.
-const RANK_DOMAIN: &[u8] = b"stack-encrypt/json/rank/v1";
 
 /// Deeper than this is refused rather than sealed: the walk recurses, and a
 /// document built in memory can nest deeper than any parser admits.
@@ -192,7 +188,8 @@ pub(crate) struct TermNode {
     pub(crate) parent: Option<usize>,
     /// The node's ordinal under its parent, when it chains from its parent
     /// (everything below the chain's heads): its index for an array
-    /// element, its keyed rank among its siblings for an object member.
+    /// element; for an object member, its place in a random permutation of
+    /// the object's members, drawn for the document ([`member_ordinals`]).
     pub(crate) ordinal: Option<u32>,
     /// The nearest enclosing array element that is a container.
     pub(crate) element: Option<usize>,
@@ -380,10 +377,10 @@ fn h16(parts: &[&[u8]]) -> Tag {
 /// `H16("t" ‖ t(parent) ‖ s(member))`: the token of the object member whose
 /// selector is `selector`, under the object whose token is `parent`.
 /// Column-wide like every token (no document salt), and free of the
-/// member's ordinal, which is a rank among its siblings' keys: so the
-/// client derives a member's token from the path alone, whatever else the
-/// object holds in a row, and the server derives a hit's from its parent's
-/// and the hit's stored `s` as it walks. No token is ever stored.
+/// member's ordinal, which is random per document: so the client derives a
+/// member's token from the path alone, whatever else the object holds in a
+/// row, and the server derives a hit's from its parent's and the hit's
+/// stored `s` as it walks. No token is ever stored.
 ///
 /// Object keys are unique, so the selector alone tells a member from its
 /// siblings. It also keeps a member apart from an array element: an
@@ -445,25 +442,6 @@ pub(super) fn parent_tag(iv: &[u8], parent: &Tag, ordinal: u32) -> super::Parent
     let mut tag = super::ParentTag::default();
     tag.copy_from_slice(&full[..8]);
     tag
-}
-
-/// `PRF(json/rank ‖ column, PAE(t(parent), key))`: what an object's members
-/// are ranked by for their ordinals, so an ordinal does not rank key names.
-/// Keyed with the index key (the design's decision 11). The ordinals below
-/// a token are public to whoever holds it (the server enumerates a node's
-/// children by probing them), so an unkeyed rank would let a token's holder
-/// rank guessed key names and compare the order with the selector it finds
-/// at each ordinal, in every row. Only the client ranks, when it seals. A
-/// member's token does not depend on its rank ([`member_token`]); its parent
-/// tag does.
-fn rank(
-    prf: &HmacSha256Prf,
-    context: &Context<'_>,
-    parent: &Tag,
-    key: &str,
-) -> Result<Tag, TermError> {
-    let framed = pae_wiped(&[parent, key.as_bytes()]);
-    prf16(prf, RANK_DOMAIN, context, &framed)
 }
 
 /// [`Context::pae`] into a buffer that is sized before it is written and
@@ -572,22 +550,27 @@ struct Walker<'p> {
     prf: &'p HmacSha256Prf,
     context: &'p Context<'p>,
     options: &'p JsonOptions,
+    /// Draws each object's member ordinals ([`member_ordinals`]).
+    rng: &'p mut SafeRand,
     nodes: Vec<TermNode>,
     plain: Vec<Protected<Vec<u8>>>,
 }
 
-/// Flatten `value` into its terms and its nodes' plaintexts.
+/// Flatten `value` into its terms and its nodes' plaintexts, each object's
+/// member ordinals drawn from `rng`.
 fn walk(
     value: &Value,
     options: &JsonOptions,
     prf: &HmacSha256Prf,
     context: &Context<'_>,
+    rng: &mut SafeRand,
 ) -> Result<Walked, TermError> {
     options.check()?;
     let mut walker = Walker {
         prf,
         context,
         options,
+        rng,
         nodes: Vec::new(),
         plain: Vec::new(),
     };
@@ -696,9 +679,8 @@ impl Walker<'_> {
         };
         match value {
             Value::Object(map) => {
-                let ordinals: Option<BTreeMap<&String, u32>> = chains
-                    .then(|| shuffled_ordinals(self.prf, self.context, &token, map))
-                    .transpose()?;
+                let ordinals: Option<BTreeMap<&String, u32>> =
+                    chains.then(|| member_ordinals(map, self.rng)).transpose()?;
                 for (key, child) in map {
                     let chain = ordinals
                         .as_ref()
@@ -741,25 +723,20 @@ impl Walker<'_> {
     }
 }
 
-/// An object's members' ordinals: their positions in the order of their
-/// ranks under the parent's token, so the ordinals rank nothing a reader
-/// without the token can see.
-fn shuffled_ordinals<'m>(
-    prf: &HmacSha256Prf,
-    context: &Context<'_>,
-    parent: &Tag,
+/// The ordinal of each of an object's members: a uniformly random
+/// permutation of `0..n` drawn from `rng` ([`shuffle::ordinals`]), the
+/// generator the document's stored order is drawn from. The ordinals below a
+/// node are what the server probes to enumerate its children, so they are
+/// public to whoever holds the node's token; random, they say nothing about
+/// the members' keys, in this row or across rows. Nothing recomputes them: a
+/// member's token does not depend on its ordinal ([`member_token`]), and the
+/// parent tag that carries it is read back from the row.
+fn member_ordinals<'m>(
     map: &'m Map<String, Value>,
+    rng: &mut SafeRand,
 ) -> Result<BTreeMap<&'m String, u32>, TermError> {
-    let mut ranked: Vec<(Tag, &String)> = map
-        .keys()
-        .map(|k| Ok((rank(prf, context, parent, k)?, k)))
-        .collect::<Result<_, TermError>>()?;
-    ranked.sort();
-    Ok(ranked
-        .into_iter()
-        .enumerate()
-        .map(|(o, (_, key))| (key, o as u32))
-        .collect())
+    let ordinals = shuffle::ordinals(fit_ordinal(map.len())?, rng);
+    Ok(map.keys().zip(ordinals).collect())
 }
 
 // =============================================================================
@@ -779,10 +756,12 @@ pub(crate) fn terms_pending<'a, K>(
     context: NonEmpty<CallerContext>,
 ) -> Pending<'a, JsonTerms, K> {
     let context = context.into_prf_context().into_owned();
-    let terms = walk(value, options, cipher.prf(), &context)
-        .map_err(Error::from)
-        .and_then(|walked| {
-            let mut rng = cipher.cipher().json_randomness().generator()?;
+    let terms = cipher
+        .cipher()
+        .json_randomness()
+        .generator()
+        .and_then(|mut rng| {
+            let walked = walk(value, options, cipher.prf(), &context, &mut rng)?;
             let mut selectors = group_of(&walked.terms.nodes, None);
             selectors.shuffle(&mut rng);
             Ok(JsonTerms {
@@ -812,11 +791,18 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     let value = PlainJson::protect(value);
     let prf_context = piece.clone().into_prf_context().into_owned();
     let aad = piece.into_aad().into_owned();
+    // One generator for the document: its members' ordinals, its stored
+    // order and the order of its selector set.
+    let mut rng = match cipher.cipher().json_randomness().generator() {
+        Ok(rng) => rng,
+        Err(error) => return Pending::failed(cipher, error),
+    };
     let walked = match walk(
         value.risky_ref().value(),
         options,
         cipher.prf(),
         &prf_context,
+        &mut rng,
     ) {
         Ok(walked) => walked,
         Err(error) => return Pending::failed(cipher, error.into()),
@@ -831,10 +817,6 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     };
     let keyset_id = cipher.keyset_id();
     let sealed_root = options.sealed_root;
-    let rng = match cipher.cipher().json_randomness().generator() {
-        Ok(rng) => rng,
-        Err(error) => return Pending::failed(cipher, error),
-    };
     Pending::request(
         cipher,
         vec![Request::generate_under(descriptor)],
@@ -2214,19 +2196,24 @@ mod tests {
         }
     }
 
+    fn rng() -> SafeRand {
+        SafeRand::from_controlled_seed(Protected::new([5; 32]))
+    }
+
     fn terms(value: &Value, options: &JsonOptions) -> JsonTerms {
         walk(
             value,
             options,
             &prf(),
             &Context::from_encoded(b"users/profile"),
+            &mut rng(),
         )
         .unwrap()
         .terms
     }
 
     /// The wiped framing is byte for byte the PAE vitaminc writes, so a
-    /// value selector or a rank does not move.
+    /// value selector does not move.
     #[test]
     fn the_wiped_framing_is_vitamincs_pae() {
         for pieces in [
@@ -2765,35 +2752,26 @@ mod tests {
         assert_eq!(nodes[6].element, Some(5));
     }
 
+    /// An object's members get a random permutation of `0..n` as their
+    /// ordinals, drawn afresh for every object: the same object sealed
+    /// twice gets two.
     #[test]
-    fn object_ordinals_are_a_permutation_that_does_not_rank_keys() {
-        let map: Map<String, Value> = ["a", "b", "c", "d"]
+    fn member_ordinals_are_a_random_permutation_per_object() {
+        let map: Map<String, Value> = ["a", "b", "c", "d", "e", "f"]
             .iter()
             .map(|k| (k.to_string(), json!(1)))
             .collect();
-        let context = Context::from_encoded(b"users/profile");
-        let ordinals = shuffled_ordinals(&prf(), &context, &[1; 16], &map).unwrap();
+        let mut rng = rng();
+        let ordinals = member_ordinals(&map, &mut rng).unwrap();
         let mut seen: Vec<u32> = ordinals.values().copied().collect();
         seen.sort_unstable();
-        assert_eq!(seen, [0, 1, 2, 3]);
-        let other = shuffled_ordinals(&prf(), &context, &[2; 16], &map).unwrap();
+        assert_eq!(seen, [0, 1, 2, 3, 4, 5], "a permutation of 0..n");
+        assert_eq!(ordinals.len(), map.len(), "every member has one");
+        let again = member_ordinals(&map, &mut rng).unwrap();
         assert_ne!(
-            ordinals, other,
-            "a different token shuffles differently (with overwhelming probability)"
+            ordinals, again,
+            "the same object drawn twice (with overwhelming probability)"
         );
-    }
-
-    /// A token's holder cannot rank guessed key names: an object member's
-    /// rank is keyed with the index key, so the same parent token and key
-    /// give unrelated bytes under another key.
-    #[test]
-    fn the_rank_is_keyed() {
-        let context = Context::from_encoded(b"users/profile");
-        let other = HmacSha256Prf::new(Protected::new([8; 32]));
-        let parent = [5; 16];
-        let rank_under = |prf: &HmacSha256Prf| rank(prf, &context, &parent, "a").unwrap();
-        assert_eq!(rank_under(&prf()), rank_under(&prf()), "deterministic");
-        assert_ne!(rank_under(&prf()), rank_under(&other), "keyed");
     }
 
     /// The plain bytes of a node's encoding, for the test to inspect.
@@ -2909,7 +2887,14 @@ mod tests {
         let value = json!({"a": 1});
         let context = Context::from_encoded(b"users/profile");
         let sealed = |tag_len: usize| {
-            let walked = walk(&value, &JsonOptions::default(), &prf(), &context).unwrap();
+            let walked = walk(
+                &value,
+                &JsonOptions::default(),
+                &prf(),
+                &context,
+                &mut rng(),
+            )
+            .unwrap();
             let key = stack_kms::DataKeyWithTag {
                 key: stack_kms::DataKey {
                     iv: [1; 16],
@@ -3056,7 +3041,7 @@ mod tests {
         forge: impl FnOnce(&mut Vec<Protected<Vec<u8>>>),
     ) -> Result<Value, Error> {
         let context = Context::from_encoded(b"users/profile");
-        let mut walked = walk(value, &open_root(), &prf(), &context).unwrap();
+        let mut walked = walk(value, &open_root(), &prf(), &context, &mut rng()).unwrap();
         forge(&mut walked.plain);
         let key = stack_kms::DataKeyWithTag {
             key: stack_kms::DataKey {
@@ -3114,7 +3099,7 @@ mod tests {
     fn a_document_of_another_column_is_refused_by_the_cipher() {
         let value = json!({"a": 1});
         let context = Context::from_encoded(b"users/profile");
-        let walked = walk(&value, &open_root(), &prf(), &context).unwrap();
+        let walked = walk(&value, &open_root(), &prf(), &context, &mut rng()).unwrap();
         let key = stack_kms::DataKeyWithTag {
             key: stack_kms::DataKey {
                 iv: [1; 16],
@@ -3156,7 +3141,8 @@ mod tests {
             &nested(MAX_DEPTH),
             &JsonOptions::default(),
             &prf(),
-            &Context::empty()
+            &Context::empty(),
+            &mut rng()
         )
         .is_ok());
         assert!(matches!(
@@ -3164,7 +3150,8 @@ mod tests {
                 &nested(MAX_DEPTH + 1),
                 &JsonOptions::default(),
                 &prf(),
-                &Context::empty()
+                &Context::empty(),
+                &mut rng()
             ),
             Err(TermError::JsonTooDeep)
         ));

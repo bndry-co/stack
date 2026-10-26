@@ -712,6 +712,29 @@ async fn the_self_tag_costs_about_a_tenth_of_the_stored_size() {
 /// ten-node document do not all store it alike, while each keeps the root
 /// at slot 0. (Two seals agree with probability 1/9!, so ten all agreeing
 /// is never seen.)
+/// An object's members get a fresh random permutation of ordinals each
+/// time the document is sealed: the children a token enumerates come back
+/// in another order from seal to seal, and always as the whole object.
+#[tokio::test]
+async fn every_seal_draws_its_own_member_ordinals() {
+    let cipher = stack_cipher().await;
+    let value = json!({"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6});
+    let options = options(false);
+    let root = key(&cipher, &JsonPath::root(), &options, 1).await;
+    let mut orders = BTreeSet::new();
+    for _ in 0..10 {
+        let doc = seal(&cipher, &value, &options).await;
+        let children = doc.children(&root.token_bytes()[0]);
+        assert_eq!(children.len(), 6, "every member at an ordinal from 0 to 5");
+        let order: Vec<Vec<u8>> = children
+            .iter()
+            .map(|(_, entry, _)| entry.selector().to_vec())
+            .collect();
+        let _ = orders.insert(order);
+    }
+    assert!(orders.len() > 1, "ten seals, one member order: {orders:?}");
+}
+
 #[tokio::test]
 async fn every_seal_draws_its_own_order() {
     let cipher = stack_cipher().await;

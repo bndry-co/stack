@@ -35,8 +35,8 @@
 //!   token names them, and the first place a walk reaches them below the
 //!   node a token names: the query, the token, and for each node on the way
 //!   down what the walk shows beneath it and, for an array's elements, the
-//!   ordinal (an object's members' ordinals are a keyed rank, a random
-//!   permutation that would order them differently in every world).
+//!   ordinal (an object's members' ordinals are a random permutation,
+//!   which would order them differently in every world).
 //! - Every list of `q`, and of every needle and `alt`, is sorted by its
 //!   pairs' ranks, and its element groups by their sorted contents.
 //!
@@ -241,9 +241,8 @@ fn walk_tier(world: &ObservedWorld, found: &[Vec<Found>]) -> HashMap<Tag16, Vec<
 /// description, the rule its self tag matched, and the same of its children,
 /// sorted). A step is the node's ordinal where it shares its selector with a
 /// sibling (an array's elements, whose ordinal is their index) and nothing
-/// where it does not (an object's members, whose ordinals are a keyed rank: a
-/// random permutation, which would order the members differently in every
-/// world).
+/// where it does not (an object's members, whose ordinals are a random
+/// permutation, which would order the members differently in every world).
 fn steps(
     row: &ObservedRow,
     hits: &[Hit],

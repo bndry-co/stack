@@ -24,8 +24,9 @@
 //!   `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`, below the chain's heads, which
 //!   lets the server enumerate the subtree under a node from its token and
 //!   nothing else: the ordinals `o` under a node are dense from zero (an
-//!   element's is its index, a member's its keyed rank among its
-//!   siblings), so the server probes them in turn until the first miss.
+//!   element's is its index, an object's members' a random permutation
+//!   drawn when the document is sealed), so the server probes them in turn
+//!   until the first miss.
 //!   Nothing stored says whether a hit is a member or an element, so the
 //!   server derives the member rule's token for it, keeps it if the hit's
 //!   self tag is that token's, and otherwise tries the element rule's;

@@ -373,15 +373,17 @@ impl Simulator<'_> {
     }
 
     /// Entry `i`'s ordinal under its parent, whose token is `parent`: an
-    /// element's position, or a member's rank among its sibling members
-    /// under the simulator's own keyed rank.
+    /// element's position, or a member's place in the random permutation
+    /// its object's members are given in this row (simulated as a rank
+    /// under the simulator's own key, salted by the row).
     fn ordinal(&mut self, row: &RowLeakage, i: usize, parent: &Tag16) -> u32 {
         let entry = &row.entries[i];
         match entry.step {
             Step::Element(n) => u32::try_from(n).expect("a small array"),
             Step::Member => {
+                let iv = self.iv(row);
                 let mine = self.selector(entry.selector);
-                let my_rank = simulated_rank(&self.rank_key, parent, &mine);
+                let my_rank = simulated_rank(&self.rank_key, &iv, parent, &mine);
                 let siblings: Vec<usize> = (0..row.entries.len())
                     .filter(|&j| {
                         row.entries[j].parent == entry.parent && row.entries[j].step == Step::Member
@@ -391,7 +393,7 @@ impl Simulator<'_> {
                     .into_iter()
                     .filter(|&j| {
                         let theirs = self.selector(row.entries[j].selector);
-                        simulated_rank(&self.rank_key, parent, &theirs) < my_rank
+                        simulated_rank(&self.rank_key, &iv, parent, &theirs) < my_rank
                     })
                     .count();
                 u32::try_from(below).expect("a small object")

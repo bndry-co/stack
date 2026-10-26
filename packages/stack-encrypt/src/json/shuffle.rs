@@ -1,6 +1,7 @@
 //! The JSON index's random permutations: the slots a document's entries are
-//! stored at, the order of the pairs and groups of a stored projection `q`,
-//! and the order a containment query sends its selectors in.
+//! stored at, the ordinals of an object's members, the order of the pairs
+//! and groups of a stored selector set `q`, and the order a containment
+//! query sends its selectors in.
 //!
 //! Each permutation is uniformly random, drawn when the document is sealed
 //! or the query derived, and then thrown away. Nothing reads one back: the
@@ -74,6 +75,14 @@ pub(crate) fn shuffle<T>(items: &mut [T], rng: &mut SafeRand) {
     items.shuffle(rng);
 }
 
+/// A uniformly random permutation of `0..n`: the ordinals of an object's
+/// `n` members, by their position in the object.
+pub(crate) fn ordinals(n: u32, rng: &mut SafeRand) -> Vec<u32> {
+    let mut ordinals: Vec<u32> = (0..n).collect();
+    shuffle(&mut ordinals, rng);
+    ordinals
+}
+
 /// The slot each of `n` nodes is stored at, by its index in the walk: the
 /// root (index `0`) at slot `0`, where the sealed-root fallback finds it,
 /// and the other nodes at a uniformly random permutation of the slots
@@ -99,6 +108,20 @@ mod tests {
         let mut sorted = items.to_vec();
         sorted.sort_unstable();
         sorted == (0..n).collect::<Vec<_>>()
+    }
+
+    #[test]
+    fn the_ordinals_are_a_permutation() {
+        for n in [0, 1, 2, 5, 300] {
+            let ordinals = ordinals(n, &mut seeded(1));
+            let as_usize: Vec<usize> = ordinals.iter().map(|&o| o as usize).collect();
+            assert!(is_permutation(&as_usize, n as usize), "{n}: a permutation");
+        }
+        assert_ne!(
+            ordinals(40, &mut seeded(1)),
+            (0..40).collect::<Vec<_>>(),
+            "not the identity (with overwhelming probability)"
+        );
     }
 
     #[test]

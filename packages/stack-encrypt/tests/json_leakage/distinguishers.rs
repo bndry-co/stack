@@ -80,7 +80,7 @@ registry!(
     token_reach,
     hit_rules,
     ancestor_links,
-    ordinal_patterns,
+    member_order_shared_across_rows,
     member_order_shared_across_parents,
     token_derivability,
     subtree_results,
@@ -811,7 +811,7 @@ pub fn hit_rules(world: &ObservedWorld) -> Vec<Vec<Vec<RuleAt>>> {
                                 .map(move |h| (k, h.position, h.rule))
                         })
                         .collect();
-                    // The walk's order follows the members' keyed ranks.
+                    // The walk's order follows the members' random ordinals.
                     rules.sort_unstable();
                     rules
                 })
@@ -855,50 +855,62 @@ pub fn ancestor_links(world: &ObservedWorld) -> Vec<Vec<Vec<(usize, bool)>>> {
         .collect()
 }
 
-/// Every case where one parent token ranks two child selectors one way in
-/// one row and the other way in another, as the ordinals a walk probes
-/// show them. Empty for the real scheme: an element's ordinal is its
-/// position, and a member's rank is a keyed function of its parent's token
-/// and its key, so one token ranks its members one way in every row.
-pub fn ordinal_patterns(world: &ObservedWorld) -> Vec<(usize, usize, usize)> {
-    let mut selectors = selector_names(world);
-    let mut tokens = Canon::new();
-    let mut ranked: BTreeMap<(usize, usize, usize), BTreeSet<bool>> = BTreeMap::new();
+/// Whether the objects one token's holder walks in several rows, whose
+/// members carry the same selectors, give those members one order of
+/// ordinals across the rows: what a member's ordinal would do if it were a
+/// function of the key, keyed or not, and what let a token's holder link a
+/// key to an ordinal from row to row. The real scheme draws each object's
+/// member ordinals as a fresh random permutation when the row is sealed,
+/// which makes the answer "no". An array's elements, whose ordinal is their
+/// position, agree in every row by design and are left out. Reported only
+/// where chance cannot answer it.
+///
+/// The bound: `t` rows of one token over the same `m` member selectors
+/// agree by chance with probability `(1 / m!)^(t − 1)`, the rows drawing
+/// independently; tokens are counted once each, with the first set of
+/// member selectors seen under them, so the groups are independent and the
+/// chance that every group agrees is the product. The feature is `None`
+/// unless that product is below `2^-40`.
+pub fn member_order_shared_across_rows(world: &ObservedWorld) -> Option<bool> {
+    let mut groups: BTreeMap<(Tag16, Vec<Tag16>), Vec<Vec<Tag16>>> = BTreeMap::new();
+    let mut members_of: BTreeMap<Tag16, Vec<Tag16>> = BTreeMap::new();
     for rows in walks(world) {
         for (r, found) in rows.into_iter().enumerate() {
             let row = &world.rows[r];
             for (_, hits) in found {
                 for ((_, parent_token), kids) in children_by_parent(hits) {
-                    let same = kids
-                        .windows(2)
-                        .all(|w| row.entries[w[0].position].s == row.entries[w[1].position].s);
-                    if same {
+                    let order: Vec<Tag16> =
+                        kids.iter().map(|h| row.entries[h.position].s).collect();
+                    let mut members = order.clone();
+                    members.sort_unstable();
+                    members.dedup();
+                    // Children with pairwise distinct selectors are an
+                    // object's members: an array's elements share one.
+                    if members.len() < 2 || members.len() != kids.len() {
                         continue;
                     }
-                    let parent = tokens.id(parent_token);
-                    for a in &kids {
-                        for b in &kids {
-                            let (sa, sb) = (
-                                selectors.id(row.entries[a.position].s),
-                                selectors.id(row.entries[b.position].s),
-                            );
-                            if sa < sb {
-                                let _ = ranked
-                                    .entry((parent, sa, sb))
-                                    .or_default()
-                                    .insert(a.ordinal < b.ordinal);
-                            }
-                        }
+                    let counted = members_of
+                        .entry(parent_token)
+                        .or_insert_with(|| members.clone());
+                    if *counted != members {
+                        continue;
                     }
+                    groups
+                        .entry((parent_token, members))
+                        .or_default()
+                        .push(order);
                 }
             }
         }
     }
-    ranked
-        .into_iter()
-        .filter(|(_, seen)| seen.len() > 1)
-        .map(|(key, _)| key)
-        .collect()
+    let mut chance = 0.0f64;
+    let mut shared = true;
+    for ((_, members), orders) in &groups {
+        let factorial: f64 = (1..=members.len()).map(|k| (k as f64).ln()).sum();
+        chance -= factorial * (orders.len() - 1) as f64;
+        shared &= orders.windows(2).all(|w| w[0] == w[1]);
+    }
+    (chance < -40.0 * 2f64.ln()).then_some(shared)
 }
 
 /// The hits of one walk below the node it names, grouped by their parent's
@@ -920,17 +932,17 @@ fn children_by_parent(hits: Vec<Hit>) -> BTreeMap<(usize, Tag16), Vec<Hit>> {
 /// Whether two objects a token's holder walks, under two tokens, whose
 /// nodes share a selector and whose members carry the same selectors, give
 /// those members one order of ordinals: what a member's ordinal would do if
-/// it ranked the key names. Decision 11's keyed rank, a PRF of the parent's
-/// token and the key, is there to make the answer "no". With the stored
-/// order random, the holder has no key order to set the ordinals against
-/// (as it had before, where the stored order put the members in key order);
-/// what it can still set them against is another object's. Reported only
-/// where chance cannot answer it.
+/// it ranked the key names. The ordinals are a random permutation drawn per
+/// object when the row is sealed, which makes the answer "no". With the
+/// stored order random, the holder has no key order to set the ordinals
+/// against (as it had before, where the stored order put the members in key
+/// order); what it can still set them against is another object's. Reported
+/// only where chance cannot answer it.
 ///
-/// The bound: under one parent token the order of `m` members is a keyed
-/// permutation, and distinct tokens are independent keyed inputs, so `t`
-/// tokens over the same `m` member selectors give one order with
-/// probability `(1 / m!)^(t − 1)`. Each token is counted once (its first
+/// The bound: under one parent token the order of `m` members is a uniform
+/// permutation, and distinct objects draw independently, so `t` tokens over
+/// the same `m` member selectors give one order with probability
+/// `(1 / m!)^(t − 1)`. Each token is counted once (its first
 /// object of two or more members with distinct selectors, in the order the
 /// queries, rows and tokens come), so the groups are independent and the
 /// chance that every group agrees is the product. The feature is `None`
