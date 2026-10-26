@@ -673,6 +673,7 @@ mod tests {
         let wide = IndexSpec::Match(MatchOptions {
             tokenizer: Tokenizer::Standard,
             downcase: false,
+            short_words: false,
             k: 6,
             m: 1024,
         });

@@ -2728,6 +2728,7 @@ mod wire_bytes {
             IndexSpec::Match(MatchOptions {
                 tokenizer: Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 4,
                 m: 512,
             }),
