@@ -1131,15 +1131,18 @@ pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
 ///
 /// ```text
 /// { "match": { "tokenizer": "standard" | { "ngram": <length> },
-///              "downcase": <bool>, "k": <int>, "m": <int> } }
+///              "downcase": <bool>, "short_words": <bool>,
+///              "k": <int>, "m": <int> } }
 /// ```
 ///
 /// A bare `"match"` is the default options ([`MatchOptions::default`]:
-/// 3-grams, downcased, `k = 3`, `m = 256`), so a plan written before options
-/// had a wire form means what it always meant. In the object form each
-/// option is optional and defaults the same way; an unknown or repeated
-/// option, or a set the match scheme refuses (`k` outside `3..=16`, `m` not
-/// a power of two in `32..=65536`, a zero n-gram length), is refused. The
+/// 3-grams, downcased, no short-word tokens, `k = 3`, `m = 256`), so a plan
+/// written before options had a wire form means what it always meant. In
+/// the object form each option is optional and defaults the same way; an
+/// unknown or repeated option, or a set the match scheme refuses (`k`
+/// outside `3..=16`, `m` not a power of two in `32..=65536`, a zero n-gram
+/// length, `short_words` beside the standard tokenizer or an n-gram length
+/// under 3), is refused. The
 /// other three indexes have no options and no object form. A field names
 /// each output key at most once, so it carries at most one match index.
 /// [`IndexSpec`] serializes to this form and [`IndexSpec::from_frame`]
@@ -3497,6 +3500,7 @@ mod tests {
             let options = crate::sem::MatchOptions {
                 tokenizer: crate::sem::Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 6,
                 m: 1024,
             };

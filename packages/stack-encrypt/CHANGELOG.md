@@ -65,6 +65,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A match index can search words too short for its n-grams:
+  `MatchOptions::short_words`** (#1309). Off by default. With it on, every
+  word of the normalized, case-folded text that is at least 2 characters long
+  and shorter than the n-gram length (two-letter words under the default
+  3-grams) is one more token, the word itself, beside the n-grams of the whole
+  text. So the surname "Ng" stores one token rather than the empty filter,
+  and the query "Ng" is accepted and finds rows holding the word "Ng" or
+  "Mike Ng", but not "Nguyen". A query's short words must be whole words of
+  the row: "Mike Ng" does not find "Mike Nguyen" with the option on. A word
+  is a run of characters between the separators `Tokenizer::Standard` splits
+  on (space, comma, semicolon, colon, exclamation mark). The word token is
+  PRF'd under its own domain (`stack-encrypt/sem/match/word/v1`), so it never
+  sets the bits of an n-gram of the same characters. The option is part of
+  the index's identity, as `k` is (`PlanError::IndexOptions`), is written as
+  `"short_words": true` in a data plan's `{"match": {...}}` (and only when on,
+  so other plans serialize as before), and is refused beside the standard
+  tokenizer or an n-gram length under 3 (`TermError::InvalidOptions`). What
+  it reveals: one more token per short word, under the same PRF, in the same
+  filter, by the same containment rule, so no new class of leakage; the token
+  is specific to the word, so clustering tokens across rows can tell "Ng"
+  from "Nguyen", where before only their shared boundary trigram `" ng"` was
+  visible. `MatchOptions` gains the public field, so a struct literal naming
+  every field names it too. The `sem` module docs carry the match index's
+  leakage in full.
+
 - **A document field's queries and reads through a data plan** (#1350,
   #1352). A field naming `JsonSearch` answers `contains`,
   `contained_by`, `eq_at`, `selector`, `subtree`, `children` and
