@@ -12,6 +12,11 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- `Strategy.ServiceToken` returns an opaque `auth.ServiceToken` with the bearer
+  and decoded workspace/service metadata. It shares acquisition, caching and
+  refresh with `Strategy.Token`, which still returns a string without requiring
+  that extra metadata. Neither method verifies JWT signatures locally.
+
 - **A two-letter word is searchable in `TextMatch`, `TextSearch` and
   `TextSearchOre` (#1309).** The EQL v4 match types index each two-letter
   word whole, beside the 3-grams of the text, so a two-letter surname such
