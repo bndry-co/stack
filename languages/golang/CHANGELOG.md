@@ -12,6 +12,26 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **Encrypted JSON documents of Go types** (#1351). A struct, map or slice
+  field tagged `encrypt_into=EncryptedJson` is a document: the generated code
+  marshals it with `encoding/json` when it seals it, and reads the opened
+  document back into the declared type (`gensupport.GetDocument`,
+  `GetDocumentPtr`), so 64-bit integers and finite `float64`s round-trip
+  exactly. A pointer to one takes `null=sql`. `stashgen` refuses, when it
+  runs, a type `encoding/json` cannot carry both ways: an interface such as
+  `any`, an unexported struct field or one tagged `json:"-"`, a channel, a
+  function, a scalar, or a `[]byte`. The `Fields` entry's operands are Go values now: `Contains`,
+  `ContainedBy`, `EqAt`, `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `any`,
+  a `json.RawMessage` crossing as the JSON text it is and anything else
+  marshalled (`gensupport.JSONText`); a plain `[]byte` is refused. A zero
+  struct field without `omitempty` narrows a containment query, so
+  `Contains` on a field whose type holds a struct refuses a needle of that
+  type (`gensupport.NewDocumentField`); the generated doc comments say how
+  to write a needle. `encrypt.DecodeJSON[T]` reads a value a selection or
+  subtree read opened into a Go type, numbers in an interface as
+  `json.Number`. An error from either direction names a Go type and never
+  the value.
+
 - **Encrypted JSON documents with `stashgen`** (#1351, #1352). A
   `json.RawMessage` field tagged `encrypt_into=EncryptedJson` (options:
   `ordered=$.a;$.b[*].c`, `sealed_root=false`) is stored as an

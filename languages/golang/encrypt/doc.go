@@ -200,6 +200,33 @@
 // memory until the garbage collector reclaims it; a MatchQuery never prints
 // it.
 //
+// # Encrypted JSON documents
+//
+// A field tagged encrypt_into=EncryptedJson is stored as one encrypted JSON
+// document. Declare it as a json.RawMessage, which holds the document's JSON
+// text, or as a struct, map or slice type. The generated code marshals such
+// a type with encoding/json when it seals the field. It unmarshals the
+// opened text into the declared type, so integers to 64 bits and finite
+// float64s come back exactly.
+//
+// The field's operands are Go values. Contains and ContainedBy take a
+// needle, and EqAt and the orderings take a scalar. Each is a
+// json.RawMessage of JSON text or any value encoding/json writes:
+//
+//	q, err := customers.Fields.Profile.Contains(ctx, cipher, map[string]any{"tier": "gold"})
+//	older, err := customers.Fields.Profile.At.Age.Gt(ctx, cipher, 40)
+//
+// A document contains a needle when it holds every member the needle writes.
+// encoding/json writes a struct field that has no omitempty even when the
+// field is zero. So a zero field narrows the query to documents that hold
+// that zero. Give a needle struct pointer fields with omitempty, or use a
+// map. Contains refuses a needle of the field's own type when that type
+// holds a struct, the likeliest way to make this mistake. ContainedBy takes
+// one: there a zero field widens the query.
+//
+// A selection or a subtree read opens values as JSON text ([JSONValue],
+// [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
+//
 // # Cancellation
 //
 // Every call takes a [context.Context], and a call whose context is

@@ -74,7 +74,7 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"notes,encrypt"` | seal the field, with no index |
 | `stash:"email,encrypt,index=equality;match"` | seal the field, and derive each index beside it |
 | `stash:"score,index=ore"` | derive the index alone; no ciphertext is stored, so `Decrypt` leaves the field at its zero value |
-| `stash:"profile,encrypt_into=EncryptedJson(ordered=$.age)"` | on a `json.RawMessage`: store the field as an encrypted JSON document; see "Encrypted JSON documents" |
+| `stash:"profile,encrypt_into=EncryptedJson(ordered=$.age)"` | on a `json.RawMessage`, or a struct, map or slice type: store the field as an encrypted JSON document; see "Encrypted JSON documents" |
 | `stash:"attrs,index=json"` | refused: a JSON document is stored with `encrypt_into=EncryptedJson`, not as an index beside a ciphertext |
 | `stash:"id,passthrough"` | store the field as it is |
 | `stash:"tenant,context_field"` | the field's value is the context of every other field in the struct, in place of a `context=` tag; stored as it is |
@@ -113,10 +113,43 @@ These words are the same as the Rust API's words for the same behaviour, with tw
 
 ### Encrypted JSON documents
 
-A `json.RawMessage` field with `encrypt_into=EncryptedJson` is stored as one encrypted JSON document, an `eql.EncryptedJSON` in a `public.eql_v4_json_tree` column.
-The field holds the document's JSON text; the engine parses it, so an object that names a member twice, an integer outside the 64-bit range and text that is not JSON are refused with `encrypt.ErrEncoding`.
-Values come back as JSON text holding the same values; key order and the spelling of numbers are not kept.
-A `*json.RawMessage` field is optional and must say `null=sql`: a document has no fixed length to hide a missing one behind. A non-nil pointer to `null` is a stored JSON `null`.
+A field with `encrypt_into=EncryptedJson` is stored as one encrypted JSON document, an `eql.EncryptedJSON` in a `public.eql_v4_json_tree` column.
+Declare it as a struct, map or slice type, or as a `json.RawMessage` that holds the document's JSON text:
+
+```go
+type Profile struct {
+	Name   string  `json:"name"`
+	Age    int64   `json:"age"`
+	Visits []Visit `json:"visits"`
+}
+
+type Customer struct {
+	_       struct{}        `stash:"context=customers"`
+	ID      int64           `stash:"id,passthrough"`
+	Profile Profile         `stash:"profile,encrypt_into=EncryptedJson(ordered=$.age)"`
+	Notes   json.RawMessage `stash:"notes,encrypt_into=EncryptedJson"`
+}
+
+// A needle for Contains: a field left nil is not in the query.
+type ProfileNeedle struct {
+	Name *string `json:"name,omitempty"`
+	Age  *int64  `json:"age,omitempty"`
+}
+
+q, err := customers.Fields.Profile.Contains(ctx, cipher, ProfileNeedle{Age: &age})
+older, err := customers.Fields.Profile.At.Age.Gt(ctx, cipher, 40)
+people, err := customers.Decrypt(ctx, cipher, rows) // each Profile is a Profile again
+```
+
+The generated code marshals a struct, map or slice type with `encoding/json` when it seals the field, and unmarshals the opened document into the declared type.
+It calls `encoding/json` directly, never through `map[string]any`, so an `int64`, a `uint64` and a finite `float64` come back exactly.
+`stashgen` refuses a type that `encoding/json` cannot carry both ways: an interface such as `any` anywhere in it (it reads numbers back as `float64`), an unexported struct field or one tagged `json:"-"` (each is dropped), a channel or a function.
+It refuses a string, a number and a bool too: a document is a struct, map or slice.
+A `[]byte` is refused, since `encoding/json` writes it as base64: declare JSON text as `json.RawMessage`.
+The engine parses the JSON text, so an object that names a member twice and an integer outside the 64-bit range are refused with `encrypt.ErrEncoding`.
+A `json.RawMessage` comes back as JSON text that holds the same values; key order and the spelling of numbers are not kept.
+A pointer field (`*Profile`, `*json.RawMessage`) is optional and must say `null=sql`: a document has no fixed length to hide a missing one behind.
+A nil pointer is SQL `NULL`; a non-nil `*json.RawMessage` holding `null` is a stored JSON `null`.
 A `json.RawMessage` sealed any other way (`encrypt`, `index=equality`) is bytes, as any type defined over `[]byte` is.
 
 The type takes options in parentheses: `ordered=` names the paths whose numbers and strings carry an ordering term, separated by `;`, and `sealed_root=false` turns off the sealed root (on by default).
@@ -137,7 +170,15 @@ The field's `Fields` entry has a method per operation:
 `At` has one accessor per ordered path, named for its keys (`$.visits[*].at` is `At.VisitsAt`, `$.a.1` is `At.A1`); two paths with one name, or one path given twice, stop `stashgen`.
 An ordering compares the value `->` extracts at its path, and EQL's `<` compares ordering terms alone, so take the selector from the same accessor (`At.Age.Selector`) rather than spelling the path again.
 `OpenOne` reads one value and refuses a read whose path has a wildcard before anything is opened; open a wildcard read with `Open`.
-The needle and the values are `json.RawMessage`: write the JSON you mean, such as `json.RawMessage(`+"`"+`{"active":true}`+"`"+`)`.
+A needle and a value are Go values: a `json.RawMessage` of JSON text crosses as it is, and anything else is marshalled with `encoding/json`.
+`EqAt` and the orderings take a scalar: a string, a number, a bool, or `nil` for JSON `null`.
+A plain `[]byte` is refused rather than written as base64.
+A document contains a needle when it holds every member the needle writes, and `encoding/json` writes a struct field that has no `omitempty` even when it is zero.
+So a zero field narrows the query to the documents that hold that zero: `Profile{Name: "Alice"}` also asks for `"age": 0`.
+Give a needle struct pointer fields with `omitempty`, as `ProfileNeedle` above, or use a map.
+`Contains` refuses a needle of the field's own type when that type holds a struct, since that is the likeliest way to make the mistake; a type defined over it (`type wholeProfile Profile`) states that you mean every field.
+`ContainedBy` takes the field's own type: there a zero field widens the query.
+Each value a selection or read opens is JSON text; `encrypt.DecodeJSON[T]` reads one into a Go type, with the same rules as a whole document.
 A position in a path is refused for `EqAt` and `Selector`, whose selector reads every position as the wildcard; read a position with `Subtree`.
 
 ### Optional fields
