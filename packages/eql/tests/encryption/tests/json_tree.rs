@@ -69,6 +69,18 @@ fn options() -> JsonOptions {
 }
 
 /// Padded standard base64, as the wire spells a selector.
+/// A projection with every list sorted: `q` as the sets `jsonb @>` reads.
+fn as_set(q: &Value) -> Value {
+    let mut sv = q["sv"].as_array().cloned().unwrap_or_default();
+    sv.sort_by_key(|pair| pair.to_string());
+    let mut el: Vec<Value> = q["el"]
+        .as_array()
+        .map(|groups| groups.iter().map(as_set).collect())
+        .unwrap_or_default();
+    el.sort_by_key(|group| group.to_string());
+    json!({"sv": sv, "el": el})
+}
+
 fn base64(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -123,8 +135,10 @@ async fn a_document_round_trips_through_the_typed_target() {
     );
 
     // An entry lifted from the stored document, with the header and its
-    // ordinal grafted as `->` grafts them, opens to its scalar through the
-    // selector that asked for it, and only through that one.
+    // slot grafted as `->` grafts them, opens to its scalar through the
+    // selector that asked for it, and only through that one. The entries
+    // are stored in a random order: `$.hello` is the one entry carrying its
+    // selector.
     let keyset = cipher.default_keyset();
     let selector = |path: &str| {
         let path = JsonPath::parse(path).unwrap();
@@ -132,9 +146,14 @@ async fn a_document_round_trips_through_the_typed_target() {
         async move { keyset.json_selector(&path, column()).await.unwrap() }
     };
     let hello = selector("$.hello").await;
-    let mut entry = stored.sv[1].clone();
+    let at = stored
+        .sv
+        .iter()
+        .position(|e| serde_json::to_value(&e.s).unwrap() == json!(hello.to_string()))
+        .expect("the document has $.hello");
+    let mut entry = stored.sv[at].clone();
     entry.h = Some(stored.h.clone());
-    entry.j = Some(1);
+    entry.j = Some(at as u64);
     entry.i = Some(stored.i.clone());
     entry.v = Some(stored.v);
     let scalar: Value = cipher
@@ -161,7 +180,7 @@ async fn a_document_round_trips_through_the_typed_target() {
         ),
         "another path's selector refuses the entry: {refused:?}"
     );
-    let bare = stored.sv[1].clone();
+    let bare = stored.sv[at].clone();
     assert!(cipher
         .decrypt_as::<Value, _>(JsonTreeExtracted::from_selector(&hello, bare), column())
         .await
@@ -197,16 +216,24 @@ async fn the_query_operands_are_the_engines_terms_in_the_sql_contract() {
     assert_eq!(leaf.s.0.as_str(), bound.selector().to_string());
 
     // The engine's document under the label and the EQL document under the
-    // identifier carry the same selectors: one context, two spellings.
+    // identifier carry the same selectors: one context, two spellings. Each
+    // is stored in its own random order, so they compare as multisets, and
+    // the projections as the sets `jsonb @>` reads.
     let engine = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
     let typed = seal(&cipher, &fixture()).await;
     assert_eq!(engine.entries().len(), typed.sv.len());
-    for (a, b) in engine.entries().iter().zip(&typed.sv) {
-        assert_eq!(base64(a.selector()), b.s.0.as_str());
-    }
+    let mut a: Vec<String> = engine
+        .entries()
+        .iter()
+        .map(|e| base64(e.selector()))
+        .collect();
+    let mut b: Vec<String> = typed.sv.iter().map(|e| e.s.0.as_str().to_owned()).collect();
+    a.sort_unstable();
+    b.sort_unstable();
+    assert_eq!(a, b, "the same selectors");
     assert_eq!(
-        serde_json::to_value(engine.projection()).unwrap(),
-        serde_json::to_value(&typed.q).unwrap(),
+        as_set(&serde_json::to_value(engine.selector_set()).unwrap()),
+        as_set(&serde_json::to_value(&typed.q).unwrap()),
         "and the same projection"
     );
     let opened: Value = cipher.open(engine).using(&plan).await.unwrap();
@@ -578,8 +605,9 @@ fn postgres_extracts_walks_and_orders_by_path() {
     assert_eq!(exists, [1, 2]);
 
     // Every element of an array shares its selector: the path query returns
-    // one row per element, each opening to its value.
-    let tags: Vec<Value> = db
+    // one row per element, each opening to its value, in the stored order,
+    // which is random: the client recovers element order from the labels.
+    let mut tags: Vec<Value> = db
         .query(
             "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_path_query(doc::jsonb, $1::text) e WHERE id = 3",
             &[&selector("$.tags[*]")],
@@ -588,7 +616,30 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .iter()
         .map(|r| open(&selector_of("$.tags[*]"), entry(r)))
         .collect();
+    tags.sort_by_key(Value::to_string);
     assert_eq!(tags, vec![json!("x"), json!("y")]);
+    // `->` at a wildcard path takes the first entry carrying the selector
+    // in the stored order: an unspecified element of the row, the same one
+    // every time, and one of the elements `jsonb_path_query` returns.
+    let first: Vec<Value> = (0..3)
+        .map(|_| {
+            let row = db
+                .query_one(
+                    "SELECT (doc -> $1::text)::jsonb::text FROM json_tree_rows WHERE id = 3",
+                    &[&selector("$.tags[*]")],
+                )
+                .unwrap();
+            open(&selector_of("$.tags[*]"), entry(&row))
+        })
+        .collect();
+    assert!(
+        tags.contains(&first[0]),
+        "`->` at a wildcard is one of the elements"
+    );
+    assert!(
+        first.iter().all(|v| v == &first[0]),
+        "the same one every time"
+    );
 
     // The read of `$.nested`, from a token derived on the client from the
     // path alone: nested itself and its six entries in row 1, reassembling
@@ -741,9 +792,25 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .iter()
         .map(entry)
         .collect();
+    // `json_tree_children` returns an array's elements in position order,
+    // whatever slots they are stored at: compared unsorted.
+    let found: Vec<(Option<u64>, Option<u32>)> = elements.iter().map(|e| (e.j, e.d)).collect();
+    let first = slot(
+        &mut db,
+        "json_tree_rows",
+        1,
+        &subtree_key("$.nested.list[0]"),
+    );
+    let second = slot(
+        &mut db,
+        "json_tree_rows",
+        1,
+        &subtree_key("$.nested.list[1]"),
+    );
     assert_eq!(
-        elements.iter().map(|e| (e.j, e.d)).collect::<Vec<_>>(),
-        [(Some(5), Some(1)), (Some(7), Some(1))]
+        found,
+        vec![(Some(first), Some(1)), (Some(second), Some(1))],
+        "both elements, in position order, each at the slot it is stored at"
     );
     let members: i32 = db
         .query_one(
@@ -1273,6 +1340,23 @@ fn store(
         )
         .unwrap();
     }
+}
+
+/// The slot the node `key` names is stored at in row `id`: the entries are
+/// stored in a random order, so a test finds a node by its self tag, as the
+/// server does.
+fn slot(db: &mut postgres::Client, table: &str, id: i32, key: &JsonSubtreeKey) -> u64 {
+    let j: i64 = db
+        .query_one(
+            &format!(
+                "SELECT (e.o - 1)::bigint FROM {table}, jsonb_array_elements(doc::jsonb -> 'sv') WITH ORDINALITY AS e(v, o)
+                 WHERE id = $2 AND e.v ->> 'x' = eql_v4_internal.json_tree_self_tag(eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64'))"
+            ),
+            &[&key.tokens()[0], &id],
+        )
+        .unwrap_or_else(|error| panic!("{table} {} in row {id}: {error}", key.path()))
+        .get(0);
+    j as u64
 }
 
 /// The rows `json_tree_subtree(doc, key.tokens(), budget)` returns in row `id`.
@@ -1836,12 +1920,14 @@ fn postgres_a_position_reaches_array_elements_only() {
 /// (another path's entry, the sealed root, another position's subtree with
 /// its self tag forged) and from stored rows tampered with (a self tag
 /// forged so the read finds the wrong node, a top-level field moved under
-/// another node, two entries swapped in `sv`). Each is refused: the wrong
-/// entry as `JsonWrongEntry`, a moved entry as `Aead`, since its ciphertext
-/// is bound to the position it was sealed at. Two answers are allowed by
-/// design and shown to open: another row's node at the path (ADR 0010),
-/// and the node at the same selector under another element, which no field
-/// a row binds tells apart.
+/// another node, two entries swapped in `sv`). Each is refused: an entry
+/// that is not the one asked for at the top of a read as `JsonWrongEntry`;
+/// anything changed beneath the node a read names as `Aead`, since every
+/// node's ciphertext commits to its children's tags; and a moved entry as
+/// `Aead`, since its ciphertext is bound to the slot it was sealed at. Two
+/// answers are allowed by design and shown to open: another row's node at
+/// the path (ADR 0010), and the node at the same selector under another
+/// element at the top of a read, which nothing the node binds tells apart.
 #[test]
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_hostile_answers_are_refused_by_the_client() {
@@ -1942,16 +2028,23 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
     );
 
     // The read of `$.nested.list[1]` answered with `$.nested.list[0]`'s
-    // rows, its self tag forged to the second element's: the same selector,
-    // and the position in its label tells them apart.
+    // rows, its self tag forged to the second element's: the chain finds
+    // none of the second element's children among them, and the first
+    // element, sealed over its own `x`, does not open.
     let second = subtree_key("$.nested.list[1]");
     assert_eq!(
         opened(&second, read(&mut db, 1, &second)).unwrap(),
         json!({"x": 2})
     );
     let mut forged = read(&mut db, 1, &subtree_key("$.nested.list[0]"));
-    forged[0].x = serde_json::from_value(json!(x_of(&mut db, 1, &second))).unwrap();
-    wrong(opened(&second, forged), "another position's subtree");
+    // The read returns its rows by slot; the element itself is at depth 0.
+    let top = forged.iter().position(|e| e.d == Some(0)).unwrap();
+    forged[top].x = serde_json::from_value(json!(x_of(&mut db, 1, &second))).unwrap();
+    let refused = opened(&second, forged);
+    assert!(
+        matches!(refused, Err(Error::Aead)),
+        "another position's subtree: {refused:?}"
+    );
 
     // Allowed: `$.nested.list[0].x` for `$.nested.list[1].x`, self tag
     // forged; the same selector, the same label.
@@ -1977,40 +2070,62 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
     assert!(opened(&nested, truncated).is_err(), "a truncated read");
     let mut reordered = read(&mut db, 1, &nested);
     reordered.swap(2, 3);
+    reordered.reverse();
     assert_eq!(
         opened(&nested, reordered).unwrap(),
         fixture()["nested"],
-        "the rows are placed by their positions, not the order they came in"
+        "the rows are placed by the chain, not by the order they came in"
     );
 
-    // A stored row whose `$.number` (entry 9) is moved under `$.nested`:
-    // a parent tag at the ordinal after its two members and a member's self
-    // tag. The read takes it for nested's third member and returns it after
-    // nested's subtree; nested's child count says two, and the row is
-    // refused.
+    // A stored row whose `$.number` is moved under `$.nested`: a parent tag
+    // at the ordinal after its two members and a member's self tag. The
+    // read takes it for nested's third member and returns it after nested's
+    // subtree; nested, sealed over the tags of its two members, does not
+    // open.
+    let number = subtree_key("$.number");
+    let number_at = slot(&mut db, "json_tree_hostile", 1, &number);
     db.execute(
-        "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb, '{sv,9,p}',
-           to_jsonb(eql_v4_internal.json_tree_parent_tag(
-             eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64'), 2))),
-           '{sv,9,x}',
-           to_jsonb(eql_v4_internal.json_tree_self_tag(
-             eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'),
-             eql_v4_internal.json_tree_member_token(decode($1::text, 'base64'), decode(doc::jsonb -> 'sv' -> 9 ->> 's', 'base64')))))::public.eql_v4_json_tree
-         WHERE id = 1",
+        &format!(
+            "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb, '{{sv,{number_at},p}}',
+               to_jsonb(eql_v4_internal.json_tree_parent_tag(
+                 eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64'), 2))),
+               '{{sv,{number_at},x}}',
+               to_jsonb(eql_v4_internal.json_tree_self_tag(
+                 eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'),
+                 eql_v4_internal.json_tree_member_token(decode($1::text, 'base64'), decode(doc::jsonb -> 'sv' -> {number_at} ->> 's', 'base64')))))::public.eql_v4_json_tree
+             WHERE id = 1"
+        ),
         &[&nested.tokens()[0]],
     )
     .unwrap();
     let rows = read(&mut db, 1, &nested);
     assert_eq!(rows.len(), 8, "the read took number for a member");
-    assert_eq!(rows.last().map(|e| (e.j, e.d)), Some((Some(9), Some(1))));
-    wrong(opened(&nested, rows), "a top-level field as a member");
+    assert!(
+        rows.iter()
+            .any(|e| (e.j, e.d) == (Some(number_at), Some(1))),
+        "number among nested's members"
+    );
+    let refused = opened(&nested, rows);
+    assert!(
+        matches!(refused, Err(Error::Aead)),
+        "a top-level field as a member: {refused:?}"
+    );
 
-    // A stored row whose `$.hello` (1) carries `$.number`'s self tag: the
-    // read of `$.number` finds hello, whose selector is not number's.
-    let number = subtree_key("$.number");
+    // A stored row whose `$.hello` carries `$.number`'s self tag: the read
+    // of `$.number` finds hello, whose selector is not number's.
+    let hello_at = slot(&mut db, "json_tree_hostile", 2, &subtree_key("$.hello"));
+    let number_at = slot(&mut db, "json_tree_hostile", 2, &number);
+    let deep_at = slot(
+        &mut db,
+        "json_tree_hostile",
+        2,
+        &subtree_key("$.nested.deep"),
+    );
     db.execute(
-        "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb, '{sv,1,x}', doc::jsonb -> 'sv' -> 9 -> 'x'),
-           '{sv,9,x}', '\"AAAAAAAAAAA=\"')::public.eql_v4_json_tree WHERE id = 2",
+        &format!(
+            "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb, '{{sv,{hello_at},x}}', doc::jsonb -> 'sv' -> {number_at} -> 'x'),
+               '{{sv,{number_at},x}}', '\"AAAAAAAAAAA=\"')::public.eql_v4_json_tree WHERE id = 2"
+        ),
         &[],
     )
     .unwrap();
@@ -2019,18 +2134,23 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
         "a forged self tag",
     );
 
-    // A stored row whose `deep` (3) and `number` (9) swapped places: each
-    // entry is found where it now sits, and fails to open there.
+    // A stored row whose `deep` and `number` swapped places: each entry is
+    // found where it now sits, and fails to open there.
     db.execute(
-        "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb,
-           '{sv,3}', doc::jsonb -> 'sv' -> 9), '{sv,9}', doc::jsonb -> 'sv' -> 3)::public.eql_v4_json_tree
-         WHERE id = 2",
+        &format!(
+            "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb,
+               '{{sv,{deep_at}}}', doc::jsonb -> 'sv' -> {number_at}), '{{sv,{number_at}}}', doc::jsonb -> 'sv' -> {deep_at})::public.eql_v4_json_tree
+             WHERE id = 2"
+        ),
         &[],
     )
     .unwrap();
     let deep = selector_of("$.nested.deep");
     let moved = extracted(&deep, arrow(&mut db, 2, &deep));
-    assert!(matches!(moved, Err(Error::Aead)), "`->`: {moved:?}");
+    assert!(
+        matches!(moved, Err(Error::JsonNotALeaf)),
+        "`->`: a moved entry cannot be told from a container, so both are named: {moved:?}"
+    );
     let moved = opened(&nested, read(&mut db, 2, &nested));
     assert!(matches!(moved, Err(Error::Aead)), "the read: {moved:?}");
 }

@@ -77,7 +77,8 @@ pub struct JsonTreeKeyHeader(pub Base64Text);
 /// `public.eql_v4_json_tree`: a JSON tree document, `{v, i, h, sv:
 /// [entry], q: group}`. Strict. `h` is the document's key header, stored
 /// once (every entry is sealed under the document's one data key); `sv`
-/// holds one entry per node in depth-first order, the root first; `q` is
+/// holds one entry per node, the root first and the rest in a random order
+/// drawn when the document was sealed; `q` is
 /// the document's containment projection, one `{s, vs}` pair per node
 /// nested by array element, which the client writes beside the entries
 /// and which is the only place the value selectors live: the server's

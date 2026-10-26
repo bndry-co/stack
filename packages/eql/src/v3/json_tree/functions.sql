@@ -160,7 +160,8 @@ COMMENT ON FUNCTION {{prefix}}_internal.json_tree_element_token(bytea, bytea, in
 --! @param iv bytea The document's iv.
 --! @param token bytea The parent's token, sixteen bytes.
 --! @param s bytea The child's selector, sixteen bytes.
---! @param o integer The child's ordinal: an element's index, a member's rank.
+--! @param o integer The child's ordinal: an element's index, or a member's
+--!        place in the random permutation its object's members were given.
 --! @param x text The child's stored self tag.
 --! @return bytea The child's token, or NULL when neither rule's self tag is
 --!         `x`, and the walk does not descend into it.
@@ -293,7 +294,9 @@ $$;
 --! @param val jsonb The document.
 --! @param selector text The path selector, base64.
 --! @return SETOF public.{{prefix}}_json_tree_entry The matching entries, in
---!         document order.
+--!         stored order, which says nothing about the document: entries
+--!         are stored in a random order, and the client puts an array's
+--!         elements back in order from their decrypted labels.
 CREATE FUNCTION {{prefix}}.json_tree_path_query(val jsonb, selector text)
   RETURNS SETOF public.{{prefix}}_json_tree_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
@@ -520,9 +523,12 @@ $$;
 --! @brief The children of the node whose token is `token`, as rows.
 --!
 --! What `jsonb_array_elements` is for an encrypted array, and the members of
---! an encrypted object: one row per child, in the document's order, each
---! opening on its own. Enumerating one level needs no child's token, so the
---! rows are the same whichever rule each child's token takes.
+--! an encrypted object: one row per child, in ordinal order, which puts an
+--! array's elements in position order and an object's members in the random
+--! order their ordinals were drawn in. A scalar or empty-container child
+--! opens on its own; a child with children of its own opens with its
+--! subtree. Enumerating one level needs no child's token, so the rows are
+--! the same whichever rule each child's token takes.
 --!
 --! @param e public.{{prefix}}_json_tree The stored document.
 --! @param token text The node's token, base64: derived by the client from
@@ -567,7 +573,7 @@ AS $$
   SELECT (doc.meta || (doc.sv -> p.j) || jsonb_build_object('j', p.j, 'd', 1))::public.{{prefix}}_json_tree_entry
   FROM visited AS p, doc
   WHERE p.j IS NOT NULL
-  ORDER BY p.j
+  ORDER BY p.o
 $$;
 
 --! @brief How many children the node whose token is `token` has: the length
@@ -634,9 +640,10 @@ $$;
 --! miss and recursing under each hit's own token. So a read returns the
 --! node it names, and `{}`, `[]`, a scalar and an absent node are an empty
 --! object's entry, an empty array's entry, the scalar's entry and no rows,
---! the four answers `jsonb #>` gives. Rows come out in token order and,
---! within a token, in document order. A token that names no node yields no
---! row, and nothing in a row is linkable to anything without its token.
+--! the four answers `jsonb #>` gives. Rows come out in no promised order:
+--! the client places each one by its tags and checks it under its parent's
+--! digest, so the order they arrive in carries nothing. A token that names
+--! no node yields no row, and nothing in a row is linkable to anything without its token.
 --! The client sends one token for a path with no wildcard, and for a
 --! wildcard one per position below its bound and a probe at the bound. The
 --! server treats a probe like any other token, but can pick it out: it is

@@ -129,10 +129,11 @@ pub fn shared_bits(a: &[u8], b: &[u8]) -> usize {
         .map_or(bits, |k| k - 1)
 }
 
-/// The simulator's stand-in for the keyed member rank: any keyed function of
-/// the parent's token and the member's selector will do, since the real one
-/// is a PRF under a key the database never sees. The simulator samples its
-/// own `key`.
-pub fn simulated_rank(key: &[u8; 32], parent: &Tag16, selector: &Tag16) -> Tag16 {
-    first(sha256(&[b"rank", key, parent, selector]))
+/// The simulator's stand-in for an object's random member ordinals: ranking
+/// the members by a keyed function of the row's `iv`, the parent's token and
+/// the member's selector gives, to an observer without `key`, a uniformly
+/// random permutation per object per row, which is what the real scheme
+/// draws from its generator. The simulator samples its own `key`.
+pub fn simulated_rank(key: &[u8; 32], iv: &Tag16, parent: &Tag16, selector: &Tag16) -> Tag16 {
+    first(sha256(&[b"rank", key, iv, parent, selector]))
 }
