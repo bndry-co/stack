@@ -304,7 +304,7 @@ func TestRunGeneratesTypedJSONDocuments(t *testing.T) {
 		t.Skip(err)
 	}
 	_ = checker.Close()
-	types := "type Profile struct {\n\tName string `json:\"name\"`\n\tAge int64 `json:\"age\"`\n\tVisits []Visit `json:\"visits\"`\n}\n\ntype Visit struct {\n\tAt int64 `json:\"at\"`\n}\n\ntype Prefs struct {\n\tTheme string `json:\"theme\"`\n}\n\ntype Hidden struct {\n\tName string\n\tsecret string\n}\n\ntype Loose struct {\n\tExtra any\n}\n\ntype Dropped struct {\n\tName string\n\tToken string `json:\"-\"`\n}\n\ntype Twice struct {\n\tName string `json:\"name\"`\n\tAlias string `json:\"name\"`\n}\n\ntype Label struct{ V string }\n\nfunc (l Label) MarshalText() ([]byte, error) { return []byte(l.V), nil }\n\ntype base struct {\n\tKind string `json:\"kind\"`\n}\n\ntype Embeds struct {\n\tbase\n\tName string `json:\"name\"`\n}\n\ntype PtrEmbeds struct {\n\t*base\n\tName string `json:\"name\"`\n}\n\ntype Shared struct {\n\tKind string `json:\"kind\"`\n}\n\ntype PtrShared struct {\n\t*Shared\n\tName string `json:\"name\"`\n}\n\ntype Stamped struct {\n\ttime.Time\n\tName string\n}\n\ntype Inner struct {\n\tX int64\n}\n\ntype Left struct {\n\tInner\n}\n\ntype Right struct {\n\tInner\n}\n\ntype Diamond struct {\n\tLeft\n\tRight\n}\n"
+	types := "type Profile struct {\n\tName string `json:\"name\"`\n\tAge int64 `json:\"age\"`\n\tVisits []Visit `json:\"visits\"`\n}\n\ntype Visit struct {\n\tAt int64 `json:\"at\"`\n}\n\ntype Prefs struct {\n\tTheme string `json:\"theme\"`\n}\n\ntype Hidden struct {\n\tName string\n\tsecret string\n}\n\ntype Loose struct {\n\tExtra any\n}\n\ntype Dropped struct {\n\tName string\n\tToken string `json:\"-\"`\n}\n\ntype Twice struct {\n\tName string `json:\"name\"`\n\tAlias string `json:\"name\"`\n}\n\ntype Label struct{ V string }\n\nfunc (l Label) MarshalText() ([]byte, error) { return []byte(l.V), nil }\n\ntype base struct {\n\tKind string `json:\"kind\"`\n}\n\ntype Embeds struct {\n\tbase\n\tName string `json:\"name\"`\n}\n\ntype PtrEmbeds struct {\n\t*base\n\tName string `json:\"name\"`\n}\n\ntype Shared struct {\n\tKind string `json:\"kind\"`\n}\n\ntype PtrShared struct {\n\t*Shared\n\tName string `json:\"name\"`\n}\n\ntype Stamped struct {\n\ttime.Time\n\tName string\n}\n\ntype Inner struct {\n\tX int64\n}\n\ntype Left struct {\n\tInner\n}\n\ntype Right struct {\n\tInner\n}\n\ntype Diamond struct {\n\tLeft\n\tRight\n}\n\ntype Code struct{ V string }\n\nfunc (c Code) MarshalJSON() ([]byte, error) { return json.Marshal(c.V) }\n\nfunc (c *Code) UnmarshalJSON(b []byte) error { return json.Unmarshal(b, &c.V) }\n\ntype Pointers struct {\n\tAt *time.Time `json:\"at\"`\n\tRaw *json.RawMessage `json:\"raw\"`\n\tCode *Code `json:\"code\"`\n}\n"
 	generate := func(fields string) (string, string, int) {
 		source := "package users\n\nimport (\n\t\"encoding/json\"\n\t\"time\"\n)\n\nvar (\n\t_ json.RawMessage\n\t_ time.Time\n)\n\n" + types + "\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n" + fields + "\n}\n"
 		dir := writeModule(t, map[string]string{"model.go": source})
@@ -316,6 +316,11 @@ func TestRunGeneratesTypedJSONDocuments(t *testing.T) {
 	// An unexported embedded struct's fields are promoted, and stored.
 	if _, stderr, code := generate("\tProfile Embeds `stash:\"profile,encrypt_into=JsonSearch\"`"); code != 0 {
 		t.Fatalf("an embedded unexported struct: exit %d\n%s", code, stderr)
+	}
+	// A pointer to a type with both halves of a codec writes and reads
+	// itself through the pointer's methods.
+	if _, stderr, code := generate("\tProfile Pointers `stash:\"profile,encrypt_into=JsonSearch\"`"); code != 0 {
+		t.Fatalf("pointers to codec types: exit %d\n%s", code, stderr)
 	}
 	// encoding/json allocates an embedded pointer to an exported struct
 	// when it reads a member the struct promotes.

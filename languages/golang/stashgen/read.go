@@ -1364,23 +1364,36 @@ func (w *documentWalk) fields(u *types.Struct, names map[string]string, embeddin
 // marshal method on the pointer alone is not called for the value a field
 // holds; and a codec a struct gets from a field it embeds writes the whole
 // struct as that field, dropping the rest.
+//
+// A value's marshal method is looked up on its type, and its unmarshal
+// method on a pointer to it, which encoding/json reads into. A pointer's
+// are both looked up on the pointer: encoding/json writes a non-nil *E
+// through *E's methods, and reads into the *E it allocates, and the method
+// set of *E holds E's methods too.
 func ownCodec(t types.Type) (bool, string) {
 	name := types.TypeString(t, func(p *types.Package) string { return p.Name() })
+	elem, writer, reader := t, t, types.Type(types.NewPointer(t))
+	p, isPointer := t.Underlying().(*types.Pointer)
+	if isPointer {
+		elem = p.Elem()
+		writer = types.NewPointer(elem)
+		reader = writer
+	}
 	for _, codec := range []string{"JSON", "Text"} {
-		marshal, onValue := methodOf(t, "Marshal"+codec)
-		_, unmarshal := methodOf(types.NewPointer(t), "Unmarshal"+codec)
-		if pointerOnly, _ := methodOf(types.NewPointer(t), "Marshal"+codec); pointerOnly != nil && !onValue {
+		marshal, writes := methodOf(writer, "Marshal"+codec)
+		_, unmarshal := methodOf(reader, "Unmarshal"+codec)
+		if pointerOnly, _ := methodOf(reader, "Marshal"+codec); !isPointer && pointerOnly != nil && !writes {
 			return false, "holds a " + name + ", whose Marshal" + codec + " is on its pointer, which encoding/json does not call for a value"
 		}
 		switch {
-		case onValue && unmarshal:
+		case writes && unmarshal:
 			if len(marshal.Index()) > 1 {
-				if st, ok := t.Underlying().(*types.Struct); ok && st.NumFields() > 1 {
+				if st, ok := elem.Underlying().(*types.Struct); ok && st.NumFields() > 1 {
 					return false, "holds a " + name + ", which takes Marshal" + codec + " from a field it embeds, so encoding/json writes that field alone and drops the rest"
 				}
 			}
 			return true, ""
-		case onValue:
+		case writes:
 			return false, "holds a " + name + ", which has Marshal" + codec + " but no Unmarshal" + codec + ", so encoding/json could not read it back"
 		case unmarshal:
 			return false, "holds a " + name + ", which has Unmarshal" + codec + " but no Marshal" + codec + ", so encoding/json would read it otherwise than it writes it"

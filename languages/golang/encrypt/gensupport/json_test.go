@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 )
@@ -99,5 +100,49 @@ func TestGetDocumentReadsTheDeclaredType(t *testing.T) {
 	_, err = GetDocument[numbers](vals, "doc")
 	if !errors.Is(err, encrypt.ErrEncoding) || strings.Contains(err.Error(), "secret-value") || !strings.Contains(err.Error(), `"doc"`) {
 		t.Fatalf("a mismatched document: %v", err)
+	}
+}
+
+// code writes and reads itself, MarshalJSON on the value and UnmarshalJSON
+// on the pointer, as json.RawMessage and time.Time do.
+type code struct{ v string }
+
+func (c code) MarshalJSON() ([]byte, error) { return json.Marshal("code:" + c.v) }
+
+func (c *code) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	c.v = strings.TrimPrefix(s, "code:")
+	return nil
+}
+
+// pointers holds a pointer to each kind of codec type stashgen accepts in a
+// document: the codec runs through the pointer both ways.
+type pointers struct {
+	At   *time.Time       `json:"at"`
+	Raw  *json.RawMessage `json:"raw"`
+	Code *code            `json:"code"`
+	None *time.Time       `json:"none"`
+}
+
+func TestPointersToCodecTypesRoundTrip(t *testing.T) {
+	at := time.Date(2026, 10, 26, 10, 0, 0, 500, time.UTC)
+	raw := json.RawMessage(`{"a":[1,2]}`)
+	in := pointers{At: &at, Raw: &raw, Code: &code{v: "x"}}
+	text, err := JSONText(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"at":"2026-10-26T10:00:00.0000005Z","raw":{"a":[1,2]},"code":"code:x","none":null}`; string(text) != want {
+		t.Fatalf("JSONText = %s, want %s", text, want)
+	}
+	out, err := GetDocument[pointers](Values{"doc": text}, "doc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.At == nil || !out.At.Equal(at) || out.Raw == nil || string(*out.Raw) != string(raw) || out.Code == nil || out.Code.v != "x" || out.None != nil {
+		t.Fatalf("read back %+v", out)
 	}
 }
