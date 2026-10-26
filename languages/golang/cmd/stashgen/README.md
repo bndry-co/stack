@@ -199,7 +199,8 @@ The ordered date, timestamp and numeric types are refused: the engine derives no
 An ordered type has no `Between` method yet, because a `BETWEEN` operand needs EQL v4's range query domains.
 
 Any built-in Go integer field takes an integer type (ADR-0002) and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.
-A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index; its query refuses such text too.
+A `TextMatch` field indexes the 3-grams of its text and each two-letter word whole, so a two-letter surname such as "Ng" is stored and found by the query "ng"; a query's two-letter words must be whole words of the row.
+A `TextMatch` field refuses text that cuts no token, such as an empty string or one letter; its query refuses such text too.
 A `TextSearch` field stores such text with an empty match filter, so its `Eq`, `Lt`, `Lte`, `Gt` and `Gte` queries find it and no `Matches` query does; those queries take such text too, and its `Matches` query refuses it.
 Put the column on the left of `@@` (`WHERE name @@ $1::eql_v4.query_text_match`): the other operand order finds nothing until #1171 is fixed.
 `encrypt_into` with any other type is refused with the type's name and the reason it is not produced yet.

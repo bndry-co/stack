@@ -12,6 +12,19 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **A two-letter word is searchable in `TextMatch`, `TextSearch` and
+  `TextSearchOre` (#1309).** The EQL v4 match types index each two-letter
+  word whole, beside the 3-grams of the text, so a two-letter surname such
+  as "Ng" stores into a `TextMatch` field (it was refused with `ErrTerm`),
+  and `Matches` with "ng" is a query (it was refused) that finds the rows
+  holding the word "Ng", not "Nguyen". A query's two-letter words must be
+  whole words of the row: "Mike Ng" does not find "Mike Nguyen". Text that
+  cuts no token, an empty string or one letter, is still refused by
+  `TextMatch` and stored with the empty filter by the search types. The
+  word token is one more token per two-letter word, in the same filter, so
+  someone who clusters tokens across rows can tell "Ng" from "Nguyen".
+  A native `index=match` field takes no options yet (#1112), so this
+  reaches Go through the EQL types only.
 - **Decimals, dates and timestamps take an order index (#1236).** An
   `encrypt.Decimal`, `encrypt.Date` or `time.Time` field takes `ore` and
   `ope`, and the generated code gives it `Lt`, `Lte`, `Gt`, `Gte` and

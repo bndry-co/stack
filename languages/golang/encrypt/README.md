@@ -490,7 +490,7 @@ The EQL types the engine produces, and the Go field types each takes:
 | EQL type | Go field | Queries |
 |---|---|---|
 | `TextEq` | `string` | `=`, `<>` |
-| `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
+| `TextMatch` | `string` | `@@` (substring match, 3-grams and two-letter words, case-insensitive) |
 | `TextOrd`, `TextOrdOpe`, `TextOrdOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `TextSearch`, `TextSearchOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY`, `@@` |
 | `Text` | `string` | none: stored and read only |
@@ -527,13 +527,19 @@ with `ErrEncoding`, naming the field's kind and not the value.
 `encrypt.Int128` and `encrypt.Uint128` are not converted, and floats take
 exactly their own width.
 
-A `TextMatch` value must be at least three characters long: shorter text has
-no 3-grams to index and is refused. A `TextSearch` value of such text, an
-empty string included, is stored with an empty match filter: `Eq`, `Lt`,
-`Lte`, `Gt` and `Gte` find it through its other terms, and no `Matches`
-query does. A `TextSearch` query carries only the term its operator reads,
-so `Eq` and `Lt` on two-letter text work and `Matches` on it is refused; EQL
-v4 raises if a query lacks the term its operator compares. The number
+A `TextMatch` value is indexed by its 3-grams and by each two-letter word
+whole, so a two-letter surname such as "Ng" is stored, and `Matches` with
+"ng" finds the rows holding the word "Ng" ("Ng", "Mike Ng"), not "Nguyen".
+A query's two-letter words must be whole words of the row, so "Mike Ng" does
+not find "Mike Nguyen". The word token reveals one more token per two-letter
+word, in the same filter: someone who clusters tokens across rows can tell
+"Ng" from "Nguyen", where before only the trigram they share was visible.
+Text that cuts no token, such as an empty string or one letter, is refused. A
+`TextSearch` value of such text is stored with an empty match filter: `Eq`,
+`Lt`, `Lte`, `Gt` and `Gte` find it through its other terms, and no
+`Matches` query does. A `TextSearch` query carries only the term its
+operator reads, so `Eq` and `Lt` on one-letter text work and `Matches` on it
+is refused; EQL v4 raises if a query lacks the term its operator compares. The number
 equality types compare as
 PostgreSQL compares the plain types: an integer equals itself whatever its
 width, and for floats `-0.0 = 0.0` and `NaN = NaN`; the stored value still
