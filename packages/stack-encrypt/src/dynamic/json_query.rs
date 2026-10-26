@@ -9,8 +9,8 @@
 //!
 //! | operator | input | operand |
 //! |---|---|---|
-//! | `contains`, `contained_by` | `{"json"}`: a JSON needle | EQL: the needle's projection (`eql_v4.query_json`) |
-//! | `eq_at` | `{"path", "json"}`: a scalar at a path | EQL: the needle holding the scalar there |
+//! | `contains`, `contained_by` | `{"json"}`: a JSON document | EQL: the document's selector set (`eql_v4.query_json`) |
+//! | `eq_at` | `{"path", "json"}`: a scalar at a path | EQL: the selector set of the document holding the scalar there |
 //! | `lt_at`, `lte_at`, `gt_at`, `gte_at` | `{"path", "json"}`: a number or string at an ordered path | EQL: the path's selector and the leaf's ordering term (`eql_v4.query_json_leaf`) |
 //! | `between_at` | `{"path", "low", "high"}` | EQL, two of them: the low bound's then the high's |
 //! | `selector` | `{"path"}` | text: the selector `->` takes |
@@ -24,9 +24,13 @@
 //! `selector`): a selector reads every position as the wildcard, so the
 //! query would compare whichever element the database found first. A
 //! positional read is a `subtree` read. Equality at a wildcard path matches
-//! when any element matches; an ordering or `->` through one compares the
-//! first. Two `eq_at` predicates on one row need not hold of the same
-//! array element; one containment needle holding both does.
+//! when any element matches. `->` at a wildcard path, and an ordering
+//! written over it (`eql_v4.ord_term(col -> sel)`), see an unspecified
+//! element of the row, since entries are stored in a random order; an
+//! ordering over every element is written over all its matches
+//! (`json_tree_path_query`). Two `eq_at` predicates on one row need not
+//! hold of the same array element; one containment query of a document
+//! holding both does.
 //!
 //! # Reads
 //!
@@ -64,8 +68,8 @@ use crate::{KeysetCipher, Label, NonEmpty, Pending};
 /// The SQL type a JSON operand binds as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Binds {
-    /// The target's needle domain (`eql_v4.query_json`).
-    Needle,
+    /// The target's query domain (`eql_v4.query_json`).
+    Query,
     /// The target's leaf operand domain (`eql_v4.query_json_leaf`).
     Leaf,
     /// `text`.
@@ -80,7 +84,7 @@ pub(super) enum Binds {
 /// must be placed.
 pub(super) fn binds(op: OpSpec) -> Option<Binds> {
     match op {
-        OpSpec::Contains | OpSpec::ContainedBy | OpSpec::EqAt => Some(Binds::Needle),
+        OpSpec::Contains | OpSpec::ContainedBy | OpSpec::EqAt => Some(Binds::Query),
         OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt | OpSpec::BetweenAt => {
             Some(Binds::Leaf)
         }
@@ -96,11 +100,11 @@ pub(super) fn binds(op: OpSpec) -> Option<Binds> {
     }
 }
 
-/// The SQL type an operand of `binds` binds as for `target`: its needle
+/// The SQL type an operand of `binds` binds as for `target`: its query
 /// or leaf domain, which a resolver may not name, or text.
 pub(super) fn domain(target: &super::TargetDescriptor, binds: Binds) -> Option<String> {
     match binds {
-        Binds::Needle => target.query_sql_domain.clone(),
+        Binds::Query => target.query_sql_domain.clone(),
         Binds::Leaf => target.leaf_query_sql_domain.clone(),
         Binds::Text => Some("text".to_owned()),
         Binds::TextArray => Some("text[]".to_owned()),
@@ -162,7 +166,7 @@ fn json_reason(error: crate::json::JsonTextError) -> Reason {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NeedleInput {
+struct DocumentInput {
     json: JsonText,
 }
 
@@ -198,7 +202,7 @@ struct ReadInput {
 /// An operator's input, read from its frame and checked: everything
 /// [`derive`] would refuse before it derives anything.
 enum Input {
-    Needle(Parsed),
+    Document(Parsed),
     At(JsonPath, Parsed),
     Between(JsonPath, Parsed, Parsed),
     Path(JsonPath),
@@ -212,8 +216,18 @@ fn read_frame<T: for<'de> Deserialize<'de>>(input: &ValueFrame) -> Result<T, Err
     })
 }
 
+/// A path from an input. A path with more steps than a document has
+/// levels names no node, and the operators that build the document
+/// holding a value there (`eq_at`, the orderings) would build one as deep
+/// as the path, whose recursive drop could overflow the stack: it is
+/// refused as too deep before anything is built, for every operator.
 fn path(text: &str) -> Result<JsonPath, Error> {
-    JsonPath::parse(text).map_err(|error| Error::Cipher(TermError::JsonPath(error).into()))
+    let path =
+        JsonPath::parse(text).map_err(|error| Error::Cipher(TermError::JsonPath(error).into()))?;
+    if path.segments().len() > crate::json::MAX_DEPTH {
+        return Err(term(TermError::JsonTooDeep));
+    }
+    Ok(path)
 }
 
 /// A path whose operand is a selector, which reads a position as the
@@ -229,6 +243,8 @@ fn selector_path(text: &str) -> Result<JsonPath, Error> {
 /// A path that names one node: no wildcard.
 fn node_path(text: &str) -> Result<JsonPath, Error> {
     let path = path(text)?;
+    // `is_positional`: every array step names a position, so the path
+    // has no wildcard and names at most one node.
     if path.is_positional() {
         Ok(path)
     } else {
@@ -243,8 +259,8 @@ fn term(error: TermError) -> Error {
 /// Read and check an operator's input against the field's options.
 fn read_input(op: OpSpec, options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
     match op {
-        OpSpec::Contains | OpSpec::ContainedBy => Ok(Input::Needle(
-            read_frame::<NeedleInput>(input)?.json.parse()?,
+        OpSpec::Contains | OpSpec::ContainedBy => Ok(Input::Document(
+            read_frame::<DocumentInput>(input)?.json.parse()?,
         )),
         OpSpec::EqAt => read_eq_at(input),
         OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt => {
@@ -299,6 +315,14 @@ fn read_between(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Erro
 }
 
 /// A path the index orders, which names no position.
+///
+/// A position here is the index's own refusal,
+/// [`TermError::JsonOrderingAtPosition`], the one the typed
+/// `op::AtPath` orderings and [`JsonOptions::ordering`] give, so a
+/// binding and a Rust caller see one error for one mistake. `eq_at` and
+/// `selector` have no such refusal in the index (a typed equality reads a
+/// position as the wildcard), so the data plan's own,
+/// [`Reason::JsonPathPosition`], is what refuses one there.
 fn ordered_path(options: &JsonOptions, text: &str) -> Result<JsonPath, Error> {
     let path = path(text)?;
     if path.names_a_position() {
@@ -319,7 +343,11 @@ fn leaf(value: &Value) -> Result<(), Error> {
 }
 
 /// Check a JSON operator's input without a cipher: what [`derive`]
-/// refuses before it derives anything.
+/// refuses from the input alone (its shape, its paths and values, a path
+/// deeper than a document). The limits a subtree read's key hits as it is
+/// built, a wildcard expanding too wide or a path too deep for its
+/// tokens (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`), are
+/// [`derive`]'s, after the keyset is resolved.
 pub(super) fn check(op: OpSpec, options: &JsonOptions, input: &ValueFrame) -> Result<(), Error> {
     read_input(op, options, input).map(drop)
 }
@@ -355,17 +383,17 @@ pub(super) fn derive<'a, K: 'static>(
 ) -> Result<Pending<'a, Operand, K>, Error> {
     let column = || NonEmpty::from(label.clone());
     Ok(match read_input(op, options, input)? {
-        Input::Needle(needle) => terms(keyset, options, label, needle.0.clone())
-            .try_map(|terms| eql(&JsonQuery::of_terms(&terms)).map(Operand::One)),
+        Input::Document(document) => terms(keyset, options, label, document.0.clone())
+            .try_map(|terms| eql(&JsonQuery::of_terms(terms)).map(Operand::One)),
         Input::At(path, value) if op == OpSpec::EqAt => {
-            terms(keyset, options, label, path.needle(value.0.clone()))
-                .try_map(|terms| eql(&JsonQuery::at_path(&terms)).map(Operand::One))
+            terms(keyset, options, label, path.holding(value.0.clone()))
+                .try_map(|terms| eql(&JsonQuery::at_path(terms)).map(Operand::One))
         }
-        Input::At(path, value) => terms(keyset, options, label, path.needle(value.0.clone()))
+        Input::At(path, value) => terms(keyset, options, label, path.holding(value.0.clone()))
             .try_map(|terms| eql(&JsonLeafQuery::of_leaf(&terms)).map(Operand::One)),
         Input::Between(path, low, high) => {
-            terms(keyset, options, label, path.needle(low.0.clone()))
-                .zip(terms(keyset, options, label, path.needle(high.0.clone())))
+            terms(keyset, options, label, path.holding(low.0.clone()))
+                .zip(terms(keyset, options, label, path.holding(high.0.clone())))
                 .try_map(|(lo, hi)| {
                     Ok(Operand::Range {
                         lo: eql(&JsonLeafQuery::of_leaf(&lo))?,
@@ -458,7 +486,9 @@ fn read_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(Read, Vec<Vec<J
 }
 
 /// Check a read's request and rows without a cipher: what [`open`] refuses
-/// before it derives anything.
+/// from the request and rows alone. The limits the read's key hits as it
+/// is built (`JsonWildcardTooWide`, `JsonTooWide`, `JsonTooDeep`) are
+/// [`open`]'s, after the keyset is resolved.
 pub(super) fn check_open(request: &ValueFrame, rows: &ValueFrame) -> Result<(), Error> {
     read_open(request, rows).map(drop)
 }
@@ -490,7 +520,9 @@ enum Opener {
 /// not parse, a wildcard that expands too far). A row that is not the one
 /// the read asked for fails the pending
 /// ([`crate::Error::JsonWrongEntry`]), as does a wildcard read of an array
-/// longer than the bound ([`crate::Error::JsonWildcardTruncated`]).
+/// longer than the bound ([`crate::Error::JsonWildcardTruncated`]). A
+/// `selector` entry that does not open alone, a container with members or
+/// an altered entry, is [`crate::Error::JsonNotALeaf`].
 pub(super) fn open<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     label: &Label,

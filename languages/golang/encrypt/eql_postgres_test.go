@@ -114,9 +114,9 @@ func TestEQLTypesRoundTripAndQueryInPostgres(t *testing.T) {
 			continue
 		}
 		// A document has operators of its own, not one query per index,
-		// so it is not run here or counted:
-		// TestJSONDocumentsQueryAndReadInPostgres runs it with the
-		// generated fields that store it.
+		// so it is not run here or counted: TestJSONDocumentsQueryAndReadInPostgres
+		// stores documents through the generated fields (the data plan)
+		// into an eql_v4_json_search column and runs every operator there.
 		if typ.Plaintext == "json" {
 			continue
 		}

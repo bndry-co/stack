@@ -106,7 +106,7 @@ pub struct TargetDescriptor {
     /// The PostgreSQL domain of the type's ordering operand at a path, for
     /// a type that stores a JSON document
     /// ([`with_leaf_query_sql_domain`](Self::with_leaf_query_sql_domain)):
-    /// what an ordering at a path binds as, beside the containment needle
+    /// what an ordering at a path binds as, beside the containment query
     /// [`query_sql_domain`](Self::query_sql_domain) names. Not on the
     /// wire; a generator reads it from the operators' terms.
     pub leaf_query_sql_domain: Option<String>,

@@ -24,9 +24,12 @@ use stack_encrypt::dynamic::{
 use stack_encrypt::json::{JsonDocument, Tag};
 use stack_encrypt::target::{Borrowed, CallerContext, IndexSpec};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
-use stack_kms::FakeDataKeySource;
+use stack_kms::{DataKeySource, IndexKeySource};
 
-type Keyset<'c> = KeysetCipher<'c, FakeDataKeySource>;
+/// What the helpers below run over: any key source a test builds its
+/// cipher on.
+trait Source: DataKeySource + IndexKeySource + Send + Sync + 'static {}
+impl<K: DataKeySource + IndexKeySource + Send + Sync + 'static> Source for K {}
 
 /// A resolver holding one type, `JsonSearch`, sealed with the engine's
 /// JSON index under the options the plan resolved. It stores the
@@ -123,7 +126,12 @@ fn json_frame(value: &Value) -> ValueFrame {
     ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(value).unwrap()).unwrap()
 }
 
-async fn term(keyset: &Keyset<'_>, plan: &record::Plan, operator: &str, input: Value) -> QueryTerm {
+async fn term<K: Source>(
+    keyset: &KeysetCipher<'_, K>,
+    plan: &record::Plan,
+    operator: &str,
+    input: Value,
+) -> QueryTerm {
     dynamic::query_term(
         keyset,
         plan,
@@ -138,7 +146,11 @@ async fn term(keyset: &Keyset<'_>, plan: &record::Plan, operator: &str, input: V
 }
 
 /// A document sealed through the plan, as the engine's `JsonDocument`.
-async fn seal(keyset: &Keyset<'_>, plan: &record::Plan, document: &Value) -> JsonDocument {
+async fn seal<K: Source>(
+    keyset: &KeysetCipher<'_, K>,
+    plan: &record::Plan,
+    document: &Value,
+) -> JsonDocument {
     let text = document.to_string();
     let row = record::encrypt_with(
         keyset,
@@ -149,16 +161,20 @@ async fn seal(keyset: &Keyset<'_>, plan: &record::Plan, document: &Value) -> Jso
     .unwrap()
     .await
     .unwrap();
-    let CipherText::Map(fields) = &row else {
+    stored(&row, "profile")
+}
+
+/// The document a sealed row stores for `field`.
+fn stored(row: &stack_encrypt::StackCipherText, field: &str) -> JsonDocument {
+    let CipherText::Map(fields) = row else {
         panic!("a row is a map")
     };
-    let Some((_, CipherText::Map(outputs))) = fields.iter().find(|(name, _)| name == "profile")
-    else {
-        panic!("profile is a map of outputs")
+    let Some((_, CipherText::Map(outputs))) = fields.iter().find(|(name, _)| name == field) else {
+        panic!("{field} is a map of outputs")
     };
     let Some((_, CipherText::Passthrough(payload))) = outputs.iter().find(|(key, _)| key == "eql")
     else {
-        panic!("profile's stored value is a passthrough")
+        panic!("{field}'s stored value is a passthrough")
     };
     let bytes: bytes::Bytes = dynamic::frame::serde::from_slice(&payload.0).unwrap();
     serde_json::from_slice(&bytes.0).unwrap()
@@ -197,8 +213,8 @@ fn subtree(doc: &JsonDocument, tokens: &[String]) -> Vec<String> {
         .collect()
 }
 
-async fn open(
-    keyset: &Keyset<'_>,
+async fn open<K: Source>(
+    keyset: &KeysetCipher<'_, K>,
     plan: &record::Plan,
     request: Value,
     groups: Vec<Vec<String>>,
@@ -359,8 +375,10 @@ async fn every_operator_derives_its_tagged_operand() {
     assert!(matches!(children.operand(), Operand::Text(_)));
 }
 
-/// A field with no ordered path answers no ordering; a target given
-/// options it does not take is refused when the plan is built.
+/// A field with no ordered path lists no ordering, and an ordering asked
+/// of it is not answered. (Options on a target that takes none are
+/// refused when the plan is built, `Reason::TargetOptions`: the record
+/// module's plan tests.)
 #[test]
 fn the_orderings_follow_the_resolved_options() {
     let names = |plan: &record::Plan| -> Vec<&'static str> {
@@ -404,10 +422,22 @@ fn malformed_inputs_are_refused_with_their_reason() {
     let check = |operator: OpSpec, input: Value| {
         dynamic::check_query(&plan, "profile", operator, json_frame(&input), &Documents)
     };
-    let reason = |operator: OpSpec, input: Value| {
+    // The data plan's reason, or for the engine's own refusals the index's
+    // term error by name, so a refusal of another kind fails the row.
+    let reason = |operator: OpSpec, input: Value| -> String {
         let error = check(operator, input).unwrap_err();
         assert!(!error.to_string().contains("secret"), "{error}");
-        error.reason().map(Reason::as_str).unwrap_or("engine")
+        match (&error, error.reason()) {
+            (_, Some(reason)) => reason.as_str().to_owned(),
+            (dynamic::Error::Cipher(stack_encrypt::Error::Term(term)), None) => {
+                let name = format!("{term:?}");
+                name.split(['(', ' ', '{'])
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned()
+            }
+            (other, None) => panic!("neither a reason nor a term error: {other:?}"),
+        }
     };
     for (operator, input, want) in [
         (OpSpec::Contains, json!({"needle": "{}"}), "json_input"),
@@ -447,9 +477,9 @@ fn malformed_inputs_are_refused_with_their_reason() {
         (
             OpSpec::LtAt,
             json!({"path": "$.visits[0].at", "json": "1"}),
-            // A position is not the ordered wildcard path: the engine
-            // refuses the path as one the field does not order.
-            "engine",
+            // A position on an ordering is the index's own refusal, the
+            // one the typed ordering gives.
+            "JsonOrderingAtPosition",
         ),
         (
             OpSpec::Selector,
@@ -471,25 +501,33 @@ fn malformed_inputs_are_refused_with_their_reason() {
         (
             OpSpec::EqAt,
             json!({"path": "$.a", "json": r#"{"secret": 1}"#}),
-            "engine",
+            "JsonValueNotScalar",
         ),
         (
             OpSpec::LtAt,
             json!({"path": "$.name", "json": "1"}),
-            "engine",
+            "JsonPathNotOrdered",
         ),
         (
             OpSpec::GtAt,
             json!({"path": "$.age", "json": "true"}),
-            "engine",
+            "JsonLeafNotOrdered",
         ),
-        (OpSpec::Selector, json!({"path": "secret"}), "engine"),
+        (OpSpec::Selector, json!({"path": "secret"}), "JsonPath"),
+        // A path with more steps than a document has levels names no node,
+        // and is refused before a document as deep is built.
+        (
+            OpSpec::EqAt,
+            json!({"path": format!("${}", ".a".repeat(50_000)), "json": "1"}),
+            "JsonTooDeep",
+        ),
+        (
+            OpSpec::Selector,
+            json!({"path": format!("${}", ".a".repeat(128))}),
+            "JsonTooDeep",
+        ),
     ] {
-        assert_eq!(
-            reason(operator, input.clone()),
-            want,
-            "{operator:?} {input}"
-        );
+        assert_eq!(reason(operator, input.clone()), want, "{operator:?}");
     }
     for (operator, input) in [
         (OpSpec::Contains, json!({"json": "[1, {\"a\": null}]"})),
@@ -619,6 +657,164 @@ async fn reads_open_against_the_request_that_prepared_them() {
             Err(stack_encrypt::Error::JsonWildcardTruncated { .. })
         ),
         "{truncated:?}"
+    );
+}
+
+/// Rows that are not the read's are refused whichever way they differ:
+/// rows of a document sealed under another keyset (refused before any key
+/// is retrieved, since the read opens through the keyset that derived it),
+/// an entry of another field of the plan, and rows of a selector read
+/// handed over as a subtree read's, or the reverse.
+#[tokio::test]
+async fn rows_that_are_not_the_reads_are_refused() {
+    let (cipher, _, retrieves) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let other_keyset = cipher
+        .keyset(stack_kms::IdentifiedBy::Name("other".to_string().into()))
+        .await
+        .unwrap();
+    let plan = plan();
+    let document = json!({"name": "Alice", "age": 34, "visits": [{"at": 3}]});
+    let mine = seal(&keyset, &plan, &document).await;
+    let theirs = seal(&other_keyset, &plan, &document).await;
+    let text = |t: QueryTerm| match t.operand() {
+        Operand::Text(text) => text.clone(),
+        other => panic!("{other:?}"),
+    };
+    let list = |t: QueryTerm| match t.operand() {
+        Operand::TextList(list) => list.clone(),
+        other => panic!("{other:?}"),
+    };
+
+    // Another keyset's document: its selectors are not this keyset's, so
+    // no row is the one asked for, and nothing is retrieved.
+    let name = text(term(&keyset, &plan, "selector", json!({"path": "$.name"})).await);
+    let their_name = text(term(&other_keyset, &plan, "selector", json!({"path": "$.name"})).await);
+    let before = retrieves.load(std::sync::atomic::Ordering::SeqCst);
+    let refused = open(
+        &keyset,
+        &plan,
+        json!({"operation": "selector", "path": "$.name"}),
+        vec![extracted(&theirs, &their_name)],
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(stack_encrypt::Error::JsonWrongEntry { .. })),
+        "{refused:?}"
+    );
+    let visits = list(term(&keyset, &plan, "subtree", json!({"path": "$.visits"})).await);
+    let their_visits =
+        list(term(&other_keyset, &plan, "subtree", json!({"path": "$.visits"})).await);
+    let refused = open(
+        &keyset,
+        &plan,
+        json!({"operation": "subtree", "path": "$.visits"}),
+        vec![subtree(&theirs, &their_visits)],
+    )
+    .await;
+    // Rows the key's tokens do match, but under a header naming another
+    // keyset: the read opens through its own keyset alone.
+    assert!(
+        matches!(refused, Err(stack_encrypt::Error::ForeignKeyset { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(
+        retrieves.load(std::sync::atomic::Ordering::SeqCst),
+        before,
+        "another keyset's rows are refused before any key is retrieved"
+    );
+
+    // An entry of another field of the plan, under another column: the
+    // selector is derived under this field's column, so it is not the
+    // one asked for.
+    let two = record::plan_with(
+        &dynamic::frame::serde::to_vec(&json!({
+            "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
+                        "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}},
+            "prefs": {"context": ["users", "prefs"], "type": "json", "null": "sql",
+                      "target": "JsonSearch"}
+        }))
+        .unwrap(),
+        &Documents,
+    )
+    .unwrap();
+    let text_of = document.to_string();
+    let row = record::encrypt_with(
+        &keyset,
+        frame(BTreeMap::from([("prefs", text_of.as_str())])),
+        &two,
+        &Documents,
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    let prefs = stored(&row, "prefs");
+    let prefs_name = text(
+        dynamic::query_term(
+            &keyset,
+            &two,
+            "prefs",
+            OpSpec::Selector,
+            json_frame(&json!({"path": "$.name"})),
+            &Documents,
+        )
+        .unwrap()
+        .await
+        .unwrap(),
+    );
+    assert_ne!(prefs_name, name, "a selector is the column's");
+    let refused = open(
+        &keyset,
+        &plan,
+        json!({"operation": "selector", "path": "$.name"}),
+        vec![extracted(&prefs, &prefs_name)],
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(stack_encrypt::Error::JsonWrongEntry { .. })),
+        "{refused:?}"
+    );
+
+    // A selector read's row handed over as a subtree read's: the entry
+    // `->` returns for a leaf is the node a subtree read of the same path
+    // names, so it opens to the same value, and under another path's
+    // subtree read it is refused. A subtree read's rows of a container
+    // handed over as a selector read's are more than the one entry `->`
+    // returns, and are refused before anything is derived.
+    let same = open(
+        &keyset,
+        &plan,
+        json!({"operation": "subtree", "path": "$.name"}),
+        vec![extracted(&mine, &name)],
+    )
+    .await
+    .unwrap();
+    assert_eq!(same, [vec![json!("Alice")]]);
+    let refused = open(
+        &keyset,
+        &plan,
+        json!({"operation": "subtree", "path": "$.age"}),
+        vec![extracted(&mine, &name)],
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(stack_encrypt::Error::JsonWrongEntry { .. })),
+        "{refused:?}"
+    );
+    let rows = subtree(&mine, &visits);
+    assert!(rows.len() > 1, "a container and its members");
+    let refused = dynamic::json_open(
+        &keyset,
+        &plan,
+        "profile",
+        json_frame(&json!({"operation": "selector", "path": "$.visits"})),
+        frame(vec![rows]),
+        &Documents,
+    );
+    assert_eq!(
+        refused.err().and_then(|error| error.reason()),
+        Some(Reason::JsonInput),
+        "a subtree read's rows as a selector read's"
     );
 }
 

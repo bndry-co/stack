@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use stack_encrypt::json::{JsonDocument, JsonHeader, JsonLeafQuery, JsonNode, JsonProjection};
+use stack_encrypt::json::{JsonDocument, JsonHeader, JsonLeafQuery, JsonNode, JsonSelectorSet};
 
 // Fuzz the JSON index's wire decoders. A stored `json_tree` document, and
 // every entry `->` or a walk returns, come back from the database through
@@ -29,6 +29,6 @@ fuzz_target!(|bytes: &[u8]| {
         let back: JsonNode = serde_json::from_value(wire).expect("its wire form reads back");
         assert_eq!(back, node, "JsonNode wire form is not lossless");
     }
-    let _ = serde_json::from_str::<JsonProjection>(text);
+    let _ = serde_json::from_str::<JsonSelectorSet>(text);
     let _ = serde_json::from_str::<JsonLeafQuery>(text);
 });

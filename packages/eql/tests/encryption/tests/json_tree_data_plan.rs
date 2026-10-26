@@ -11,7 +11,7 @@
 //! - a batch of documents seals in one key request and opens to the same
 //!   values, scalar roots, arrays and a JSON `null` included;
 //! - the data plan and `JsonTree::new(options)` write the same search terms
-//!   (selectors, ordering terms, the containment projection) for the same
+//!   (selectors, ordering terms, the containment selector set) for the same
 //!   document under the same column, and each opens what the other sealed;
 //! - text that is not a document is refused before any key is requested,
 //!   naming the field and a code, never a byte of the text.
@@ -27,7 +27,7 @@ use serde_json::{json, Value};
 use stack_encrypt::dynamic::{
     self, record, Scope, TargetDescriptor, TargetError, TargetResolver, ValueFrame,
 };
-use stack_encrypt::json::JsonOptions;
+use stack_encrypt::json::{JsonDocument, JsonOptions, JsonQuery};
 use stack_encrypt::target::{ExpectedContext, Layout};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
 
@@ -192,6 +192,33 @@ mod serde_bytes_like {
     }
 }
 
+/// The JSON index's own document under the EQL envelope, whose selector
+/// set compares as a set.
+fn index_document(document: &JsonTreeDocument) -> JsonDocument {
+    let wire = serde_json::to_value(document).unwrap();
+    serde_json::from_value(json!({"h": wire["h"], "sv": wire["sv"], "q": wire["q"]})).unwrap()
+}
+
+/// What each stored entry shows a query, as a sorted list: its selector,
+/// its ordering term and whether it carries a parent tag. Entries are
+/// stored in a random order, so two seals of one document compare as
+/// multisets.
+fn search_terms(document: &JsonTreeDocument) -> Vec<(String, String, bool)> {
+    let mut terms: Vec<_> = document
+        .sv
+        .iter()
+        .map(|entry| {
+            (
+                serde_json::to_string(&entry.s).unwrap(),
+                serde_json::to_string(&entry.op).unwrap(),
+                entry.p.is_some(),
+            )
+        })
+        .collect();
+    terms.sort();
+    terms
+}
+
 fn column() -> NonEmpty<Identifier> {
     Identifier::for_column("users", "profile").unwrap()
 }
@@ -233,10 +260,11 @@ async fn a_batch_of_documents_round_trips_in_one_request() {
 }
 
 /// The data plan and the typed layout write the same search terms for the
-/// same document under the same column: every entry's selector, self and
-/// parent tags' places and ordering term, and the containment projection.
-/// Only the ciphertexts, the data key and the tags salted by it differ.
-/// And each opens what the other sealed.
+/// same document under the same column: the root's entry first, then every
+/// entry's selector, parent tag's place and ordering term, and the
+/// containment selector set, compared as sets because each seal draws its
+/// own storage order. Only the ciphertexts, the data key, the tags salted
+/// by it and the order differ. And each opens what the other sealed.
 #[tokio::test]
 async fn the_data_plan_and_the_typed_layout_agree() {
     let (cipher, _) = common::cipher().await;
@@ -259,13 +287,17 @@ async fn the_data_plan_and_the_typed_layout_agree() {
             .await
             .unwrap();
         assert_eq!(data.i, typed.i, "{text}: the column");
-        assert_eq!(data.q, typed.q, "{text}: the containment projection");
-        assert_eq!(data.sv.len(), typed.sv.len(), "{text}: one entry per node");
-        for (a, b) in data.sv.iter().zip(&typed.sv) {
-            assert_eq!(a.s, b.s, "{text}: an entry's selector");
-            assert_eq!(a.op, b.op, "{text}: an entry's ordering term");
-            assert_eq!(a.p.is_some(), b.p.is_some(), "{text}: a parent tag's place");
-        }
+        assert_eq!(
+            index_document(&data).selector_set(),
+            index_document(&typed).selector_set(),
+            "{text}: the containment selector set"
+        );
+        assert_eq!(data.sv[0].s, typed.sv[0].s, "{text}: the root first");
+        assert_eq!(
+            search_terms(&data),
+            search_terms(&typed),
+            "{text}: one entry per node, each with its selector, ordering term and parent tag's place"
+        );
 
         // The typed path opens the data plan's document...
         let opened: Value = cipher
@@ -300,10 +332,112 @@ async fn the_data_plan_and_the_typed_layout_agree() {
     }
 }
 
+/// Under `"null": "sql"` a frame null, or a row with no `profile`, stores
+/// no value for the field, and opens as a null; a JSON `null` beside them
+/// is a document and round-trips as one.
+#[tokio::test]
+async fn a_sql_null_stores_no_document() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = plan();
+    let rows: Vec<BTreeMap<&str, Option<&str>>> = vec![
+        BTreeMap::from([("profile", Some(r#"{"name": "Alice"}"#))]),
+        BTreeMap::from([("profile", None)]),
+        BTreeMap::new(),
+        BTreeMap::from([("profile", Some("null"))]),
+    ];
+    let sealed = record::encrypt_with(&keyset, frame(&rows), &plan, &Eql)
+        .unwrap()
+        .await
+        .unwrap();
+    let CipherText::Sequence(stored) = &sealed else {
+        panic!("a batch is a sequence")
+    };
+    let stores_profile: Vec<bool> = stored
+        .iter()
+        .map(|row| {
+            let CipherText::Map(fields) = row else {
+                panic!("a row is a map")
+            };
+            fields.iter().any(|(name, _)| name == "profile")
+        })
+        .collect();
+    assert_eq!(stores_profile, [true, false, false, true]);
+    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &Eql)
+        .unwrap()
+        .await
+        .unwrap();
+    let rows: Vec<BTreeMap<String, Option<serde_bytes_like::Bytes>>> =
+        dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+    let back: Vec<Option<Value>> = rows
+        .iter()
+        .map(|row| {
+            row["profile"]
+                .as_ref()
+                .map(|text| serde_json::from_slice(&text.0).unwrap())
+        })
+        .collect();
+    assert_eq!(
+        back,
+        [
+            Some(json!({"name": "Alice"})),
+            None,
+            None,
+            Some(Value::Null)
+        ]
+    );
+}
+
+/// A document sealed for one column does not open as another's: the data
+/// plan opens `JsonSearch` under the field's own column, and a document
+/// whose envelope names another is refused before any key is retrieved.
+#[tokio::test]
+async fn a_document_does_not_open_under_another_column() {
+    let (cipher, calls) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let text = documents()[0].to_string();
+    let sealed = record::encrypt_with(
+        &keyset,
+        frame(BTreeMap::from([("profile", text.as_str())])),
+        &plan(),
+        &Eql,
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    let other = record::plan_with(
+        &dynamic::frame::serde::to_vec(&json!({
+            "profile": {
+                "context": ["users", "other"],
+                "type": "json",
+                "null": "sql",
+                "target": {
+                    "name": "JsonSearch",
+                    "options": {"ordered": ["$.age", "$.visits[*].at"]}
+                }
+            }
+        }))
+        .unwrap(),
+        &Eql,
+    )
+    .unwrap();
+    calls.lock().unwrap().retrieve.clear();
+    let refused = record::decrypt_with(Scope::Client(&cipher), sealed, &other, None, &Eql)
+        .unwrap()
+        .await;
+    assert!(
+        matches!(refused, Err(stack_encrypt::Error::ContextMismatch { .. })),
+        "{:?}",
+        refused.map(drop)
+    );
+    assert!(
+        calls.lock().unwrap().retrieve.is_empty(),
+        "refused before any key is retrieved"
+    );
+}
+
 /// Text that is not a document is refused when the record is read, before
 /// any key is requested, naming the field and what was wrong by its code.
-/// A frame null is not a JSON null: under `"null": "sql"` it stores
-/// nothing.
 #[tokio::test]
 async fn text_that_is_not_a_document_is_refused_before_any_key() {
     let (cipher, calls) = common::cipher().await;
@@ -393,6 +527,13 @@ fn one(term: &dynamic::QueryTerm) -> Value {
     serde_json::from_slice(bytes).unwrap()
 }
 
+/// A containment or equality operand, read back as the engine's
+/// `JsonQuery`, which compares as sets: each derivation sends its selector
+/// set in a random order of its own.
+fn containment(operand: Value) -> JsonQuery {
+    serde_json::from_value(operand).unwrap()
+}
+
 /// The operators a document field answers, with the input each takes:
 /// the orderings at a path only when the field orders a path.
 #[test]
@@ -451,7 +592,8 @@ fn a_document_field_answers_the_json_operators() {
 }
 
 /// Every operand the data path derives is the typed chain's, in the EQL
-/// wire form, bound as the domain the target names for it.
+/// wire form, bound as the domain the target names for it. A containment
+/// or equality operand is the same selector set, in its own random order.
 #[tokio::test]
 async fn every_operand_is_the_typed_chains() {
     use stack_encrypt::op;
@@ -459,32 +601,32 @@ async fn every_operand_is_the_typed_chains() {
     let keyset = cipher.default_keyset();
     let plan = plan();
     let typed = typed_plan();
-    let needle = json!({"visits": [{"at": 3}], "name": "Alice"});
+    let document = json!({"visits": [{"at": 3}], "name": "Alice"});
 
     for (operator, typed_op) in [("contains", true), ("contained_by", false)] {
         let term = data_term(
             &keyset,
             &plan,
             operator,
-            &[("json", json!(needle.to_string()))],
+            &[("json", json!(document.to_string()))],
         )
         .await;
         let typed = if typed_op {
             cipher
-                .query(op::Contains, &needle)
+                .query(op::Contains, &document)
                 .on(&typed)
                 .await
                 .unwrap()
         } else {
             cipher
-                .query(op::ContainedBy, &needle)
+                .query(op::ContainedBy, &document)
                 .on(&typed)
                 .await
                 .unwrap()
         };
         assert_eq!(
-            one(&term),
-            serde_json::to_value(&typed).unwrap(),
+            containment(one(&term)),
+            containment(serde_json::to_value(&typed).unwrap()),
             "{operator}"
         );
         assert_eq!(term.domain(), Some("eql_v4.query_json"));
@@ -503,7 +645,10 @@ async fn every_operand_is_the_typed_chains() {
         .on(&typed)
         .await
         .unwrap();
-    assert_eq!(one(&eq), serde_json::to_value(&typed_eq).unwrap());
+    assert_eq!(
+        containment(one(&eq)),
+        containment(serde_json::to_value(&typed_eq).unwrap())
+    );
     assert_eq!(eq.domain(), Some("eql_v4.query_json"));
 
     let lt = data_term(
@@ -742,7 +887,8 @@ fn subtree_rows(doc: &stack_encrypt::json::JsonDocument, tokens: &[String]) -> V
         .collect()
 }
 
-/// The entry `doc -> selector` returns: the first entry carrying it.
+/// The entry `doc -> selector` returns: the first entry carrying it in
+/// stored order.
 fn extracted_row(doc: &stack_encrypt::json::JsonDocument, selector: &str) -> Option<String> {
     use base64::Engine;
     let selector: [u8; 16] = base64::engine::general_purpose::STANDARD
@@ -854,6 +1000,27 @@ async fn reads_open_against_the_request_that_prepared_them() {
         ages,
         [vec![json!(34)], vec![]],
         "absence is no value, not null"
+    );
+
+    // `->` on a container with members returns its entry alone, which
+    // commits to children the read does not return: it does not open, and
+    // the refusal names that cause and an altered entry, claiming neither.
+    // A container is read with `subtree`.
+    let visits = data_term(&keyset, &plan, "selector", &[("path", json!("$.visits"))]).await;
+    let dynamic::Operand::Text(visits) = visits.operand() else {
+        panic!()
+    };
+    let container = open(
+        &keyset,
+        &plan,
+        json!({"operation": "selector", "path": "$.visits"}),
+        vec![extracted_row(&stored[0], visits).into_iter().collect()],
+    )
+    .await;
+    assert!(
+        matches!(container, Err(stack_encrypt::Error::JsonNotALeaf)),
+        "{:?}",
+        container.err()
     );
 
     // A wildcard read: every element's `at` below the bound, per row.

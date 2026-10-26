@@ -1,12 +1,12 @@
 //! The query terms of the JSON index, and how the operators reach it.
 //!
-//! A containment needle is the **element-nested projection** of the
-//! needle's terms: the selector pairs `{s, vs}` of every node, grouped by
-//! the array element they sit in. A stored document carries its own
-//! projection, built the same way, as `q`, which the server reads, and
-//! native `jsonb @>` over the two projections is exact containment: each needle element has to fit inside
-//! one stored element, which is PostgreSQL's own rule for arrays. The
-//! design's "The preferred form" records why no re-check is needed.
+//! A containment query sends the [`JsonSelectorSet`] of the document it
+//! asks about: the selector pairs `{s, vs}` of every node, grouped by the
+//! array element they sit in. A stored document carries its own, built the
+//! same way, as `q`, which the server reads, and native `jsonb @>` over the
+//! two sets is exact containment: each element of the query's document has
+//! to fit inside one stored element, which is PostgreSQL's own rule for
+//! arrays.
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use serde_json::Value;
 
 use super::derive::{JsonTerms, Selectors, TermNode};
 use super::path::JsonPath;
+use super::plain::PlainJson;
 use super::{base64, JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::op::{
     Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
@@ -22,34 +23,108 @@ use crate::op::{
 use crate::sem::{RangeQuery, TermError};
 use crate::target::{DeclaredContext, Index, Json, Owned, Pending};
 use crate::{Error, KeysetCipher, Label, NonEmpty};
+use vitaminc_protected::{Choice, Controlled, OpaqueDebug, Protected, TimingSafeEq};
 
-/// One selector pair of a projection.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One node's selector pair: its path selector `s` and its value selector
+/// `vs`. Ordered, so a set can be sorted into one spelling.
+#[derive(Clone, Copy, TimingSafeEq, PartialOrd, Ord)]
 struct Pair16 {
     s: Tag,
     vs: Tag,
 }
 
-/// The element-nested projection of a document: the selector pairs that
-/// sit outside any array element, and one nested projection per array
-/// element that is a container. What a stored document carries as `q`,
-/// which the server reads (`json_tree_query`), and what a containment
-/// needle is.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub struct JsonProjection {
+/// The selector pairs `{s, vs}` of a document's nodes, grouped by array
+/// element: the pairs of the nodes outside any array element, and one
+/// nested set per array element that is a container. A stored document
+/// carries its own as `q`, which the server reads (`json_tree_query`), and
+/// a containment query sends the set of the document it asks about.
+///
+/// It holds no plaintext: a selector is a keyed hash of a path, and a value
+/// selector of a path and a value, which is what the database stores. It
+/// prints opaquely all the same, since the pairs are derived from the
+/// document's keys and values.
+///
+/// Equality is as sets, which is how `jsonb @>` reads one: two sets are
+/// equal when they hold the same pairs in the same groups, whatever order
+/// their lists are in. A stored `q` is shuffled, so two seals of one
+/// document carry equal sets in different orders. The comparison is
+/// constant-time in the pairs ([`TimingSafeEq`]); the sort that puts both
+/// sides in one spelling first depends on the order of the pairs, which
+/// the database holds.
+#[derive(Clone, Default, OpaqueDebug)]
+pub struct JsonSelectorSet {
     sv: Vec<Pair16>,
-    el: Vec<JsonProjection>,
+    el: Vec<JsonSelectorSet>,
 }
 
-impl JsonProjection {
-    /// `jsonb @>` over two projections: every needle pair is some pair of
-    /// this projection, and every needle element fits inside some element
-    /// of it, recursively. What the server computes natively over the two
-    /// projections; here so a caller can decide containment over documents
+impl TimingSafeEq for JsonSelectorSet {
+    fn ts_eq(&self, other: &Self) -> Choice {
+        let (a, b) = (self.canonical(), other.canonical());
+        let mut equal = Choice::from(u8::from(
+            a.sv.len() == b.sv.len() && a.el.len() == b.el.len(),
+        ));
+        for (x, y) in a.sv.iter().zip(&b.sv) {
+            equal &= x.ts_eq(y);
+        }
+        for (x, y) in a.el.iter().zip(&b.el) {
+            equal &= x.ts_eq(y);
+        }
+        equal
+    }
+}
+
+impl PartialEq for JsonSelectorSet {
+    fn eq(&self, other: &Self) -> bool {
+        bool::from(self.ts_eq(other))
+    }
+}
+impl std::cmp::Eq for JsonSelectorSet {}
+
+impl JsonSelectorSet {
+    /// This set with every list sorted, recursively: one spelling per set
+    /// of pairs and groups.
+    fn canonical(&self) -> Self {
+        let mut sv = self.sv.clone();
+        sv.sort_unstable();
+        let mut el: Vec<Self> = self.el.iter().map(Self::canonical).collect();
+        el.sort_unstable_by(Self::cmp_canonical);
+        Self { sv, el }
+    }
+
+    /// The order of two sets already in [`canonical`](Self::canonical)
+    /// form: by their pairs, then by their groups in turn. A sort key, not a
+    /// comparison of secrets.
+    fn cmp_canonical(a: &Self, b: &Self) -> std::cmp::Ordering {
+        a.sv.cmp(&b.sv).then_with(|| {
+            a.el.iter()
+                .zip(&b.el)
+                .map(|(x, y)| Self::cmp_canonical(x, y))
+                .find(|o| o.is_ne())
+                .unwrap_or_else(|| a.el.len().cmp(&b.el.len()))
+        })
+    }
+
+    /// Put the pairs of every group, and the groups of every element list,
+    /// in a uniformly random order ([`shuffle`](super::shuffle::shuffle)).
+    /// The server reads `q` as sets (`jsonb @>` over `sv` and `el`), so the
+    /// order changes no answer, and the stored order says nothing of the
+    /// document's.
+    pub(crate) fn shuffle(&mut self, rng: &mut vitaminc::random::SafeRand) {
+        super::shuffle::shuffle(&mut self.sv, rng);
+        super::shuffle::shuffle(&mut self.el, rng);
+        for group in &mut self.el {
+            group.shuffle(rng);
+        }
+    }
+
+    /// `jsonb @>` over two sets: every pair of `other` is some pair of this
+    /// set, and every element group of `other` fits inside some element
+    /// group of it, recursively. What the server computes natively over
+    /// the two sets; here so a caller can decide containment over documents
     /// it holds, with no database.
-    pub fn contains(&self, needle: &JsonProjection) -> bool {
-        needle.sv.iter().all(|pair| self.sv.contains(pair))
-            && needle
+    pub fn contains(&self, other: &JsonSelectorSet) -> bool {
+        other.sv.iter().all(|pair| self.sv.contains(pair))
+            && other
                 .el
                 .iter()
                 .all(|group| self.el.iter().any(|mine| mine.contains(group)))
@@ -57,58 +132,69 @@ impl JsonProjection {
 }
 
 /// The query term of [`Contains`], [`ContainedBy`] and `AtPath<Eq>`: the
-/// element-nested projection of the needle's selectors, and, for a needle
-/// whose root is a scalar, the alternative projection that matches a
+/// [`JsonSelectorSet`] of the document the query asks about, and, for a
+/// document whose root is a scalar, the alternative set that matches a
 /// stored root array holding it. Serializes to the `query_json`
 /// operand: `{"sv": [{"s": "…", "vs": "…"}, …], "el": [{"sv": …, "el": …},
 /// …], "alt": {…}}`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The set is sent in a random order of its own, drawn when the terms were
+/// derived, as a stored
+/// `q`'s order is drawn when its document is sealed: every pair list and
+/// element-group list shuffled, recursively. `jsonb @>` is set containment
+/// over arrays, so the order changes no answer, and a query shows no more
+/// of the order of its keys than a stored row does. Two derivations of one
+/// value therefore serialize differently and compare equal (equality is as
+/// sets).
+#[derive(Clone, OpaqueDebug, PartialEq, Eq)]
 pub struct JsonQuery {
-    group: JsonProjection,
-    alt: Option<JsonProjection>,
+    selectors: JsonSelectorSet,
+    alt: Option<JsonSelectorSet>,
 }
 
 impl JsonQuery {
-    /// The needle of an accessor: the projection of the document that holds
-    /// the value at the path, with no `alt`. The alternative matches a root
-    /// array that holds a root scalar, which is containment; at a path,
-    /// `("$", 1)` asks for the scalar `1`, not for an array holding it.
-    pub(crate) fn at_path(terms: &JsonTerms) -> Self {
+    /// The query of an accessor: the selector set of the document that
+    /// holds the value at the path, with no `alt`. The alternative matches
+    /// a root array that holds a root scalar, which is containment; at a
+    /// path, `("$", 1)` asks for the scalar `1`, not for an array holding
+    /// it.
+    pub(crate) fn at_path(terms: JsonTerms) -> Self {
         Self {
-            group: group_of(terms.nodes(), None),
+            selectors: terms.into_query_selectors(),
             alt: None,
         }
     }
 
-    pub(crate) fn of_terms(terms: &JsonTerms) -> Self {
-        let alt = terms.alt().map(|(s, vs)| JsonProjection {
+    pub(crate) fn of_terms(terms: JsonTerms) -> Self {
+        let alt = terms.alt().map(|(s, vs)| JsonSelectorSet {
             sv: vec![Pair16 { s, vs }],
             el: Vec::new(),
         });
         Self {
-            group: group_of(terms.nodes(), None),
+            selectors: terms.into_query_selectors(),
             alt,
         }
     }
 
-    /// The needle's projection: what `<@` compares a stored document's
-    /// projection against.
-    pub fn projection(&self) -> &JsonProjection {
-        &self.group
+    /// The query's selector set: what `<@` compares a stored document's
+    /// against.
+    pub fn selector_set(&self) -> &JsonSelectorSet {
+        &self.selectors
     }
 
-    /// Whether a stored document's projection contains this needle, as the
-    /// server decides `@>`: containment of the needle's projection, or of
-    /// its alternative for a root scalar against a root array.
-    pub fn matches(&self, stored: &JsonProjection) -> bool {
-        stored.contains(&self.group) || self.alt.as_ref().is_some_and(|alt| stored.contains(alt))
+    /// Whether a stored document's selector set contains this query's, as
+    /// the server decides `@>`: containment of the query's set, or of its
+    /// alternative for a root scalar against a root array.
+    pub fn matches(&self, stored: &JsonSelectorSet) -> bool {
+        stored.contains(&self.selectors)
+            || self.alt.as_ref().is_some_and(|alt| stored.contains(alt))
     }
 }
 
-/// The group of the nodes that sit directly in `parent` (`None` is the top
-/// level), with the container elements in it nested as groups. What a
-/// needle is, and what a document writes to `q` when it is sealed.
-pub(crate) fn group_of(nodes: &[TermNode], parent: Option<usize>) -> JsonProjection {
+/// The selector set of the nodes that sit directly in `parent` (`None` is
+/// the top level), with the container elements in it nested as groups.
+/// What a query sends, and what a document writes to `q` when it is sealed.
+pub(crate) fn group_of(nodes: &[TermNode], parent: Option<usize>) -> JsonSelectorSet {
     let belongs = |index: usize, node: &TermNode| {
         if node.container_element {
             Some(index)
@@ -116,7 +202,7 @@ pub(crate) fn group_of(nodes: &[TermNode], parent: Option<usize>) -> JsonProject
             node.element
         }
     };
-    JsonProjection {
+    JsonSelectorSet {
         sv: nodes
             .iter()
             .enumerate()
@@ -138,7 +224,7 @@ struct PairWire {
     vs: String,
 }
 
-/// One group, as a needle or a stored document's `q` spells it.
+/// One group, as a query or a stored document's `q` spells it.
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct GroupWire {
     sv: Vec<PairWire>,
@@ -153,8 +239,8 @@ struct QueryWire {
     alt: Option<GroupWire>,
 }
 
-impl From<&JsonProjection> for GroupWire {
-    fn from(group: &JsonProjection) -> Self {
+impl From<&JsonSelectorSet> for GroupWire {
+    fn from(group: &JsonSelectorSet) -> Self {
         Self {
             sv: group
                 .sv
@@ -169,21 +255,21 @@ impl From<&JsonProjection> for GroupWire {
     }
 }
 
-/// A projection serializes as a stored `q` and a needle do: `{"sv": [{"s",
-/// "vs"}, …], "el": [group, …]}`.
-impl Serialize for JsonProjection {
+/// A selector set serializes as a stored `q` and a query do: `{"sv":
+/// [{"s", "vs"}, …], "el": [group, …]}`.
+impl Serialize for JsonSelectorSet {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         GroupWire::from(self).serialize(s)
     }
 }
 
-impl<'de> Deserialize<'de> for JsonProjection {
+impl<'de> Deserialize<'de> for JsonSelectorSet {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        JsonProjection::try_from(GroupWire::deserialize(d)?).map_err(serde::de::Error::custom)
+        JsonSelectorSet::try_from(GroupWire::deserialize(d)?).map_err(serde::de::Error::custom)
     }
 }
 
-impl TryFrom<GroupWire> for JsonProjection {
+impl TryFrom<GroupWire> for JsonSelectorSet {
     type Error = super::WireError;
     fn try_from(w: GroupWire) -> Result<Self, Self::Error> {
         let tag = |text: &str| {
@@ -203,7 +289,7 @@ impl TryFrom<GroupWire> for JsonProjection {
             el: w
                 .el
                 .into_iter()
-                .map(JsonProjection::try_from)
+                .map(JsonSelectorSet::try_from)
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -212,7 +298,7 @@ impl TryFrom<GroupWire> for JsonProjection {
 impl Serialize for JsonQuery {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         QueryWire {
-            group: GroupWire::from(&self.group),
+            group: GroupWire::from(&self.selectors),
             alt: self.alt.as_ref().map(GroupWire::from),
         }
         .serialize(s)
@@ -223,10 +309,10 @@ impl<'de> Deserialize<'de> for JsonQuery {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let wire = QueryWire::deserialize(d)?;
         Ok(Self {
-            group: JsonProjection::try_from(wire.group).map_err(serde::de::Error::custom)?,
+            selectors: JsonSelectorSet::try_from(wire.group).map_err(serde::de::Error::custom)?,
             alt: wire
                 .alt
-                .map(JsonProjection::try_from)
+                .map(JsonSelectorSet::try_from)
                 .transpose()
                 .map_err(serde::de::Error::custom)?,
         })
@@ -484,7 +570,7 @@ impl Serialize for JsonSubtreeKey {
 }
 
 /// The terms of an accessor's input: the path it was asked at, and the
-/// index's terms of the needle that holds the value there. What
+/// index's terms of the document that holds the value there. What
 /// [`Input<Pathed<A>>`](Input) derives, and what the JSON index's
 /// [`Supports`] impls build an accessor's query from.
 #[derive(Clone, Debug)]
@@ -499,7 +585,8 @@ impl<T> AtPathTerms<T> {
         &self.path
     }
 
-    /// The terms of the needle, or of both needles for a pair of bounds.
+    /// The terms of the document holding the value, or of both documents
+    /// for a pair of bounds.
     pub fn terms(&self) -> &T {
         &self.terms
     }
@@ -518,8 +605,8 @@ fn parse_path(text: &str) -> Result<JsonPath, Error> {
 
 /// A path and a value: the input of `AtPath<Eq>` and the single-bound
 /// orderings. The index is declared over the document, so the plaintext
-/// is a [`Value`], and the term is derived over the needle that holds the
-/// value at the path.
+/// is a [`Value`], and the term is derived over the document that holds
+/// the value at the path.
 impl<P, V> Input<Pathed<One>> for (P, V)
 where
     P: AsRef<str> + 'static,
@@ -544,11 +631,11 @@ where
             Ok(path) => path,
             Err(error) => return Pending::failed(keyset, error),
         };
-        let needle = path.needle(value.into());
+        let holding = path.holding(value.into());
         keyset
             .run(
                 index.operation::<K, Owned>().under(NonEmpty::from(label)),
-                needle,
+                holding,
                 extend,
             )
             .map(move |terms| AtPathTerms { path, terms })
@@ -556,7 +643,7 @@ where
 }
 
 /// A path and a pair of bounds: the input of `AtPath<Between>`. Both
-/// needles derive under the one label, settled together.
+/// documents' terms derive under the one label, settled together.
 impl<P, V> Input<Pathed<Pair>> for (P, (V, V))
 where
     P: AsRef<str> + 'static,
@@ -585,12 +672,12 @@ where
             index
                 .operation::<K, Owned>()
                 .under(NonEmpty::from(label.clone())),
-            path.needle(lo.into()),
+            path.holding(lo.into()),
             extend.clone(),
         );
         let hi = keyset.run(
             index.operation::<K, Owned>().under(NonEmpty::from(label)),
-            path.needle(hi.into()),
+            path.holding(hi.into()),
             extend,
         );
         lo.zip(hi).map(move |terms| AtPathTerms { path, terms })
@@ -609,8 +696,8 @@ where
 /// [`json_document`]: crate::target::json_document
 impl LabelledTarget for JsonDocument {}
 
-/// Containment, both ways: the needle's projection, which the SQL compares
-/// against the stored projection in the direction the operator says.
+/// Containment, both ways: the query's selector set, which the SQL compares
+/// against the stored set in the direction the operator says.
 macro_rules! containment {
     ($($op:ident),+ $(,)?) => {$(
         impl Supports<$op, Value> for Json {
@@ -621,7 +708,7 @@ macro_rules! containment {
             }
             fn verifier(&self, _: &Value) {}
             fn query((): (), terms: JsonTerms, _: QueryToken) -> JsonQuery {
-                JsonQuery::of_terms(&terms)
+                JsonQuery::of_terms(terms)
             }
         }
         impl Answers<$op, Value> for JsonDocument {
@@ -634,8 +721,8 @@ macro_rules! containment {
 }
 containment!(Contains, ContainedBy);
 
-/// Equality at a path: the needle that holds the value at the path,
-/// projected, with no `alt`. For a scalar, containment of that needle is
+/// Equality at a path: the selector set of the document that holds the
+/// value at the path, with no `alt`. For a scalar, containment of that set is
 /// equality of the value at the path. For an object or an array it would be
 /// containment (`{"x": 1}` matching `{"x": 1, "y": 2}`), so a container is
 /// refused with [`TermError::JsonValueNotScalar`] when the query is
@@ -650,11 +737,11 @@ where
     type Verifier = ();
     fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
         let _ = parse_path(path.as_ref())?;
-        scalar(&value.clone().into())
+        scalar(&copy_of(value))
     }
     fn verifier(&self, _: &(P, V)) {}
     fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonQuery {
-        JsonQuery::at_path(&terms.terms)
+        JsonQuery::at_path(terms.terms)
     }
 }
 impl<P, V> Answers<AtPath<Eq>, (P, V)> for JsonDocument
@@ -672,8 +759,14 @@ where
     type Via = Json;
 }
 
+/// The copy of the caller's plaintext a check reads: wiped when it drops.
+fn copy_of<V: Into<Value> + Clone>(value: &V) -> Protected<PlainJson> {
+    PlainJson::protect(value.clone().into())
+}
+
 /// Whether `value` is a scalar, which equality at a path compares.
-fn scalar(value: &Value) -> Result<(), Error> {
+fn scalar(value: &Protected<PlainJson>) -> Result<(), Error> {
+    let value = value.risky_ref().value();
     match value {
         Value::Object(_) | Value::Array(_) => Err(TermError::JsonValueNotScalar.into()),
         _ => Ok(()),
@@ -681,7 +774,8 @@ fn scalar(value: &Value) -> Result<(), Error> {
 }
 
 /// Whether `value` is a leaf the index orders: a number or a string.
-fn ordered(value: &Value) -> Result<(), Error> {
+fn ordered(value: &Protected<PlainJson>) -> Result<(), Error> {
+    let value = value.risky_ref().value();
     match value {
         Value::Number(_) | Value::String(_) => Ok(()),
         _ => Err(TermError::JsonLeafNotOrdered.into()),
@@ -691,8 +785,8 @@ fn ordered(value: &Value) -> Result<(), Error> {
 /// Whether the index orders the leaves at `path`: some path in its
 /// `ordered` option covers it. A path that names a position is refused
 /// first: the comparison extracts by selector, which reads the position as
-/// the wildcard, so it would compare the first element at the path rather
-/// than the one named.
+/// the wildcard, so it would compare an unspecified element at the path
+/// rather than the one named.
 fn orders(index: &Json, path: &JsonPath) -> Result<(), Error> {
     if path.names_a_position() {
         Err(TermError::JsonOrderingAtPosition.into())
@@ -720,7 +814,7 @@ macro_rules! orderings {
             fn check(&self, (path, value): &(P, V)) -> Result<(), Error> {
                 let path = parse_path(path.as_ref())?;
                 orders(self, &path)?;
-                ordered(&value.clone().into())
+                ordered(&copy_of(value))
             }
             fn verifier(&self, _: &(P, V)) {}
             fn query((): (), terms: AtPathTerms<JsonTerms>, _: QueryToken) -> JsonLeafQuery {
@@ -755,8 +849,8 @@ where
     fn check(&self, (path, (lo, hi)): &(P, (V, V))) -> Result<(), Error> {
         let path = parse_path(path.as_ref())?;
         orders(self, &path)?;
-        ordered(&lo.clone().into())?;
-        ordered(&hi.clone().into())
+        ordered(&copy_of(lo))?;
+        ordered(&copy_of(hi))
     }
     fn verifier(&self, _: &(P, (V, V))) {}
     fn query(
@@ -796,18 +890,72 @@ impl Json {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pair(n: u8) -> Pair16 {
+        Pair16 {
+            s: [n; 16],
+            vs: [n + 100; 16],
+        }
+    }
+
+    /// Selector sets compare as the sets `jsonb @>` reads: the order of
+    /// their lists does not count, their contents and their grouping do.
+    #[test]
+    fn selector_sets_are_equal_as_sets() {
+        let group = |sv: Vec<Pair16>, el: Vec<JsonSelectorSet>| JsonSelectorSet { sv, el };
+        let a = group(
+            vec![pair(1), pair(2)],
+            vec![
+                group(vec![pair(3), pair(4)], vec![]),
+                group(vec![pair(5)], vec![]),
+            ],
+        );
+        let shuffled = group(
+            vec![pair(2), pair(1)],
+            vec![
+                group(vec![pair(5)], vec![]),
+                group(vec![pair(4), pair(3)], vec![]),
+            ],
+        );
+        assert_eq!(a, shuffled, "the same pairs in the same groups");
+        let regrouped = group(
+            vec![pair(1), pair(2)],
+            vec![
+                group(vec![pair(3)], vec![]),
+                group(vec![pair(4), pair(5)], vec![]),
+            ],
+        );
+        assert_ne!(a, regrouped, "the grouping counts");
+        let fewer = group(vec![pair(1)], a.el.clone());
+        assert_ne!(a, fewer, "a pair fewer");
+        let more_groups = group(a.sv.clone(), {
+            let mut el = a.el.clone();
+            el.push(JsonSelectorSet::default());
+            el
+        });
+        assert_ne!(a, more_groups, "a group more");
+        let nested = group(
+            vec![],
+            vec![group(vec![], vec![group(vec![pair(1)], vec![])])],
+        );
+        assert_ne!(
+            nested,
+            group(vec![], vec![group(vec![pair(1)], vec![])]),
+            "depth counts"
+        );
+    }
     use serde_json::json;
 
     #[test]
-    fn a_query_serializes_as_the_needle_operand() {
+    fn a_query_serializes_as_the_query_operand() {
         let pair = |b: u8| Pair16 {
             s: [b; 16],
             vs: [b + 1; 16],
         };
         let query = JsonQuery {
-            group: JsonProjection {
+            selectors: JsonSelectorSet {
                 sv: vec![pair(1)],
-                el: vec![JsonProjection {
+                el: vec![JsonSelectorSet {
                     sv: vec![pair(3)],
                     el: vec![],
                 }],
@@ -892,13 +1040,13 @@ mod tests {
     }
 
     #[test]
-    fn a_projection_round_trips_through_its_wire_form() {
-        let projection = JsonProjection {
+    fn a_selector_set_round_trips_through_its_wire_form() {
+        let set = JsonSelectorSet {
             sv: vec![Pair16 {
                 s: [1; 16],
                 vs: [2; 16],
             }],
-            el: vec![JsonProjection {
+            el: vec![JsonSelectorSet {
                 sv: vec![Pair16 {
                     s: [3; 16],
                     vs: [4; 16],
@@ -906,7 +1054,7 @@ mod tests {
                 el: Vec::new(),
             }],
         };
-        let wire = serde_json::to_value(&projection).unwrap();
+        let wire = serde_json::to_value(&set).unwrap();
         assert_eq!(
             wire,
             serde_json::json!({
@@ -914,16 +1062,16 @@ mod tests {
                 "el": [{"sv": [{"s": "AwMDAwMDAwMDAwMDAwMDAw==", "vs": "BAQEBAQEBAQEBAQEBAQEBA=="}], "el": []}],
             })
         );
-        let back: JsonProjection = serde_json::from_value(wire).unwrap();
-        assert_eq!(back, projection);
+        let back: JsonSelectorSet = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, set);
         assert!(
-            serde_json::from_value::<JsonProjection>(serde_json::json!({"sv": [], "el": []}))
+            serde_json::from_value::<JsonSelectorSet>(serde_json::json!({"sv": [], "el": []}))
                 .unwrap()
                 .el
                 .is_empty()
         );
         assert!(
-            serde_json::from_value::<JsonProjection>(
+            serde_json::from_value::<JsonSelectorSet>(
                 serde_json::json!({"sv": [{"s": "zz", "vs": "00"}], "el": []})
             )
             .is_err(),
@@ -937,28 +1085,28 @@ mod tests {
             s: [b; 16],
             vs: [b; 16],
         };
-        let element = |pairs: &[u8]| JsonProjection {
+        let element = |pairs: &[u8]| JsonSelectorSet {
             sv: pairs.iter().map(|&b| pair(b)).collect(),
             el: vec![],
         };
-        let stored = JsonProjection {
+        let stored = JsonSelectorSet {
             sv: vec![pair(0)],
             el: vec![element(&[1, 5]), element(&[7, 2])],
         };
         // The issue's example: 1 and 2 sit in different elements.
-        assert!(!stored.contains(&JsonProjection {
+        assert!(!stored.contains(&JsonSelectorSet {
             sv: vec![],
             el: vec![element(&[1, 2])],
         }));
-        assert!(stored.contains(&JsonProjection {
+        assert!(stored.contains(&JsonSelectorSet {
             sv: vec![],
             el: vec![element(&[1, 5])],
         }));
-        assert!(stored.contains(&JsonProjection {
+        assert!(stored.contains(&JsonSelectorSet {
             sv: vec![pair(0)],
             el: vec![element(&[1]), element(&[2])],
         }));
-        assert!(!stored.contains(&JsonProjection {
+        assert!(!stored.contains(&JsonSelectorSet {
             sv: vec![pair(9)],
             el: vec![],
         }));
