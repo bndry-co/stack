@@ -294,11 +294,11 @@ mod tests {
     fn a_failed_keyset_load_maps_as_its_cause() {
         let load = stack_encrypt::Error::KeysetLoad {
             keyset_id: uuid::Uuid::from_u128(1),
-            source: std::sync::Arc::new(stack_encrypt::Error::Kms(
-                stack_kms::Error::LoadKeyset(stack_kms::LoadKeysetError::Unauthorized(vitur(
+            source: std::sync::Arc::new(stack_encrypt::Error::Kms(stack_kms::Error::LoadKeyset(
+                stack_kms::LoadKeysetError::Unauthorized(vitur(
                     ViturRequestErrorKind::Unauthorized,
-                ))),
-            )),
+                )),
+            ))),
         };
         assert_eq!(status_for_error(&load), STATUS_KMS_UNAUTHORIZED);
     }
