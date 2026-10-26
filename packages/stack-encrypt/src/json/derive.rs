@@ -14,6 +14,7 @@ use std::sync::Arc;
 use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+use vitaminc::random::SafeRand;
 use vitaminc_aead::{Cipher, Context, IntoAad, IntoContext, LocalCipherText};
 use vitaminc_encrypt::{Aes256Cipher, Key as AesKey};
 use vitaminc_hmac::HmacSha256Prf;
@@ -21,6 +22,7 @@ use vitaminc_prf::{BlockVisitor, IntoPrfContext, PrfValue};
 use vitaminc_protected::{AsProtectedRef, Controlled, Protected};
 
 use super::cascade::{self, ChildrenDigest};
+use super::order;
 use super::path::{key_step_len, push_key, JsonPath, Segment, ARRAY_STEP};
 use super::plain::{
     insert_member, protected_array, protected_object, push_element, read_protected, take_protected,
@@ -783,12 +785,16 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     };
     let keyset_id = cipher.keyset_id();
     let sealed_root = options.sealed_root;
+    let order = match cipher.cipher().json_order().document() {
+        Ok(order) => order,
+        Err(error) => return Pending::failed(cipher, error),
+    };
     Pending::request(
         cipher,
         vec![Request::generate_under(descriptor)],
         move |responses| {
             let key = responses.next_generated_key()?;
-            seal(walked, whole, keyset_id, key, &aad, sealed_root)
+            seal(walked, whole, keyset_id, key, &aad, sealed_root, order)
         },
     )
 }
@@ -906,6 +912,9 @@ fn sealed_root_plaintext(value: &Value) -> Result<Protected<Vec<u8>>, serde_json
     })
 }
 
+/// Seal the walked nodes under `key`, from the leaves up, each at the slot
+/// `order` draws for it ([`order::slots`]), and shuffle the projection with
+/// the same generator.
 fn seal(
     walked: Walked,
     mut whole: Option<Protected<Vec<u8>>>,
@@ -913,6 +922,7 @@ fn seal(
     key: stack_kms::DataKeyWithTag,
     aad: &Context<'_>,
     sealed_root: bool,
+    mut order: SafeRand,
 ) -> Result<JsonDocument, Error> {
     if key.tag.len() > usize::from(u16::MAX) {
         return Err(Error::Other(
@@ -928,6 +938,8 @@ fn seal(
     // ordinal. Under the sealed root its members chain from nothing, so the
     // root commits to no children and opens under the empty digest.
     let children = cascade::children_of(nodes.iter().map(|n| n.parent.zip(n.ordinal)));
+    // Where each node is stored, by its index in the walk; the AAD binds it.
+    let slots = order::slots(nodes.len(), &mut order);
     let mut sealed: Vec<Vec<u8>> = vec![Vec::new(); nodes.len()];
     // From the leaves up: the walk is pre-order, so every descendant of a
     // node has a larger index, and the reverse order seals a node's children
@@ -944,18 +956,19 @@ fn seal(
         let c = cipher
             .seal(
                 plaintext,
-                &entry_aad(keyset_id, aad, &tag, &nodes[i].s, i as u64, &digest),
+                &entry_aad(keyset_id, aad, &tag, &nodes[i].s, slots[i] as u64, &digest),
             )
             .map_err(|_| Error::Aead)?;
         sealed[i] = c.as_ref().to_vec();
     }
-    let mut entries = Vec::with_capacity(nodes.len());
-    for (node, c) in nodes.iter().zip(sealed) {
+    let mut entries: Vec<Option<JsonEntry>> =
+        std::iter::repeat_with(|| None).take(nodes.len()).collect();
+    for ((node, c), slot) in nodes.iter().zip(sealed).zip(&slots) {
         let p = node
             .parent
             .zip(node.ordinal)
             .map(|(parent, o)| parent_tag(&iv, &nodes[parent].token, o));
-        entries.push(JsonEntry {
+        entries[*slot] = Some(JsonEntry {
             s: node.s,
             c,
             x: self_tag(&iv, &node.token),
@@ -963,7 +976,10 @@ fn seal(
             op: node.op.clone(),
         });
     }
-    let projection = super::query::group_of(nodes, None);
+    // `slots` is a permutation, so every slot was filled once.
+    let entries: Vec<JsonEntry> = entries.into_iter().flatten().collect();
+    let mut projection = super::query::group_of(nodes, None);
+    projection.shuffle(&mut order);
     Ok(JsonDocument::new(
         JsonHeader::new(keyset_id, iv, tag, sealed_root),
         entries,
@@ -1273,6 +1289,16 @@ fn wrong(expected: &'static str) -> Error {
 /// with [`Error::Aead`], and its value opens through [`JsonSubtree`]. An
 /// empty container opens and holds no value of its own:
 /// [`Error::OpenedType`].
+///
+/// At a wildcard path (a path with an array step, whose elements all share
+/// one selector, at any depth: every element under `$.a[*]`) the entry `->`
+/// returns is the first the server finds carrying the selector in the
+/// stored order, which is random per document: an unspecified element of
+/// the row, the same one every time the row is read, but not element `0`.
+/// The same holds for `->>` and for ordering by `eql_v4.ord_term(col ->
+/// sel)`. Every element of a wildcard path is reached through all its
+/// matches instead (`json_tree_path_query`, or a [`JsonSubtree`] read,
+/// which opens them in document order by their labels).
 impl DecryptInto<Value> for JsonExtracted {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
@@ -2775,6 +2801,7 @@ mod tests {
                 key,
                 &context,
                 true,
+                SafeRand::from_controlled_seed(Protected::new([0; 32])),
             )
         };
         let longest = usize::from(u16::MAX);

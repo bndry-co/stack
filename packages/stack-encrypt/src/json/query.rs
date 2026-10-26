@@ -42,6 +42,19 @@ pub struct JsonProjection {
 }
 
 impl JsonProjection {
+    /// Put the pairs of every group, and the groups of every element list,
+    /// in a uniformly random order ([`order::shuffle`](super::order::shuffle)).
+    /// The server reads `q` as sets (`jsonb @>` over `sv` and `el`), so the
+    /// order changes no answer; shuffled, it no longer restates the
+    /// document's depth-first order.
+    pub(crate) fn shuffle(&mut self, rng: &mut vitaminc::random::SafeRand) {
+        super::order::shuffle(&mut self.sv, rng);
+        super::order::shuffle(&mut self.el, rng);
+        for group in &mut self.el {
+            group.shuffle(rng);
+        }
+    }
+
     /// `jsonb @>` over two projections: every needle pair is some pair of
     /// this projection, and every needle element fits inside some element
     /// of it, recursively. What the server computes natively over the two

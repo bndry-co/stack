@@ -120,6 +120,7 @@ use crate::target::{DecryptField, DecryptInto, Decryptable, Decryption};
 
 mod cascade;
 mod derive;
+pub(crate) mod order;
 mod path;
 mod plain;
 mod query;
@@ -419,7 +420,8 @@ impl JsonEntry {
 }
 
 /// A stored JSON document: its [`JsonHeader`] and its entries, one per
-/// node, in depth-first pre-order with the root first. What
+/// node, in a random order drawn for the document when it was sealed, with
+/// the root first. What
 /// [`json_document`](crate::target::json_document) produces and
 /// [`DecryptInto<Value>`](crate::DecryptInto) opens.
 ///
@@ -441,7 +443,10 @@ impl JsonDocument {
         &self.header
     }
 
-    /// The entries, in depth-first pre-order; the root is first.
+    /// The entries, in their stored order: the root first, the rest in a
+    /// uniformly random order drawn when the document was sealed, which says
+    /// nothing of the tree. A node's children are found by the chain
+    /// ([`children`](Self::children)), not by position.
     pub fn entries(&self) -> &[JsonEntry] {
         &self.entries
     }
@@ -553,8 +558,9 @@ impl JsonDocument {
         }
     }
 
-    /// The node at ordinal `j` as an extraction returns it: the entry with
-    /// the header beside it, which opens on its own.
+    /// The node stored at slot `j` as an extraction returns it: the entry
+    /// with the header beside it. A scalar or an empty container opens on
+    /// its own; a container with children opens only with its subtree.
     pub fn node(&self, j: usize) -> Option<JsonNode> {
         self.entries.get(j).map(|entry| JsonNode {
             entry: entry.clone(),

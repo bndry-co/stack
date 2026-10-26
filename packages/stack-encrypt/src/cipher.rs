@@ -531,6 +531,9 @@ pub struct StackCipher<K> {
     /// Every other keyset this cipher has selected, least recently used
     /// first out. See [`keyset`](Self::keyset).
     keysets: Mutex<KeysetCache>,
+    /// Where the stored orders of the JSON documents this cipher seals are
+    /// drawn from: fresh entropy per document, outside tests.
+    json_order: crate::json::order::OrderSource,
 }
 
 #[cfg(feature = "http")]
@@ -600,6 +603,11 @@ impl<K> StackCipher<K> {
             Lookup::Hit(state) => Some(state),
             Lookup::Stale(_) | Lookup::Miss(_) => None,
         }
+    }
+
+    /// Where this cipher draws a JSON document's stored order from.
+    pub(crate) fn json_order(&self) -> &crate::json::order::OrderSource {
+        &self.json_order
     }
 
     fn keysets(&self) -> std::sync::MutexGuard<'_, KeysetCache> {
@@ -780,6 +788,7 @@ pub struct StackCipherBuilder<K = FromEnv> {
     kms: K,
     cache_size: NonZeroUsize,
     name_ttl: Duration,
+    json_order_seed: Option<Protected<[u8; 32]>>,
 }
 
 impl StackCipherBuilder<FromEnv> {
@@ -793,6 +802,7 @@ impl StackCipherBuilder<FromEnv> {
             kms: FromEnv,
             cache_size: KeysetCache::DEFAULT_CAPACITY,
             name_ttl: DEFAULT_NAME_TTL,
+            json_order_seed: None,
         }
     }
 }
@@ -827,6 +837,22 @@ impl<K> StackCipherBuilder<K> {
         self.name_ttl = ttl;
         self
     }
+
+    /// Test support: draw the stored order of every JSON document the
+    /// cipher seals from one generator started at `seed`, so that a run
+    /// sealing the same documents in the same sequence stores them in the
+    /// same orders, and a fixture can pin them. What the deterministic key
+    /// source (`kms::DeterministicSource`) is paired with.
+    ///
+    /// Never for data: a document's stored order is drawn from the
+    /// operating system's entropy precisely so that it says nothing, and an
+    /// order that follows from a known seed hides nothing of the document's
+    /// shape (see `json::order`).
+    #[cfg(feature = "test-support")]
+    pub fn json_order_seed(mut self, seed: [u8; 32]) -> Self {
+        self.json_order_seed = Some(Protected::new(seed));
+        self
+    }
 }
 
 impl StackCipherBuilder<FromEnv> {
@@ -842,6 +868,7 @@ impl StackCipherBuilder<FromEnv> {
             kms,
             cache_size: self.cache_size,
             name_ttl: self.name_ttl,
+            json_order_seed: self.json_order_seed,
         }
     }
 
@@ -884,6 +911,11 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
                 Arc::clone(&default),
             )),
             default,
+            json_order: self
+                .json_order_seed
+                .map_or(crate::json::order::OrderSource::Entropy, |seed| {
+                    crate::json::order::OrderSource::controlled(seed)
+                }),
         })
     }
 }
