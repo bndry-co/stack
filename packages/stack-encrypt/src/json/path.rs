@@ -330,9 +330,9 @@ impl JsonPath {
 
     /// The document that holds `value` at this path and nothing else:
     /// `$.a[*].x` with `1` is `{"a": [{"x": 1}]}`. A positional array step
-    /// places the value at element zero, since the needle's selectors do not
-    /// tell positions apart.
-    pub(crate) fn needle(&self, value: serde_json::Value) -> serde_json::Value {
+    /// places the value at element zero, since the selectors of a query do
+    /// not tell positions apart.
+    pub(crate) fn holding(&self, value: serde_json::Value) -> serde_json::Value {
         self.segments
             .iter()
             .rev()
@@ -609,13 +609,13 @@ mod tests {
     }
 
     #[test]
-    fn a_needle_holds_the_value_at_the_path() {
-        let needle = JsonPath::parse("$.a[*].x")
+    fn the_document_holding_a_value_puts_it_at_the_path() {
+        let holding = JsonPath::parse("$.a[*].x")
             .unwrap()
-            .needle(serde_json::json!(1));
-        assert_eq!(needle, serde_json::json!({"a": [{"x": 1}]}));
-        let needle = JsonPath::root().needle(serde_json::json!("v"));
-        assert_eq!(needle, serde_json::json!("v"));
+            .holding(serde_json::json!(1));
+        assert_eq!(holding, serde_json::json!({"a": [{"x": 1}]}));
+        let holding = JsonPath::root().holding(serde_json::json!("v"));
+        assert_eq!(holding, serde_json::json!("v"));
     }
 
     #[test]

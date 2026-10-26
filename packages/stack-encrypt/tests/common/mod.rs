@@ -227,7 +227,7 @@ pub use stack_kms::DeterministicSource;
 
 /// A cipher over [`DeterministicSource`] with `seed`. With the crate's
 /// `test-support` feature, the JSON index's permutations (a document's
-/// stored order, a needle's order) are drawn from a
+/// stored order, the order a query's selectors are sent in) are drawn from a
 /// generator started at the same seed, so they repeat between runs too;
 /// without it they are random per document, as in production.
 pub async fn deterministic_cipher(seed: [u8; 32]) -> StackCipher<DeterministicSource> {

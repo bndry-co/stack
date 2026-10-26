@@ -28,7 +28,7 @@ use super::plain::{
     insert_member, protected_array, protected_object, push_element, read_protected, take_protected,
     PlainJson,
 };
-use super::query::{group_of, JsonProjection, JsonSelector, JsonSubtreeKey, Read};
+use super::query::{group_of, JsonSelector, JsonSelectorSet, JsonSubtreeKey, Read};
 use super::shuffle;
 use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag};
 use crate::keyset::KeysetState;
@@ -215,14 +215,14 @@ pub(crate) struct TermNode {
 pub struct JsonTerms {
     nodes: Vec<TermNode>,
     /// For a document whose root is a scalar: the selector pair the same
-    /// scalar has as an element of a root array, so a containment needle
+    /// scalar has as an element of a root array, so a containment query
     /// can match a stored `["a"]` as `jsonb @>` does.
     alt: Option<(Tag, Tag)>,
-    /// The projection a containment query built from these terms sends,
+    /// The selector set a containment query built from these terms sends,
     /// its pair lists and element groups in a random order drawn when the
     /// terms were derived for a query ([`terms_pending`]). `None` for the
     /// terms a document is sealed from, which no query is built from.
-    needle: Option<JsonProjection>,
+    query_selectors: Option<JsonSelectorSet>,
 }
 
 /// The key names and the tokens are what the terms must not leak, so the
@@ -265,14 +265,15 @@ impl JsonTerms {
         self.alt
     }
 
-    /// The projection a containment query sends: the one drawn when the
+    /// The selector set a containment query sends: the one drawn when the
     /// terms were derived for a query, or, for terms no query was derived
-    /// for, the nodes' projection in the walk's order.
-    pub(crate) fn into_needle(self) -> JsonProjection {
-        self.needle.unwrap_or_else(|| group_of(&self.nodes, None))
+    /// for, the nodes' set in the walk's order.
+    pub(crate) fn into_query_selectors(self) -> JsonSelectorSet {
+        self.query_selectors
+            .unwrap_or_else(|| group_of(&self.nodes, None))
     }
 
-    /// The last node of the walk: in a needle built from one path, the
+    /// The last node of the walk: in a document built from one path, the
     /// leaf the path names.
     pub(crate) fn leaf(&self) -> Option<&TermNode> {
         self.nodes.last()
@@ -614,7 +615,7 @@ fn walk(
         terms: JsonTerms {
             nodes: walker.nodes,
             alt,
-            needle: None,
+            query_selectors: None,
         },
         plain: walker.plain,
     })
@@ -768,9 +769,9 @@ fn shuffled_ordinals<'m>(
 // =============================================================================
 
 /// The one-way terms of `value` under `context`, as the index's operation
-/// derives them for a query: no key is requested. The projection a
+/// derives them for a query: no key is requested. The selector set a
 /// containment query sends is drawn here, in a random order of its own
-/// ([`shuffle`]), so a needle shows no more of the order of its keys than a
+/// ([`shuffle`]), so a query shows no more of the order of its keys than a
 /// stored `q` does; `jsonb @>` reads both as sets, so the order changes no
 /// answer.
 pub(crate) fn terms_pending<'a, K>(
@@ -784,10 +785,10 @@ pub(crate) fn terms_pending<'a, K>(
         .map_err(Error::from)
         .and_then(|walked| {
             let mut rng = cipher.cipher().json_randomness().generator()?;
-            let mut needle = group_of(&walked.terms.nodes, None);
-            needle.shuffle(&mut rng);
+            let mut selectors = group_of(&walked.terms.nodes, None);
+            selectors.shuffle(&mut rng);
             Ok(JsonTerms {
-                needle: Some(needle),
+                query_selectors: Some(selectors),
                 ..walked.terms
             })
         });
@@ -1025,12 +1026,12 @@ fn seal(
     }
     // `slots` is a permutation, so every slot was filled once.
     let entries: Vec<JsonEntry> = entries.into_iter().flatten().collect();
-    let mut projection = group_of(nodes, None);
-    projection.shuffle(&mut rng);
+    let mut selectors = group_of(nodes, None);
+    selectors.shuffle(&mut rng);
     Ok(JsonDocument::new(
         JsonHeader::new(keyset_id, iv, tag, sealed_root),
         entries,
-        projection,
+        selectors,
     ))
 }
 
@@ -2662,28 +2663,28 @@ mod tests {
         }
 
         proptest! {
-            /// A needle sent in a shuffled order matches exactly the stored
-            /// projections the needle in the walk's order matched, stored
+            /// A query sent in a shuffled order matches exactly the stored
+            /// selector sets the query in the walk's order matched, stored
             /// in either order: `jsonb @>` is set containment over arrays.
             #[test]
-            fn a_shuffled_needle_matches_what_the_unshuffled_one_did(
+            fn a_shuffled_query_matches_what_the_unshuffled_one_did(
                 stored in arbitrary_json(),
-                needle in arbitrary_json(),
+                asked in arbitrary_json(),
                 seed in any::<[u8; 32]>(),
             ) {
                 let options = JsonOptions::default();
-                let project = |value: &Value| super::super::super::query::group_of(terms(value, &options).nodes(), None);
+                let selectors = |value: &Value| group_of(terms(value, &options).nodes(), None);
                 let mut rng = SafeRand::from_controlled_seed(Protected::new(seed));
-                let walked = project(&needle);
+                let walked = selectors(&asked);
                 let mut shuffled = walked.clone();
                 shuffled.shuffle(&mut rng);
-                let mut stored_shuffled = project(&stored);
+                let mut stored_shuffled = selectors(&stored);
                 stored_shuffled.shuffle(&mut rng);
-                prop_assert_eq!(&shuffled, &walked, "one needle, as sets");
-                for target in [project(&stored), stored_shuffled] {
+                prop_assert_eq!(&shuffled, &walked, "one query, as sets");
+                for target in [selectors(&stored), stored_shuffled] {
                     prop_assert_eq!(target.contains(&shuffled), target.contains(&walked));
                 }
-                prop_assert!(project(&needle).contains(&shuffled), "a needle contains itself in any order");
+                prop_assert!(selectors(&asked).contains(&shuffled), "a query's set contains itself in any order");
             }
         }
 

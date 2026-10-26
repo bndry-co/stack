@@ -34,11 +34,12 @@
 //!   same OPE term the scalar [`Ope`](crate::target::Ope) index derives,
 //!   keyed by the column. No path is ordered by default.
 //!
-//! Beside the entries the document stores its containment **projection**
-//! `q`: one `(s, vs)` pair per node, `vs` being a PRF of the node's kind
-//! and, for a scalar, its canonical value, bound to `s`, nested by array
-//! element so that PostgreSQL's own `jsonb @>` over two projections is
-//! exact containment. The value selectors live there and nowhere else.
+//! Beside the entries the document stores its **selector set** `q` (the
+//! design's containment projection, [`JsonSelectorSet`]): one `(s, vs)`
+//! pair per node, `vs` being a PRF of the node's kind and, for a scalar,
+//! its canonical value, bound to `s`, nested by array element so that
+//! PostgreSQL's own `jsonb @>` over two sets is exact containment. The
+//! value selectors live there and nowhere else.
 //!
 //! By default the root is **sealed** ([`JsonOptions::sealed_root`]): the root
 //! entry's ciphertext is the whole document and the top-level fields are
@@ -132,7 +133,7 @@ mod shuffle;
 pub use derive::JsonTerms;
 pub use path::{JsonPath, JsonPathError, Segment};
 pub use query::{
-    AtPathTerms, JsonLeafQuery, JsonProjection, JsonQuery, JsonSelector, JsonSubtreeKey,
+    AtPathTerms, JsonLeafQuery, JsonQuery, JsonSelector, JsonSelectorSet, JsonSubtreeKey,
 };
 
 pub(crate) use derive::{seal_pending, terms_pending};
@@ -433,14 +434,14 @@ impl JsonEntry {
 ///
 /// Serializes to the wire form the EQL domain stores: `{"h": "…", "sv":
 /// [{"s": "…", "c": "…", …}, …], "q": {"sv": [{"s", "vs"}, …], "el":
-/// […]}}`, where `q` is the document's containment
-/// [projection](Self::projection); see the [module docs](self#byte-encodings).
+/// […]}}`, where `q` is the document's [selector set](Self::selector_set);
+/// see the [module docs](self#byte-encodings).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "DocumentWire", into = "DocumentWire")]
 pub struct JsonDocument {
     header: JsonHeader,
     entries: Vec<JsonEntry>,
-    projection: JsonProjection,
+    selectors: JsonSelectorSet,
 }
 
 impl JsonDocument {
@@ -457,13 +458,13 @@ impl JsonDocument {
         &self.entries
     }
 
-    /// The document's containment projection: what a [`JsonQuery`] is
-    /// matched against, stored as `q`. Computed from the plaintext when the
+    /// The document's selector set: what a [`JsonQuery`] is matched
+    /// against, stored as `q`. Computed from the plaintext when the
     /// document is sealed and read back as stored: like every search field
     /// it is unauthenticated (only `c` is), and a tampered `q` changes
     /// which rows a containment query returns and nothing else.
-    pub fn projection(&self) -> &JsonProjection {
-        &self.projection
+    pub fn selector_set(&self) -> &JsonSelectorSet {
+        &self.selectors
     }
 
     /// The entry whose self tag is `token`'s, as the server finds the node
@@ -581,12 +582,12 @@ impl JsonDocument {
     pub(crate) fn new(
         header: JsonHeader,
         entries: Vec<JsonEntry>,
-        projection: JsonProjection,
+        selectors: JsonSelectorSet,
     ) -> Self {
         Self {
             header,
             entries,
-            projection,
+            selectors,
         }
     }
 }
@@ -806,7 +807,7 @@ fn unbase85(text: &str) -> Result<Vec<u8>, WireError> {
 #[error("a JSON index wire field does not decode: {0}")]
 pub struct WireError(&'static str);
 
-/// `h`, `sv` and `q`, as stored. All three are required: the projection
+/// `h`, `sv` and `q`, as stored. All three are required: the selector set
 /// `q` is the only place the value selectors live.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -862,7 +863,7 @@ impl From<JsonDocument> for DocumentWire {
         Self {
             h: base64(&doc.header.to_bytes()),
             sv: doc.entries.iter().map(EntryWire::from).collect(),
-            q: query::GroupWire::from(&doc.projection),
+            q: query::GroupWire::from(&doc.selectors),
         }
     }
 }
@@ -877,11 +878,11 @@ impl TryFrom<DocumentWire> for JsonDocument {
             w.sv.into_iter()
                 .map(JsonEntry::try_from)
                 .collect::<Result<_, _>>()?;
-        let projection = JsonProjection::try_from(w.q)?;
+        let selectors = JsonSelectorSet::try_from(w.q)?;
         Ok(Self {
             header,
             entries,
-            projection,
+            selectors,
         })
     }
 }
@@ -1039,7 +1040,7 @@ mod tests {
         let chain = JsonDocument::new(
             JsonHeader::new(Uuid::from_u128(7), iv, vec![], true),
             entries,
-            JsonProjection::default(),
+            JsonSelectorSet::default(),
         );
         let walked = chain.subtree(&[token]);
         assert_eq!(

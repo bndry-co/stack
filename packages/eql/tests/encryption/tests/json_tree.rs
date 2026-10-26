@@ -232,7 +232,7 @@ async fn the_query_operands_are_the_engines_terms_in_the_sql_contract() {
     b.sort_unstable();
     assert_eq!(a, b, "the same selectors");
     assert_eq!(
-        as_set(&serde_json::to_value(engine.projection()).unwrap()),
+        as_set(&serde_json::to_value(engine.selector_set()).unwrap()),
         as_set(&serde_json::to_value(&typed.q).unwrap()),
         "and the same projection"
     );

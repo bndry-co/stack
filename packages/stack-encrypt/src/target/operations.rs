@@ -581,7 +581,7 @@ pub fn json_terms<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
                 Err(e) => Pending::failed(cipher, e),
             };
             // The terms are derived by now; a document this description
-            // owns (a query's needle) is wiped rather than dropped.
+            // owns (the one a query asks about) is wiped rather than dropped.
             M::release(source, |value| drop(crate::json::PlainJson::protect(value)));
             pending
         }),

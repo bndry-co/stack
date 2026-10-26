@@ -532,8 +532,8 @@ pub struct StackCipher<K> {
     /// first out. See [`keyset`](Self::keyset).
     keysets: Mutex<KeysetCache>,
     /// Where the JSON index draws its permutations from (a document's stored
-    /// order, a query's needle order): fresh entropy per document or query,
-    /// outside tests.
+    /// order, the order a query's selectors are sent in): fresh entropy per
+    /// document or query, outside tests.
     json_randomness: crate::json::Randomness,
     /// The backend's [`IndexKeySource::load_index_key`], captured at
     /// [`init`](StackCipherBuilder::init), where `K` is known to implement
@@ -897,8 +897,8 @@ impl<K> StackCipherBuilder<K> {
     }
 
     /// Test support: draw every permutation the JSON index needs (the
-    /// stored order of each document it seals, the order of each query's
-    /// needle) from one generator started at `seed`,
+    /// stored order of each document it seals, the order each query's
+    /// selectors are sent in) from one generator started at `seed`,
     /// so that a run sealing the same documents in the same sequence draws
     /// the same permutations and a fixture can pin them. Paired with the
     /// deterministic key source (`kms::DeterministicSource`).

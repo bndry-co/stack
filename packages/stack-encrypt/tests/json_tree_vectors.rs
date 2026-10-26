@@ -149,7 +149,7 @@ async fn vectors(options: &JsonOptions) -> Value {
         "entries": entries,
         "order": order,
         "selectors": selectors,
-        "q": as_set(&serde_json::to_value(doc.projection()).unwrap()),
+        "q": as_set(&serde_json::to_value(doc.selector_set()).unwrap()),
         "tokens": tokens,
     })
 }

@@ -455,7 +455,7 @@ mod given_the_fixture_document {
             "`q` round-trips as stored"
         );
         assert_eq!(
-            serde_json::to_value(back.projection()).unwrap(),
+            serde_json::to_value(back.selector_set()).unwrap(),
             wire["q"],
             "the projection read back is the stored one"
         );
@@ -540,7 +540,7 @@ mod given_the_fixture_document {
         assert_eq!(tags.len(), 6, "every parent tag is distinct");
         // The projection groups the two list elements: each is a nested group
         // holding its own pair and its `x`.
-        let q = serde_json::to_value(doc.projection()).unwrap();
+        let q = serde_json::to_value(doc.selector_set()).unwrap();
         assert_eq!(
             q["el"].as_array().unwrap().len(),
             2,
@@ -571,7 +571,7 @@ mod given_the_fixture_document {
         // elements' path, in their stored (shuffled) order.
         let element_vs = |doc: &JsonDocument| -> Vec<String> {
             let s = base64(doc.entries()[1].selector());
-            let q = serde_json::to_value(doc.projection()).unwrap();
+            let q = serde_json::to_value(doc.selector_set()).unwrap();
             q["sv"]
                 .as_array()
                 .unwrap()
@@ -1775,8 +1775,8 @@ mod given_the_design_corpus {
             .await
             .unwrap();
         let doc = cipher.encrypt(&value).using(&plan).await.unwrap();
-        assert!(one.matches(doc.projection()) && two.matches(doc.projection()));
-        assert!(at.matches(doc.projection()), "an equality needle too");
+        assert!(one.matches(doc.selector_set()) && two.matches(doc.selector_set()));
+        assert!(at.matches(doc.selector_set()), "an equality needle too");
     }
 
     /// Every pair of the corpus, both ways round: `@>` over the projections
@@ -2215,7 +2215,7 @@ mod given_generated_documents {
                 case.stored
             );
             prop_assert_eq!(
-                query.matches(doc.projection()),
+                query.matches(doc.selector_set()),
                 pg_contains(&case.stored, &needle, true),
                 "{} @> {}",
                 &case.stored,
@@ -2235,8 +2235,8 @@ mod given_generated_documents {
                 .unwrap();
             prop_assert_eq!(&again, &query, "one needle, as sets");
             prop_assert_eq!(
-                again.matches(doc.projection()),
-                query.matches(doc.projection()),
+                again.matches(doc.selector_set()),
+                query.matches(doc.selector_set()),
                 "{} @> {}, sent in another order",
                 &case.stored,
                 &needle
@@ -2265,7 +2265,7 @@ mod given_generated_documents {
                 excluded.set(excluded.get() + 1);
             }
             prop_assert_eq!(
-                query.projection().contains(doc.projection()),
+                query.selector_set().contains(doc.selector_set()),
                 jsonb && !scalar_in_array(&case.stored, &needle),
                 "{} <@ {}",
                 &case.stored,
@@ -2498,14 +2498,14 @@ mod given_equality_at_the_root {
         let scalar = cipher.encrypt(&json!(1)).using(&plan).await.unwrap();
         let array = cipher.encrypt(&json!([1])).using(&plan).await.unwrap();
         assert!(
-            at_root.matches(scalar.projection()),
+            at_root.matches(scalar.selector_set()),
             "(\"$\", 1) matches a stored 1"
         );
         assert!(
-            !at_root.matches(array.projection()),
+            !at_root.matches(array.selector_set()),
             "(\"$\", 1) does not match a stored [1]"
         );
-        assert!(contains.matches(array.projection()), "jsonb: [1] @> 1");
+        assert!(contains.matches(array.selector_set()), "jsonb: [1] @> 1");
         assert!(
             serde_json::to_value(&at_root).unwrap().get("alt").is_none(),
             "equality at the root carries no alternative"
@@ -2520,7 +2520,7 @@ mod given_an_accessor {
     async fn matches_the_value_at_its_path() {
         let Scenario { cipher, plan } = scenario().await;
         let doc = cipher.encrypt(&fixture()).using(&plan).await.unwrap();
-        let projection = doc.projection();
+        let projection = doc.selector_set();
         for (path, value, matches, what) in [
             ("$.nested.list[*].x", json!(2), true, "an element's x is 2"),
             ("$.nested.list[*].x", json!(3), false, "no element's x is 3"),
@@ -3094,7 +3094,7 @@ mod assertions {
         needle: &Value,
     ) {
         assert_eq!(
-            query.matches(doc.projection()),
+            query.matches(doc.selector_set()),
             pg_contains(stored, needle, true),
             "{stored} @> {needle}"
         );
@@ -3109,7 +3109,7 @@ mod assertions {
         needle: &Value,
     ) {
         assert_eq!(
-            query.projection().contains(doc.projection()),
+            query.selector_set().contains(doc.selector_set()),
             pg_contains(needle, stored, true) && !scalar_in_array(stored, needle),
             "{stored} <@ {needle}"
         );
