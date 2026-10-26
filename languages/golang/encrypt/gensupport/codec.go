@@ -424,6 +424,13 @@ func Opaque[T any](vals Values, out *T) error {
 		}
 		return nil
 	}
+	// encoding/json writes a struct as an object, so a JSON document of
+	// the shape struct begins "{"; a value that begins with neither is not
+	// one either reader can take, and is said so rather than handed to
+	// the JSON reader to fail on.
+	if !bytes.HasPrefix(encoded, []byte("{")) {
+		return fmt.Errorf("gensupport: %w: the opaque value is neither a storage blob nor a JSON document", encrypt.ErrEncoding)
+	}
 	if err := json.Unmarshal(encoded, out); err != nil {
 		// Its error is not wrapped: encoding/json's text quotes the value.
 		return fmt.Errorf("gensupport: %w: the opaque value does not decode into a %T", encrypt.ErrEncoding, *out)

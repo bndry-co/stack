@@ -1200,8 +1200,9 @@ func textForm(t types.Type) (bool, string) {
 }
 
 // notStorableKey says why a map key has no storage form: vcffi takes an
-// integer, a string, bytes (a byte slice or array, a 128-bit integer) or a
-// type with MarshalText and UnmarshalText.
+// integer, a string, bytes (a byte array, a 128-bit integer; a slice is
+// not comparable, so Go never keys a map by one) or a type with MarshalText
+// and UnmarshalText.
 func notStorableKey(k types.Type) string {
 	if kind, _ := valueKind(k); kind == KindInt128 || kind == KindUint128 {
 		return ""
@@ -1216,14 +1217,8 @@ func notStorableKey(k types.Type) string {
 		if u.Info()&(types.IsInteger|types.IsString) != 0 {
 			return ""
 		}
-	case *types.Slice, *types.Array:
-		var elem types.Type
-		if s, ok := u.(*types.Slice); ok {
-			elem = s.Elem()
-		} else {
-			elem = u.(*types.Array).Elem()
-		}
-		if b, ok := elem.Underlying().(*types.Basic); ok && b.Kind() == types.Byte {
+	case *types.Array:
+		if b, ok := u.Elem().Underlying().(*types.Basic); ok && b.Kind() == types.Byte {
 			return ""
 		}
 	}

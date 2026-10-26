@@ -69,7 +69,12 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   form for them), a type with only one of `MarshalText` and
   `UnmarshalText`, a map key that is not an integer, a string, bytes or
   text, and a type that only `MarshalJSON` carries over a struct with
-  unexported fields. A blob a later release writes is
+  unexported fields. **Rows already sealed with an `encrypt.Decimal` or
+  `encrypt.Date` in an opaque struct do not decrypt under this release**,
+  since no generated file can name the field: before upgrading, decrypt
+  them with the earlier release, change the field to a string (or to its
+  parts), and encrypt them again; the earlier release writes JSON, which
+  this release reads. A blob a later release writes is
   `encrypt.ErrStorageVersion`. This takes vcffi from the unreleased
   cipherstash/vitaminc#526 by pseudo-version; the storage format is a
   compatibility commitment only once vitaminc releases it, so no Go
