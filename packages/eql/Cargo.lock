@@ -4270,6 +4270,7 @@ dependencies = [
  "clww-ore",
  "miette",
  "ore-rs 0.10.0",
+ "rand 0.10.1",
  "rust_decimal",
  "serde",
  "serde_json",
