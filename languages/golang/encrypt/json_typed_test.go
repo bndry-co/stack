@@ -165,10 +165,24 @@ func TestASubscribersTypedNeedlesDeriveTheRawQuery(t *testing.T) {
 	}
 	// What encoding/json cannot write, and a []byte, are refused, naming
 	// no value.
+	type doc []byte
+	type redefined json.RawMessage
+	type text string
 	for name, err := range map[string]error{
 		"[]byte": func() error { _, err := f.Contains(ctx, cipher, []byte(`{"tier":"secret"}`)); return err }(),
-		"NaN":    func() error { _, err := f.At.Age.Lt(ctx, cipher, math.NaN()); return err }(),
-		"chan":   func() error { _, err := f.EqAt(ctx, cipher, "$.name", make(chan int)); return err }(),
+		// A type defined over []byte, json.RawMessage included, has no
+		// MarshalJSON and would be written as base64.
+		"defined []byte": func() error { _, err := f.EqAt(ctx, cipher, "$.name", doc(`"secret"`)); return err }(),
+		"redefined RawMessage": func() error {
+			_, err := f.Contains(ctx, cipher, redefined(`{"tier":"secret"}`))
+			return err
+		}(),
+		// JSON text in a Go string would be one JSON string: refused as a
+		// needle, which is never what it means.
+		"string needle":         func() error { _, err := f.Contains(ctx, cipher, `{"tier":"secret"}`); return err }(),
+		"defined string needle": func() error { _, err := f.ContainedBy(ctx, cipher, text(`{"tier":"secret"}`)); return err }(),
+		"NaN":                   func() error { _, err := f.At.Age.Lt(ctx, cipher, math.NaN()); return err }(),
+		"chan":                  func() error { _, err := f.EqAt(ctx, cipher, "$.name", make(chan int)); return err }(),
 	} {
 		if !errors.Is(err, encrypt.ErrEncoding) || strings.Contains(err.Error(), "secret") {
 			t.Errorf("%s: %v", name, err)

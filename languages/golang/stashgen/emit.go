@@ -1123,7 +1123,7 @@ func (w *writer) jsonEntry(g genField) {
 	recv := "func (f " + g.fieldType + ") "
 	if answered["contains"] {
 		w.nl()
-		doc := "Contains derives the query for documents that contain needle: col @> query. needle is a json.RawMessage of JSON text, or any value encoding/json writes, such as a map or a struct. Each member it writes must be in the document, so a zero-valued struct field narrows the query to documents holding that zero: give a needle struct pointer fields, or omitempty, or use a map. Each array element of the needle must sit inside one element of the document's array."
+		doc := "Contains derives the query for documents that contain needle: col @> query. needle is a json.RawMessage of JSON text, or a map, struct or slice that encoding/json writes; a Go string is refused, as one JSON string is not JSON text. Each member it writes must be in the document, so a zero-valued struct field narrows the query to documents holding that zero: give a needle struct pointer fields, or omitempty, or use a map. Each array element of the needle must sit inside one element of the document's array."
 		if g.holdsStruct {
 			doc += " A needle of the field's own type, " + g.valueExpr + ", is refused for that reason."
 		}
@@ -1134,14 +1134,14 @@ func (w *writer) jsonEntry(g genField) {
 	}
 	if answered["contained_by"] {
 		w.nl()
-		w.b.WriteString(wrapComment("ContainedBy derives the query for documents contained by needle: col <@ query. needle is a json.RawMessage of JSON text, or any value encoding/json writes; here a zero-valued field widens the query, admitting documents that hold that zero.", 80))
+		w.b.WriteString(wrapComment("ContainedBy derives the query for documents contained by needle: col <@ query. needle is a json.RawMessage of JSON text, or a map, struct or slice that encoding/json writes (not a Go string); here a zero-valued field widens the query, admitting documents that hold that zero.", 80))
 		w.p("%sContainedBy(ctx context.Context, c *encrypt.Cipher, needle any) (%s, error) {", recv, needle)
 		w.p("\treturn gensupport.JSONQuery[%s](ctx, f.field, c, \"contained_by\", needle)", needle)
 		w.p("}")
 	}
 	if answered["eq_at"] {
 		w.nl()
-		w.b.WriteString(wrapComment("EqAt derives the query for documents holding the scalar v at path: col @> query. v is a Go string, number or bool, nil for JSON null, or a json.RawMessage of JSON text. A wildcard step matches when any element holds it; a position ([2]) is refused, since the stored selector reads every position as the wildcard.", 80))
+		w.b.WriteString(wrapComment("EqAt derives the query for documents holding the scalar v at path: col @> query. v is a Go string, number or bool, nil for JSON null, or a json.RawMessage of JSON text; a Go string is the JSON string it holds, never parsed as JSON. A wildcard step matches when any element holds it; a position ([2]) is refused, since the stored selector reads every position as the wildcard.", 80))
 		w.p("%sEqAt(ctx context.Context, c *encrypt.Cipher, path string, v any) (%s, error) {", recv, needle)
 		w.p("\treturn gensupport.JSONQueryAt[%s](ctx, f.field, c, \"eq_at\", path, v)", needle)
 		w.p("}")

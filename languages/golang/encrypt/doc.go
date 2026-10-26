@@ -216,6 +216,9 @@
 //	q, err := customers.Fields.Profile.Contains(ctx, cipher, map[string]any{"tier": "gold"})
 //	older, err := customers.Fields.Profile.At.Age.Gt(ctx, cipher, 40)
 //
+// A Go string is the string value itself, never parsed. So Contains and
+// ContainedBy refuse a string needle; put JSON text in a json.RawMessage.
+//
 // A document contains a needle when it holds every member the needle writes.
 // encoding/json writes a struct field that has no omitempty even when the
 // field is zero. So a zero field narrows the query to documents that hold

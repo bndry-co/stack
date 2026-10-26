@@ -344,37 +344,48 @@ func DecodeJSON[T any](text json.RawMessage) (T, error) {
 	dec.UseNumber()
 	if err := dec.Decode(&out); err != nil {
 		var zero T
-		return zero, decodeError(err, out)
+		return zero, decodeError(err, typeName[T]())
 	}
 	// One value, and nothing after it: Decode reads the first of a stream.
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+	switch _, err := dec.Token(); {
+	case errors.Is(err, io.EOF):
+		return out, nil
+	case err == nil:
 		var zero T
-		return zero, fmt.Errorf("%w: the JSON text holds more than one value, and reads into one %T", ErrEncoding, zero)
+		return zero, fmt.Errorf("%w: the JSON text holds more than one value, and reads into one %s", ErrEncoding, typeName[T]())
+	default:
+		var zero T
+		return zero, fmt.Errorf("%w: the text after its first JSON value is not JSON, and reads into no %s", ErrEncoding, typeName[T]())
 	}
-	return out, nil
+}
+
+// typeName is T as Go source, an interface type included: %T of a T
+// holding nil prints <nil>, and a *T names its element.
+func typeName[T any]() string {
+	return strings.TrimPrefix(fmt.Sprintf("%T", (*T)(nil)), "*")
 }
 
 // decodeError is encoding/json's decode error without the text it quotes:
 // a SyntaxError names the character it met and an UnmarshalTypeError the
 // number it could not store, both plaintext. It keeps the kind of JSON value
 // and the Go type that did not fit.
-func decodeError(err error, out any) error {
+func decodeError(err error, out string) error {
 	var typeErr *json.UnmarshalTypeError
 	switch {
 	case errors.As(err, &typeErr):
 		// Value is "number", "number 1.5", "string", "bool", "array" or
 		// "object": its first word is the kind, the rest the value.
 		kind, _, _ := strings.Cut(typeErr.Value, " ")
-		return fmt.Errorf("%w: a JSON %s does not read into the Go type %s, in a %T", ErrEncoding, kind, typeErr.Type, out)
+		return fmt.Errorf("%w: a JSON %s does not read into the Go type %s, in a %s", ErrEncoding, kind, typeErr.Type, out)
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-		return fmt.Errorf("%w: no JSON value to read into a %T (an unfound JSONValue holds none: check Found)", ErrEncoding, out)
+		return fmt.Errorf("%w: no JSON value to read into a %s (an unfound JSONValue holds none: check Found)", ErrEncoding, out)
 	}
 	var syntax *json.SyntaxError
 	if errors.As(err, &syntax) {
-		return fmt.Errorf("%w: the text is not JSON (at byte %d), and reads into no %T", ErrEncoding, syntax.Offset, out)
+		return fmt.Errorf("%w: the text is not JSON (at byte %d), and reads into no %s", ErrEncoding, syntax.Offset, out)
 	}
 	// An UnmarshalJSON or UnmarshalText of the caller's type failed, or
 	// encoding/json refused the target (a non-pointer, say): its text may
 	// hold the value, so only the type is named.
-	return fmt.Errorf("%w: the JSON text does not read into a %T", ErrEncoding, out)
+	return fmt.Errorf("%w: the JSON text does not read into a %s", ErrEncoding, out)
 }

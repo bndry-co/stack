@@ -19,12 +19,14 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `GetDocumentPtr`), so 64-bit integers and finite `float64`s round-trip
   exactly. A pointer to one takes `null=sql`. `stashgen` refuses, when it
   runs, a type `encoding/json` cannot carry both ways: an interface such as
-  `any`, an unexported struct field or one tagged `json:"-"`, a channel, a
-  function, a scalar, or a `[]byte`. The `Fields` entry's operands are Go
+  `any`, a struct field `encoding/json` drops (unexported, tagged
+  `json:"-"`, or two writing one member), a one-way `MarshalJSON` or
+  `MarshalText`, a channel, a function, a scalar, or a `[]byte`. The `Fields` entry's operands are Go
   values now: `Contains`, `ContainedBy`, `EqAt`, `Lt`, `Lte`, `Gt`, `Gte`
   and `Between` take `any`,
   a `json.RawMessage` crossing as the JSON text it is and anything else
-  marshalled (`gensupport.JSONText`); a plain `[]byte` is refused. A zero
+  marshalled (`gensupport.JSONText`); a `[]byte` or a type defined over
+  one is refused, and so is a Go string as a containment needle. A zero
   struct field without `omitempty` narrows a containment query, so
   `Contains` on a field whose type holds a struct refuses a needle of that
   type (`gensupport.NewDocumentField`); the generated doc comments say how

@@ -36,6 +36,14 @@ func TestDecodeJSONReadsTheCallersType(t *testing.T) {
 	if p, err := encrypt.DecodeJSON[*visit](json.RawMessage(`null`)); err != nil || p != nil {
 		t.Fatalf("null: %v %v", p, err)
 	}
+	// Trailing text that is not JSON is told apart from a second value, and
+	// an interface type is named.
+	if _, err := encrypt.DecodeJSON[map[string]int](json.RawMessage(`{"a":1}}`)); err == nil || strings.Contains(err.Error(), "more than one") {
+		t.Fatalf("trailing junk: %v", err)
+	}
+	if _, err := encrypt.DecodeJSON[any](json.RawMessage(``)); err == nil || !strings.Contains(err.Error(), "interface {}") {
+		t.Fatalf("an interface type is not named: %v", err)
+	}
 	for name, text := range map[string]string{
 		"an unfound value":      ``,
 		"not JSON":              `{"secret-value"`,

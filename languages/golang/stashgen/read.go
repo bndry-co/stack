@@ -724,16 +724,16 @@ func (r *reader) buildFields(c *collected) error {
 		// What encoding/json cannot carry both ways is refused here, when
 		// the code is generated.
 		holdsStruct := false
-		if field.Verb == VerbEncryptInto && r.storesDocument(field.EQLType) {
+		if eqlType := r.eqlType(field.EQLType); field.Verb == VerbEncryptInto && eqlType != nil && eqlType.wire == record.JSON {
 			doc, docType := &field.GoType, cf.typ
 			if doc.Kind == KindPointer && doc.Elem != nil {
 				doc, docType = doc.Elem, docType.Underlying().(*types.Pointer).Elem()
 			}
 			if doc.Kind != KindJSON {
-				if reason := notDocument(docType); reason != "" {
+				var reason string
+				if reason, holdsStruct = notDocument(docType); reason != "" {
 					return fieldErr(typeName, cf.goName, "%s seals a json document, and %s %s; %s", field.EQLType, r.typeExpr(docType), reason, documentTypes)
 				}
-				holdsStruct = reaches(docType, func(u types.Type) bool { _, ok := u.(*types.Struct); return ok }, map[types.Type]bool{})
 				*doc = GoType{Name: doc.Name, Kind: KindJSONValue}
 			}
 		}
@@ -786,12 +786,7 @@ func (r *reader) buildFields(c *collected) error {
 			g.outputType = g.typeExpr
 			g.outputs = []output{{name: "Value", typeExpr: g.typeExpr, pathType: g.pathType}}
 		case VerbEncryptInto:
-			var eqlType *EQLType
-			for i := range r.eql {
-				if r.eql[i].Name == field.EQLType {
-					eqlType = &r.eql[i]
-				}
-			}
+			eqlType := r.eqlType(field.EQLType)
 			if eqlType == nil {
 				if len(r.eql) == 0 {
 					return fieldErr(typeName, cf.goName, "EQL types are not available yet; this build of the engine produces none")
@@ -864,10 +859,8 @@ func (r *reader) nullMode(field Field, tagged Null) (Null, error) {
 		indexes = append(indexes, idx.Name)
 	}
 	if field.Verb == VerbEncryptInto {
-		for _, eqlType := range r.eql {
-			if eqlType.Name == field.EQLType {
-				indexes = eqlType.Indexes
-			}
+		if eqlType := r.eqlType(field.EQLType); eqlType != nil {
+			indexes = eqlType.Indexes
 		}
 	}
 	indexed := false
@@ -1165,115 +1158,184 @@ func notJSONEncodable(t types.Type, seen map[types.Type]bool) string {
 	return "is not a type JSON carries"
 }
 
-// storesDocument reports whether the engine's EQL type of that name stores
-// a JSON document.
-func (r *reader) storesDocument(name string) bool {
-	for _, t := range r.eql {
-		if t.Name == name {
-			return t.wire == record.JSON
+// eqlType is the engine's EQL type of that name, or nil.
+func (r *reader) eqlType(name string) *EQLType {
+	for i := range r.eql {
+		if r.eql[i].Name == name {
+			return &r.eql[i]
 		}
 	}
-	return false
+	return nil
 }
 
 // notDocument says why a Go type other than json.RawMessage is not a JSON
 // document that encoding/json writes and reads back to the same value, or
-// "" when it is: a struct, map, slice or array whose every part
-// encoding/json carries ([notJSONEncodable]) and holds no interface.
-func notDocument(t types.Type) string {
+// "" when it is; and whether the type holds a struct, whose zero fields
+// would narrow a containment needle of that type. A document is a struct,
+// map, slice or array, walked by [documentWalk].
+func notDocument(t types.Type) (string, bool) {
 	if _, ok := valueKind(t); ok {
-		return "is one value, not a document"
+		return "is one value, not a document", false
 	}
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
-		return "is one JSON scalar, not a document (a string is a JSON string to encoding/json, not the JSON text it may hold)"
+		return "is one JSON scalar, not a document (a string is a JSON string to encoding/json, not the JSON text it may hold)", false
 	case *types.Slice:
 		if b, ok := u.Elem().Underlying().(*types.Basic); ok && b.Kind() == types.Byte {
-			return "is written by encoding/json as a base64 string, not as JSON text"
+			return "is written by encoding/json as a base64 string, not as JSON text", false
 		}
 	case *types.Pointer:
-		return "is a pointer to a pointer"
+		return "is a pointer to a pointer", false
 	case *types.Struct, *types.Map, *types.Array:
 	default:
-		return "is not a type JSON carries"
+		return "is not a type JSON carries", false
 	}
-	if reaches(t, func(u types.Type) bool { _, ok := u.(*types.Interface); return ok }, map[types.Type]bool{}) {
-		return "holds an interface, which encoding/json reads back as a map or a float64, not the value written"
-	}
-	if name := droppedField(t, map[types.Type]bool{}); name != "" {
-		return "has a field " + name + ` tagged json:"-", which encoding/json drops, so the stored document would not hold it`
-	}
-	return notJSONEncodable(t, map[types.Type]bool{})
+	w := documentWalk{seen: map[types.Type]bool{}}
+	return w.problem(t), w.holdsStruct
 }
 
-// droppedField names the first exported struct field that t, or a type it
-// reaches, tags json:"-", or "" for none: encoding/json writes no such
-// field, so a document of the type would come back without it. A type that
-// writes and reads itself is not looked into.
-func droppedField(t types.Type, seen map[types.Type]bool) string {
-	if seen[t] {
+// documentWalk checks a document type as encoding/json writes and reads
+// it, once per type: what it writes must read back to the same value, so
+// nothing is dropped and nothing changes type on the way. It refuses an
+// interface (read back as a map or a float64), a value JSON does not carry,
+// a map key encoding/json cannot write, and a struct field encoding/json
+// drops: an unexported one, one tagged json:"-", and two that write one
+// member. A type with both halves of a codec (MarshalJSON and
+// UnmarshalJSON, or MarshalText and UnmarshalText) writes and reads itself
+// and is not looked into; one half alone is refused.
+type documentWalk struct {
+	seen        map[types.Type]bool
+	holdsStruct bool
+}
+
+// problem is why t is not carried both ways, as a phrase that follows the
+// type's name ("holds an interface, ..."), or "".
+func (w *documentWalk) problem(t types.Type) string {
+	if w.seen[t] {
 		return ""
 	}
-	seen[t] = true
-	if hasMethod(types.NewPointer(t), "UnmarshalJSON") && hasMethod(t, "MarshalJSON") {
-		return ""
+	w.seen[t] = true
+	if own, reason := ownCodec(t); reason != "" || own {
+		return reason
 	}
 	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		if u.Info()&(types.IsBoolean|types.IsInteger|types.IsFloat|types.IsString) != 0 && u.Info()&types.IsUntyped == 0 {
+			return ""
+		}
+		return "holds a " + u.Name() + ", which JSON does not carry"
+	case *types.Interface:
+		return "holds an interface, which encoding/json reads back as a map or a float64, not the value written"
 	case *types.Slice:
-		return droppedField(u.Elem(), seen)
+		return w.problem(u.Elem())
 	case *types.Array:
-		return droppedField(u.Elem(), seen)
+		return w.problem(u.Elem())
 	case *types.Pointer:
-		return droppedField(u.Elem(), seen)
+		return w.problem(u.Elem())
 	case *types.Map:
-		return droppedField(u.Elem(), seen)
+		if k, ok := u.Key().Underlying().(*types.Basic); !ok || k.Info()&(types.IsString|types.IsInteger) == 0 {
+			if text, _ := textForm(u.Key()); !text {
+				return "holds a map whose key is not a string, an integer or a type with MarshalText and UnmarshalText"
+			}
+		}
+		return w.problem(u.Elem())
 	case *types.Struct:
-		for i := range u.NumFields() {
-			fld := u.Field(i)
-			if fld.Exported() && reflect.StructTag(u.Tag(i)).Get("json") == "-" {
-				return fld.Name()
+		w.holdsStruct = true
+		return w.fields(u, map[string]string{}, map[types.Type]bool{})
+	}
+	return "holds a " + types.TypeString(t.Underlying(), nil) + ", which JSON does not carry"
+}
+
+// fields checks a struct's fields, and those an untagged embedded struct
+// promotes into it, against names: the JSON member each field writes, so
+// two that write one member are refused (encoding/json keeps one of them,
+// or neither, silently).
+func (w *documentWalk) fields(u *types.Struct, names map[string]string, embedding map[types.Type]bool) string {
+	for i := range u.NumFields() {
+		fld := u.Field(i)
+		tag := reflect.StructTag(u.Tag(i)).Get("json")
+		name, _, _ := strings.Cut(tag, ",")
+		if tag == "-" {
+			return "holds a struct with a field " + fld.Name() + ` tagged json:"-", which encoding/json drops`
+		}
+		if fld.Embedded() && name == "" {
+			et := fld.Type()
+			if p, ok := et.Underlying().(*types.Pointer); ok {
+				et = p.Elem()
 			}
-			if name := droppedField(fld.Type(), seen); name != "" {
-				return name
+			if st, ok := et.Underlying().(*types.Struct); ok {
+				if own, _ := ownCodec(et); !own {
+					// encoding/json promotes an untagged embedded
+					// struct's fields, exported or not the struct is.
+					if embedding[et] {
+						continue
+					}
+					embedding[et] = true
+					if reason := w.fields(st, names, embedding); reason != "" {
+						return reason
+					}
+					continue
+				}
 			}
+		}
+		if !fld.Exported() {
+			return "holds a struct with an unexported field " + fld.Name() + ", which encoding/json drops"
+		}
+		if name == "" {
+			name = fld.Name()
+		}
+		if prior, dup := names[name]; dup {
+			return fmt.Sprintf("holds a struct whose fields %s and %s both write the JSON member %q, which encoding/json drops", prior, fld.Name(), name)
+		}
+		names[name] = fld.Name()
+		if reason := w.problem(fld.Type()); reason != "" {
+			return reason
 		}
 	}
 	return ""
 }
 
-// reaches reports whether t, or a type its fields, elements or pointers
-// reach, has an underlying type that match reports: a document type that
-// holds a struct, say. A type that writes and reads itself (MarshalJSON and
-// UnmarshalJSON) is not looked into, as encoding/json does not.
-func reaches(t types.Type, match func(types.Type) bool, seen map[types.Type]bool) bool {
-	if seen[t] {
-		return false
-	}
-	seen[t] = true
-	if hasMethod(types.NewPointer(t), "UnmarshalJSON") && hasMethod(t, "MarshalJSON") {
-		return match(t.Underlying())
-	}
-	u := t.Underlying()
-	if match(u) {
-		return true
-	}
-	switch u := u.(type) {
-	case *types.Slice:
-		return reaches(u.Elem(), match, seen)
-	case *types.Array:
-		return reaches(u.Elem(), match, seen)
-	case *types.Pointer:
-		return reaches(u.Elem(), match, seen)
-	case *types.Map:
-		return reaches(u.Elem(), match, seen)
-	case *types.Struct:
-		for i := range u.NumFields() {
-			if reaches(u.Field(i).Type(), match, seen) {
-				return true
+// ownCodec reports whether t writes and reads itself through encoding/json
+// (MarshalJSON and UnmarshalJSON, else MarshalText and UnmarshalText), or
+// why it cannot: one half alone writes it one way and reads it another; a
+// marshal method on the pointer alone is not called for the value a field
+// holds; and a codec a struct gets from a field it embeds writes the whole
+// struct as that field, dropping the rest.
+func ownCodec(t types.Type) (bool, string) {
+	name := types.TypeString(t, func(p *types.Package) string { return p.Name() })
+	for _, codec := range []string{"JSON", "Text"} {
+		marshal, onValue := methodOf(t, "Marshal"+codec)
+		_, unmarshal := methodOf(types.NewPointer(t), "Unmarshal"+codec)
+		if pointerOnly, _ := methodOf(types.NewPointer(t), "Marshal"+codec); pointerOnly != nil && !onValue {
+			return false, "holds a " + name + ", whose Marshal" + codec + " is on its pointer, which encoding/json does not call for a value"
+		}
+		switch {
+		case onValue && unmarshal:
+			if len(marshal.Index()) > 1 {
+				if st, ok := t.Underlying().(*types.Struct); ok && st.NumFields() > 1 {
+					return false, "holds a " + name + ", which takes Marshal" + codec + " from a field it embeds, so encoding/json writes that field alone and drops the rest"
+				}
 			}
+			return true, ""
+		case onValue:
+			return false, "holds a " + name + ", which has Marshal" + codec + " but no Unmarshal" + codec + ", so encoding/json could not read it back"
+		case unmarshal:
+			return false, "holds a " + name + ", which has Unmarshal" + codec + " but no Marshal" + codec + ", so encoding/json would read it otherwise than it writes it"
 		}
 	}
-	return false
+	return false, ""
+}
+
+// methodOf is the selection of t's method of that name, and whether t's
+// method set has it.
+func methodOf(t types.Type, name string) (*types.Selection, bool) {
+	ms := types.NewMethodSet(t)
+	for i := range ms.Len() {
+		if ms.At(i).Obj().Name() == name {
+			return ms.At(i), true
+		}
+	}
+	return nil, false
 }
 
 // notStorable says why the storage profile (vcffi.MarshalStorage and

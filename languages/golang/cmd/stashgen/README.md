@@ -143,7 +143,8 @@ people, err := customers.Decrypt(ctx, cipher, rows) // each Profile is a Profile
 
 The generated code marshals a struct, map or slice type with `encoding/json` when it seals the field, and unmarshals the opened document into the declared type.
 It calls `encoding/json` directly, never through `map[string]any`, so an `int64`, a `uint64` and a finite `float64` come back exactly.
-`stashgen` refuses a type that `encoding/json` cannot carry both ways: an interface such as `any` anywhere in it (it reads numbers back as `float64`), an unexported struct field or one tagged `json:"-"` (each is dropped), a channel or a function.
+`stashgen` refuses a type that `encoding/json` cannot carry both ways: an interface such as `any` anywhere in it (it reads numbers back as `float64`); a struct field that `encoding/json` drops (unexported, tagged `json:"-"`, or one of two that write the same member); a `MarshalJSON` or `MarshalText` with no matching unmarshal method; a channel or a function.
+An unexported embedded struct is fine: its fields are promoted and stored.
 It refuses a string, a number and a bool too: a document is a struct, map or slice.
 A `[]byte` is refused, since `encoding/json` writes it as base64: declare JSON text as `json.RawMessage`.
 The engine parses the JSON text, so an object that names a member twice and an integer outside the 64-bit range are refused with `encrypt.ErrEncoding`.
@@ -172,7 +173,9 @@ An ordering compares the value `->` extracts at its path, and EQL's `<` compares
 `OpenOne` reads one value and refuses a read whose path has a wildcard before anything is opened; open a wildcard read with `Open`.
 A needle and a value are Go values: a `json.RawMessage` of JSON text crosses as it is, and anything else is marshalled with `encoding/json`.
 `EqAt` and the orderings take a scalar: a string, a number, a bool, or `nil` for JSON `null`.
-A plain `[]byte` is refused rather than written as base64.
+A `[]byte`, or a type defined over one, is refused rather than written as base64.
+A Go string is refused as a `Contains` or `ContainedBy` needle, since it would be one JSON string: pass JSON text as `json.RawMessage`.
+For `EqAt` and the orderings a Go string is the string value itself.
 A document contains a needle when it holds every member the needle writes, and `encoding/json` writes a struct field that has no `omitempty` even when it is zero.
 So a zero field narrows the query to the documents that hold that zero: `Profile{Name: "Alice"}` also asks for `"age": 0`.
 Give a needle struct pointer fields with `omitempty`, as `ProfileNeedle` above, or use a map.

@@ -2,9 +2,11 @@ package gensupport
 
 import (
 	"context"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
@@ -30,11 +32,13 @@ import (
 // encoding/json's own text quotes a NaN, and a MarshalJSON's error may hold
 // anything.
 func JSONText(v any) ([]byte, error) {
-	switch v := v.(type) {
-	case json.RawMessage:
-		return v, nil
-	case []byte:
-		return nil, fmt.Errorf("%w: a []byte is not JSON text to encoding/json, which writes it as a base64 string; convert JSON text to json.RawMessage", encrypt.ErrEncoding)
+	if raw, ok := v.(json.RawMessage); ok {
+		return raw, nil
+	}
+	if writesItself(v) == "" && kindOf(v) == reflect.Slice && reflect.TypeOf(v).Elem().Kind() == reflect.Uint8 {
+		// A []byte, or a type defined over one (type Doc []byte, or
+		// json.RawMessage redefined, which drops its MarshalJSON).
+		return nil, fmt.Errorf("%w: a %T is not JSON text to encoding/json, which writes it as a base64 string; convert JSON text to json.RawMessage", encrypt.ErrEncoding, v)
 	}
 	text, err := json.Marshal(v)
 	if err == nil {
@@ -52,6 +56,29 @@ func JSONText(v any) ([]byte, error) {
 		return nil, fmt.Errorf("%w: the MarshalJSON or MarshalText of %s failed, in a %T", encrypt.ErrEncoding, marshalerErr.Type, v)
 	}
 	return nil, fmt.Errorf("%w: a %T does not write as JSON", encrypt.ErrEncoding, v)
+}
+
+// writesItself names the encoding/json interface v implements to write
+// itself, or "" for none.
+func writesItself(v any) string {
+	switch v.(type) {
+	case json.Marshaler:
+		return "json.Marshaler"
+	case encoding.TextMarshaler:
+		return "encoding.TextMarshaler"
+	}
+	return ""
+}
+
+// kindOf is the kind of v's dynamic type, or reflect.Invalid for nil: the
+// one place the JSON operands look at a type by kind, since a type switch
+// cannot name every type defined over []byte or string.
+func kindOf(v any) reflect.Kind {
+	t := reflect.TypeOf(v)
+	if t == nil {
+		return reflect.Invalid
+	}
+	return t.Kind()
 }
 
 // GetDocument reads one opened document field into the Go type T the struct
@@ -129,10 +156,17 @@ func (f Field[T]) jsonOperand(v any) ([]byte, error) {
 
 // JSONQuery derives a containment operator's query on a JSON field
 // (contains, contained_by): the needle's projection, Q. The needle is any
-// value [JSONText] writes. Contains on a field of [NewDocumentField]
+// value [JSONText] writes, other than a string, which is refused: one JSON
+// string is never what a containment needle means, and JSON text in a Go
+// string is the likely mistake. Contains on a field of [NewDocumentField]
 // refuses a needle of the field's own type, T or *T: its zero-valued
 // fields would narrow the query.
 func JSONQuery[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, operator string, needle any) (Q, error) {
+	// A Go string is one JSON string, and a document of members never
+	// contains one: it is almost always JSON text meant as the needle.
+	if kindOf(needle) == reflect.String && writesItself(needle) == "" {
+		return nil, fmt.Errorf("%w: gensupport: %s: a %T needle is one JSON string, not JSON text; pass JSON text as json.RawMessage, or a map or struct", encrypt.ErrEncoding, f.name, needle)
+	}
 	if f.holdsStruct && operator == "contains" {
 		switch needle.(type) {
 		case T, *T:

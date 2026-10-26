@@ -150,30 +150,31 @@ func (f SubscriberProfileField) Encrypt(ctx context.Context, c *encrypt.Cipher, 
 }
 
 // Contains derives the query for documents that contain needle: col @> query.
-// needle is a json.RawMessage of JSON text, or any value encoding/json writes,
-// such as a map or a struct. Each member it writes must be in the document, so
-// a zero-valued struct field narrows the query to documents holding that zero:
-// give a needle struct pointer fields, or omitempty, or use a map. Each array
-// element of the needle must sit inside one element of the document's array. A
-// needle of the field's own type, SubscriberProfile, is refused for that
-// reason.
+// needle is a json.RawMessage of JSON text, or a map, struct or slice that
+// encoding/json writes; a Go string is refused, as one JSON string is not JSON
+// text. Each member it writes must be in the document, so a zero-valued struct
+// field narrows the query to documents holding that zero: give a needle struct
+// pointer fields, or omitempty, or use a map. Each array element of the needle
+// must sit inside one element of the document's array. A needle of the field's
+// own type, SubscriberProfile, is refused for that reason.
 func (f SubscriberProfileField) Contains(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQuery[eql.JSONSearchQuery](ctx, f.field, c, "contains", needle)
 }
 
 // ContainedBy derives the query for documents contained by needle: col <@
-// query. needle is a json.RawMessage of JSON text, or any value encoding/json
-// writes; here a zero-valued field widens the query, admitting documents that
-// hold that zero.
+// query. needle is a json.RawMessage of JSON text, or a map, struct or slice
+// that encoding/json writes (not a Go string); here a zero-valued field widens
+// the query, admitting documents that hold that zero.
 func (f SubscriberProfileField) ContainedBy(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQuery[eql.JSONSearchQuery](ctx, f.field, c, "contained_by", needle)
 }
 
 // EqAt derives the query for documents holding the scalar v at path: col @>
 // query. v is a Go string, number or bool, nil for JSON null, or a
-// json.RawMessage of JSON text. A wildcard step matches when any element holds
-// it; a position ([2]) is refused, since the stored selector reads every
-// position as the wildcard.
+// json.RawMessage of JSON text; a Go string is the JSON string it holds, never
+// parsed as JSON. A wildcard step matches when any element holds it; a position
+// ([2]) is refused, since the stored selector reads every position as the
+// wildcard.
 func (f SubscriberProfileField) EqAt(ctx context.Context, c *encrypt.Cipher, path string, v any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchQuery](ctx, f.field, c, "eq_at", path, v)
 }
@@ -263,29 +264,31 @@ func (f SubscriberPrefsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v 
 }
 
 // Contains derives the query for documents that contain needle: col @> query.
-// needle is a json.RawMessage of JSON text, or any value encoding/json writes,
-// such as a map or a struct. Each member it writes must be in the document, so
-// a zero-valued struct field narrows the query to documents holding that zero:
-// give a needle struct pointer fields, or omitempty, or use a map. Each array
-// element of the needle must sit inside one element of the document's array. A
-// needle of the field's own type, SubscriberPrefs, is refused for that reason.
+// needle is a json.RawMessage of JSON text, or a map, struct or slice that
+// encoding/json writes; a Go string is refused, as one JSON string is not JSON
+// text. Each member it writes must be in the document, so a zero-valued struct
+// field narrows the query to documents holding that zero: give a needle struct
+// pointer fields, or omitempty, or use a map. Each array element of the needle
+// must sit inside one element of the document's array. A needle of the field's
+// own type, SubscriberPrefs, is refused for that reason.
 func (f SubscriberPrefsField) Contains(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQuery[eql.JSONSearchQuery](ctx, f.field, c, "contains", needle)
 }
 
 // ContainedBy derives the query for documents contained by needle: col <@
-// query. needle is a json.RawMessage of JSON text, or any value encoding/json
-// writes; here a zero-valued field widens the query, admitting documents that
-// hold that zero.
+// query. needle is a json.RawMessage of JSON text, or a map, struct or slice
+// that encoding/json writes (not a Go string); here a zero-valued field widens
+// the query, admitting documents that hold that zero.
 func (f SubscriberPrefsField) ContainedBy(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQuery[eql.JSONSearchQuery](ctx, f.field, c, "contained_by", needle)
 }
 
 // EqAt derives the query for documents holding the scalar v at path: col @>
 // query. v is a Go string, number or bool, nil for JSON null, or a
-// json.RawMessage of JSON text. A wildcard step matches when any element holds
-// it; a position ([2]) is refused, since the stored selector reads every
-// position as the wildcard.
+// json.RawMessage of JSON text; a Go string is the JSON string it holds, never
+// parsed as JSON. A wildcard step matches when any element holds it; a position
+// ([2]) is refused, since the stored selector reads every position as the
+// wildcard.
 func (f SubscriberPrefsField) EqAt(ctx context.Context, c *encrypt.Cipher, path string, v any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchQuery](ctx, f.field, c, "eq_at", path, v)
 }
@@ -333,28 +336,30 @@ func (f SubscriberLabelsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v
 }
 
 // Contains derives the query for documents that contain needle: col @> query.
-// needle is a json.RawMessage of JSON text, or any value encoding/json writes,
-// such as a map or a struct. Each member it writes must be in the document, so
-// a zero-valued struct field narrows the query to documents holding that zero:
-// give a needle struct pointer fields, or omitempty, or use a map. Each array
-// element of the needle must sit inside one element of the document's array.
+// needle is a json.RawMessage of JSON text, or a map, struct or slice that
+// encoding/json writes; a Go string is refused, as one JSON string is not JSON
+// text. Each member it writes must be in the document, so a zero-valued struct
+// field narrows the query to documents holding that zero: give a needle struct
+// pointer fields, or omitempty, or use a map. Each array element of the needle
+// must sit inside one element of the document's array.
 func (f SubscriberLabelsField) Contains(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQuery[eql.JSONSearchQuery](ctx, f.field, c, "contains", needle)
 }
 
 // ContainedBy derives the query for documents contained by needle: col <@
-// query. needle is a json.RawMessage of JSON text, or any value encoding/json
-// writes; here a zero-valued field widens the query, admitting documents that
-// hold that zero.
+// query. needle is a json.RawMessage of JSON text, or a map, struct or slice
+// that encoding/json writes (not a Go string); here a zero-valued field widens
+// the query, admitting documents that hold that zero.
 func (f SubscriberLabelsField) ContainedBy(ctx context.Context, c *encrypt.Cipher, needle any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQuery[eql.JSONSearchQuery](ctx, f.field, c, "contained_by", needle)
 }
 
 // EqAt derives the query for documents holding the scalar v at path: col @>
 // query. v is a Go string, number or bool, nil for JSON null, or a
-// json.RawMessage of JSON text. A wildcard step matches when any element holds
-// it; a position ([2]) is refused, since the stored selector reads every
-// position as the wildcard.
+// json.RawMessage of JSON text; a Go string is the JSON string it holds, never
+// parsed as JSON. A wildcard step matches when any element holds it; a position
+// ([2]) is refused, since the stored selector reads every position as the
+// wildcard.
 func (f SubscriberLabelsField) EqAt(ctx context.Context, c *encrypt.Cipher, path string, v any) (eql.JSONSearchQuery, error) {
 	return gensupport.JSONQueryAt[eql.JSONSearchQuery](ctx, f.field, c, "eq_at", path, v)
 }
