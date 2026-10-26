@@ -212,6 +212,10 @@ func TestWireGivesATargetItsOptions(t *testing.T) {
 	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "no target") {
 		t.Fatalf("options with no target: %v", err)
 	}
+	noTarget := &Plan{Context: []string{"users"}, Fields: []Field{{Name: "profile", Kind: JSON, Outputs: []Output{Ciphertext}}}}
+	if err := noTarget.Validate(); err == nil || !strings.Contains(err.Error(), `"profile" is a JSON document and names no target`) {
+		t.Fatalf("a json field with no target: %v", err)
+	}
 	if !JSON.Known() {
 		t.Fatal("json is a kind")
 	}

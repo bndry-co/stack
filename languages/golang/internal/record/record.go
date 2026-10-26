@@ -332,6 +332,12 @@ func (p *Plan) Validate() error {
 		if f.TargetOptions != nil && !f.IsTarget() {
 			return fmt.Errorf("record: field %q has target options and no target", f.Name)
 		}
+		// A JSON document is stored only through a target that stores one
+		// (JsonSearch); the engine refuses a json field with no target
+		// (json_needs_target), and saying it here names the field first.
+		if f.Kind == JSON && !f.IsTarget() {
+			return fmt.Errorf("record: field %q is a JSON document and names no target; a document is stored through an EQL type that stores one, such as JsonSearch", f.Name)
+		}
 		if f.IsTarget() {
 			if len(f.Outputs) != 0 {
 				return fmt.Errorf("record: field %q names the EQL type %s and outputs; a field has one or the other", f.Name, f.Target)
