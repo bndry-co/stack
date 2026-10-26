@@ -69,8 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its text in a bytes leaf (`dynamic::read_json`, `dynamic::json_frame`).
   `json::parse_text` is the one parser, the engine's own (held to
   serde_json's by a differential property test and the `fuzz:json-text`
-  target), so no heap block it frees holds the document: it refuses an
-  object that names a member twice and an integer literal outside
+  target), so no heap block it frees holds the document's strings or an
+  array's buffer (a number or boolean in an object of twelve or more
+  members can stay in a map node it frees; those are wiped best-effort):
+  it refuses an object that names a member twice and an integer literal
+  outside
   `i64::MIN ..= u64::MAX` (which serde_json would read as the nearest
   `f64`), as well as text that is not JSON, each with a code
   (`JsonTextError::code`) and a position, never a byte of the text.

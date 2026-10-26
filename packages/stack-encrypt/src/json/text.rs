@@ -79,11 +79,20 @@ impl JsonTextError {
 /// Parse a document from UTF-8 JSON text by the rules in the module docs.
 ///
 /// The parser is the engine's own, not serde_json's deserializer, so that
-/// no heap block it frees holds plaintext: each string is decoded into a
-/// buffer sized for it before it is read, so it never grows; a container's
-/// buffer is wiped before it is replaced by a larger one; numbers are read
-/// from the text in place; and on a refusal the part of the document built
-/// so far is wiped ([`wipe_value`](super::wipe_value)) before it drops.
+/// it leaves no string and no array buffer in a heap block it frees: each
+/// string is decoded into a buffer sized for it before it is read, so it
+/// never grows; an array's buffer is wiped before it is replaced by a
+/// larger one; numbers are read from the text in place; and on a refusal
+/// the part of the document built so far is wiped
+/// ([`wipe_value`](super::wipe_value)) before it drops.
+///
+/// An object's members go into serde_json's map, a `BTreeMap`, which
+/// splits a full node by copying half its members to a new one and does
+/// not clear the slots it leaves. Strings move by pointer, so their bytes
+/// never sit in those slots, but a number or a boolean is held inline: in
+/// an object of twelve or more members, a scalar member's value can stay
+/// in a node the map frees. Numbers and booleans are wiped best-effort, as
+/// [`wipe_value`](super::wipe_value) says.
 ///
 /// # Errors
 ///
