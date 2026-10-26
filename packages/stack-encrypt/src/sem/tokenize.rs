@@ -39,7 +39,7 @@ pub enum Tokenizer {
     /// `length` is only ever seen inside the n-grams that cross its edges:
     /// a query of a two-letter word cuts nothing under 3-grams. With
     /// [`MatchOptions::short_words`] on, each such word is also one token of
-    /// its own (see [`Tokens`]).
+    /// its own.
     Ngram { length: usize },
     /// Split on the v1 match indexer's separator set — space, comma,
     /// semicolon, colon and exclamation mark — one token per run of
