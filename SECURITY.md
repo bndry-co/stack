@@ -34,7 +34,7 @@ It also carries the source of five Rust crates published to crates.io,
 **`stack-encrypt-derive`** (`packages/stack-kms`, `packages/stack-encrypt`,
 `packages/stack-encrypt-derive`), and of the **Go module** at
 `languages/golang` (`encrypt` and `auth`, over WASI guests built
-from the stack-* crates), released by `.github/workflows/release-golang.yml`
+from the stack-* crates, and `control` for workspace administration), released by `.github/workflows/release-golang.yml`
 as `languages/golang/vX.Y.Z` tags. All of these are in scope
 for security reports on the same terms as the npm packages above.
 

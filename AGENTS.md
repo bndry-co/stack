@@ -97,6 +97,7 @@ Every npm package except EQL lives under `languages/typescript/`: packages in `l
 - `languages/typescript/examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
 - `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-deployment`, `stash-zerokms`, `stash-auth`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma`, `stash-managed-platforms`, `stash-supply-chain-security`)
+- `languages/golang/control`: Workspace administration across CTS (actors, access-key metadata, memberships) and ZeroKMS (keysets, clients, grants). Uses the Go `auth` package's strategies and decoded token metadata; management needs no encryption client key. Creation secrets have one-shot typed handoff or byte export. See its README for ownership, error handling and live-verification limits.
 
 ## Working on protect-ffi
 

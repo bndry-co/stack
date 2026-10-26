@@ -12,6 +12,15 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- Optional `auth.WithAcceptedRoles` checks decoded token roles in Go, including
+  cached and refreshed tokens. This catches wrong credentials; it does not
+  verify JWT signatures or authorize operations.
+
+- Workspace administration through `control`: CTS actors, access-key metadata
+  and memberships, and ZeroKMS keysets, clients and grants. Creation secrets
+  support one-shot typed transfer or byte export. Administrative writes are
+  not retried, redirects are refused, and malformed inventories fail closed.
+
 - **A two-letter word is searchable in `TextMatch`, `TextSearch` and
   `TextSearchOre` (#1309).** The EQL v4 match types index each two-letter
   word whole, beside the 3-grams of the text, so a two-letter surname such
@@ -124,6 +133,14 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   map a `null=sql` field yet.
 
 ### Breaking
+
+- `ProfileStore.AccessKey` now consumes `*auth.AccessKey`, constructed with
+  `auth.NewAccessKey(ownedBytes)`, instead of a string. It wipes the owned
+  bytes on success and failure. `Strategy.Token` returns an opaque
+  `auth.ServiceToken` with the bearer and decoded workspace/service metadata;
+  use `Bearer()` at an HTTP authorization boundary. This follows the existing
+  Rust client contract, without local JWT signature verification. Role checks
+  are opt-in configuration checks through `auth.WithAcceptedRoles`.
 
 - **`eql.SteVecDocument` and `eql.SteVecQuery` are gone.** They named
   EQL v4's SteVec domains, which the engine never produced and the v4

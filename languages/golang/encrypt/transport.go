@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/cipherstash/stack/languages/golang/auth"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 )
@@ -24,13 +25,22 @@ const transportModule = "cipherstash_transport"
 // tokenSource supplies the bearer token the guest presents to ZeroKMS. It
 // is asked once before each operation that can reach ZeroKMS, so a source
 // that rotates tokens needs no re-initialisation of the client.
-// Outside this package's tests it is always a *auth.Strategy: minting and
-// refresh stay host-side, out of the crypto guest, in auth's credential
+// Outside this package's tests it extracts the bearer from auth.Strategy's
+// snapshot: acquisition and refresh stay in the credential
 // guest. The interface is unexported so that no caller can hand the client
 // a raw token, which could not be refreshed and would bypass the
 // strategies' refresh lock.
 type tokenSource interface {
 	Token(ctx context.Context) (string, error)
+}
+
+// The crypto guest ABI takes bearer bytes, not the auth snapshot's metadata.
+// This adapter extracts only that field; it owns no cache or authentication.
+type strategyBearer struct{ strategy *auth.Strategy }
+
+func (s strategyBearer) Token(ctx context.Context) (string, error) {
+	token, err := s.strategy.Token(ctx)
+	return token.Bearer(), err
 }
 
 // transport performs the guest's ZeroKMS requests over a RoundTripper and

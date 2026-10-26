@@ -2,8 +2,6 @@ package encrypt
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -448,11 +446,7 @@ func TestACallCancelledDuringATokenExchangeLeavesTheProfileOpen(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	t.Cleanup(func() { close(done) })
-	claims, err := json.Marshal(map[string]any{"iss": server.URL, "sub": "CS|test", "workspace": "ZVATKW3VHMFG27DY", "exp": time.Now().Add(time.Hour).Unix()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	jwt = "e30." + base64.RawURLEncoding.EncodeToString(claims) + ".c2ln"
+	jwt = authJWT(t, server.URL, "ZVATKW3VHMFG27DY")
 
 	store, err := auth.OpenWithoutProfile(context.Background())
 	if errors.Is(err, auth.ErrGuestNotBuilt) {
@@ -462,14 +456,14 @@ func TestACallCancelledDuringATokenExchangeLeavesTheProfileOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	strategy, err := store.AccessKey(context.Background(), testCRN, testAccessKey, auth.WithBaseURL(server.URL))
+	strategy, err := store.AccessKey(context.Background(), testCRN, auth.NewAccessKey([]byte(testAccessKey)), auth.WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer strategy.Close()
 
 	rt := &switchable{rt: unauthorized}
-	c := cancelClient(t, rt, strategy)
+	c := cancelClient(t, rt, strategyBearer{strategy})
 	hold.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()

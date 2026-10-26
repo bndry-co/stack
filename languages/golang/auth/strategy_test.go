@@ -35,34 +35,29 @@ func testJWT(t *testing.T, issuer string) string {
 // callers can tell whose token came back.
 func testJWTFor(t *testing.T, issuer, sub string) string {
 	t.Helper()
-	payload, err := json.Marshal(map[string]any{
-		"iss": issuer, "sub": sub, "workspace": "ZVATKW3VHMFG27DY",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return "e30." + base64.RawURLEncoding.EncodeToString(payload) + ".c2ln"
+	return unsignedJWT(t, testClaims(issuer, sub, "ZVATKW3VHMFG27DY"))
 }
 
-// jwtSubject reads the sub claim of an unverified JWT.
-func jwtSubject(t *testing.T, jwt string) string {
-	t.Helper()
-	parts := strings.Split(jwt, ".")
-	if len(parts) != 3 {
-		t.Fatalf("not a JWT: %q", jwt)
+func testClaims(issuer, sub, workspace string) map[string]any {
+	return map[string]any{
+		"iss": strings.TrimRight(issuer, "/") + "/", "sub": sub, "workspace": workspace,
+		"services": map[string]string{"zerokms": "https://ap-southeast-2.aws.viturhosted.net/"},
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+}
+
+func unsignedJWT(t *testing.T, claims map[string]any) string {
+	t.Helper()
+	payload, err := json.Marshal(claims)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var claims struct {
-		Sub string `json:"sub"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		t.Fatal(err)
-	}
-	return claims.Sub
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
+}
+
+func deviceJWT(t *testing.T, issuer, sub string) string {
+	t.Helper()
+	return unsignedJWT(t, testClaims(issuer, sub, wsA))
 }
 
 func TestAccessKeyStrategyCachesAndPreservesRequest(t *testing.T) {
@@ -90,14 +85,14 @@ func TestAccessKeyStrategyCachesAndPreservesRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer strategy.Close()
 	for i := 0; i < 2; i++ {
 		got, err := strategy.Token(context.Background())
-		if err != nil || got != jwt {
+		if err != nil || got.Bearer() != jwt {
 			t.Fatalf("Token #%d = %q, %v", i, got, err)
 		}
 	}
@@ -135,7 +130,7 @@ func TestOIDCStrategyFederatesEachProviderTokenOnce(t *testing.T) {
 		}
 		// The CTS token names the IdP token it was exchanged from, so the
 		// test can tell whose token the strategy handed back.
-		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWTFor(t, "https://cts.example", "CS|"+body.OIDCToken), time.Now().Add(time.Hour).Unix())
+		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWTFor(t, "http://"+r.Host, "CS|"+body.OIDCToken), time.Now().Add(time.Hour).Unix())
 	}))
 	defer server.Close()
 	profile, err := Open(context.Background(), t.TempDir())
@@ -164,16 +159,16 @@ func TestOIDCStrategyFederatesEachProviderTokenOnce(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Token for %s: %v", idp, err)
 		}
-		return token
+		return token.Bearer()
 	}
 	a := tokenFor("idp-a")
 	b := tokenFor("idp-b")
 	again := tokenFor("idp-a")
-	if got := jwtSubject(t, a); got != "CS|idp-a" {
-		t.Errorf("A's token subject = %q, want CS|idp-a", got)
+	if a != testJWTFor(t, server.URL, "CS|idp-a") {
+		t.Error("A did not receive the token minted for A")
 	}
-	if got := jwtSubject(t, b); got != "CS|idp-b" {
-		t.Errorf("B's token subject = %q, want CS|idp-b: B was handed A's token", got)
+	if b != testJWTFor(t, server.URL, "CS|idp-b") {
+		t.Error("B did not receive the token minted for B")
 	}
 	if again != a {
 		t.Errorf("A's second call did not serve A's cached token")
@@ -200,7 +195,7 @@ func TestOIDCStrategyCacheCapacityZeroExchangesEveryCall(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWTFor(t, "https://cts.example", "CS|"+body.OIDCToken), time.Now().Add(time.Hour).Unix())
+		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWTFor(t, "http://"+r.Host, "CS|"+body.OIDCToken), time.Now().Add(time.Hour).Unix())
 	}))
 	defer server.Close()
 	profile, err := Open(context.Background(), t.TempDir())
@@ -220,8 +215,8 @@ func TestOIDCStrategyCacheCapacityZeroExchangesEveryCall(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Token #%d: %v", i, err)
 		}
-		if got := jwtSubject(t, token); got != "CS|idp-a" {
-			t.Errorf("Token #%d subject = %q, want CS|idp-a", i, got)
+		if token.Bearer() != testJWTFor(t, server.URL, "CS|idp-a") {
+			t.Errorf("Token #%d did not return the exchanged token", i)
 		}
 	}
 	if exchanges.Load() != 2 {
@@ -241,7 +236,7 @@ func TestUsageLimitIsPreservedAcrossGuest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +291,7 @@ func TestAutoPrefersAccessKeyThenDeviceSession(t *testing.T) {
 			fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, accessJWT, time.Now().Add(time.Hour).Unix())
 		case "/oauth/token":
 			refreshCalls.Add(1)
-			fmt.Fprint(w, `{"access_token":"device-token","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`)
+			fmt.Fprintf(w, `{"access_token":%q,"token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`, deviceJWT(t, "http://"+r.Host, "device-token"))
 		default:
 			t.Errorf("unexpected auth path %q", r.URL.Path)
 			http.NotFound(w, r)
@@ -319,7 +314,7 @@ func TestAutoPrefersAccessKeyThenDeviceSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	token, err := strategy.Token(context.Background())
-	if err != nil || token != accessJWT {
+	if err != nil || token.Bearer() != accessJWT {
 		t.Fatalf("access key: token %q, error %v", token, err)
 	}
 	strategy.Close()
@@ -335,7 +330,7 @@ func TestAutoPrefersAccessKeyThenDeviceSession(t *testing.T) {
 	}
 	defer strategy.Close()
 	token, err = strategy.Token(context.Background())
-	if err != nil || token != "device-token" {
+	if err != nil || token.Bearer() != deviceJWT(t, server.URL, "device-token") {
 		t.Fatalf("device fallback: token %q, error %v", token, err)
 	}
 	if refreshCalls.Load() != 1 {
@@ -364,7 +359,12 @@ func expiredDeviceProfile(t *testing.T) (string, string) {
 func TestDeviceSessionFreshTokenDoesNotTakeRefreshLock(t *testing.T) {
 	guestOrSkip(t)
 	dir, workspaceDir := expiredDeviceProfile(t)
-	write(t, filepath.Join(workspaceDir, "auth.json"), fmt.Sprintf(`{"access_token":"fresh","refresh_token":"refresh-1","token_type":"Bearer","expires_at":%d,"region":"ap-southeast-2.aws","client_id":"client-1"}`, time.Now().Add(time.Hour).Unix()))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("fresh token must not make an auth request")
+	}))
+	defer server.Close()
+	jwt := deviceJWT(t, server.URL, "fresh")
+	write(t, filepath.Join(workspaceDir, "auth.json"), fmt.Sprintf(`{"access_token":%q,"refresh_token":"refresh-1","token_type":"Bearer","expires_at":%d,"region":"ap-southeast-2.aws","client_id":"client-1"}`, jwt, time.Now().Add(time.Hour).Unix()))
 	profile, err := Open(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
@@ -374,7 +374,7 @@ func TestDeviceSessionFreshTokenDoesNotTakeRefreshLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	strategy, err := workspace.DeviceSession(context.Background(), WithBaseURL("https://cts.example.com"))
+	strategy, err := workspace.DeviceSession(context.Background(), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestDeviceSessionFreshTokenDoesNotTakeRefreshLock(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		token, err := strategy.Token(ctx)
-		if err != nil || token != "fresh" {
+		if err != nil || token.Bearer() != jwt {
 			return fmt.Errorf("fresh token while lock is held = %q, %v", token, err)
 		}
 		return nil
@@ -464,7 +464,7 @@ func TestAutoUsesEnvironmentPresenceAndProfileExistence(t *testing.T) {
 	} else if d := wantDiagnostic(t, err, "stack_auth::invalid_access_key"); strings.Contains(fmt.Sprintf("%v %+v", err, *d), keyMarker) {
 		t.Fatalf("the access key is in the Diagnostic: %v %+v", err, *d)
 	}
-	if _, err := profile.AccessKey(context.Background(), "invalid", "CSAKtestKeyId.testKeySecret"); !errors.Is(err, ErrConfig) {
+	if _, err := profile.AccessKey(context.Background(), "invalid", NewAccessKey([]byte("CSAKtestKeyId.testKeySecret"))); !errors.Is(err, ErrConfig) {
 		t.Fatalf("malformed CRN for access key: error = %v, want %v", err, ErrConfig)
 	} else {
 		wantCode(t, err, "stack_auth::invalid_crn")
@@ -514,7 +514,7 @@ func TestDeviceRefreshLockPreventsReplay(t *testing.T) {
 			t.Errorf("request body = %v, want %v", r.PostForm, want)
 		}
 		time.Sleep(50 * time.Millisecond)
-		fmt.Fprint(w, `{"access_token":"fresh","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`)
+		fmt.Fprintf(w, `{"access_token":%q,"token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`, deviceJWT(t, "http://"+r.Host, "fresh"))
 	}))
 	defer server.Close()
 	var wg sync.WaitGroup
@@ -541,7 +541,7 @@ func TestDeviceRefreshLockPreventsReplay(t *testing.T) {
 			}
 			defer strategy.Close()
 			token, err := strategy.Token(context.Background())
-			if err == nil && token != "fresh" {
+			if err == nil && token.Bearer() != deviceJWT(t, server.URL, "fresh") {
 				err = fmt.Errorf("token = %q, want fresh", token)
 			}
 			errCh <- err
@@ -623,14 +623,14 @@ func TestAuthRequestsIdentifyTheLibraryNotGo(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer strategy.Close()
 	got, err := strategy.Token(context.Background())
 	ua, _ := agent.Load().(string)
-	if err != nil || got != jwt {
+	if err != nil || got.Bearer() != jwt {
 		t.Fatalf("Token = %q, %v (User-Agent %q)", got, err, ua)
 	}
 	if !isStackAuthGoAgent(ua) {
@@ -664,7 +664,7 @@ func TestAuthTransportErrorNamesTheHTTPStatusNotTheBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -697,7 +697,7 @@ func TestAuthTransportErrorWithoutAResponseNamesNoStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(addr))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(addr))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,7 +723,7 @@ func TestAuthTransportErrorTextIsNotInTheDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.invalid"))
+	strategy, err := profile.AccessKey(ctx, testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL("https://cts.invalid"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -766,7 +766,7 @@ func TestOutOfRangeAuthStatusIsTransport(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer profile.Close()
-			strategy, err := profile.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.invalid"))
+			strategy, err := profile.AccessKey(ctx, testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL("https://cts.invalid"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -812,7 +812,7 @@ func TestOpenWithoutProfileRunsAccessKeyAndRefusesProfileReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer strategy.Close()
-	if token, err := strategy.Token(ctx); err != nil || token != jwt {
+	if token, err := strategy.Token(ctx); err != nil || token.Bearer() != jwt {
 		t.Fatalf("Token = %q, %v", token, err)
 	}
 	if err := os.Unsetenv("CS_CLIENT_ACCESS_KEY"); err != nil {
@@ -829,7 +829,7 @@ func TestOpenWithoutProfileRunsAccessKeyAndRefusesProfileReads(t *testing.T) {
 func TestStrategyReportsItsStoresMemoryLockLive(t *testing.T) {
 	ctx := context.Background()
 	_, s := profile(t)
-	strategy, err := s.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.invalid"))
+	strategy, err := s.AccessKey(ctx, testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL("https://cts.invalid"))
 	if err != nil {
 		t.Fatal(err)
 	}

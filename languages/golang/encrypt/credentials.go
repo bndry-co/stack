@@ -106,7 +106,7 @@ func NewCredentials(clientID string, key *ClientKey, strategy *auth.Strategy) Cr
 	// A nil *Strategy stored in the interface would be a non-nil source
 	// that fails on first use; left unset, NewClient refuses it up front.
 	if strategy != nil {
-		c.token = strategy
+		c.token = strategyBearer{strategy}
 	}
 	return c
 }
@@ -136,11 +136,11 @@ func (c *explicitCredentials) resolve(context.Context, resolveOptions) (*resolve
 	// A nil token never gets here: NewClient refuses it host-side, before
 	// the guest is read.
 	resolved := &resolvedCredentials{ClientID: c.clientID, ClientKey: c.key, Token: c.token}
-	if strategy, ok := c.token.(*auth.Strategy); ok {
+	if source, ok := c.token.(strategyBearer); ok {
 		// The strategy's store is the guest the token lives in and, when
 		// the key was read through it, the key passed through: reported
 		// live, as AutoCredentials reports its profile's.
-		resolved.MemoryLockError = strategy.MemoryLockError
+		resolved.MemoryLockError = source.strategy.MemoryLockError
 	}
 	// No Close: the strategy and its store are the caller's.
 	return resolved, nil
@@ -330,7 +330,7 @@ func resolveWithStrategy(
 	return &resolvedCredentials{
 		ClientID:  clientID,
 		ClientKey: key,
-		Token:     token,
+		Token:     strategyBearer{token},
 		Close: func() error {
 			// The strategy lives in the profile's guest, which closing the
 			// profile would free anyway; closing it first unregisters it
