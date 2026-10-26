@@ -410,7 +410,13 @@ async fn a_leaf_sealed_from_a_frame_opens_as_the_typed_plaintext() {
 async fn every_producible_type_dispatches_by_name() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let producible: Vec<_> = targets::targets().iter().filter(|t| t.producible).collect();
+    // A type that stores a JSON document takes JSON text and answers the
+    // JSON operators, not one query per index: tests/json_tree_data_plan.rs
+    // runs it by name.
+    let producible: Vec<_> = targets::targets()
+        .iter()
+        .filter(|t| t.producible && t.plaintext != Some("json"))
+        .collect();
     assert!(!producible.is_empty());
     for target in producible {
         let name = target.name;

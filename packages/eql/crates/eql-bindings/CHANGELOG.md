@@ -9,8 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`JsonSearch`, the `json_tree` document, by name** (`targets`
+  feature, #1348, #1349). The target table has a row for it, generated
+  from the catalog's document family (`eql_domains::DOCUMENT_FAMILIES`):
+  produced from the `json` kind, carrying the `json` index, with
+  `JsonSearchQuery` (`eql_v4.query_json`) as its needle.
+  `encryption::targets::encrypt_with` takes the field's `TargetOptions`
+  and seals the document's JSON text through `v4::json_tree::JsonTree`
+  under them; `decrypt` opens it back to its text. A value that is not a
+  JSON document is `TargetError::Json`, options on a type that takes none
+  `TargetError::Options`, and a one-plaintext `query` of a document
+  `TargetError::DocumentQuery` (its operands are the engine's, by JSON
+  operator). `v4::all()` lists `JsonTreeDocument` and
+  `v4::all_query()` lists `JsonTreeQuery` and `JsonTreeLeafQuery`. The
+  contract names are the ones EQL v3 gives its searchable JSON document
+  (`JsonSearch`, `JsonSearchQuery`, `JsonSearchLeafQuery`, `JsonEntry`);
+  the structs keep the implementation's name, as v3's `SteVecDocument`
+  does. The table no longer has a `SteVecDocument` row: the SteVec SQL is
+  EQL v3 only, and `public.eql_v4_json_search` is the JSON tree document.
+
 - **The EQL v4 `json_tree` family's types, `v4::json_tree`** (`stack-encrypt`
-  feature). `JsonTreeDocument` is `public.eql_v4_json_tree`, `{v, i, h, sv,
+  feature). `JsonTreeDocument` is `public.eql_v4_json_search`, `{v, i, h, sv,
   q}`: the document's entries, one per JSON node, and `q`, its containment
   projection, which the server compares with a needle by native `jsonb @>`.
   `JsonTreeEntry` is one entry as `->` and the subtree reads return it,

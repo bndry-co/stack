@@ -10,13 +10,13 @@
 --! Stack Encrypt's JSON index writes. It shares no wire shape and no SQL with
 --! the SteVec surface. Four jsonb-backed domains (none over another domain,
 --! so the native-jsonb firewall in blockers.sql attaches):
---!   - public.{{prefix}}_json_tree       — storage: an EQL envelope `{v, i, h, sv, q}`.
---!   - public.{{prefix}}_json_tree_entry — one `sv` element (returned by `->`
---!                                        and the subtree read).
---!   - {{prefix}}.query_json_tree         — a containment needle: the element-nested
---!                                        projection of the needle's selectors.
---!   - {{prefix}}.query_json_tree_leaf    — an ordering operand at a path: a
---!                                        selector and a leaf ordering term.
+--!   - public.{{prefix}}_json_search — storage: an EQL envelope `{v, i, h, sv, q}`.
+--!   - public.{{prefix}}_json_entry  — one `sv` element (returned by `->`
+--!                                    and the subtree read).
+--!   - {{prefix}}.query_json         — a containment needle: the element-nested
+--!                                    projection of the needle's selectors.
+--!   - {{prefix}}.query_json_leaf    — an ordering operand at a path: a
+--!                                    selector and a leaf ordering term.
 --!
 --! The design is `docs/plans/2026-10-17-json-tree-index.md`
 --! at the repository root. The document's per-entry fields:
@@ -184,20 +184,20 @@ $$;
 --! reaching a column value.
 --!
 --! @note Constructing from inline JSON uses the standard DOMAIN cast:
---!       `'{"v":{{eql_version}},"i":{…},"h":"…","sv":[…],"q":{…}}'::public.{{prefix}}_json_tree`.
+--!       `'{"v":{{eql_version}},"i":{…},"h":"…","sv":[…],"q":{…}}'::public.{{prefix}}_json_search`.
 DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = '{{prefix}}_json_tree' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_json_search' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.{{prefix}}_json_tree AS jsonb
+    CREATE DOMAIN public.{{prefix}}_json_search AS jsonb
       CHECK (
         public.{{prefix}}_is_valid_json_tree_document_payload(VALUE)
       );
   END IF;
 
-  COMMENT ON DOMAIN public.{{prefix}}_json_tree IS 'EQL encrypted JSON tree document (containment, token chain)';
+  COMMENT ON DOMAIN public.{{prefix}}_json_search IS 'EQL encrypted JSON tree document (containment, token chain)';
 END
 $$;
 
@@ -214,15 +214,15 @@ DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = '{{prefix}}_json_tree_entry' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_json_entry' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.{{prefix}}_json_tree_entry AS jsonb
+    CREATE DOMAIN public.{{prefix}}_json_entry AS jsonb
       CHECK (
         VALUE IS NULL OR public.{{prefix}}_is_valid_json_tree_entry_payload(VALUE)
       );
   END IF;
 
-  COMMENT ON DOMAIN public.{{prefix}}_json_tree_entry IS 'EQL encrypted JSON tree entry (one node)';
+  COMMENT ON DOMAIN public.{{prefix}}_json_entry IS 'EQL encrypted JSON tree entry (one node)';
 END
 $$;
 
@@ -235,21 +235,21 @@ $$;
 --! from casting and matching every row via bare `jsonb @>`.
 --!
 --! @note Construct from inline JSON via the DOMAIN cast:
---!       `'{"sv":[…],"el":[]}'::{{prefix}}.query_json_tree`.
+--!       `'{"sv":[…],"el":[]}'::{{prefix}}.query_json`.
 --! @see {{prefix}}.json_tree_query
 DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'query_json_tree' AND typnamespace = '{{prefix}}'::regnamespace
+    WHERE typname = 'query_json' AND typnamespace = '{{prefix}}'::regnamespace
   ) THEN
-    CREATE DOMAIN {{prefix}}.query_json_tree AS jsonb
+    CREATE DOMAIN {{prefix}}.query_json AS jsonb
       CHECK (
         public.{{prefix}}_is_valid_json_tree_query_payload(VALUE)
       );
   END IF;
 
-  COMMENT ON DOMAIN {{prefix}}.query_json_tree IS 'EQL JSON tree query operand (containment)';
+  COMMENT ON DOMAIN {{prefix}}.query_json IS 'EQL JSON tree query operand (containment)';
 END
 $$;
 
@@ -261,14 +261,14 @@ $$;
 --! `>` and `>=` on an extracted entry; a range at a path is two predicates.
 --!
 --! @note Construct from inline JSON via the DOMAIN cast:
---!       `'{"s":"…","op":"…"}'::{{prefix}}.query_json_tree_leaf`.
+--!       `'{"s":"…","op":"…"}'::{{prefix}}.query_json_leaf`.
 DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'query_json_tree_leaf' AND typnamespace = '{{prefix}}'::regnamespace
+    WHERE typname = 'query_json_leaf' AND typnamespace = '{{prefix}}'::regnamespace
   ) THEN
-    CREATE DOMAIN {{prefix}}.query_json_tree_leaf AS jsonb
+    CREATE DOMAIN {{prefix}}.query_json_leaf AS jsonb
       CHECK (
         VALUE IS NULL
         OR COALESCE(
@@ -281,6 +281,6 @@ BEGIN
       );
   END IF;
 
-  COMMENT ON DOMAIN {{prefix}}.query_json_tree_leaf IS 'EQL JSON tree query operand (ordering at a path)';
+  COMMENT ON DOMAIN {{prefix}}.query_json_leaf IS 'EQL JSON tree query operand (ordering at a path)';
 END
 $$;

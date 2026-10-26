@@ -1,5 +1,5 @@
 //! The JSON tree family end to end: a document sealed by Stack Encrypt's
-//! JSON index into `public.eql_v4_json_tree`, queried with the v4 SQL, and
+//! JSON index into `public.eql_v4_json_search`, queried with the v4 SQL, and
 //! opened again. The unit tests need no database; the PostgreSQL test
 //! installs nothing itself (`mise run test:encryption:postgres` installs the
 //! v4 bundle built from the tree) and is the oracle the design asks for:
@@ -388,7 +388,7 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
     let plan = plan();
     let mut db = connect();
     db.batch_execute(
-        "CREATE TEMP TABLE json_tree_docs (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_tree NOT NULL);
+        "CREATE TEMP TABLE json_tree_docs (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_search NOT NULL);
          CREATE INDEX json_tree_docs_doc ON json_tree_docs USING gin ((eql_v4.json_tree_query(doc)) jsonb_path_ops);",
     )
     .unwrap();
@@ -398,7 +398,7 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
         let stored = wait(&runtime, seal(&cipher, plain));
         let stored = serde_json::to_string(&stored).unwrap();
         db.execute(
-            "INSERT INTO json_tree_docs VALUES ($1, $2::text::jsonb, $3::text::jsonb::public.eql_v4_json_tree)",
+            "INSERT INTO json_tree_docs VALUES ($1, $2::text::jsonb, $3::text::jsonb::public.eql_v4_json_search)",
             &[&(id as i32), &plain.to_string(), &stored],
         )
         .unwrap();
@@ -423,13 +423,13 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
         );
         let encrypted = ids(
             &mut db,
-            "SELECT id FROM json_tree_docs WHERE doc @> $1::text::jsonb::eql_v4.query_json_tree ORDER BY id",
+            "SELECT id FROM json_tree_docs WHERE doc @> $1::text::jsonb::eql_v4.query_json ORDER BY id",
             &operand,
         );
         assert_eq!(encrypted, expected, "@> {needle}");
         let function_form = ids(
             &mut db,
-            "SELECT id FROM json_tree_docs WHERE eql_v4.json_tree_contains(doc, $1::text::jsonb::eql_v4.query_json_tree) ORDER BY id",
+            "SELECT id FROM json_tree_docs WHERE eql_v4.json_tree_contains(doc, $1::text::jsonb::eql_v4.query_json) ORDER BY id",
             &operand,
         );
         assert_eq!(function_form, expected, "json_tree_contains {needle}");
@@ -451,7 +451,7 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
         }
         let encrypted = ids(
             &mut db,
-            "SELECT id FROM json_tree_docs WHERE doc <@ $1::text::jsonb::eql_v4.query_json_tree ORDER BY id",
+            "SELECT id FROM json_tree_docs WHERE doc <@ $1::text::jsonb::eql_v4.query_json ORDER BY id",
             &reverse,
         );
         assert_eq!(encrypted, expected, "<@ {needle}");
@@ -475,7 +475,7 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
     let operand = serde_json::to_string(&JsonTreeQuery::try_from(&needle).unwrap()).unwrap();
     let explain: Vec<String> = db
         .query(
-            "EXPLAIN SELECT id FROM json_tree_docs WHERE doc @> $1::text::jsonb::eql_v4.query_json_tree",
+            "EXPLAIN SELECT id FROM json_tree_docs WHERE doc @> $1::text::jsonb::eql_v4.query_json",
             &[&operand],
         )
         .unwrap()
@@ -492,8 +492,8 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
     // Not STRICT, so inlinable; a NULL on either side is still NULL.
     let nulls = db
         .query_one(
-            "SELECT (NULL::public.eql_v4_json_tree @> $1::text::jsonb::eql_v4.query_json_tree) IS NULL
-                AND ((SELECT doc FROM json_tree_docs WHERE id = 0) @> NULL::eql_v4.query_json_tree) IS NULL",
+            "SELECT (NULL::public.eql_v4_json_search @> $1::text::jsonb::eql_v4.query_json) IS NULL
+                AND ((SELECT doc FROM json_tree_docs WHERE id = 0) @> NULL::eql_v4.query_json) IS NULL",
             &[&operand],
         )
         .unwrap();
@@ -527,7 +527,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
     let plan = plan();
     let mut db = connect();
     db.batch_execute(
-        "CREATE TEMP TABLE json_tree_rows (id int PRIMARY KEY, doc public.eql_v4_json_tree NOT NULL)",
+        "CREATE TEMP TABLE json_tree_rows (id int PRIMARY KEY, doc public.eql_v4_json_search NOT NULL)",
     )
     .unwrap();
     let rows = [
@@ -542,7 +542,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
         let stored = wait(&runtime, seal(&cipher, plain));
         let stored = serde_json::to_string(&stored).unwrap();
         db.execute(
-            "INSERT INTO json_tree_rows VALUES ($1, $2::text::jsonb::public.eql_v4_json_tree)",
+            "INSERT INTO json_tree_rows VALUES ($1, $2::text::jsonb::public.eql_v4_json_search)",
             &[id, &stored],
         )
         .unwrap();
@@ -733,7 +733,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .query_one(
             "SELECT count(*) FROM json_tree_rows,
                eql_v4.json_tree_subtree(
-                 jsonb_set(doc::jsonb, '{h}', to_jsonb(encode(set_byte(decode(doc::jsonb ->> 'h', 'base64'), 1, 0), 'base64')))::public.eql_v4_json_tree,
+                 jsonb_set(doc::jsonb, '{h}', to_jsonb(encode(set_byte(decode(doc::jsonb ->> 'h', 'base64'), 1, 0), 'base64')))::public.eql_v4_json_search,
                  $1::text[], 1) e
              WHERE id = 1",
             &[&nested.tokens()],
@@ -846,7 +846,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
     let number = selector("$.number");
     let ids: Vec<i32> = db
         .query(
-            "SELECT id FROM json_tree_rows WHERE (doc -> $1::text) >= $2::text::jsonb::eql_v4.query_json_tree_leaf ORDER BY id",
+            "SELECT id FROM json_tree_rows WHERE (doc -> $1::text) >= $2::text::jsonb::eql_v4.query_json_leaf ORDER BY id",
             &[&number, &at_least_one],
         )
         .unwrap()
@@ -856,7 +856,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
     assert_eq!(ids, [1, 2]);
     let ids: Vec<i32> = db
         .query(
-            "SELECT id FROM json_tree_rows WHERE (doc -> $1::text) < $2::text::jsonb::eql_v4.query_json_tree_leaf ORDER BY id",
+            "SELECT id FROM json_tree_rows WHERE (doc -> $1::text) < $2::text::jsonb::eql_v4.query_json_leaf ORDER BY id",
             &[&number, &at_least_one],
         )
         .unwrap()
@@ -886,7 +886,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .collect();
     assert_eq!(sorted, [3, 1, 2], "aaa, world-1, world-2");
 
-    // An ordering operand that lost its `query_json_tree_leaf` cast is plain
+    // An ordering operand that lost its `query_json_leaf` cast is plain
     // jsonb, and every comparison of an entry with plain jsonb raises,
     // either way round, instead of comparing the entry's ciphertext.
     for op in ["<", "<=", ">", ">=", "=", "<>"] {
@@ -903,7 +903,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
                         .unwrap_or_else(|| error.to_string());
                     assert!(
                         message.contains(&format!(
-                            "operator {op} is not supported for public.eql_v4_json_tree_entry"
+                            "operator {op} is not supported for public.eql_v4_json_entry"
                         )),
                         "{sql}: {message}"
                     );
@@ -926,7 +926,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
                 .map(|e| e.message().to_owned())
                 .unwrap_or_else(|| error.to_string());
             assert!(
-                message.contains("operator ? is not supported for public.eql_v4_json_tree"),
+                message.contains("operator ? is not supported for public.eql_v4_json_search"),
                 "native `?` must be blocked: {message}"
             );
         }
@@ -1056,7 +1056,7 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
     for shape in &shapes {
         let table = format!("json_tree_plan_{}", shape.name);
         db.batch_execute(&format!(
-            "CREATE TEMP TABLE {table} (id int PRIMARY KEY, doc public.eql_v4_json_tree NOT NULL);
+            "CREATE TEMP TABLE {table} (id int PRIMARY KEY, doc public.eql_v4_json_search NOT NULL);
              CREATE INDEX {table}_gin ON {table} USING gin ((eql_v4.json_tree_query(doc)) jsonb_path_ops);
              CREATE INDEX {table}_ord ON {table} (eql_v4.ord_term(doc -> '{number}'::text));"
         ))
@@ -1066,7 +1066,7 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
             let stored = serde_json::to_string(&stored).unwrap();
             db.execute(
                 &format!(
-                    "INSERT INTO {table} VALUES ($1, $2::text::jsonb::public.eql_v4_json_tree)"
+                    "INSERT INTO {table} VALUES ($1, $2::text::jsonb::public.eql_v4_json_search)"
                 ),
                 &[&(i as i32), &stored],
             )
@@ -1123,7 +1123,7 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
         let operand = needle(shape.needle.clone());
         let text = explain(
             &mut db,
-            &format!("SELECT id FROM {table} WHERE doc @> $1::text::jsonb::eql_v4.query_json_tree"),
+            &format!("SELECT id FROM {table} WHERE doc @> $1::text::jsonb::eql_v4.query_json"),
             &[&operand],
         );
         assert!(
@@ -1133,7 +1133,9 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
         );
         let matched: i64 = db
             .query_one(
-                &format!("SELECT count(*) FROM {table} WHERE doc @> $1::text::jsonb::eql_v4.query_json_tree"),
+                &format!(
+                    "SELECT count(*) FROM {table} WHERE doc @> $1::text::jsonb::eql_v4.query_json"
+                ),
                 &[&operand],
             )
             .unwrap()
@@ -1148,7 +1150,7 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
         let operand = leaf(shape.rows - 5);
         let text = explain(
             &mut db,
-            &format!("SELECT id FROM {table} WHERE (doc -> $1::text) >= $2::text::jsonb::eql_v4.query_json_tree_leaf"),
+            &format!("SELECT id FROM {table} WHERE (doc -> $1::text) >= $2::text::jsonb::eql_v4.query_json_leaf"),
             &[&number, &operand],
         );
         assert!(
@@ -1159,7 +1161,7 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
         );
         let matched: i64 = db
             .query_one(
-                &format!("SELECT count(*) FROM {table} WHERE (doc -> $1::text) >= $2::text::jsonb::eql_v4.query_json_tree_leaf"),
+                &format!("SELECT count(*) FROM {table} WHERE (doc -> $1::text) >= $2::text::jsonb::eql_v4.query_json_leaf"),
                 &[&number, &operand],
             )
             .unwrap()
@@ -1183,9 +1185,9 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
         }
         db.batch_execute(&format!(
             "PREPARE {table}_contains(text) AS
-               SELECT id FROM {table} WHERE doc @> $1::jsonb::eql_v4.query_json_tree;
+               SELECT id FROM {table} WHERE doc @> $1::jsonb::eql_v4.query_json;
              PREPARE {table}_range(text) AS
-               SELECT id FROM {table} WHERE (doc -> '{number}'::text) >= $1::jsonb::eql_v4.query_json_tree_leaf;"
+               SELECT id FROM {table} WHERE (doc -> '{number}'::text) >= $1::jsonb::eql_v4.query_json_leaf;"
         ))
         .unwrap();
         for (statement, operand, index, what) in [
@@ -1237,12 +1239,12 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
     // The control: with `json_tree_query` priced as if it were free, the
     // planner takes the sequential scan over the TOASTed table.
     let mut tx = db.transaction().unwrap();
-    tx.batch_execute("ALTER FUNCTION eql_v4.json_tree_query(public.eql_v4_json_tree) COST 1")
+    tx.batch_execute("ALTER FUNCTION eql_v4.json_tree_query(public.eql_v4_json_search) COST 1")
         .unwrap();
     let operand = needle(shapes[1].needle.clone());
     let text = tx
         .query(
-            "EXPLAIN SELECT id FROM json_tree_plan_nested WHERE doc @> $1::text::jsonb::eql_v4.query_json_tree",
+            "EXPLAIN SELECT id FROM json_tree_plan_nested WHERE doc @> $1::text::jsonb::eql_v4.query_json",
             &[&operand],
         )
         .unwrap()
@@ -1321,7 +1323,7 @@ fn store(
     documents: &[Value],
 ) {
     db.batch_execute(&format!(
-        "CREATE TEMP TABLE {table} (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_tree NOT NULL)"
+        "CREATE TEMP TABLE {table} (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_search NOT NULL)"
     ))
     .unwrap();
     for (id, plain) in (1..).zip(documents) {
@@ -1335,7 +1337,7 @@ fn store(
         )
         .unwrap();
         db.execute(
-            &format!("INSERT INTO {table} VALUES ($1, $2::text::jsonb, $3::text::jsonb::public.eql_v4_json_tree)"),
+            &format!("INSERT INTO {table} VALUES ($1, $2::text::jsonb, $3::text::jsonb::public.eql_v4_json_search)"),
             &[&id, &plain.to_string(), &serde_json::to_string(&stored).unwrap()],
         )
         .unwrap();
@@ -2092,7 +2094,7 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
                '{{sv,{number_at},x}}',
                to_jsonb(eql_v4_internal.json_tree_self_tag(
                  eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'),
-                 eql_v4_internal.json_tree_member_token(decode($1::text, 'base64'), decode(doc::jsonb -> 'sv' -> {number_at} ->> 's', 'base64')))))::public.eql_v4_json_tree
+                 eql_v4_internal.json_tree_member_token(decode($1::text, 'base64'), decode(doc::jsonb -> 'sv' -> {number_at} ->> 's', 'base64')))))::public.eql_v4_json_search
              WHERE id = 1"
         ),
         &[&nested.tokens()[0]],
@@ -2124,7 +2126,7 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
     db.execute(
         &format!(
             "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb, '{{sv,{hello_at},x}}', doc::jsonb -> 'sv' -> {number_at} -> 'x'),
-               '{{sv,{number_at},x}}', '\"AAAAAAAAAAA=\"')::public.eql_v4_json_tree WHERE id = 2"
+               '{{sv,{number_at},x}}', '\"AAAAAAAAAAA=\"')::public.eql_v4_json_search WHERE id = 2"
         ),
         &[],
     )
@@ -2139,7 +2141,7 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
     db.execute(
         &format!(
             "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb,
-               '{{sv,{deep_at}}}', doc::jsonb -> 'sv' -> {number_at}), '{{sv,{number_at}}}', doc::jsonb -> 'sv' -> {deep_at})::public.eql_v4_json_tree
+               '{{sv,{deep_at}}}', doc::jsonb -> 'sv' -> {number_at}), '{{sv,{number_at}}}', doc::jsonb -> 'sv' -> {deep_at})::public.eql_v4_json_search
              WHERE id = 2"
         ),
         &[],
@@ -2223,7 +2225,7 @@ fn postgres_reads_never_answer_wrongly_under_tampering() {
     let keyset = cipher.default_keyset();
     let mut db = connect();
     db.batch_execute(
-        "CREATE TEMP TABLE json_tree_tamper (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_tree NOT NULL)",
+        "CREATE TEMP TABLE json_tree_tamper (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_search NOT NULL)",
     )
     .unwrap();
     let mut rng = Lcg(0x5eed_7a3e);
@@ -2296,7 +2298,7 @@ fn postgres_reads_never_answer_wrongly_under_tampering() {
             _ => "a node moved under another parent",
         };
         let inserted = db.execute(
-            "INSERT INTO json_tree_tamper VALUES ($1, $2::text::jsonb, $3::text::jsonb::public.eql_v4_json_tree)",
+            "INSERT INTO json_tree_tamper VALUES ($1, $2::text::jsonb, $3::text::jsonb::public.eql_v4_json_search)",
             &[&id, &plain.to_string(), &tampered.to_string()],
         );
         if inserted.is_err() {
@@ -2349,7 +2351,7 @@ fn postgres_reads_never_answer_wrongly_under_tampering() {
                                       ->> eql_v4_internal.json_tree_self_tag(eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64'))) AS j,
                                     decode(doc::jsonb -> 'sv' -> ((SELECT nodes FROM eql_v4_internal.json_tree_index(doc::jsonb))
                                       ->> eql_v4_internal.json_tree_self_tag(eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64')))::integer ->> 's', 'base64') AS s) AS q
-                     )::public.eql_v4_json_tree WHERE id = $5",
+                     )::public.eql_v4_json_search WHERE id = $5",
                     &[&from_key.tokens()[0], &to_key.tokens()[0], &width, &member, &id],
                 )
                 .unwrap();
@@ -2427,7 +2429,7 @@ fn forged_chain(flags: i32, levels: i64, copies: i64, spread: bool) -> String {
                        'x', eql_v4_internal.json_tree_self_tag(k.iv, eql_v4_internal.json_tree_member_token(link.t, decode(repeat('00', 16), 'hex'))),
                        'p', eql_v4_internal.json_tree_parent_tag(k.iv, link.t, {ordinal})) ORDER BY n, copy.c)
                      FROM link, k, copy),
-           'q', '{{\"sv\": [], \"el\": []}}'::jsonb))::public.eql_v4_json_tree",
+           'q', '{{\"sv\": [], \"el\": []}}'::jsonb))::public.eql_v4_json_search",
         last = levels - 1
     )
 }

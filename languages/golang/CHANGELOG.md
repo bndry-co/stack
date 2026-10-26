@@ -25,6 +25,16 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   someone who clusters tokens across rows can tell "Ng" from "Nguyen".
   A native `index=match` field takes no options yet (#1112), so this
   reaches Go through the EQL types only.
+
+- **The EQL types for an encrypted JSON document** (#1348):
+  `eql.JSONSearch` (`public.eql_v4_json_search`), its containment needle
+  `eql.JSONSearchQuery`, its ordering operand
+  `eql.JSONSearchLeafQuery` and its entry `eql.JSONEntry`,
+  generated from the EQL catalog. The names are the ones EQL v3 gives its
+  searchable JSON document; `eql.JSON` stays the storage-only type. The
+  engine stores one from the module's own plans; `stashgen` does not
+  generate a field of it yet.
+
 - **Decimals, dates and timestamps take an order index (#1236).** An
   `encrypt.Decimal`, `encrypt.Date` or `time.Time` field takes `ore` and
   `ope`, and the generated code gives it `Lt`, `Lte`, `Gt`, `Gte` and
@@ -55,6 +65,49 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Breaking
 
+- **`eql.SteVecDocument` and `eql.SteVecQuery` are gone.** They named
+  EQL v4's SteVec domains, which the engine never produced and the v4
+  bundle no longer carries: in v4, `public.eql_v4_json_search` is the
+  JSON tree document, `eql.JSONSearch`, and `eql.Types` lists it in
+  their place.
+
+- **An opaque struct seals as a storage blob, and reads the JSON it used
+  to (#1347).** `stash:"context=...,opaque"` now seals the struct as one
+  blob in vitaminc's storage profile, version 1 (`vcffi.MarshalStorage`),
+  the format vitaminc keeps readable across releases and languages, where
+  it sealed the JSON document `encoding/json` wrote. Rows sealed before
+  still decrypt: `Decrypt` reads a value that is not a blob as JSON.
+  **Run stashgen again:** generated files name
+  `gensupport.GeneratedVersion2`, so a file generated before does not
+  compile against this release (it would seal blobs keyed by Go field
+  names that the regenerated file could not read). The generated shape
+  struct names each field `vc:"name,default"`, so a field added to the
+  struct later reads as its zero value from a blob sealed before it, as
+  it did from JSON. A field added to a nested struct type has no such
+  tag: give it a pointer type, or rows sealed before it do not decrypt.
+  **Upgrade every reader before any writer:** an earlier release cannot
+  read a blob, so a rolling deploy or a rollback that runs an earlier
+  release after this one has sealed a row fails to decrypt that row.
+  What else changes for a program: a NaN or infinite float now seals
+  (JSON refused it with `ErrEncoding`); a nil slice or map comes back
+  empty, not nil, from a blob; `Encrypt` refuses, as `ErrEncoding`
+  wrapping `vcffi.ErrUnwritable`, a string that is not UTF-8 (JSON wrote
+  U+FFFD), a value nested more than 128 levels deep, and two map keys
+  whose `MarshalText` spells alike. `stashgen` refuses in an opaque
+  struct `encrypt.Decimal` and `encrypt.Date` (the storage profile has no
+  form for them), a type with only one of `MarshalText` and
+  `UnmarshalText`, a map key that is not an integer, a string, bytes or
+  text, and a type that only `MarshalJSON` carries over a struct with
+  unexported fields. **Rows already sealed with an `encrypt.Decimal` or
+  `encrypt.Date` in an opaque struct do not decrypt under this release**,
+  since no generated file can name the field: before upgrading, decrypt
+  them with the earlier release, change the field to a string (or to its
+  parts), and encrypt them again; the earlier release writes JSON, which
+  this release reads. A blob a later release writes is
+  `encrypt.ErrStorageVersion`. This takes vcffi from the unreleased
+  cipherstash/vitaminc#526 by pseudo-version; the storage format is a
+  compatibility commitment only once vitaminc releases it, so no Go
+  release should be cut while the pin is a pseudo-version.
 - **Every order term changes: re-derive stored `ore`, `ope` and
   `ore_block` index terms.** The engine moved to vitaminc 0.8, clww-ore 0.6
   (formerly cllw-ore) and ore-rs 0.10, and both order schemes now derive
@@ -200,6 +253,20 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Changed
 
+- **vitaminc's Go bindings at an untagged vitaminc commit (temporary).**
+  `vcffi` and `vcvalue` move to vitaminc `06568ba93` on its `main`, which
+  carries the storage profile (`vcffi.MarshalStorage`, from
+  cipherstash/vitaminc#526); vitaminc's Go bindings have no tags, so the
+  commit is the pin. One encoding changes
+  with them, and it comes from vitaminc `e9c3837b` (on `main`, in no Go
+  tag yet), not from the storage profile: a nil pointer to a fixed-width
+  value (`(*int64)(nil)`) is written as a typed null where it was written
+  as a null. The engine reads a typed null as a null, and generated code
+  passes an untyped nil for a nil pointer, so this only shows in the bytes
+  a hand-built `record.Source` or query input sends. The pin returns to a
+  vitaminc release before this module is tagged:
+  `scripts/go-release-version.mjs` refuses a final version while `go.mod`
+  names a vitaminc pseudo-version.
 - **An EQL v4 block ORE term is one hex string.** The `ob` of a value
   encrypted into an `_ord_ore` or `text_search_ore` EQL type is
   `"ob": "0202…"`, where it was a one-element array, and the EQL v4 bundle
