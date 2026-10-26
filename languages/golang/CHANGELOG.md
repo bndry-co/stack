@@ -24,7 +24,10 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   return against the request that prepared them (`OpenOne` refuses a
   wildcard read up front); `encrypt.JSONSelector`, `JSONToken` and
   `JSONTokens` bind as `text` and `text[]`, and a zero selector, token or
-  token list is refused rather than bound. A `json.RawMessage` sealed any other way stays
+  token list is refused rather than bound. `JSONToken`, `JSONTokens`,
+  `JSONSelection` and `JSONRead` print and log with the tokens, the
+  selector and the path redacted; `encrypt.JSONValue` holds plaintext and
+  prints it. A `json.RawMessage` sealed any other way stays
   bytes. `gensupport.JSON`, `TargetOptions`,
   `Declaration.Options` and the `JSON*` helpers are the generated code's.
 

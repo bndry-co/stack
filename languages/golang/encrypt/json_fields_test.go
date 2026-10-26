@@ -1,10 +1,12 @@
 package encrypt_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -172,5 +174,51 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 	// ordering on it.
 	if _, ok := reflect.TypeOf(testusers.CustomerFields.Prefs).FieldByName("At"); ok {
 		t.Fatal("Prefs has an At")
+	}
+}
+
+// A token is a capability and a path's keys can be a customer's data: the
+// read types print and log neither, under any verb or through slog.
+func TestJSONReadTypesPrintAndLogRedacted(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	f := testusers.CustomerFields.Profile
+	sel, err := f.Selector(ctx, cipher, "$.secretkey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := f.Subtree(ctx, cipher, "$.secretkey[*]", encrypt.JSONReadOptions{WildcardBound: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := f.Children(ctx, cipher, "$.secretkey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden := append([]string{"secretkey", string(sel.Selector()), string(token)}, read.Tokens()...)
+	var logged bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logged, nil))
+	for name, v := range map[string]any{"selection": sel, "read": read, "token": token, "tokens": read.Tokens()} {
+		logger.Info(name, "v", v)
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
+			out := fmt.Sprintf(verb, v)
+			for _, h := range hidden {
+				if strings.Contains(out, h) {
+					t.Errorf("%s printed with %s shows %q: %s", name, verb, h, out)
+				}
+			}
+			if !strings.Contains(out, "encrypt.JSON") {
+				t.Errorf("%s printed with %s does not name its type: %s", name, verb, out)
+			}
+		}
+	}
+	for _, h := range hidden {
+		if strings.Contains(logged.String(), h) {
+			t.Errorf("slog shows %q: %s", h, logged.String())
+		}
+	}
+	if !strings.Contains(logged.String(), `"field":"profile"`) || !strings.Contains(logged.String(), `"tokens":3`) {
+		t.Errorf("slog records no field or token count: %s", logged.String())
 	}
 }
