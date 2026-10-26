@@ -73,6 +73,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          # On a pull request, the PR's head rather than GitHub's test merge
+          # commit: cargo-mutants applies `pr.diff` to the checked-out tree
+          # and refuses a hunk whose lines do not match it, and the diff
+          # below is taken between the base and this head. Empty on a
+          # manual dispatch, which checks out the default ref.
+          ref: ${{ github.event.pull_request.head.sha || '' }}
           # Full history, to diff the PR against its base for `--in-diff`.
           fetch-depth: 0
           persist-credentials: false
@@ -100,9 +106,8 @@ jobs:
       # PR's base in `github.base_ref`. The diff was then everything between
       # `main` and `next`, and the gate ran for two hours on a Go-only
       # change. `gh pr view` returns the base the PR page shows. The diff is
-      # taken between that base and the PR's head, not the checked-out merge
-      # commit, so it holds the PR's own lines whatever GitHub merged them
-      # into.
+      # taken between that base and the PR's head, which is what the checkout
+      # step put in the tree, so the hunks' line numbers are the tree's.
       - name: Compute the PR diff
         if: github.event_name == 'pull_request'
         env:
@@ -115,8 +120,9 @@ jobs:
           base_ref=${base% *}
           base_sha=${base#* }
           echo "Base: $base_ref at $base_sha (the event payload said '$PAYLOAD_BASE_REF'); head: $HEAD_SHA"
-          git fetch --no-tags origin "$base_sha" "$HEAD_SHA"
-          git diff "$base_sha...$HEAD_SHA" > pr.diff
+          git fetch --no-tags origin "$base_sha"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA" || { echo "the checkout is not the PR head"; exit 1; }
+          git diff "$base_sha...HEAD" > pr.diff
           echo "Files under mutation:"
           grep '^diff --git' pr.diff | sed 's|^diff --git a/.* b/|  |' || echo "  (none)"
 
