@@ -592,6 +592,16 @@ impl<K> StackCipher<K> {
         &self.kms
     }
 
+    /// The loaded state of the keyset with `id`, if this cipher holds it:
+    /// what opening a JSON document with its root open derives the root's
+    /// token with.
+    pub(crate) fn loaded_keyset(&self, id: Uuid) -> Option<Arc<KeysetState>> {
+        match self.keysets().get(&IdentifiedBy::Uuid(id)) {
+            Lookup::Hit(state) => Some(state),
+            Lookup::Stale(_) | Lookup::Miss(_) => None,
+        }
+    }
+
     fn keysets(&self) -> std::sync::MutexGuard<'_, KeysetCache> {
         // The cache holds no invariant a panic mid-update could break (an
         // insert is two map writes, and a stale name entry only points at

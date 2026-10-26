@@ -118,6 +118,7 @@ use vitaminc_protected::OpaqueDebug;
 
 use crate::target::{DecryptField, DecryptInto, Decryptable, Decryption};
 
+mod cascade;
 mod derive;
 mod path;
 mod plain;
