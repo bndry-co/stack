@@ -51,7 +51,7 @@ use crate::{KeysetCipher, Label, Pending, StackCipher};
 /// | `suffix` | string: the query-capability suffix, `Eq`; empty for a storage-only type |
 /// | `plaintext` | string or null: the [`ValueKind`] name the type is produced from — the same names a field's `"type"` key uses — or null while unspecified |
 /// | `sql_domain` | string: the stored value's PostgreSQL domain |
-/// | `indexes` | list of strings: the indexes the type carries, by `IndexSpec::key()`, plus `json` for a SteVec document |
+/// | `indexes` | list of strings: the indexes the type carries, by `IndexSpec::key()`: `eq`, `match`, `ore`, `ope`, and `json` for a document family's stored type (`JsonSearch`) |
 /// | `query` | string or null: the query twin's type name |
 /// | `query_sql_domain` | string or null: the query twin's PostgreSQL domain |
 /// | `producible` | bool: whether the engine produces the type today |
