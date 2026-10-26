@@ -114,17 +114,16 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read encrypted visits: %w", err)
 	}
+	defer rows.Close()
 	var entries []eql.JSONEntry
 	for rows.Next() {
 		var entry eql.JSONEntry
 		if err := rows.Scan(&entry); err != nil {
-			rows.Close()
 			return fmt.Errorf("scan visit entry: %w", err)
 		}
 		entries = append(entries, entry)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		return fmt.Errorf("iterate visit entries: %w", err)
 	}
 	if err := rows.Close(); err != nil {
