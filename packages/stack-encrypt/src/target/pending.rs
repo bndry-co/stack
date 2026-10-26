@@ -21,7 +21,7 @@ use stack_kms::{
 };
 use uuid::Uuid;
 
-use super::request::{tally, Request, RequestKind, Responses};
+use super::request::{tally, KeysetAnswer, Request, RequestKind, Responses};
 use crate::keyset::KeysetState;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
 
@@ -467,10 +467,12 @@ struct Retrieve {
 }
 
 /// Issue the batched ZeroKMS calls for `requests`: at most one
-/// `generate_keys` (under the pending's keyset) and one `retrieve_keys` per
-/// keyset the retrieved leaves were sealed under, whatever the request
-/// count. When ZeroKMS grows a combined operation (data keys + PRF
-/// derivations in one round-trip), this is the one place that changes.
+/// `generate_keys` (under the pending's keyset), one `retrieve_keys` per
+/// keyset the retrieved leaves were sealed under, and one keyset load per
+/// keyset the keyset requests name that the cipher has not cached, the
+/// loads running beside the retrieves, whatever the request count. When
+/// ZeroKMS grows a combined operation (data keys + PRF derivations in one
+/// round-trip), this is the one place that changes.
 async fn dispatch<K: DataKeySource + IndexKeySource>(
     cipher: &StackCipher<K>,
     keyset: Option<Uuid>,
@@ -508,6 +510,19 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
         .chain(retrieves.iter().map(|retrieve| &retrieve.descriptor))
         .try_for_each(Descriptor::check)?;
 
+    // The retrieves and the keyset loads run beside each other, after the
+    // generates. Both sides are built here, before any key has been through
+    // the stack, and boxed: a future is built on the stack and moved with
+    // every byte it does not initialise, and a joined future holds each
+    // side in a slot as wide as the side, replacing the whole slot with the
+    // side's output from a stack temporary when it is done. A side built
+    // early and boxed is a pointer wide at both moments, and its output is
+    // kept narrow too (an error travels boxed, a keyset's outcome shared).
+    // `tests/heap_hygiene.rs` is what notices.
+    let retrieving = retrieve_data_keys(cipher, &retrieves);
+    let retrieve_keys = Box::pin(async move { retrieving.await.map_err(Box::new) });
+    let load_keysets = Box::pin(load_keysets(cipher, &loads));
+
     let generated = if generates.is_empty() {
         Vec::new()
     } else {
@@ -535,9 +550,19 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
         keys
     };
 
-    // Retrieves group by the keyset each leaf names — one call per keyset,
-    // in first-seen order — and the keys scatter back into request order,
-    // which is the order the fulfilments draw them in.
+    let (retrieved, keysets) = futures::future::join(retrieve_keys, load_keysets).await;
+    let retrieved = retrieved.map_err(|error| *error)?;
+    Ok(Responses::new(generated, retrieved).with_keysets(keysets))
+}
+
+/// The data keys of `retrieves`, in request order: one `retrieve_keys` per
+/// keyset the leaves were sealed under, in first-seen order, the keys
+/// scattered back into request order, which is the order the fulfilments
+/// draw them in.
+async fn retrieve_data_keys<K: DataKeySource>(
+    cipher: &StackCipher<K>,
+    retrieves: &[Retrieve],
+) -> Result<Vec<DataKey>, Error> {
     let mut groups: Vec<(Uuid, Vec<usize>)> = Vec::new();
     let mut group_of: HashMap<Uuid, usize> = HashMap::new();
     for (index, retrieve) in retrieves.iter().enumerate() {
@@ -579,30 +604,53 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
     // Every slot was filled by exactly one group; a hole would mean the
     // grouping above lost a request, which is a bug here, not a data error.
     // Cloned out for the same reason; `retrieved` drops its keys in place.
-    let retrieved: Vec<DataKey> = retrieved
+    retrieved
         .iter()
         .map(|key| key.clone().ok_or(Error::ResponseShape))
-        .collect::<Result<_, _>>()?;
+        .collect()
+}
 
-    // A keyset request is answered from the cipher's cache, and loaded from
-    // ZeroKMS only on a miss, as selecting the keyset would load it. Each
-    // keyset is looked up once however many requests name it (a column of
-    // documents names one), and the answer is shared in request order.
-    let mut loaded: HashMap<Uuid, Arc<KeysetState>> = HashMap::new();
-    let mut keysets = Vec::with_capacity(loads.len());
+/// The answers to the keyset requests naming `loads`, in request order. A
+/// keyset is answered from the cipher's cache, and loaded from ZeroKMS only
+/// on a miss, as selecting it would load it; each distinct keyset is loaded
+/// once however many requests name it (a column of documents names one),
+/// the loads running together. A load that fails answers the requests that
+/// named that keyset with its error and no other.
+///
+/// The per-keyset futures are built when this is called, not when the
+/// returned future is first polled, for the reason `dispatch` builds its
+/// sides early.
+fn load_keysets<'c, K: DataKeySource + IndexKeySource>(
+    cipher: &'c StackCipher<K>,
+    loads: &'c [Uuid],
+) -> impl Future<Output = Vec<KeysetAnswer>> + 'c {
+    let mut distinct: Vec<Uuid> = Vec::new();
     for keyset_id in loads {
-        let state = match loaded.get(&keyset_id) {
-            Some(state) => Arc::clone(state),
-            None => {
-                let state = cipher.keyset_state(keyset_id).await?;
-                let _ = loaded.insert(keyset_id, Arc::clone(&state));
-                state
-            }
-        };
-        keysets.push(state);
+        if !distinct.contains(keyset_id) {
+            distinct.push(*keyset_id);
+        }
     }
-
-    Ok(Responses::new(generated, retrieved).with_keysets(keysets))
+    let loading = futures::future::join_all(
+        distinct
+            .iter()
+            .map(|&id| Box::pin(async move { cipher.keyset_state(id).await.map_err(Arc::new) })),
+    );
+    async move {
+        let by_keyset: HashMap<Uuid, Result<Arc<KeysetState>, Arc<Error>>> =
+            distinct.into_iter().zip(loading.await).collect();
+        loads
+            .iter()
+            .map(|keyset_id| KeysetAnswer {
+                keyset_id: *keyset_id,
+                // Every keyset named was loaded above; a hole would be a bug
+                // here, reported as a response shape, never a panic.
+                outcome: by_keyset
+                    .get(keyset_id)
+                    .cloned()
+                    .unwrap_or_else(|| Err(Arc::new(Error::ResponseShape))),
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -762,7 +810,7 @@ mod tests {
     }
 
     /// A source that answers a load by id for another keyset is refused,
-    /// and nothing is cached under either id.
+    /// as the load of that keyset, and nothing is cached under either id.
     #[tokio::test]
     async fn a_keyset_answered_for_another_id_is_refused() {
         let cipher = cipher().await;
@@ -771,12 +819,64 @@ mod tests {
         *cipher.kms().answers_as.lock().unwrap() = Some(answered);
         let refused = loading(&cipher, asked).await;
         assert!(
-            matches!(refused, Err(Error::KeysetMismatch { left, right }) if left == asked && right == answered),
+            matches!(
+                &refused,
+                Err(Error::KeysetLoad { keyset_id, source })
+                    if *keyset_id == asked
+                        && matches!(**source, Error::KeysetMismatch { left, right } if left == asked && right == answered)
+            ),
             "{refused:?}"
         );
         let loads = cipher.kms().load_calls();
         let _ = loading(&cipher, asked).await;
         assert_eq!(cipher.kms().load_calls(), loads + 1, "nothing was cached");
+    }
+
+    /// A keyset that cannot be loaded fails the fulfilment that asked for
+    /// it and nothing else: the data key beside it is retrieved, the
+    /// fulfilment draws it, and the keyset request alone comes back as the
+    /// load's error; a sibling pending that needs no keyset is answered.
+    #[tokio::test]
+    async fn a_failed_keyset_load_fails_only_the_fulfilment_that_needed_it() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let (iv, tag) = generating_pairs(&keyset, 1).await.unwrap().remove(0);
+        let failing = Uuid::from_u128(42);
+        *cipher.kms().answers_as.lock().unwrap() = Some(Uuid::from_u128(43));
+        let drew_key = Arc::new(AtomicUsize::new(0));
+        let drawn = Arc::clone(&drew_key);
+        let requests = vec![
+            Request::retrieve_under(iv, tag.clone(), d(), keyset.keyset_id()),
+            Request::load_keyset(failing),
+        ];
+        let result = Pending::request(&cipher, requests, move |responses| {
+            let _key = responses.next_retrieved_key()?;
+            drawn.fetch_add(1, Ordering::SeqCst);
+            responses.next_keyset().map(|state| state.id)
+        })
+        .await;
+        assert!(
+            matches!(result, Err(Error::KeysetLoad { keyset_id, .. }) if keyset_id == failing),
+            "{result:?}"
+        );
+        assert_eq!(
+            drew_key.load(Ordering::SeqCst),
+            1,
+            "the fulfilment ran and drew its data key before the keyset"
+        );
+        assert_eq!(cipher.kms().retrieve_calls(), 1, "the retrieve was made");
+
+        let retrieving = Pending::request(
+            &cipher,
+            vec![Request::retrieve_under(iv, tag, d(), keyset.keyset_id())],
+            |responses| responses.next_retrieved_key().map(|_| ()),
+        );
+        let zipped = retrieving.zip(loading(&cipher, failing)).await;
+        assert!(
+            matches!(zipped, Err(Error::KeysetLoad { keyset_id, .. }) if keyset_id == failing),
+            "the pair fails with the keyset's error, not a dispatch failure: {zipped:?}"
+        );
+        assert_eq!(cipher.kms().retrieve_calls(), 2, "its sibling was answered");
     }
 
     fn d() -> Descriptor {

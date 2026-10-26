@@ -129,6 +129,9 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // retrieved, like a foreign keyset and unlike a wrong-context open.
         stack_encrypt::Error::ContextMismatch { .. } => STATUS_CONTEXT_MISMATCH,
         stack_encrypt::Error::Kms(kms) => status_for_kms(kms),
+        // A keyset a JSON document needed could not be loaded: the load's
+        // own error says what the host can act on.
+        stack_encrypt::Error::KeysetLoad { source, .. } => status_for_error(source),
         // A context that renders past ZeroKMS's descriptor limit is the
         // caller's input, refused before any request is sent.
         stack_encrypt::Error::DescriptorTooLong { .. } => STATUS_ENCODING,
@@ -281,6 +284,19 @@ mod tests {
 
     fn vitur(kind: ViturRequestErrorKind) -> ViturRequestError {
         ViturRequestError::new(kind, "stubbed", std::io::Error::other("boom"))
+    }
+
+    #[test]
+    fn a_failed_keyset_load_maps_as_its_cause() {
+        let load = stack_encrypt::Error::KeysetLoad {
+            keyset_id: uuid::Uuid::from_u128(1),
+            source: std::sync::Arc::new(stack_encrypt::Error::Kms(
+                stack_kms::Error::LoadKeyset(stack_kms::LoadKeysetError::Unauthorized(vitur(
+                    ViturRequestErrorKind::Unauthorized,
+                ))),
+            )),
+        };
+        assert_eq!(status_for_error(&load), STATUS_KMS_UNAUTHORIZED);
     }
 
     #[test]

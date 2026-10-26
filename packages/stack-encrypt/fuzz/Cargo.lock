@@ -2080,6 +2080,7 @@ dependencies = [
  "base64ct",
  "base85-simd",
  "clww-ore",
+ "futures",
  "miette",
  "ore-rs",
  "rand 0.10.1",

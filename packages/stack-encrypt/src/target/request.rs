@@ -157,6 +157,16 @@ pub(super) fn tally(requests: &[Request]) -> (usize, usize, usize) {
     (generate, retrieve, keyset)
 }
 
+/// What a keyset request settles to: the keyset's loaded state, or the
+/// error its load ended in, shared by every request in the batch that named
+/// that keyset. A failed load fails those requests' fulfilments and no
+/// other.
+#[derive(Clone)]
+pub(super) struct KeysetAnswer {
+    pub(super) keyset_id: Uuid,
+    pub(super) outcome: Result<Arc<KeysetState>, Arc<Error>>,
+}
+
 /// The responses a fulfilment draws from — one queue per request kind, in
 /// request order. A fulfilment sees exactly the responses its own requests
 /// asked for (never a neighbour's), and drawing past that is
@@ -164,7 +174,7 @@ pub(super) fn tally(requests: &[Request]) -> (usize, usize, usize) {
 pub struct Responses {
     generated: Queue<DataKeyWithTag>,
     retrieved: Queue<DataKey>,
-    keysets: Queue<Arc<KeysetState>>,
+    keysets: Queue<KeysetAnswer>,
 }
 
 /// One kind's responses, drawn front first. A response is handed out as a
@@ -220,9 +230,9 @@ impl Responses {
         }
     }
 
-    /// These responses with the keysets loaded for the keyset requests, in
-    /// request order.
-    pub(super) fn with_keysets(mut self, keysets: Vec<Arc<KeysetState>>) -> Self {
+    /// These responses with the answers to the keyset requests, in request
+    /// order.
+    pub(super) fn with_keysets(mut self, keysets: Vec<KeysetAnswer>) -> Self {
         self.keysets = Queue::new(keysets);
         self
     }
@@ -237,9 +247,14 @@ impl Responses {
         self.retrieved.pop_front().ok_or(Error::ResponseShape)
     }
 
-    /// The next loaded keyset, in [`Request::load_keyset`] order.
+    /// The next loaded keyset, in [`Request::load_keyset`] order, or
+    /// [`Error::KeysetLoad`] when the cipher could not load it.
     pub(crate) fn next_keyset(&mut self) -> Result<Arc<KeysetState>, Error> {
-        self.keysets.pop_front().ok_or(Error::ResponseShape)
+        let answer = self.keysets.pop_front().ok_or(Error::ResponseShape)?;
+        answer.outcome.map_err(|source| Error::KeysetLoad {
+            keyset_id: answer.keyset_id,
+            source,
+        })
     }
 
     /// Split off the first `generated` + `retrieved` + `keysets` responses — the
@@ -581,13 +596,42 @@ mod tests {
         ));
     }
 
-    fn keyset(id: u128) -> Arc<KeysetState> {
+    fn keyset(id: u128) -> KeysetAnswer {
         use vitaminc_prf::PrfKeyInit;
-        Arc::new(KeysetState {
-            id: Uuid::from_u128(id),
-            name: None,
-            prf: vitaminc_hmac::HmacSha256Prf::new(vitaminc_protected::Protected::new([1; 32])),
-        })
+        KeysetAnswer {
+            keyset_id: Uuid::from_u128(id),
+            outcome: Ok(Arc::new(KeysetState {
+                id: Uuid::from_u128(id),
+                name: None,
+                prf: vitaminc_hmac::HmacSha256Prf::new(vitaminc_protected::Protected::new([1; 32])),
+            })),
+        }
+    }
+
+    /// A keyset request answered with a failed load names the keyset and
+    /// carries the load's error; the next request's answer is its own.
+    #[test]
+    fn a_failed_load_answers_its_request_with_the_keyset_and_the_cause() {
+        let failed = KeysetAnswer {
+            keyset_id: Uuid::from_u128(9),
+            outcome: Err(Arc::new(Error::Aead)),
+        };
+        let mut responses =
+            Responses::new(Vec::new(), Vec::new()).with_keysets(vec![failed, keyset(1)]);
+        let refused = responses.next_keyset().map(|state| state.id);
+        assert!(
+            matches!(
+                &refused,
+                Err(Error::KeysetLoad { keyset_id, source })
+                    if *keyset_id == Uuid::from_u128(9) && matches!(**source, Error::Aead)
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(
+            responses.next_keyset().unwrap().id,
+            Uuid::from_u128(1),
+            "the next request's keyset is unaffected"
+        );
     }
 
     #[test]

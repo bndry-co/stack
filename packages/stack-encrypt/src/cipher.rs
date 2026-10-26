@@ -327,6 +327,22 @@ pub enum Error {
         help("Build every part of one record or batch through the same keyset.")
     )]
     KeysetMismatch { left: Uuid, right: Uuid },
+    /// A keyset a decryption needed could not be loaded. Opening a JSON
+    /// document whose root is open derives the root's token under the index
+    /// key of the keyset the document was sealed under, and the cipher could
+    /// not load that keyset; `source` is the load's own error. Only the
+    /// documents under that keyset fail: the rest of the batch they were
+    /// opened in settles.
+    #[error("keyset {keyset_id} could not be loaded")]
+    #[diagnostic(
+        code(stack_encrypt::keyset_load),
+        help("The source says why the load failed. Check that this client is authorised for the keyset the document was sealed under.")
+    )]
+    KeysetLoad {
+        keyset_id: Uuid,
+        #[source]
+        source: Arc<Error>,
+    },
     /// A leaf sealed under one keyset was handed to a [`KeysetCipher`] for
     /// another. The handle's keyset is a constraint the caller asked for —
     /// a tenant-scoped request handler must not open another tenant's row
@@ -403,6 +419,11 @@ impl crate::ErrorPayload for Error {
                 ("left", left.to_string().into()),
                 ("right", right.to_string().into()),
             ]),
+            Self::KeysetLoad { keyset_id, source } => {
+                let mut fields = payload([("keyset_id", keyset_id.to_string().into())]);
+                fields.extend(source.payload());
+                fields
+            }
             Self::ForeignKeyset { expected, found } => payload([
                 ("expected", expected.to_string().into()),
                 ("found", found.to_string().into()),
@@ -694,13 +715,9 @@ impl<K: IndexKeySource> StackCipher<K> {
             Lookup::Hit(state) => return Ok(state),
             Lookup::Stale(resolution) | Lookup::Miss(resolution) => resolution,
         };
-        // Boxed on its own rather than inlined into the pending's future: a
-        // pending settles through a boxed future of its own (`IntoFuture`),
-        // and a generator is built on the stack and copied into its box with
-        // every byte it does not initialise, so the larger that generator,
-        // the more stack residue its box carries to the heap. The load path
-        // is the deepest thing a settle can await; `tests/heap_hygiene.rs`
-        // is what notices.
+        // Boxed: this runs after a batch's data keys have been through the
+        // stack, and a future is built on the stack and moved with every
+        // byte it does not initialise (see `dispatch`).
         let state = Box::pin(load_keyset(&self.kms, IdentifiedBy::Uuid(id))).await?;
         // Asked by id, ZeroKMS answers for that id. A source that answers for
         // another would have the document walked under another keyset's PRF,

@@ -4268,6 +4268,7 @@ dependencies = [
  "base85-simd",
  "chrono",
  "clww-ore",
+ "futures",
  "miette",
  "ore-rs 0.10.0",
  "rand 0.10.1",

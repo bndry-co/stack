@@ -67,6 +67,10 @@ mod tests {
             },
             Error::ResponseShape => Error::ResponseShape,
             Error::KeysetMismatch { .. } => Error::KeysetMismatch { left: a, right: b },
+            Error::KeysetLoad { .. } => Error::KeysetLoad {
+                keyset_id: a,
+                source: std::sync::Arc::new(Error::KeysetMismatch { left: a, right: b }),
+            },
             Error::ForeignKeyset { .. } => Error::ForeignKeyset {
                 expected: a,
                 found: b,

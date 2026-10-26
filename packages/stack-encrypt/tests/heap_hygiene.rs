@@ -23,6 +23,13 @@
 //! crate's; the spy reports how many it skipped, and recognises them by
 //! their backtrace, so a build without symbols fails rather than passes.
 //!
+//! The stack is not watched, and is kept out of the picture: a future the
+//! operation boxes (`Pending`'s `IntoFuture`) is built on the stack and
+//! copied into its box with every byte it does not initialise, so a watch
+//! first zeroes the stack below it ([`scrub_stack`]); otherwise residue from
+//! earlier work (a hash's block buffer after a PRF over a marked key name)
+//! would reach a heap block and be blamed on the operation that boxed it.
+//!
 //! Unix only: the spy scans a freed block with libc's `memmem`, not as a
 //! Rust slice (see [`holds_mark`]).
 #![cfg(all(feature = "dynamic", unix))]
@@ -118,7 +125,12 @@ struct Spy;
 
 unsafe impl GlobalAlloc for Spy {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        System.alloc(layout)
+        // Zeroed, so a block holds only what was written into it during its
+        // own lifetime: the system allocator hands memory out as its last
+        // owner left it, and a block that is only partly written (a boxed
+        // future's state, a `Vec`'s spare capacity) would otherwise show
+        // what an earlier, excluded free left there and be blamed for it.
+        System.alloc_zeroed(layout)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -150,12 +162,28 @@ unsafe impl GlobalAlloc for Spy {
 #[global_allocator]
 static SPY: Spy = Spy;
 
+/// Zero the stack below the caller's frame, so that a future `f` boxes
+/// copies zeros rather than what earlier work left there (see the module
+/// docs). Deep enough to cover every frame an operation and its runtime
+/// nest beneath [`watched`].
+#[inline(never)]
+fn scrub_stack() {
+    let mut pad = [0u8; 256 * 1024];
+    for byte in pad.iter_mut() {
+        // SAFETY: a volatile write to a live local, so the zeroing is not
+        // elided as a dead store.
+        unsafe { std::ptr::write_volatile(byte, 0) };
+    }
+    std::hint::black_box(&pad);
+}
+
 /// Run `f` with this thread watched, and fail if any block it freed held
 /// the marker.
 fn watched<T>(what: &str, f: impl FnOnce() -> T) -> T {
     let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     FOUND.lock().unwrap().clear();
     *UPSTREAM.lock().unwrap() = 0;
+    scrub_stack();
     WATCHING.with(|on| on.set(true));
     let out = f();
     WATCHING.with(|on| on.set(false));

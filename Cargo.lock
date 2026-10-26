@@ -3404,6 +3404,7 @@ dependencies = [
  "base85-simd",
  "chrono",
  "clww-ore",
+ "futures",
  "miette",
  "ore-rs",
  "proptest",
