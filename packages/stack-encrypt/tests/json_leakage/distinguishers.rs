@@ -11,6 +11,19 @@
 //! say), which changes a feature with probability below `n² / 2^64` for `n`
 //! tags in a world, about `10^-13` at the harness's sizes.
 //!
+//! The entries are stored in a random order, and a needle is sent in one, so
+//! each distinguisher reads a world in its canonical order
+//! ([`super::canonical`]): a row's root at position `0` and its other
+//! entries, every list of `q` and every list of a needle, sorted by what an
+//! observer sees of them without the stored or sent order. A *position*
+//! below is a place in that order, and a selector's name is its first
+//! appearance in it. Two features read the orders themselves: the stored
+//! one, through the slot each entry came from
+//! ([`walked_subtrees_are_contiguous`]), and the sent one, through the
+//! queries as sent ([`repeated_needles_sent_alike`]). Like
+//! [`member_order_shared_across_parents`] they carry their probability
+//! bounds in their doc comments.
+//!
 //! What is deliberately not here, and why, is in the module docs
 //! (`mod.rs`, "Out of reach").
 
@@ -59,9 +72,7 @@ registry!(
     headers,
     projections,
     value_selector_partitions,
-    chain_head_runs,
-    selector_precedence,
-    depth_recovery,
+    walked_subtrees_are_contiguous,
     token_counts,
     bound_recovery,
     token_hits,
@@ -69,11 +80,12 @@ registry!(
     token_reach,
     hit_rules,
     ancestor_links,
-    ordinal_patterns,
-    member_ordinals_follow_key_order,
+    member_order_shared_across_rows,
+    member_order_shared_across_parents,
     token_derivability,
     subtree_results,
     transcripts,
+    repeated_needles_sent_alike,
     extraction_matches,
     containment_matches,
     ordering_term_order,
@@ -147,8 +159,10 @@ pub fn entry_counts(world: &ObservedWorld) -> Vec<usize> {
     world.rows.iter().map(|r| r.entries.len()).collect()
 }
 
-/// Which entries carry a parent tag, by position. Catches a leak in which
-/// entries are chain heads.
+/// Which entries carry a parent tag, by position: with the selectors
+/// ([`selector_pattern_across_rows`]), which paths are chain heads and how
+/// many heads each row has. Catches a leak in which entries are chain
+/// heads.
 pub fn parent_tag_presence(world: &ObservedWorld) -> Vec<Vec<bool>> {
     world
         .rows
@@ -429,10 +443,10 @@ fn name_group(
     }
 }
 
-/// Every row's projection `q`: its grouping by array element, the order of
-/// its pairs, and which pairs share a selector or a value selector across
-/// the column. Catches a value equality, a grouping or an order the profile
-/// does not state.
+/// Every row's projection `q`: its grouping by array element and which
+/// pairs share a selector or a value selector across the column. Catches a
+/// value equality or a grouping the profile does not state. (The stored
+/// order of `q`'s lists is random; this reads them in the canonical order.)
 pub fn projections(world: &ObservedWorld) -> Vec<NamedGroup> {
     let mut selectors = selector_names(world);
     let mut values = Canon::new();
@@ -474,138 +488,6 @@ pub fn value_selector_partitions(
 }
 
 // =============================================================================
-// At rest: what the order of the entries says
-// =============================================================================
-
-/// The runs that start at each entry without a parent tag (other than the
-/// first): under the sealed root these are the top-level fields, and since
-/// everything beneath a field follows it, each run's length is that field's
-/// subtree size. "The node count of each top-level field's subtree can be
-/// read off a single row exactly." Parent tags are keyed by ordinal, so no
-/// two entries share one and there are no equal-tag runs to read; this is
-/// the contiguity structure there is.
-pub fn chain_head_runs(world: &ObservedWorld) -> Vec<Vec<(usize, usize)>> {
-    let mut canon = selector_names(world);
-    world
-        .rows
-        .iter()
-        .map(|row| {
-            let starts: Vec<usize> = (1..row.entries.len())
-                .filter(|&j| row.entries[j].p.is_none())
-                .collect();
-            starts
-                .iter()
-                .enumerate()
-                .map(|(k, &start)| {
-                    let end = starts.get(k + 1).copied().unwrap_or(row.entries.len());
-                    (canon.id(row.entries[start].s), end - start)
-                })
-                .collect()
-        })
-        .collect()
-}
-
-/// For every two selectors that occur in one row, which of them came first
-/// in the rows that hold both: `(a first, b first)`. Under a depth-first
-/// order with members sorted by key, every two sibling members appear in one
-/// order in every row, which is "the alphabetical order of sibling key
-/// names"; a stored order independent of the keys would show both.
-pub fn selector_precedence(world: &ObservedWorld) -> BTreeMap<(usize, usize), (bool, bool)> {
-    let mut canon = selector_names(world);
-    let mut out: BTreeMap<(usize, usize), (bool, bool)> = BTreeMap::new();
-    for row in &world.rows {
-        let mut first: Vec<usize> = Vec::new();
-        for entry in &row.entries {
-            let id = canon.id(entry.s);
-            if !first.contains(&id) {
-                first.push(id);
-            }
-        }
-        for (i, &a) in first.iter().enumerate() {
-            for &b in &first[i + 1..] {
-                let (key, a_first) = if a < b {
-                    ((a, b), true)
-                } else {
-                    ((b, a), false)
-                };
-                let seen = out.entry(key).or_default();
-                if a_first {
-                    seen.0 = true;
-                } else {
-                    seen.1 = true;
-                }
-            }
-        }
-    }
-    out
-}
-
-/// An observer's reconstruction of every row's depth sequence from the
-/// stored order alone, as the page says one can: "an observer comparing rows
-/// learns" which selector's path sits under which.
-///
-/// The attack: a selector's parent is among the selectors that precede it
-/// in every row that holds it; of those it takes the one that itself has the
-/// most such predecessors (the deepest candidate), and gives up where two
-/// tie. An entry with no parent tag after the first is a top-level field
-/// (depth 1). Each entry's depth is then its selector's chain of parents.
-/// The attack is not always right (from order alone, a field that always
-/// follows a sibling in every row reads as its child), and it does not need
-/// to be: the feature is compared between worlds, and
-/// `the_order_reveals_the_shape` checks that it is right on a corpus whose
-/// rows vary.
-pub fn depth_recovery(world: &ObservedWorld) -> Vec<Vec<Option<usize>>> {
-    let mut canon = selector_names(world);
-    let rows: Vec<Vec<usize>> = world
-        .rows
-        .iter()
-        .map(|row| row.entries.iter().map(|e| canon.id(e.s)).collect())
-        .collect();
-    let mut candidates: HashMap<usize, BTreeSet<usize>> = HashMap::new();
-    let mut heads: BTreeSet<usize> = BTreeSet::new();
-    let mut roots: BTreeSet<usize> = BTreeSet::new();
-    for (row, ids) in world.rows.iter().zip(&rows) {
-        for (k, &b) in ids.iter().enumerate() {
-            if k == 0 {
-                let _ = roots.insert(b);
-            } else if row.entries[k].p.is_none() {
-                let _ = heads.insert(b);
-            }
-            let before: BTreeSet<usize> = ids[..k].iter().copied().filter(|&a| a != b).collect();
-            let _ = candidates
-                .entry(b)
-                .and_modify(|c| *c = c.intersection(&before).copied().collect())
-                .or_insert(before);
-        }
-    }
-    let parent = |b: usize| -> Option<usize> {
-        let cands = candidates.get(&b)?;
-        let size = |a: &usize| candidates.get(a).map_or(0, BTreeSet::len);
-        let best = cands.iter().map(size).max()?;
-        let mut top = cands.iter().filter(|a| size(a) == best);
-        let first = *top.next()?;
-        top.next().is_none().then_some(first)
-    };
-    let depth = |b: usize| -> Option<usize> {
-        let mut at = b;
-        // A chain of parents longer than there are selectors is a cycle.
-        for d in 0..=candidates.len() {
-            if roots.contains(&at) {
-                return Some(d);
-            }
-            if heads.contains(&at) {
-                return Some(d + 1);
-            }
-            at = parent(at)?;
-        }
-        None
-    };
-    rows.iter()
-        .map(|ids| ids.iter().map(|&b| depth(b)).collect())
-        .collect()
-}
-
-// =============================================================================
 // Under a token: the database's walk, with the real hash
 // =============================================================================
 
@@ -613,12 +495,12 @@ pub fn depth_recovery(world: &ObservedWorld) -> Vec<Vec<Option<usize>>> {
 /// self tag to position and parent tag to position, the last entry winning
 /// a repeated tag (`jsonb_object_agg` keeps the last value of a repeated
 /// key).
-struct RowIndex {
+pub(super) struct RowIndex {
     x: HashMap<Tag8, usize>,
     p: HashMap<Tag8, usize>,
 }
 
-fn row_index(row: &ObservedRow) -> RowIndex {
+pub(super) fn row_index(row: &ObservedRow) -> RowIndex {
     let mut index = RowIndex {
         x: HashMap::new(),
         p: HashMap::new(),
@@ -636,13 +518,13 @@ fn row_index(row: &ObservedRow) -> RowIndex {
 
 /// One entry a walk from a token reaches.
 #[derive(Clone, Copy, Debug)]
-struct Hit {
-    position: usize,
+pub(super) struct Hit {
+    pub(super) position: usize,
     /// The position of the hit's parent, `None` for the node the token
     /// names.
-    parent: Option<usize>,
+    pub(super) parent: Option<usize>,
     /// The ordinal the hit was probed at under its parent.
-    ordinal: Option<u32>,
+    pub(super) ordinal: Option<u32>,
     depth: usize,
     /// The hit's own token, when the database has one: the token sent, for
     /// the node it names, or the one the member rule or the element rule
@@ -650,7 +532,7 @@ struct Hit {
     /// and not descended into.
     token: Option<Tag16>,
     /// The rule that gave a hit below the named node its token.
-    rule: Option<Rule>,
+    pub(super) rule: Option<Rule>,
     /// The token of the hit's parent (for the named node, its own).
     parent_token: Tag16,
 }
@@ -679,7 +561,7 @@ fn children(row: &ObservedRow, index: &RowIndex, token: &Tag16) -> Vec<Child> {
 /// below it, depth first, bounded as the crate's walk (`JsonDocument::subtree`)
 /// and the SQL's are: no deeper than the index seals, and no more hits than
 /// entries.
-fn walk_with(row: &ObservedRow, index: &RowIndex, token: &Tag16) -> Vec<Hit> {
+pub(super) fn walk_with(row: &ObservedRow, index: &RowIndex, token: &Tag16) -> Vec<Hit> {
     fn go(
         row: &ObservedRow,
         index: &RowIndex,
@@ -929,7 +811,7 @@ pub fn hit_rules(world: &ObservedWorld) -> Vec<Vec<Vec<RuleAt>>> {
                                 .map(move |h| (k, h.position, h.rule))
                         })
                         .collect();
-                    // The walk's order follows the members' keyed ranks.
+                    // The walk's order follows the members' random ordinals.
                     rules.sort_unstable();
                     rules
                 })
@@ -973,121 +855,206 @@ pub fn ancestor_links(world: &ObservedWorld) -> Vec<Vec<Vec<(usize, bool)>>> {
         .collect()
 }
 
-/// What the ordinals a walk probes say, in the two forms that do not depend
-/// on the keyed rank's random order: how many reached nodes have children
-/// that all share one selector (an array's elements, or an object's one
-/// member) whose ordinals do not run in stored order, and every case where
-/// one parent token ranks two child selectors one way in one row and the
-/// other way in another. Both are zero for the real scheme: an element's
-/// ordinal is its position, and a member's rank is a keyed function of its
-/// parent's token and its key.
-pub fn ordinal_patterns(world: &ObservedWorld) -> (usize, Vec<(usize, usize, usize)>) {
-    let mut selectors = selector_names(world);
-    let mut tokens = Canon::new();
-    let mut out_of_order = 0;
-    let mut ranked: BTreeMap<(usize, usize, usize), BTreeSet<bool>> = BTreeMap::new();
+/// Whether the objects one token's holder walks in several rows, whose
+/// members carry the same selectors, give those members one order of
+/// ordinals across the rows: what a member's ordinal would do if it were a
+/// function of the key, keyed or not, and what let a token's holder link a
+/// key to an ordinal from row to row. The real scheme draws each object's
+/// member ordinals as a fresh random permutation when the row is sealed,
+/// which makes the answer "no". An array's elements, whose ordinal is their
+/// position, agree in every row by design and are left out. Reported only
+/// where chance cannot answer it.
+///
+/// The bound: `t` rows of one token over the same `m` member selectors
+/// agree by chance with probability `(1 / m!)^(t − 1)`, the rows drawing
+/// independently; tokens are counted once each, with the first set of
+/// member selectors seen under them, so the groups are independent and the
+/// chance that every group agrees is the product. The feature is `None`
+/// unless that product is below `2^-40`.
+pub fn member_order_shared_across_rows(world: &ObservedWorld) -> Option<bool> {
+    let mut groups: BTreeMap<(Tag16, Vec<Tag16>), Vec<Vec<Tag16>>> = BTreeMap::new();
+    let mut members_of: BTreeMap<Tag16, Vec<Tag16>> = BTreeMap::new();
     for rows in walks(world) {
         for (r, found) in rows.into_iter().enumerate() {
             let row = &world.rows[r];
             for (_, hits) in found {
-                let mut by_parent: BTreeMap<(usize, Tag16), Vec<Hit>> = BTreeMap::new();
-                for hit in hits.into_iter().filter(|h| h.depth > 0) {
-                    by_parent
-                        .entry((hit.parent.expect("below the node"), hit.parent_token))
+                for ((_, parent_token), kids) in children_by_parent(hits) {
+                    let order: Vec<Tag16> =
+                        kids.iter().map(|h| row.entries[h.position].s).collect();
+                    let mut members = order.clone();
+                    members.sort_unstable();
+                    members.dedup();
+                    // Children with pairwise distinct selectors are an
+                    // object's members: an array's elements share one.
+                    if members.len() < 2 || members.len() != kids.len() {
+                        continue;
+                    }
+                    let counted = members_of
+                        .entry(parent_token)
+                        .or_insert_with(|| members.clone());
+                    if *counted != members {
+                        continue;
+                    }
+                    groups
+                        .entry((parent_token, members))
                         .or_default()
-                        .push(hit);
-                }
-                for ((_, parent_token), mut kids) in by_parent {
-                    kids.sort_by_key(|h| h.position);
-                    let same = kids
-                        .windows(2)
-                        .all(|w| row.entries[w[0].position].s == row.entries[w[1].position].s);
-                    if same
-                        && kids
-                            .iter()
-                            .enumerate()
-                            .any(|(i, h)| h.ordinal != Some(i as u32))
-                    {
-                        out_of_order += 1;
-                    }
-                    if !same {
-                        let parent = tokens.id(parent_token);
-                        for a in &kids {
-                            for b in &kids {
-                                let (sa, sb) = (
-                                    selectors.id(row.entries[a.position].s),
-                                    selectors.id(row.entries[b.position].s),
-                                );
-                                if sa < sb {
-                                    let _ = ranked
-                                        .entry((parent, sa, sb))
-                                        .or_default()
-                                        .insert(a.ordinal < b.ordinal);
-                                }
-                            }
-                        }
-                    }
+                        .push(order);
                 }
             }
         }
     }
-    let inconsistent = ranked
-        .into_iter()
-        .filter(|(_, seen)| seen.len() > 1)
-        .map(|(key, _)| key)
-        .collect();
-    (out_of_order, inconsistent)
+    let mut chance = 0.0f64;
+    let mut shared = true;
+    for ((_, members), orders) in &groups {
+        let factorial: f64 = (1..=members.len()).map(|k| (k as f64).ln()).sum();
+        chance -= factorial * (orders.len() - 1) as f64;
+        shared &= orders.windows(2).all(|w| w[0] == w[1]);
+    }
+    (chance < -40.0 * 2f64.ln()).then_some(shared)
 }
 
-/// Whether the members a token's holder finds directly under a token it was
-/// sent carry ordinals in their stored order, which is their keys' sorted
-/// order: the question decision 11 (the keyed member rank) is there to make
-/// the answer to "no". Reported only where chance cannot answer it.
+/// The hits of one walk below the node it names, grouped by their parent's
+/// position and token, each group in the order of its ordinals.
+fn children_by_parent(hits: Vec<Hit>) -> BTreeMap<(usize, Tag16), Vec<Hit>> {
+    let mut by_parent: BTreeMap<(usize, Tag16), Vec<Hit>> = BTreeMap::new();
+    for hit in hits.into_iter().filter(|h| h.depth > 0) {
+        by_parent
+            .entry((hit.parent.expect("below the node"), hit.parent_token))
+            .or_default()
+            .push(hit);
+    }
+    for kids in by_parent.values_mut() {
+        kids.sort_by_key(|h| h.ordinal);
+    }
+    by_parent
+}
+
+/// Whether two objects a token's holder walks, under two tokens, whose
+/// nodes share a selector and whose members carry the same selectors, give
+/// those members one order of ordinals: what a member's ordinal would do if
+/// it ranked the key names. The ordinals are a random permutation drawn per
+/// object when the row is sealed, which makes the answer "no". With the
+/// stored order random, the holder has no key order to set the ordinals
+/// against (as it had before, where the stored order put the members in key
+/// order); what it can still set them against is another object's. Reported
+/// only where chance cannot answer it.
 ///
-/// The bound: a member's ordinal is its rank under a keyed function of its
-/// parent's token and its key, so for one token the members of its largest
-/// observed object fall in key order with probability `1 / k!` for `k`
-/// members, and distinct tokens are independent keyed inputs. All of them
-/// fall in key order by chance with probability at most the product of
-/// `1 / k!` over the tokens sent. The feature is `None` unless that product
-/// is below `2^-40`; above it, real and simulated could disagree by chance.
-/// Only objects directly under a token sent are counted, since which deeper
-/// nodes share a derived token depends on the ranks themselves.
-pub fn member_ordinals_follow_key_order(world: &ObservedWorld) -> Option<bool> {
-    let indexes: Vec<RowIndex> = world.rows.iter().map(row_index).collect();
-    let mut chance = 1.0f64;
-    let mut all_in_order = true;
-    let mut sent = BTreeSet::new();
-    for (_, tokens, _) in subtree_queries(world) {
-        for t in tokens {
-            if !sent.insert(*t) {
-                continue;
-            }
-            let mut widest = 0usize;
-            for (row, index) in world.rows.iter().zip(&indexes) {
-                let mut kids: Vec<Hit> = walk_with(row, index, t)
-                    .into_iter()
-                    .filter(|h| h.depth == 1)
-                    .collect();
-                let distinct: BTreeSet<Tag16> =
-                    kids.iter().map(|h| row.entries[h.position].s).collect();
-                if kids.len() < 2 || distinct.len() != kids.len() {
-                    continue;
-                }
-                widest = widest.max(kids.len());
-                kids.sort_by_key(|h| h.position);
-                if kids
-                    .iter()
-                    .enumerate()
-                    .any(|(i, h)| h.ordinal != Some(i as u32))
-                {
-                    all_in_order = false;
+/// The bound: under one parent token the order of `m` members is a uniform
+/// permutation, and distinct objects draw independently, so `t` tokens over
+/// the same `m` member selectors give one order with probability
+/// `(1 / m!)^(t − 1)`. Each token is counted once (its first
+/// object of two or more members with distinct selectors, in the order the
+/// queries, rows and tokens come), so the groups are independent and the
+/// chance that every group agrees is the product. The feature is `None`
+/// unless that product is below `2^-40`. The same path in two rows is one
+/// token (tokens are column-wide), so it is the elements of an array of
+/// like objects that decide it.
+pub fn member_order_shared_across_parents(world: &ObservedWorld) -> Option<bool> {
+    let mut counted: BTreeSet<Tag16> = BTreeSet::new();
+    let mut groups: BTreeMap<(Tag16, Vec<Tag16>), Vec<Vec<Tag16>>> = BTreeMap::new();
+    for rows in walks(world) {
+        for (r, found) in rows.into_iter().enumerate() {
+            let row = &world.rows[r];
+            for (_, hits) in found {
+                for ((parent, parent_token), kids) in children_by_parent(hits) {
+                    // Children with pairwise distinct selectors are an
+                    // object's members: an array's elements share one.
+                    let order: Vec<Tag16> =
+                        kids.iter().map(|h| row.entries[h.position].s).collect();
+                    let mut members = order.clone();
+                    members.sort_unstable();
+                    members.dedup();
+                    if members.len() < 2
+                        || members.len() != kids.len()
+                        || !counted.insert(parent_token)
+                    {
+                        continue;
+                    }
+                    groups
+                        .entry((row.entries[parent].s, members))
+                        .or_default()
+                        .push(order);
                 }
             }
-            chance /= (1..=widest).map(|k| k as f64).product::<f64>();
         }
     }
-    (chance < 2f64.powi(-40)).then_some(all_in_order)
+    let mut chance = 0.0f64;
+    let mut shared = true;
+    for ((_, members), orders) in &groups {
+        let factorial: f64 = (1..=members.len()).map(|k| (k as f64).ln()).sum();
+        chance -= factorial * (orders.len() - 1) as f64;
+        shared &= orders.windows(2).all(|w| w[0] == w[1]);
+    }
+    (chance < -40.0 * 2f64.ln()).then_some(shared)
+}
+
+/// Whether every subtree a walk links sits at consecutive stored slots, the
+/// node its token names first: what a depth-first stored order gives every
+/// subtree, and what the read check before the cascade required. This is
+/// the one feature that reads the stored order, through the slot each
+/// entry came from ([`ObservedRow::slots`]); every other reads the
+/// canonical order. Reported only where chance cannot answer it.
+///
+/// The bound: a row of `n` entries stores its root at slot `0` and the
+/// others at a uniformly random permutation of the `N = n − 1` slots after
+/// it. Take `k` pairwise disjoint walked subtrees of sizes `m_1 … m_k`, none
+/// holding the root: they all land as runs that start at their named nodes
+/// with probability `(N − Σm + k)! · Π (m_i − 1)! / N!` (each run is a
+/// block whose first entry is fixed). A walked subtree that holds the root
+/// (its named node is `$` with the root open) must fill the `m − 1` slots
+/// after it, which multiplies in `(m − 1)!` and takes those slots out of
+/// `N` first. That every walked subtree is a run implies that the chosen
+/// disjoint ones are, so the chosen family's probability bounds it; each
+/// row takes its largest walked subtrees greedily, and rows are drawn
+/// independently, so the chance for the whole world is at most the product
+/// over the rows. The feature is `None` unless that product is below
+/// `2^-40`.
+pub fn walked_subtrees_are_contiguous(world: &ObservedWorld) -> Option<bool> {
+    let ln_factorial = |n: usize| -> f64 { (2..=n).map(|k| (k as f64).ln()).sum() };
+    let mut per_row: Vec<Vec<(usize, BTreeSet<usize>)>> = vec![Vec::new(); world.rows.len()];
+    for rows in walks(world) {
+        for (r, found) in rows.into_iter().enumerate() {
+            for (_, hits) in found {
+                let first = hits[0].position;
+                let set: BTreeSet<usize> = hits.iter().map(|h| h.position).collect();
+                if set.len() > 1 && !per_row[r].iter().any(|(_, s)| *s == set) {
+                    per_row[r].push((first, set));
+                }
+            }
+        }
+    }
+    let mut runs = true;
+    let mut chance = 0.0f64;
+    for (row, mut subtrees) in world.rows.iter().zip(per_row) {
+        for (first, set) in &subtrees {
+            let slots: BTreeSet<usize> = set.iter().map(|&j| row.slots[j]).collect();
+            let start = row.slots[*first];
+            runs &= slots.len() == set.len()
+                && slots.first() == Some(&start)
+                && slots.last() == Some(&(start + set.len() - 1));
+        }
+        subtrees.sort_by_key(|(_, set)| std::cmp::Reverse(set.len()));
+        let mut taken: BTreeSet<usize> = BTreeSet::new();
+        let mut free = row.entries.len().saturating_sub(1);
+        let mut blocks = Vec::new();
+        let mut favourable = 0.0;
+        for (_, set) in subtrees {
+            if !set.is_disjoint(&taken) {
+                continue;
+            }
+            taken.extend(set.iter().copied());
+            favourable += ln_factorial(set.len() - 1);
+            if set.contains(&0) {
+                free = free.saturating_sub(set.len() - 1);
+            } else {
+                blocks.push(set.len());
+            }
+        }
+        let singles = free.saturating_sub(blocks.iter().sum::<usize>());
+        favourable += ln_factorial(singles + blocks.len());
+        chance += favourable - ln_factorial(row.entries.len().saturating_sub(1));
+    }
+    (chance < -40.0 * 2f64.ln()).then_some(runs)
 }
 
 /// Which subtree reads' tokens the database can derive from which others':
@@ -1266,6 +1233,62 @@ pub fn transcripts(world: &ObservedWorld) -> Vec<NamedQuery> {
             }
         })
         .collect()
+}
+
+/// Whether a needle sent more than once is sent in one order every time:
+/// what a needle sent in the walk's order does, and what one shuffled
+/// afresh for each query does not. This reads the needles as sent
+/// ([`ObservedWorld::sent`]); a needle's identity is its content, read in
+/// the canonical order. Reported only where chance cannot answer it.
+///
+/// The bound: a needle's pair list of `m` pairs, `c_1, c_2, …` of them
+/// alike, is sent in one of `m! / Π c_i!` arrangements, uniformly and
+/// independently for each query, and so is its list of `k` element groups,
+/// `d_1, d_2, …` of them alike, in one of `k! / Π d_j!`. Two sends of one
+/// needle agree everywhere only if those two lists agree, which they do with
+/// probability `Π c_i! / m! · Π d_j! / k!` (deeper lists only make it
+/// smaller), and `t` sends agree with the first with that to the power
+/// `t − 1`. The feature is `None` unless the product over the repeated
+/// needles is below `2^-40`.
+pub fn repeated_needles_sent_alike(world: &ObservedWorld) -> Option<bool> {
+    fn needle(query: &ObservedQuery) -> Option<(&ObservedGroup, Option<&ObservedGroup>)> {
+        match query {
+            ObservedQuery::Contains { needle, alt } => Some((needle, alt.as_ref())),
+            ObservedQuery::Equals { needle } => Some((needle, None)),
+            _ => None,
+        }
+    }
+    fn ln_arrangements<T: Ord>(items: &[T]) -> f64 {
+        let ln_factorial = |n: usize| -> f64 { (2..=n).map(|k| (k as f64).ln()).sum() };
+        let mut sorted: Vec<&T> = items.iter().collect();
+        sorted.sort_unstable();
+        let alike: f64 = sorted
+            .chunk_by(|a, b| a == b)
+            .map(|run| ln_factorial(run.len()))
+            .sum();
+        ln_factorial(items.len()) - alike
+    }
+    let mut repeats: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, query) in world.queries.iter().enumerate() {
+        if let Some(content) = needle(query) {
+            repeats.entry(format!("{content:?}")).or_default().push(i);
+        }
+    }
+    let mut chance = 0.0f64;
+    let mut alike = true;
+    for sent in repeats.values().filter(|sent| sent.len() > 1) {
+        let (canonical, _) = needle(&world.queries[sent[0]]).expect("a needle");
+        let elements: Vec<String> = canonical
+            .elements
+            .iter()
+            .map(|g| format!("{g:?}"))
+            .collect();
+        let once = ln_arrangements(&canonical.pairs) + ln_arrangements(&elements);
+        chance -= once * (sent.len() - 1) as f64;
+        let first = needle(&world.sent[sent[0]]);
+        alike &= sent.iter().all(|&i| needle(&world.sent[i]) == first);
+    }
+    (chance < -40.0 * 2f64.ln()).then_some(alike)
 }
 
 /// For every extraction, the positions in each row whose selector it sent:

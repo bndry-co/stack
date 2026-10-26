@@ -36,7 +36,7 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use super::ValueFrame;
-use stack_kms::DataKeySource;
+use stack_kms::{DataKeySource, IndexKeySource};
 use vitaminc_aead::plaintext::{
     Error as SinkError, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
     SourceError,
@@ -446,7 +446,7 @@ pub async fn term<'c, K, P, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
     P: Encrypt,
     D: IntoPrfContext<'c>,
 {

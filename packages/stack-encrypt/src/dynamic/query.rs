@@ -76,7 +76,7 @@ use serde::{Serialize, Serializer};
 use super::WireBytes;
 use std::fmt;
 
-use stack_kms::DataKeySource;
+use stack_kms::{DataKeySource, IndexKeySource};
 
 use super::record::{FieldPlan, Plan};
 use super::term::OneScalar;
@@ -795,7 +795,7 @@ pub fn query_term<'a, K>(
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, QueryTerm, K>, Error>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let answer = answer(plan, field, operator, resolver)?;
     has_context(plan, field)?;

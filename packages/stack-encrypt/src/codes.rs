@@ -53,6 +53,7 @@ mod tests {
                 expected: "the entry at the path asked for",
             },
             Error::JsonWildcardTruncated { .. } => Error::JsonWildcardTruncated { bound: 64 },
+            Error::JsonNotALeaf => Error::JsonNotALeaf,
             Error::KeyCountMismatch { .. } => Error::KeyCountMismatch {
                 expected: 2,
                 received: 1,
@@ -67,6 +68,10 @@ mod tests {
             },
             Error::ResponseShape => Error::ResponseShape,
             Error::KeysetMismatch { .. } => Error::KeysetMismatch { left: a, right: b },
+            Error::KeysetLoad { .. } => Error::KeysetLoad {
+                keyset_id: a,
+                source: std::sync::Arc::new(Error::KeysetMismatch { left: a, right: b }),
+            },
             Error::ForeignKeyset { .. } => Error::ForeignKeyset {
                 expected: a,
                 found: b,

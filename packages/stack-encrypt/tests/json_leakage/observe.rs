@@ -9,6 +9,11 @@
 //! [`ObservedWorld::from_wire`]. A simulator that wrote a field the real form
 //! lacks, or the other way round, shows in [`ObservedRow::fields`] and
 //! [`ObservedEntry::fields`].
+//!
+//! A world is parsed in its stored and sent order. The distinguishers read
+//! it in the canonical order ([`super::canonical`]), which keeps each
+//! entry's stored slot beside it ([`ObservedRow::slots`]) and each query as
+//! sent ([`ObservedWorld::sent`]).
 
 use base64ct::{Base64, Encoding};
 use serde_json::Value;
@@ -61,6 +66,10 @@ pub struct ObservedRow {
     pub chars: usize,
     pub header: ObservedHeader,
     pub entries: Vec<ObservedEntry>,
+    /// The slot in `sv` each entry is stored at: `0, 1, 2, …` as parsed,
+    /// and wherever the canonical order took each entry from after
+    /// [`super::canonical::canonical`].
+    pub slots: Vec<usize>,
     pub q: ObservedGroup,
     /// Every key path inside `q` ([`key_paths`]).
     pub q_fields: Vec<String>,
@@ -112,6 +121,11 @@ pub enum ObservedQuery {
 pub struct ObservedWorld {
     pub rows: Vec<ObservedRow>,
     pub queries: Vec<ObservedQuery>,
+    /// The query terms with their lists in the order they were sent: the
+    /// same as `queries` as parsed, and kept as they were after
+    /// [`super::canonical::canonical`] puts the needles in `queries` in the
+    /// canonical order.
+    pub sent: Vec<ObservedQuery>,
     /// Every key path inside each query term's wire form ([`key_paths`]),
     /// which the parser above reads only in part.
     pub query_fields: Vec<Vec<String>>,
@@ -121,9 +135,11 @@ impl ObservedWorld {
     /// Parse a world from its wire form: each row as its stored JSON, each
     /// query as the JSON its term serializes to.
     pub fn from_wire(rows: &[Value], queries: &[(QueryKind, Value)]) -> Self {
+        let parsed: Vec<ObservedQuery> = queries.iter().map(|(kind, q)| query(*kind, q)).collect();
         Self {
             rows: rows.iter().map(row).collect(),
-            queries: queries.iter().map(|(kind, q)| query(*kind, q)).collect(),
+            sent: parsed.clone(),
+            queries: parsed,
             query_fields: queries.iter().map(|(_, q)| key_paths(q)).collect(),
         }
     }
@@ -237,16 +253,18 @@ fn chars(value: &Value) -> usize {
 }
 
 fn row(value: &Value) -> ObservedRow {
+    let entries: Vec<ObservedEntry> = value["sv"]
+        .as_array()
+        .expect("`sv` is a list")
+        .iter()
+        .map(entry)
+        .collect();
     ObservedRow {
         fields: keys(value),
         chars: chars(value),
         header: header(&b64(&value["h"])),
-        entries: value["sv"]
-            .as_array()
-            .expect("`sv` is a list")
-            .iter()
-            .map(entry)
-            .collect(),
+        slots: (0..entries.len()).collect(),
+        entries,
         q: group(&value["q"]),
         q_fields: key_paths(&value["q"]),
     }

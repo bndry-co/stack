@@ -28,6 +28,15 @@
 //! (`{s, c, p?, op?}` entries, one head token and plaintext gates per read);
 //! `docs/plans/2026-10-25-json-tree-leakage-before-and-after.md` records
 //! what changed between the two.
+//!
+//! Since then a document's entries are stored in a uniformly random order
+//! drawn when it is sealed, the root first, and `q`'s lists are shuffled
+//! the same way ([`Leakage::stored_order`]); a needle's lists are sent
+//! shuffled too, afresh for each query ([`Leakage::sent_order`]); each
+//! entry's AAD binds its children's AEAD tags (the cascade), which changes
+//! nothing stored. The profile numbers a row's nodes, and a needle's,
+//! depth-first ([`flatten`]) for its own bookkeeping: that numbering is not
+//! the order either is stored or sent in.
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
@@ -104,9 +113,14 @@ impl Query {
     }
 }
 
-/// Which sort "the byte order of their key names' UTF-8 encodings" means.
-/// The page now says it; the other reading is kept to show the sentence is
-/// load-bearing.
+/// Which sort "the byte order of their key names' UTF-8 encodings" means:
+/// the order of an object's members in the walk's order, which numbers the
+/// profile's nodes ([`flatten`]). Nothing the database sees shows it now:
+/// the stored order is random ([`StoredOrder::Random`]), a needle is sent in
+/// a random order ([`SentOrder::Random`]), and a member's ordinal is a keyed
+/// rank. The other reading is kept to show that: a profile read either way
+/// is told from the real scheme by no distinguisher (the key-order reading
+/// test in `calibration.rs`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyOrder {
     /// Byte order of the UTF-8 key: serde_json's `Map` without
@@ -146,8 +160,7 @@ pub enum NumberOrder {
 /// readings the page could leave open. The default is what the code needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Clauses {
-    /// How "an object's members in the byte order of their key names"
-    /// sorts.
+    /// How an object's members sort in the walk's order.
     pub key_order: KeyOrder,
     /// How a string's ordering term orders.
     pub string_order: StringOrder,
@@ -206,7 +219,8 @@ pub type SelfTagId = usize;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
     Root,
-    /// An object member: its ordinal is its keyed rank among its siblings.
+    /// An object member: its ordinal is its place in a random permutation
+    /// of its object's members, drawn when the row was sealed.
     Member,
     /// An array element at this position, which is its ordinal.
     Element(u64),
@@ -280,20 +294,19 @@ pub struct EntryLeakage {
     /// array's selector, so `$.tags[0]` and `$.tags[1]` look alike, but each
     /// element is its own entry."
     pub selector: SelId,
-    /// The shape: the position in [`RowLeakage::entries`] of this node's
-    /// parent. "Which selector's path sits under which is not written down,
-    /// but it is the same in every row, so an observer comparing rows learns
-    /// it, and with it each row's parent and child relations and the node
-    /// count of every subtree." The simulator uses it to place the chain
-    /// below a token a query sends; at rest the order clause
-    /// ([`RowLeakage::entries`]) is what shows it.
+    /// The shape: the index in [`RowLeakage::entries`] of this node's
+    /// parent. Not revealed at rest: the stored order is random
+    /// ([`Leakage::stored_order`]) and no stored field links an entry to
+    /// another, so the simulator reads it only below a token a query sends,
+    /// to place the chain the token links ([`ReadLeak::reach`]): "see how
+    /// the nodes beneath it nest, link each one to its parent".
     pub parent: Option<usize>,
     /// The node's ordinal under its parent, which a token's holder sees in
     /// the ordinals it probes: "each element's index: […] an element's index
-    /// is the ordinal it is found at". A member's ordinal is its keyed rank,
-    /// which the page does not mention; under one token it is a fixed
-    /// permutation of the members' key order that the holder sees and
-    /// cannot read (`member_ordinals_follow_key_order`).
+    /// is the ordinal it is found at". A member's ordinal is its place in a
+    /// random permutation of its object's members, drawn per row, which the
+    /// holder sees and which says nothing about the member: two objects give
+    /// two unrelated ones (`member_order_shared_across_parents`).
     pub step: Step,
     /// The rule this node's token takes under its parent's: "whether each
     /// node beneath is an object member or an array element […] the
@@ -332,11 +345,14 @@ pub struct EntryLeakage {
 /// One group of a projection, stored (`q`) or sent (a needle).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GroupLeakage {
-    /// "One `{s, vs}` pair per node, […] in the same order": the pairs of the
-    /// nodes that sit directly in this group, in the walk's order.
-    /// "Whether two rows hold the same value at the same path, through the
-    /// value selector `vs`, a keyed hash of the path and the value (for an
-    /// object or an array, of its kind alone)."
+    /// "One `{s, vs}` pair per node": the pairs of the nodes that sit
+    /// directly in this group, in the walk's order, an object's members in
+    /// [`Clauses::key_order`]. Neither list is stored or sent in this order:
+    /// a stored `q`'s lists are shuffled ([`Leakage::stored_order`]), and so
+    /// are a needle's ([`Leakage::sent_order`]). "Whether
+    /// two rows hold the same value at the same path, through the value
+    /// selector `vs`, a keyed hash of the path and the value (for an object
+    /// or an array, of its kind alone)."
     pub pairs: Vec<(SelId, ValueId)>,
     /// "Nested by array element […] Which nodes sit inside the same array
     /// element, through the nesting, for every element that is an object or
@@ -356,10 +372,12 @@ pub struct RowLeakage {
     /// data key's identifier (unique to the row)". A different name in every
     /// row. The `iv` also salts every parent and self tag in the row.
     pub data_key: usize,
-    /// "The number of entries", and the entries in their stored order:
-    /// "Entries are stored in depth-first order, the root first, each node
-    /// followed by everything beneath it, and an object's members in the
-    /// byte order of their key names' UTF-8 encodings."
+    /// "The number of entries", one per node, numbered as [`flatten`] walks
+    /// the document (depth-first, the root first). The numbering is the
+    /// profile's own: the entries are stored in the order
+    /// [`Leakage::stored_order`] says, and every index into this list
+    /// ([`EntryLeakage::parent`], [`ReadLeak::hits`], [`ReadLeak::reach`])
+    /// names a node, not a slot.
     pub entries: Vec<EntryLeakage>,
     /// The containment projection `q`.
     pub projection: GroupLeakage,
@@ -450,6 +468,47 @@ pub enum QueryLeakage {
     },
 }
 
+/// The order a row's entries and its projection's lists are stored in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoredOrder {
+    /// The page: "The entries of `sv` are stored with the root first, where
+    /// the database finds the sealed root, and every other entry in a
+    /// uniformly random order drawn when the row is sealed and then
+    /// discarded. [...] it shows nothing beyond the root's place", and "The
+    /// pairs of each group and the groups of each list are stored in a
+    /// random order, so the projection does not restate the document's
+    /// order". Slot `0` holds the
+    /// root; slots `1..n` hold the other nodes in a uniformly random
+    /// permutation; every list of `q` is a uniformly random permutation of
+    /// its pairs or groups. What stays visible is the rest of this profile:
+    /// the selectors a row holds and how many of each, `q`'s grouping by
+    /// array element, the entries without a parent tag (the chain heads),
+    /// each ciphertext's length and the ordering terms.
+    Random,
+    /// The order before: depth-first, the root first, each node followed by
+    /// everything beneath it, an object's members in key order, and `q` in
+    /// the same walk's order. It gave every row's tree away (#1357). Only a
+    /// mutant states it now.
+    DepthFirst,
+}
+
+/// The order a containment or equality needle's lists are sent in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SentOrder {
+    /// The page: "A needle is sent in a random order too, drawn afresh for
+    /// each query, so it shows no more of the order of the needle's keys
+    /// than a stored row does." Every pair list and every element-group list
+    /// of a needle (and its one-pair `alt`) is a uniformly random
+    /// permutation, drawn independently for each query, so two queries for
+    /// one needle send its pairs in two unrelated orders.
+    Random,
+    /// The walk's order, an object's members in [`Clauses::key_order`]: the
+    /// order a needle was sent in before the client shuffled it, which told
+    /// the database which of two sibling keys sorts first. Only a mutant
+    /// states it now.
+    Walk,
+}
+
 /// The leakage of a whole column: its rows and its queries, over one shared
 /// set of opaque names.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -457,6 +516,10 @@ pub struct Leakage {
     /// "The keyset the data key was minted under […] the same for every
     /// column it seals": one keyset per column, and the ZeroKMS tag's length.
     pub key_tag_len: usize,
+    /// The order every row's entries and `q` are stored in.
+    pub stored_order: StoredOrder,
+    /// The order every needle is sent in.
+    pub sent_order: SentOrder,
     pub rows: Vec<RowLeakage>,
     pub queries: Vec<QueryLeakage>,
     /// The rank of each [`OrderClass`] among the classes of its kind: "the
@@ -743,7 +806,7 @@ fn canonical(value: &Value) -> Vec<u8> {
     }
 }
 
-/// One node of a document in its stored order.
+/// One node of a document, as [`flatten`] numbers it.
 pub struct Node<'a> {
     pub value: &'a Value,
     pub positional: Vec<Segment>,
@@ -755,9 +818,10 @@ pub struct Node<'a> {
     pub container_element: bool,
 }
 
-/// A document's nodes in the order the page says they are stored:
-/// depth-first, the root first, an object's members in `order`, an array's
-/// elements in position order.
+/// A document's nodes in the walk's order: depth-first, the root first, an
+/// object's members in `order`, an array's elements in position order. The
+/// profile's numbering of a row's nodes and of a needle's; not the order
+/// either is stored or sent in ([`StoredOrder`], [`SentOrder`]).
 pub fn flatten(doc: &Value, order: KeyOrder) -> Vec<Node<'_>> {
     let mut flattener = Flattener {
         order,
@@ -979,8 +1043,8 @@ pub fn l_store(column: &Column, ids: &mut Ids, docs: &[Value]) -> Vec<RowLeakage
         .collect()
 }
 
-/// Every strict descendant of node `at` that chains from it: in the stored
-/// order these are the positions after it up to the end of its subtree.
+/// Every strict descendant of node `at` that chains from it: in the walk's
+/// numbering these are the nodes after it up to the end of its subtree.
 fn descendants(nodes: &[Node<'_>], at: usize, sealed_root: bool) -> Vec<usize> {
     let mut inside = vec![false; nodes.len()];
     inside[at] = true;
@@ -1198,6 +1262,8 @@ pub fn leak(column: &Column, clauses: Clauses, docs: &[Value], queries: &[Query]
         .collect();
     Leakage {
         key_tag_len: KEY_TAG_LEN,
+        stored_order: StoredOrder::Random,
+        sent_order: SentOrder::Random,
         rows,
         queries,
         ordering_ranks: ids.ordering_ranks(),
