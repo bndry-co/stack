@@ -86,6 +86,23 @@ func TestJSONDocumentsRoundTripThroughTheGuest(t *testing.T) {
 	}
 }
 
+// A document sealed for users/profile does not open as another column's:
+// the guest opens it under the field's own column and refuses a stored
+// value whose envelope names another.
+func TestJSONDocumentsDoNotOpenUnderAnotherColumn(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	sealed, err := c.DefaultKeyset().Seal(ctx, jsonPlan(), []record.Source{{"profile": []byte(jsonDocuments[0])}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := jsonPlan()
+	other.Fields[0].Identity = "other"
+	if _, err := c.Open(ctx, other, sealed); !errors.Is(err, encrypt.ErrContextMismatch) {
+		t.Fatalf("a users/profile document opened as users/other: %v", err)
+	}
+}
+
 // Text that is not a document is refused before anything is sealed, with
 // the engine's code and without the text.
 func TestJSONTextThatIsNotADocumentIsErrEncoding(t *testing.T) {

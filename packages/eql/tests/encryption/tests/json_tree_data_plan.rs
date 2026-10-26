@@ -328,10 +328,112 @@ async fn the_data_plan_and_the_typed_layout_agree() {
     }
 }
 
+/// Under `"null": "sql"` a frame null, or a row with no `profile`, stores
+/// no value for the field, and opens as a null; a JSON `null` beside them
+/// is a document and round-trips as one.
+#[tokio::test]
+async fn a_sql_null_stores_no_document() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let plan = plan();
+    let rows: Vec<BTreeMap<&str, Option<&str>>> = vec![
+        BTreeMap::from([("profile", Some(r#"{"name": "Alice"}"#))]),
+        BTreeMap::from([("profile", None)]),
+        BTreeMap::new(),
+        BTreeMap::from([("profile", Some("null"))]),
+    ];
+    let sealed = record::encrypt_with(&keyset, frame(&rows), &plan, &Eql)
+        .unwrap()
+        .await
+        .unwrap();
+    let CipherText::Sequence(stored) = &sealed else {
+        panic!("a batch is a sequence")
+    };
+    let stores_profile: Vec<bool> = stored
+        .iter()
+        .map(|row| {
+            let CipherText::Map(fields) = row else {
+                panic!("a row is a map")
+            };
+            fields.iter().any(|(name, _)| name == "profile")
+        })
+        .collect();
+    assert_eq!(stores_profile, [true, false, false, true]);
+    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &Eql)
+        .unwrap()
+        .await
+        .unwrap();
+    let rows: Vec<BTreeMap<String, Option<serde_bytes_like::Bytes>>> =
+        dynamic::frame::serde::from_slice(opened.risky_ref()).unwrap();
+    let back: Vec<Option<Value>> = rows
+        .iter()
+        .map(|row| {
+            row["profile"]
+                .as_ref()
+                .map(|text| serde_json::from_slice(&text.0).unwrap())
+        })
+        .collect();
+    assert_eq!(
+        back,
+        [
+            Some(json!({"name": "Alice"})),
+            None,
+            None,
+            Some(Value::Null)
+        ]
+    );
+}
+
+/// A document sealed for one column does not open as another's: the data
+/// plan opens `JsonSearch` under the field's own column, and a document
+/// whose envelope names another is refused before any key is retrieved.
+#[tokio::test]
+async fn a_document_does_not_open_under_another_column() {
+    let (cipher, calls) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let text = documents()[0].to_string();
+    let sealed = record::encrypt_with(
+        &keyset,
+        frame(BTreeMap::from([("profile", text.as_str())])),
+        &plan(),
+        &Eql,
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    let other = record::plan_with(
+        &dynamic::frame::serde::to_vec(&json!({
+            "profile": {
+                "context": ["users", "other"],
+                "type": "json",
+                "null": "sql",
+                "target": {
+                    "name": "JsonSearch",
+                    "options": {"ordered": ["$.age", "$.visits[*].at"]}
+                }
+            }
+        }))
+        .unwrap(),
+        &Eql,
+    )
+    .unwrap();
+    calls.lock().unwrap().retrieve.clear();
+    let refused = record::decrypt_with(Scope::Client(&cipher), sealed, &other, None, &Eql)
+        .unwrap()
+        .await;
+    assert!(
+        matches!(refused, Err(stack_encrypt::Error::ContextMismatch { .. })),
+        "{:?}",
+        refused.map(drop)
+    );
+    assert!(
+        calls.lock().unwrap().retrieve.is_empty(),
+        "refused before any key is retrieved"
+    );
+}
+
 /// Text that is not a document is refused when the record is read, before
 /// any key is requested, naming the field and what was wrong by its code.
-/// A frame null is not a JSON null: under `"null": "sql"` it stores
-/// nothing.
 #[tokio::test]
 async fn text_that_is_not_a_document_is_refused_before_any_key() {
     let (cipher, calls) = common::cipher().await;
