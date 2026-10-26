@@ -340,6 +340,28 @@ func TestDecryptErrorsHoldNoPlaintext(t *testing.T) {
 	}
 }
 
+// A pointer to a type with MarshalText and UnmarshalText (*time.Time) is
+// written as its element's text, nil as null, and read back into a new
+// element: what stashgen accepts such a field on the strength of.
+func TestAnOpaqueStructCarriesAPointerToATextType(t *testing.T) {
+	at := time.Date(2026, 10, 26, 5, 3, 16, 0, time.UTC)
+	type stamped struct {
+		At  *time.Time   `vc:"at,default"`
+		Ats []*time.Time `vc:"ats,default"`
+	}
+	blob, err := opaqueBytes(stamped{At: &at, Ats: []*time.Time{&at, nil}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got stamped
+	if err := Opaque(Values{OpaqueField: blob}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.At == nil || !got.At.Equal(at) || len(got.Ats) != 2 || got.Ats[0] == nil || !got.Ats[0].Equal(at) || got.Ats[1] != nil {
+		t.Fatalf("*time.Time came back as %+v", got)
+	}
+}
+
 // mustStorage is v as a storage blob.
 func mustStorage(t *testing.T, v any) []byte {
 	t.Helper()
