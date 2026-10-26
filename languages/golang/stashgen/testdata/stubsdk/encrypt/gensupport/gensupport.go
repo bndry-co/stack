@@ -7,6 +7,7 @@ package gensupport
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
@@ -44,6 +45,7 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
+	JSON      Kind = "json"
 )
 
 // Redacted formats a value with its sealed fields hidden.
@@ -87,6 +89,7 @@ func (d Declaration) Encrypt(name string, kind Kind) Declaration                
 func (d Declaration) EncryptIndex(name string, kind Kind, idx ...encrypt.Index) Declaration { return d }
 func (d Declaration) Index(name string, kind Kind, idx ...encrypt.Index) Declaration        { return d }
 func (d Declaration) EncryptInto(name string, kind Kind, eqlType string) Declaration        { return d }
+func (d Declaration) Options(name string, options TargetOptions) Declaration                { return d }
 func (d Declaration) Omit(name string) Declaration                                          { return d }
 func (d Declaration) Err() error                                                            { return nil }
 
@@ -196,3 +199,42 @@ func (f Field[T]) NullTerm(context.Context, *encrypt.Cipher, string) ([]byte, er
 
 // GetPtr reads one opened field declared over a pointer.
 func GetPtr[T any](Values, string) (*T, error) { return nil, nil }
+
+// TargetOptions are the options an EncryptInto field gives its EQL type.
+type TargetOptions struct {
+	SealedRoot *bool
+	Ordered    []string
+}
+
+// Ptr is a pointer to v.
+func Ptr[T any](v T) *T { return &v }
+
+// JSONQuery derives a containment operator's query on a JSON field.
+func JSONQuery[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, json.RawMessage) (Q, error) {
+	return nil, nil
+}
+
+// JSONQueryAt derives an operator at a path on a JSON field.
+func JSONQueryAt[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, string, json.RawMessage) (Q, error) {
+	return nil, nil
+}
+
+// JSONBetweenAt derives between_at on a JSON field.
+func JSONBetweenAt[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, json.RawMessage, json.RawMessage) (encrypt.JSONRange[Q], error) {
+	return encrypt.JSONRange[Q]{}, nil
+}
+
+// JSONSelect prepares `->` at a path on a JSON field.
+func JSONSelect[E ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string) (encrypt.JSONSelection[E], error) {
+	return encrypt.JSONSelection[E]{}, nil
+}
+
+// JSONSubtree prepares a subtree read at a path on a JSON field.
+func JSONSubtree[E ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, encrypt.JSONReadOptions) (encrypt.JSONRead[E], error) {
+	return encrypt.JSONRead[E]{}, nil
+}
+
+// JSONNodeToken derives the token of the node at a path.
+func JSONNodeToken[T any](context.Context, Field[T], *encrypt.Cipher, string, string) (encrypt.JSONToken, error) {
+	return "", nil
+}

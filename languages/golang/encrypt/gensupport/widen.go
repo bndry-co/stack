@@ -1,6 +1,7 @@
 package gensupport
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -30,6 +31,17 @@ import (
 func asKind(kind Kind, v any) (any, error) {
 	if err := checkValue(v); err != nil {
 		return nil, err
+	}
+	if kind == JSON {
+		// A document crosses as its JSON text, in a bytes value; the
+		// engine parses it.
+		switch raw := v.(type) {
+		case json.RawMessage:
+			return []byte(raw), nil
+		case []byte:
+			return raw, nil
+		}
+		return nil, fmt.Errorf("%w: a JSON field takes a json.RawMessage, not a %T", encrypt.ErrEncoding, v)
 	}
 	if !isInteger(kind) {
 		return v, nil
