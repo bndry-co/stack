@@ -1301,7 +1301,10 @@ func (w *documentWalk) problem(t types.Type) string {
 // fields checks a struct's fields, and those an untagged embedded struct
 // promotes into it, against names: the JSON member each field writes, so
 // two that write one member are refused (encoding/json keeps one of them,
-// or neither, silently).
+// or neither, silently). embedding holds the structs embedded on the path
+// from the document's struct to u, and only those: it stops an embedding
+// cycle, and a struct embedded through two branches is checked on each,
+// so the members it promotes twice are refused.
 func (w *documentWalk) fields(u *types.Struct, names map[string]string, embedding map[types.Type]bool) string {
 	for i := range u.NumFields() {
 		fld := u.Field(i)
@@ -1329,7 +1332,9 @@ func (w *documentWalk) fields(u *types.Struct, names map[string]string, embeddin
 						continue
 					}
 					embedding[et] = true
-					if reason := w.fields(st, names, embedding); reason != "" {
+					reason := w.fields(st, names, embedding)
+					delete(embedding, et)
+					if reason != "" {
 						return reason
 					}
 					continue
