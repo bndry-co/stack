@@ -1796,7 +1796,7 @@ fn the_catalog_lists_each_types_operators() {
                 op.iter().map(|(k, v)| (k.as_str(), text(v))).collect()
             })
             .collect();
-        let only = |want: [(&str, &str); 4]| {
+        let only = |want: [(&str, &str); 5]| {
             assert_eq!(listed, [want.to_vec()], "{name}");
         };
         let exact = |operator: &'static str, index: &'static str| {
@@ -1805,6 +1805,7 @@ fn the_catalog_lists_each_types_operators() {
                 ("fidelity", "exact"),
                 ("arity", "one"),
                 ("index", index),
+                ("input", "value"),
             ]
         };
         // OPE for Ord and OrdOpe, block ORE for OrdOre and SearchOre.
@@ -1833,13 +1834,41 @@ fn the_catalog_lists_each_types_operators() {
                 ("fidelity", "exact"),
                 ("arity", "one"),
                 ("index", "eq"),
+                ("input", "value"),
             ]),
             "TextMatch" => only([
                 ("operator", "matches"),
                 ("fidelity", "probabilistic"),
                 ("arity", "one"),
                 ("index", "match"),
+                ("input", "value"),
             ]),
+            // A document's operators under the index's defaults: the
+            // orderings at a path only for a field that orders one.
+            "JsonSearch" => {
+                let json = |operator: &'static str, arity: &'static str, input: &'static str| {
+                    vec![
+                        ("operator", operator),
+                        ("fidelity", "exact"),
+                        ("arity", arity),
+                        ("index", "json"),
+                        ("input", input),
+                    ]
+                };
+                assert_eq!(
+                    listed,
+                    [
+                        json("contains", "one", "json"),
+                        json("contained_by", "one", "json"),
+                        json("eq_at", "one", "path_json"),
+                        json("selector", "one", "path"),
+                        json("subtree", "one", "path_bound"),
+                        json("children", "one", "path"),
+                        json("child_count", "one", "path"),
+                    ],
+                    "{name}"
+                );
+            }
             // Each operator through its own index, whose term alone the
             // query carries.
             "TextSearch" | "TextSearchOre" => {
@@ -1850,6 +1879,7 @@ fn the_catalog_lists_each_types_operators() {
                     ("fidelity", "probabilistic"),
                     ("arity", "one"),
                     ("index", "match"),
+                    ("input", "value"),
                 ]);
                 assert_eq!(listed, want, "{name}");
             }
@@ -1967,7 +1997,7 @@ fn operators_of(plan: &[u8], field: &str) -> Vec<[String; 4]> {
                 panic!("an operator is an object");
             };
             let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
-            assert_eq!(keys, ["operator", "fidelity", "arity", "index"]);
+            assert_eq!(keys, ["operator", "fidelity", "arity", "index", "input"]);
             [0, 1, 2, 3].map(|i| text(&entries[i].1).to_owned())
         })
         .collect()

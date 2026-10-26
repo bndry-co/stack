@@ -144,6 +144,13 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // one it was opened as: sealed as that type, not tampered with, so
         // the caller's input and not STATUS_AUTH.
         stack_encrypt::Error::OpenedType { .. } => STATUS_ENCODING,
+        // A JSON read's rows that are not the ones its request asked for,
+        // or a wildcard read of an array longer than its bound: statements
+        // about the rows the host handed over, decided before any key is
+        // retrieved, which the host acts on (asks again, raises the bound).
+        // The diagnostic's code tells the two apart.
+        stack_encrypt::Error::JsonWrongEntry { .. }
+        | stack_encrypt::Error::JsonWildcardTruncated { .. } => STATUS_ENCODING,
         // The entry `->` returned did not open alone: a container with
         // children asked for as a scalar, or an altered entry. The client
         // cannot tell which, so neither STATUS_AUTH nor a claim of either.

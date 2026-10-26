@@ -150,6 +150,10 @@ pub fn wipe_value(value: &mut serde_json::Value) {
     plain::wipe(value);
 }
 
+/// The deepest a document nests: the data plan refuses a path with more
+/// steps, which names no node.
+#[cfg(feature = "dynamic")]
+pub(crate) use derive::MAX_DEPTH;
 pub(crate) use derive::{seal_pending, terms_pending};
 pub(crate) use plain::PlainJson;
 pub(crate) use shuffle::Randomness;
@@ -195,9 +199,10 @@ pub struct JsonOptions {
     /// (`$.scores[2]`) is refused, here and in an ordering query
     /// ([`TermError::JsonOrderingAtPosition`](crate::sem::TermError::JsonOrderingAtPosition)):
     /// an ordering compares the leaf `->` extracts by the path's selector,
-    /// which reads every position as the wildcard, so it reaches the first
-    /// element at the path and never the one a position names. An ordering
-    /// asked at a path no entry here covers is refused
+    /// which reads every position as the wildcard, so it reaches an
+    /// unspecified element at the path (entries are stored in a random
+    /// order) and never the one a position names. An ordering asked at a
+    /// path no entry here covers is refused
     /// ([`TermError::JsonPathNotOrdered`](crate::sem::TermError::JsonPathNotOrdered)).
     pub ordered: BTreeSet<JsonPath>,
 }

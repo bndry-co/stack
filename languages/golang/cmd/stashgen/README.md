@@ -74,7 +74,8 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"notes,encrypt"` | seal the field, with no index |
 | `stash:"email,encrypt,index=equality;match"` | seal the field, and derive each index beside it |
 | `stash:"score,index=ore"` | derive the index alone; no ciphertext is stored, so `Decrypt` leaves the field at its zero value |
-| `stash:"attrs,index=json"` | refused in this build: the engine does not derive the `json` index yet |
+| `stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"` | on a `json.RawMessage`, or a struct, map or slice type: store the field as an encrypted JSON document; see "Encrypted JSON documents" |
+| `stash:"attrs,index=json"` | refused: a JSON document is stored with `encrypt_into=JsonSearch`, not as an index beside a ciphertext |
 | `stash:"id,passthrough"` | store the field as it is |
 | `stash:"tenant,context_field"` | the field's value is the context of every other field in the struct, in place of a `context=` tag; stored as it is |
 | `stash:"-"` | leave the field out |
@@ -108,7 +109,104 @@ An index takes its options in parentheses after its name, separated by commas: `
 This build refuses an index with options: a query term is derived with the default options only, so a stored term with other options would never match one.
 These words are the same as the Rust API's words for the same behaviour, with two that only Go has.
 `opaque` seals the whole struct as one `bytes` field holding a storage blob (see "What crosses the binding").
-`json` names the JSON index, which the Rust API does not declare yet; this build refuses it.
+`json` names the JSON index, which a field reaches only through `encrypt_into=JsonSearch`.
+
+### Encrypted JSON documents
+
+A field with `encrypt_into=JsonSearch` is stored as one encrypted JSON document, an `eql.JSONSearch` in a `public.eql_v4_json_search` column.
+Declare it as a struct, map or slice type, or as a `json.RawMessage` that holds the document's JSON text:
+
+```go
+type Profile struct {
+	Name   string  `json:"name"`
+	Age    int64   `json:"age"`
+	Visits []Visit `json:"visits"`
+}
+
+type Customer struct {
+	_       struct{}        `stash:"context=customers"`
+	ID      int64           `stash:"id,passthrough"`
+	Profile Profile         `stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"`
+	Notes   json.RawMessage `stash:"notes,encrypt_into=JsonSearch"`
+}
+
+// A needle for Contains: a field left nil is not in the query.
+type ProfileNeedle struct {
+	Name *string `json:"name,omitempty"`
+	Age  *int64  `json:"age,omitempty"`
+}
+
+q, err := customers.Fields.Profile.Contains(ctx, cipher, ProfileNeedle{Age: &age})
+older, err := customers.Fields.Profile.At.Age.Gt(ctx, cipher, 40)
+people, err := customers.Decrypt(ctx, cipher, rows) // each Profile is a Profile again
+```
+
+The generated code marshals a struct, map or slice type with `encoding/json` when it seals the field, and unmarshals the opened document into the declared type.
+It calls `encoding/json` directly, never through `map[string]any`, so an `int64`, a `uint64` and a finite `float64` come back exactly.
+The rest of the document comes back as `encoding/json` reads what it wrote, which is not always the value sealed:
+
+- Invalid UTF-8 in a Go string is written as U+FFFD, with no error: `"a\xffb"` comes back as `"a\uFFFDb"`, the replacement character in place of the byte. `stashgen` cannot refuse it, because it is a property of a value, not of a type, and finding it would need a reflective walk of each value at run time, which the generated code does not do. Check text that may not be UTF-8 with `utf8.ValidString` before you seal it.
+- A nil map or slice is stored as JSON `null`, and an empty one as `{}` or `[]`. Each reads back as it was (a field with `null=sql` stores a nil pointer as SQL `NULL` instead), but a query tells them apart: `Contains` with an empty map does not match a stored `null`.
+- A `time.Time` field is refused, since it is one value, not a document, but a `time.Time` inside a document is accepted. It is stored as the text its `MarshalJSON` writes: RFC 3339, in the time's own offset, with trailing zero nanoseconds left out. One instant in two zones is two strings, so `EqAt` with a time in another zone matches nothing, and an ordering on that path orders the text, which is not time order: `…T10:00:00+10:00` sorts after `…T01:00:00Z`, an earlier instant, and `…:00.5Z` sorts before `…:00Z`. If you query a time, store it as an integer (`t.UnixNano()`) or as UTC text of a fixed width. Any type with its own `MarshalJSON` or `MarshalText` is stored as the text it writes, and queried as that text.
+
+`stashgen` refuses a type that `encoding/json` cannot carry both ways: an interface such as `any` anywhere in it (it reads numbers back as `float64`); a struct field that `encoding/json` drops (unexported, tagged `json:"-"`, or one of two that write the same member); a `MarshalJSON` or `MarshalText` with no matching unmarshal method; a channel or a function.
+It refuses a field tagged `json:",string"` anywhere in a document: `encoding/json` stores its number or bool as a JSON string (`"age":"40"`), so `EqAt`, an ordering or a needle by the number would match nothing, and an ordered path would order the text. A document's numbers cross as their exact digits without it.
+An unexported embedded struct is fine: its fields are promoted and stored.
+An embedded pointer to an unexported struct is refused: `encoding/json` writes its fields but cannot read them back, since it cannot allocate the struct.
+An embedded pointer to an exported struct is accepted, but whether it was nil is not stored: it comes back non-nil when the document holds a member it promotes, and nil when it holds none, so a non-nil pointer whose promoted fields are all left out by `omitempty` comes back nil.
+It refuses a string, a number and a bool too: a document is a struct, map or slice.
+A `[]byte` is refused, since `encoding/json` writes it as base64: declare JSON text as `json.RawMessage`.
+The engine parses the JSON text, so an object that names a member twice and an integer outside the 64-bit range are refused with `encrypt.ErrEncoding`.
+A `json.RawMessage` comes back as JSON text that holds the same values; key order and the spelling of numbers are not kept.
+A pointer field (`*Profile`, `*json.RawMessage`) is optional and must say `null=sql`: a document has no fixed length to hide a missing one behind.
+A nil pointer is SQL `NULL`; a non-nil `*json.RawMessage` holding `null` is a stored JSON `null`.
+A `json.RawMessage` sealed any other way (`encrypt`, `index=equality`) is bytes, as any type defined over `[]byte` is.
+`JsonSearch` takes `json.RawMessage` itself, or an alias of it (`type Doc = json.RawMessage`), and refuses a type defined over it (`type Doc json.RawMessage`): such a type has no `MarshalJSON`, so `encoding/json` would write it as a base64 string, not as the JSON text it holds, where a scalar type is accepted with any type defined over it.
+
+The type takes options in parentheses: `ordered=` names the paths whose numbers and strings carry an ordering term, separated by `;`, and `sealed_root=false` turns off the sealed root (on by default).
+`encrypt_into=JsonSearch(ordered=$.age;$.visits[*].at)` orders two paths.
+A path in a tag is plain JSONPath: `$`, then `.key` steps of letters, digits and underscores, and `[n]` or `[*]` steps; an ordered path names no position. The engine checks every path when `stashgen` runs.
+
+The field's `Fields` entry has a method per operation:
+
+| Method | Returns | SQL |
+|---|---|---|
+| `Contains(ctx, c, needle)`, `ContainedBy(ctx, c, needle)` | `eql.JSONSearchQuery` | `col @> $1::eql_v4.query_json`, `col <@ $1::eql_v4.query_json` |
+| `EqAt(ctx, c, path, v)` | `eql.JSONSearchQuery` | `col @> $1::eql_v4.query_json` |
+| `At.Age.Lt(ctx, c, v)`, `Lte`, `Gt`, `Gte`, `Between` | `eql.JSONSearchLeafQuery` | `(col -> $sel::text) < $1::eql_v4.query_json_leaf`, `$sel` from `At.Age.Selector(ctx, c)` |
+| `Selector(ctx, c, path)` | `encrypt.JSONSelection`: `Selector()` and `Open` | `col -> $1::text` |
+| `Subtree(ctx, c, path, opts)` | `encrypt.JSONRead`: `Tokens()`, `Open` and `OpenOne` | `eql_v4.json_tree_subtree(col, $1::text[], 64)` |
+| `Children(ctx, c, path)`, `ChildCount(ctx, c, path)` | `encrypt.JSONToken` | `eql_v4.json_tree_children(col, $1::text)`, `eql_v4.json_tree_child_count(col, $1::text)` |
+
+`At` has one accessor per ordered path, named for its keys (`$.visits[*].at` is `At.VisitsAt`, `$.a.1` is `At.A1`); two paths with one name, or one path given twice, stop `stashgen`.
+An ordering compares the value `->` extracts at its path, and EQL's `<` compares ordering terms alone, so take the selector from the same accessor (`At.Age.Selector`) rather than spelling the path again.
+At a wildcard path (`$.visits[*].at`), `->` returns an unspecified element of each row (the entries are stored in a random order), so write the comparison over every match and order by the least or greatest one:
+
+```sql
+-- rows with some visit after $2
+SELECT id FROM customers WHERE EXISTS (
+  SELECT 1 FROM eql_v4.json_tree_path_query(profile, $1::text) AS e WHERE e > $2::eql_v4.query_json_leaf)
+-- rows by their earliest visit
+SELECT id FROM customers ORDER BY (
+  SELECT eql_v4.ord_term(e) FROM eql_v4.json_tree_path_query(profile, $1::text) AS e ORDER BY 1 LIMIT 1)
+```
+
+with `$1` from `At.VisitsAt.Selector(ctx, c)` and `$2` from `At.VisitsAt.Gt(ctx, c, v)`; for the latest visit, order by `ORDER BY 1 DESC NULLS LAST` inside and `DESC` outside.
+`OpenOne` reads one value and refuses a read whose path has a wildcard before anything is opened; open a wildcard read with `Open`.
+A needle and a value are Go values: a `json.RawMessage` of JSON text crosses as it is, and anything else is marshalled with `encoding/json`.
+`EqAt` and the orderings take a scalar: a string, a number, a bool, or `nil` for JSON `null`.
+A `[]byte`, a type defined over one, or a pointer to either, is refused rather than written as base64.
+A Go string, or a pointer to one, is refused as a `Contains` or `ContainedBy` needle, since it would be one JSON string: pass JSON text as `json.RawMessage`.
+So is a needle that writes JSON `null` (`nil`, or a nil pointer, map or slice), which only a null document contains.
+For `EqAt` and the orderings a Go string is the string value itself.
+A document contains a needle when it holds every member the needle writes, and `encoding/json` writes a struct field that has no `omitempty` even when it is zero.
+So a zero field narrows the query to the documents that hold that zero: `Profile{Name: "Alice"}` also asks for `"age": 0`.
+Give a needle struct pointer fields with `omitempty`, as `ProfileNeedle` above, or use a map.
+`Contains` refuses a needle of the field's own type when that type holds a struct, since that is the likeliest way to make the mistake; a type defined over it (`type wholeProfile Profile`) states that you mean every field.
+That includes a slice or map of structs: a `[]Visit` document refuses a `[]Visit` needle, since each `Visit` writes its zero fields; pass a `[]VisitNeedle`, a slice of a needle type with pointer fields and `omitempty`.
+`ContainedBy` takes the field's own type: there a zero field widens the query.
+Each value a selection or read opens is JSON text; `encrypt.DecodeJSON[T]` reads one into a Go type, with the same rules as a whole document.
+A position in a path is refused for `EqAt` and `Selector`, whose selector reads every position as the wildcard; read a position with `Subtree`.
 
 ### Optional fields
 

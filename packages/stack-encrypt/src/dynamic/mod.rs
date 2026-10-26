@@ -89,6 +89,7 @@
 //! reason, given on the type.
 mod context;
 mod json;
+mod json_query;
 mod kind;
 mod query;
 pub mod record;
@@ -107,8 +108,8 @@ pub use json::{json_frame, read_json, JsonPlaintext, JsonValueError};
 /// a kind means to this engine.
 pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
 pub use query::{
-    check_query, field_operators, query_term, target_limit, verify, Fidelity, OpSpec, Operand,
-    OperatorEntry, QueryTerm,
+    check_json_open, check_query, field_operators, json_open, query_term, target_limit, verify,
+    Fidelity, OpSpec, Operand, OperatorEntry, QueryTerm,
 };
 pub use record::{FieldPlan, NullMode, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetOptions, TargetResolver};
@@ -618,6 +619,25 @@ reasons! {
         /// Statistics are not a row count with an optional histogram and
         /// confidence ([`Stats::from_frame`](crate::op::Stats::from_frame)).
         NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
+        /// A JSON operator's input or a read's request or rows are not the
+        /// object the operator takes ([`json_open`], the JSON operators of
+        /// [`OpSpec`]): a missing or unknown key, a value of another kind,
+        /// a row that is not an entry, or more than one entry for a
+        /// selector.
+        JsonInput => "json_input", "the input is not the object the JSON operator takes";
+        /// A JSON value in an input is not JSON text the engine reads.
+        JsonSyntax => "json_syntax", "a JSON value is not JSON text";
+        /// A JSON value in an input names an object member twice.
+        JsonDuplicateKey => "json_duplicate_key", "a JSON object names a member twice";
+        /// A JSON value in an input has an integer literal outside the 64-bit
+        /// range.
+        JsonIntegerRange => "json_integer_range", "a JSON integer literal is outside the 64-bit range";
+        /// A path names an array position where the operand is a selector,
+        /// which reads every position as the wildcard: read a position with
+        /// a subtree read.
+        JsonPathPosition => "json_path_position", "a selector reads a position as the wildcard; read a position with subtree";
+        /// A path has a wildcard where the operator names one node.
+        JsonPathWildcard => "json_path_wildcard", "the operator names one node, and a wildcard names many";
         /// `"null"` is not `"sealed"` or `"sql"`.
         UnknownNull => "unknown_null", r#""null" is not "sealed" or "sql""#;
         /// A passthrough field says how to store a null: it carries one as

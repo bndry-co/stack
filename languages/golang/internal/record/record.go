@@ -75,12 +75,16 @@ type Output string
 // The outputs. Passthrough is not one a Plan's Fields ask for (see the
 // package doc); it is the context field's, which Wire writes itself.
 const (
-	Ciphertext  Output = "c"
-	Equality    Output = "eq"
-	Match       Output = "match"
-	Ore         Output = "ore"
-	Ope         Output = "ope"
-	OreBlock    Output = "ore_block"
+	Ciphertext Output = "c"
+	Equality   Output = "eq"
+	Match      Output = "match"
+	Ore        Output = "ore"
+	Ope        Output = "ope"
+	OreBlock   Output = "ore_block"
+	// JSONIndex is the JSON index, which a target that stores a JSON
+	// document carries and answers a document's operators through. No
+	// field asks for it as an output.
+	JSONIndex   Output = "json"
 	Passthrough Output = "passthrough"
 )
 
@@ -566,7 +570,9 @@ const (
 // lists it.
 type Operator struct {
 	// Name is the operator's name, as a query names it: eq, lt, lte, gt,
-	// gte, between or matches.
+	// gte, between or matches; for a field that stores a JSON document,
+	// contains, contained_by, eq_at, lt_at, lte_at, gt_at, gte_at,
+	// between_at, selector, subtree, children or child_count.
 	Name string
 	// Fidelity is how far the server's answer can be trusted.
 	Fidelity Fidelity
@@ -575,4 +581,9 @@ type Operator struct {
 	Pair bool
 	// Index is the index that answers it: the field's, or its EQL type's.
 	Index Output
+	// Input is the shape of the operator's input, as the engine names it:
+	// value (one value of the field's kind), pair (two, low then high),
+	// json, path_json, path_pair, path or path_bound (objects of named
+	// inputs, for a document's operators).
+	Input string
 }

@@ -26,6 +26,66 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   A native `index=match` field takes no options yet (#1112), so this
   reaches Go through the EQL types only.
 
+- **Encrypted JSON documents of Go types** (#1351). A struct, map or slice
+  field tagged `encrypt_into=JsonSearch` is a document: the generated code
+  marshals it with `encoding/json` when it seals it, and reads the opened
+  document back into the declared type (`gensupport.GetDocument`,
+  `GetDocumentPtr`), so 64-bit integers and finite `float64`s round-trip
+  exactly. A pointer to one takes `null=sql`. The rest of a document comes
+  back as `encoding/json` reads it: invalid UTF-8 in a string becomes
+  U+FFFD, a nil map or slice is stored as JSON `null` (not `{}` or `[]`),
+  and a `time.Time` inside a document is stored as RFC 3339 text in its
+  own offset, which `EqAt` and the orderings compare as text. `stashgen` refuses, when it
+  runs, a type `encoding/json` cannot carry both ways: an interface such as
+  `any`, a struct field `encoding/json` drops (unexported, tagged
+  `json:"-"`, or two writing one member), a field tagged
+  `json:",string"` (stored as a JSON string, which a query by its number
+  does not match), an embedded pointer to an
+  unexported struct (written, never read back), a one-way `MarshalJSON` or
+  `MarshalText`, a channel, a function, a scalar, or a `[]byte`. The `Fields` entry's operands are Go
+  values now: `Contains`, `ContainedBy`, `EqAt`, `Lt`, `Lte`, `Gt`, `Gte`
+  and `Between` take `any`,
+  a `json.RawMessage` crossing as the JSON text it is and anything else
+  marshalled (`gensupport.JSONText`); a `[]byte`, a type defined over
+  one, or a pointer to either is refused, and so is a containment needle
+  that is a Go string, a pointer to one, or writes JSON `null`. A zero
+  struct field without `omitempty` narrows a containment query, so
+  `Contains` on a field whose type holds a struct refuses a needle of that
+  type (`gensupport.NewDocumentField`); the generated doc comments say how
+  to write a needle. `encrypt.DecodeJSON[T]` reads a value a selection or
+  subtree read opened into a Go type, numbers in an interface as
+  `json.Number`. An error from either direction names a Go type and never
+  the value.
+
+- **Encrypted JSON documents with `stashgen`** (#1351, #1352). A
+  `json.RawMessage` field tagged `encrypt_into=JsonSearch` (options:
+  `ordered=$.a;$.b[*].c`, `sealed_root=false`) is stored as an
+  `eql.JSONSearch` in a `public.eql_v4_json_search` column; a
+  `*json.RawMessage` field takes `null=sql`. Its `Fields` entry has
+  `Contains`, `ContainedBy`, `EqAt`, `Selector`, `Subtree`, `Children` and
+  `ChildCount`, and `At.<Path>` per ordered path with `Lt`, `Lte`, `Gt`,
+  `Gte`, `Between` and the path's own `Selector`; at a wildcard path their
+  operands are compared over every match (`eql_v4.json_tree_path_query`),
+  since `->` there returns an unspecified element. `encrypt.JSONSelection`
+  and `encrypt.JSONRead` open the rows `->` and `eql_v4.json_tree_subtree`
+  return against the request that prepared them (`OpenOne` refuses a
+  wildcard read up front); `encrypt.JSONSelector`, `JSONToken` and
+  `JSONTokens` bind as `text` and `text[]`, and a zero selector, token or
+  token list is refused rather than bound. `JSONToken`, `JSONTokens`,
+  `JSONSelection` and `JSONRead` print and log with the tokens, the
+  selector and the path redacted; `encrypt.JSONValue` holds plaintext and
+  prints it. A `json.RawMessage` sealed any other way stays
+  bytes. `gensupport.JSON`, `TargetOptions`,
+  `Declaration.Options` and the `JSON*` helpers are the generated code's.
+
+- **Query and read an encrypted JSON document, at the record level**
+  (#1350, #1352). `Cipher.QueryTerm` derives a document field's operands:
+  `QueryTerm.Encoding` says what the term holds, and `QueryTerm.Text`
+  carries a selector, a node's token or a read's tokens.
+  `Cipher.JSONOpen` opens the rows a selector or subtree read returned
+  against the request that prepared it. `record.Operator.Input` names an
+  operator's input. Generated methods follow with `stashgen`.
+
 - **The EQL types for an encrypted JSON document** (#1348):
   `eql.JSONSearch` (`public.eql_v4_json_search`), its containment needle
   `eql.JSONSearchQuery`, its ordering operand
