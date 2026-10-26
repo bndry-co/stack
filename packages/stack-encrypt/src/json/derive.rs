@@ -1154,7 +1154,11 @@ fn retrieval_of(
 /// for a read of `$`: it derives the root's token, finds each node's
 /// children by their parent tags, and opens each node under the digest of
 /// its children's tags ([`place`]). Deriving the root's token takes the
-/// index key of the keyset the document was sealed under.
+/// index key of the keyset the document was sealed under, which the pending
+/// asks for beside the data key ([`Request::load_keyset`]): the cipher's
+/// cached keyset, or one loaded from ZeroKMS and cached, as
+/// [`StackCipher::keyset`] would load it. The sealed root needs no index
+/// key.
 fn open_document<'a, K>(
     doc: JsonDocument,
     cipher: &'a StackCipher<K>,
@@ -1166,27 +1170,21 @@ fn open_document<'a, K>(
         Ok(parts) => parts,
         Err(error) => return Pending::failed(cipher, error),
     };
-    let keyset = if doc.header.sealed_root {
-        None
-    } else {
-        match cipher.loaded_keyset(doc.header.keyset_id) {
-            Some(state) => Some(state),
-            None => {
-                return Pending::failed(
-                    cipher,
-                    Error::Other(
-                        "opening a JSON document with its root open needs its keyset loaded".into(),
-                    ),
-                )
-            }
-        }
-    };
-    Pending::request(cipher, vec![request], move |responses| {
+    // With the root open, the keyset the document names is loaded beside
+    // its data key: from the cipher's cache, or from ZeroKMS on a miss.
+    let open_root = !doc.header.sealed_root;
+    let mut requests = vec![request];
+    if open_root {
+        requests.push(Request::load_keyset(doc.header.keyset_id));
+    }
+    Pending::request(cipher, requests, move |responses| {
         let key = responses.next_retrieved_key()?;
         let aes = leaf_cipher(&key)?;
-        match keyset {
-            None => open_sealed_root(&doc, &aes, &aad),
-            Some(keyset) => open_whole_chain(&doc, &aes, &aad, Selectors::new(keyset, prf_context)),
+        if open_root {
+            let keyset = responses.next_keyset()?;
+            open_whole_chain(&doc, &aes, &aad, Selectors::new(keyset, prf_context))
+        } else {
+            open_sealed_root(&doc, &aes, &aad)
         }
     })
 }

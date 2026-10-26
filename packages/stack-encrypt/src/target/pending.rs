@@ -189,7 +189,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     where
         F: FnOnce(&mut Responses) -> Result<T, Error> + MaybeSend + 'a,
     {
-        let (generated, retrieved) = tally(&requests);
+        let (generated, retrieved, keysets) = tally(&requests);
         if let Err(error) = check_scope(scope.keyset(), &requests) {
             return Self::failed(scope, error);
         }
@@ -199,7 +199,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             fulfil: Box::new(move |responses| {
-                let mut own = responses.split_front(generated, retrieved)?;
+                let mut own = responses.split_front(generated, retrieved, keysets)?;
                 let value = fulfil(&mut own)?;
                 if !own.is_exhausted() {
                     return Err(Error::ResponseShape);
@@ -474,9 +474,11 @@ async fn dispatch<K: DataKeySource>(
 ) -> Result<Responses, Error> {
     let mut generates: Vec<Descriptor> = Vec::new();
     let mut retrieves: Vec<Retrieve> = Vec::new();
+    let mut loads: Vec<Uuid> = Vec::new();
     for request in requests {
         match request.into_kind() {
             RequestKind::GenerateDataKey { descriptor } => generates.push(descriptor),
+            RequestKind::LoadKeyset { keyset_id } => loads.push(keyset_id),
             RequestKind::RetrieveDataKey {
                 iv,
                 tag,
@@ -574,7 +576,14 @@ async fn dispatch<K: DataKeySource>(
         .map(|key| key.ok_or(Error::ResponseShape))
         .collect::<Result<_, _>>()?;
 
-    Ok(Responses::new(generated, retrieved))
+    // A keyset request is answered from the cipher's cache, and loaded from
+    // ZeroKMS only on a miss, as selecting the keyset would load it.
+    let mut keysets = Vec::with_capacity(loads.len());
+    for keyset_id in loads {
+        keysets.push(cipher.keyset_state(keyset_id).await?);
+    }
+
+    Ok(Responses::new(generated, retrieved).with_keysets(keysets))
 }
 
 #[cfg(test)]

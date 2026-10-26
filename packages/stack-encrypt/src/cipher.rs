@@ -534,6 +534,39 @@ pub struct StackCipher<K> {
     /// Where the stored orders of the JSON documents this cipher seals are
     /// drawn from: fresh entropy per document, outside tests.
     json_order: crate::json::order::OrderSource,
+    /// The backend's [`IndexKeySource::load_index_key`], captured at
+    /// [`init`](StackCipherBuilder::init), where `K` is known to implement
+    /// it. Settling a [`Pending`](crate::target::Pending) asks only for a
+    /// [`DataKeySource`]; a keyset request reaches the index key through
+    /// this, so the settling path's bounds stay what they were.
+    index_keys: IndexKeyLoader<K>,
+}
+
+/// The future of one index-key load, `Send` on native targets as every
+/// pending's future is ([`MaybeSend`](crate::kms::MaybeSend)).
+#[cfg(not(target_arch = "wasm32"))]
+type IndexKeyFuture<'k> = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<(Uuid, stack_kms::IndexKey), stack_kms::Error>>
+            + Send
+            + 'k,
+    >,
+>;
+
+/// See the native definition above; identical minus the `Send` bound.
+#[cfg(target_arch = "wasm32")]
+type IndexKeyFuture<'k> = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<(Uuid, stack_kms::IndexKey), stack_kms::Error>>
+            + 'k,
+    >,
+>;
+
+/// [`IndexKeySource::load_index_key`] for one `K`, as a plain function.
+type IndexKeyLoader<K> = for<'k> fn(&'k K, IdentifiedBy) -> IndexKeyFuture<'k>;
+
+fn load_index_key_of<K: IndexKeySource>(kms: &K, keyset: IdentifiedBy) -> IndexKeyFuture<'_> {
+    Box::pin(kms.load_index_key(Some(keyset)))
 }
 
 #[cfg(feature = "http")]
@@ -595,14 +628,24 @@ impl<K> StackCipher<K> {
         &self.kms
     }
 
-    /// The loaded state of the keyset with `id`, if this cipher holds it:
-    /// what opening a JSON document with its root open derives the root's
-    /// token with.
-    pub(crate) fn loaded_keyset(&self, id: Uuid) -> Option<Arc<KeysetState>> {
-        match self.keysets().get(&IdentifiedBy::Uuid(id)) {
-            Lookup::Hit(state) => Some(state),
-            Lookup::Stale(_) | Lookup::Miss(_) => None,
-        }
+    /// The loaded state of the keyset `id`: from the cache, or loaded from
+    /// ZeroKMS and cached on a miss, exactly as [`keyset`](Self::keyset)
+    /// selects a keyset by id. What a keyset request settles to
+    /// ([`Request::load_keyset`](crate::target::Request)).
+    pub(crate) async fn keyset_state(&self, id: Uuid) -> Result<Arc<KeysetState>, Error> {
+        // Bound first, so the cache's lock is released before the await.
+        let lookup = self.keysets().get(&IdentifiedBy::Uuid(id));
+        let resolution = match lookup {
+            Lookup::Hit(state) => return Ok(state),
+            Lookup::Stale(resolution) | Lookup::Miss(resolution) => resolution,
+        };
+        let (id, index_key) = (self.index_keys)(&self.kms, IdentifiedBy::Uuid(id)).await?;
+        let state = Arc::new(KeysetState {
+            id,
+            name: None,
+            prf: hmac_prf_from_index_key(&index_key),
+        });
+        Ok(self.keysets().insert(state, resolution))
     }
 
     /// Where this cipher draws a JSON document's stored order from.
@@ -916,6 +959,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
                 .map_or(crate::json::order::OrderSource::Entropy, |seed| {
                     crate::json::order::OrderSource::controlled(seed)
                 }),
+            index_keys: load_index_key_of::<K>,
         })
     }
 }
