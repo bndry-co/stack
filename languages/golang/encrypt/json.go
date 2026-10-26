@@ -131,8 +131,13 @@ func (t JSONToken) Value() (driver.Value, error) {
 type JSONTokens []string
 
 // Value binds the tokens as a text[] literal. A token is base64, so it
-// needs no escape inside the quotes.
+// needs no escape inside the quotes. Empty JSONTokens (a zero JSONRead's)
+// are refused, as a zero [JSONToken] is: bound as {}, they would read
+// nothing from every row.
 func (t JSONTokens) Value() (driver.Value, error) {
+	if len(t) == 0 {
+		return nil, fmt.Errorf("%w: empty JSONTokens: prepare a read with the field's Subtree", ErrEncoding)
+	}
 	var b strings.Builder
 	b.WriteByte('{')
 	for i, token := range t {

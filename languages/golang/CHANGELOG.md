@@ -23,8 +23,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   and `encrypt.JSONRead` open the rows `->` and `eql_v4.json_tree_subtree`
   return against the request that prepared them (`OpenOne` refuses a
   wildcard read up front); `encrypt.JSONSelector`, `JSONToken` and
-  `JSONTokens` bind as `text` and `text[]`, and a zero selector or token is
-  refused rather than bound. A `json.RawMessage` sealed any other way stays
+  `JSONTokens` bind as `text` and `text[]`, and a zero selector, token or
+  token list is refused rather than bound. A `json.RawMessage` sealed any other way stays
   bytes. `gensupport.JSON`, `TargetOptions`,
   `Declaration.Options` and the `JSON*` helpers are the generated code's.
 

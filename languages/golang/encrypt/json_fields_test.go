@@ -125,7 +125,7 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 	// the rows hold, and its error does not name the path, which can hold
 	// a customer's key. A quoted key that spells [*] names one member: the
 	// engine derives one token for it, and OpenOne takes it. A zero
-	// selector or token binds nothing.
+	// selector, token or tokens binds nothing.
 	if _, err := read.OpenOne(ctx, nil); !errors.Is(err, encrypt.ErrEncoding) || strings.Contains(err.Error(), "visits") {
 		t.Fatalf("OpenOne on a wildcard read: %v", err)
 	}
@@ -141,6 +141,12 @@ func TestACustomersFieldsDeriveEachQuery(t *testing.T) {
 	}
 	if _, err := (encrypt.JSONToken("")).Value(); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("a zero token binds: %v", err)
+	}
+	if _, err := (encrypt.JSONTokens(nil)).Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("no tokens bind: %v", err)
+	}
+	if _, err := (encrypt.JSONRead[eql.JSONEntry]{}).Tokens().Value(); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a zero read's tokens bind: %v", err)
 	}
 	// A selection over rows with no entry opens to no value without a
 	// request.
