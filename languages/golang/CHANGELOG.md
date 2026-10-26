@@ -92,8 +92,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `eql.JSONSearchLeafQuery` and its entry `eql.JSONEntry`,
   generated from the EQL catalog. The names are the ones EQL v3 gives its
   searchable JSON document; `eql.JSON` stays the storage-only type. The
-  engine stores one from the module's own plans; `stashgen` does not
-  generate a field of it yet.
+  engine stores one from the module's own plans, and `stashgen` generates
+  fields tagged `encrypt_into=JsonSearch`.
 
 - **Decimals, dates and timestamps take an order index (#1236).** An
   `encrypt.Decimal`, `encrypt.Date` or `time.Time` field takes `ore` and
@@ -252,7 +252,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   implements `driver.Valuer`, `sql.Scanner` and JSON like the other query
   types. They are not in
   `eql.Types`, which lists stored types, and no generated method returns one
-  yet: the ordered EQL types are not producible.
+  yet: `stashgen` does not construct a range query operand, although the
+  ordered EQL types are producible and expose single-bound comparisons.
 - **`encrypt.MatchQuery` and `encrypt.EQLMatchQuery`**: what a `Matches`
   method returns. Each carries the term or EQL query value to bind,
   `Verify` (check decrypted rows, since a match can return false positives)
@@ -290,12 +291,13 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   these types: it is not a tag word.
 - **`TextSearch`**: a `string` field tagged `encrypt_into=TextSearch` gets
   `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, one column for all of them.
-  The stored value keeps all three terms. Text shorter than three
-  characters, an empty string included, is stored with an empty match
+  The stored value keeps all three terms. Text that cuts no match token,
+  such as an empty string or one letter, is stored with an empty match
   filter, where `TextMatch` refuses it with `ErrTerm`: `Eq`, `Lt`, `Lte`,
   `Gt` and `Gte` find the row, and no `Matches` query does. Each query
   carries only the term its operator reads, so `Eq` and `Lt` take a
-  two-letter value and `Matches` refuses one (`ErrTerm`). Needs the EQL v4
+  one-letter value and `Matches` refuses one (`ErrTerm`). A two-letter
+  word has its own match token, as described above. Needs the EQL v4
   SQL from this release, whose `eql_v4.query_text_search` accepts one term.
 - **Ordering methods on text.** A string field with `index=ore` or
   `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`. Text orders by its

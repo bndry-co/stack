@@ -677,6 +677,12 @@ func (w *writer) fieldEntries(f *genFile) {
 		return
 	}
 	w.nl()
+	for _, g := range sealed {
+		if g.isJSON() {
+			w.b.WriteString(wrapComment(fmt.Sprintf("%s provides operations for the sealed fields of %s. Each entry binds queries and encrypts updates using its field's declaration.", f.fieldsVar, f.typeName), 80))
+			break
+		}
+	}
 	w.p("var %s = struct {", f.fieldsVar)
 	for _, g := range sealed {
 		w.p("\t%s %s", g.GoName, g.fieldType)
@@ -1113,6 +1119,7 @@ func (w *writer) jsonEntry(g genField) {
 	ordered := len(g.jsonPaths) > 0
 	field := "gensupport.Field[" + g.valueExpr + "]"
 
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s provides document queries and reads for the %s field.", g.fieldType, g.GoName), 80))
 	w.p("type %s struct {", g.fieldType)
 	w.p("\tfield %s", field)
 	if ordered {
@@ -1134,6 +1141,7 @@ func (w *writer) jsonEntry(g genField) {
 	}
 	w.p("}")
 	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("Encrypt seals one %s document for an update of its stored column.", g.GoName), 80))
 	w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.valueExpr, g.outputType)
 	w.sealedOutput(g, "f.field.Encrypt(ctx, c, v)")
 	w.p("}")
@@ -1198,6 +1206,7 @@ func (w *writer) jsonEntry(g genField) {
 		return
 	}
 	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%sAt names the declared ordered paths of %s. Use an accessor's Selector with its ordering query.", g.fieldType, g.GoName), 80))
 	w.p("type %sAt struct {", g.fieldType)
 	for _, p := range g.jsonPaths {
 		w.p("\t%s %sPath // %s", p.name, g.fieldType, p.path)

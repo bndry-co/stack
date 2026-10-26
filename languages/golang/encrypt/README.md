@@ -349,8 +349,9 @@ operand of `eql_v4.between(column, $1::eql_v4.query_integer_range_ore)`. Keep
 the cast to the exact range domain: an uncast `$1`, a `jsonb` parameter, or a
 range of another term or family fails with SQLSTATE 42725 ("function ... is
 not unique"), unlike the single-bound operators, which resolve an untyped
-`$1`. No generated method returns one yet, because the ordered EQL types are
-not producible.
+`$1`. The ordered EQL types are producible, but `stashgen` does not yet
+generate a `Between` method or construct these range query values. Their
+generated fields expose the four single-bound comparisons.
 
 `Eq`, the orderings and `Between` are exact: the server's answer is the
 answer. `Matches` is probabilistic: the server answers with every row whose
@@ -512,10 +513,14 @@ The EQL types the engine produces, and the Go field types each takes:
 | `DoubleOrd`, `DoubleOrdOpe`, `DoubleOrdOre` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Date` | `encrypt.Date` | none |
 | `DateEq` | `encrypt.Date` | `=`, `<>` |
+| `DateOrd`, `DateOrdOpe`, `DateOrdOre` | `encrypt.Date` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Timestamp` | `time.Time` | none |
 | `TimestampEq` | `time.Time` | `=`, `<>` (to the microsecond, truncated) |
+| `TimestampOrd`, `TimestampOrdOpe`, `TimestampOrdOre` | `time.Time` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
 | `Numeric` | `encrypt.Decimal` | none |
 | `NumericEq` | `encrypt.Decimal` | `=`, `<>` (`1.5 = 1.50`) |
+| `NumericOrd`, `NumericOrdOpe`, `NumericOrdOre` | `encrypt.Decimal` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `JsonSearch` (`eql.JSONSearch`) | struct, map, slice, or `json.RawMessage` | containment, equality at a path, ordering at declared paths, selection, subtree reads; see [Encrypted JSON documents](#encrypted-json-documents) |
 
 Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
 is sealed at the type's width, and opens back into the field's type. A type
@@ -552,8 +557,8 @@ decimal with its scale and a `time.Time` with its nanoseconds, in UTC. A
 `time.Time` is sealed as its instant, whatever its location. A zero
 `encrypt.Date`, a date or instant outside years -262143 to 262142 and a
 decimal with more than 28 digits after the point are refused with
-`ErrEncoding`. The ordered date, timestamp and numeric types are not
-produced yet: the engine derives no order term for these kinds.
+`ErrEncoding`. Ordered dates compare by day, timestamps by the truncated
+microsecond, and decimals by value (`1.5` ties `1.50`).
 
 The `Ord` and `OrdOpe` types store an OPE term, which EQL compares as bytes,
 and order by ADR-0002's order key: integers by value, floats as PostgreSQL's
@@ -570,7 +575,8 @@ answers `Eq` through an equality term only. A text order type also stores
 `TextEq`'s equality term, and `=` reads that, so `Café` and `cafe` are
 neither `<` nor `>` each other and not `=` either. Text holding a code point
 Unicode 16 does not assign has no order term and is refused. There is no
-`Between` method yet: a `BETWEEN` needs EQL v4's range query domains.
+generated `Between` method on these EQL fields yet, although EQL v4 has
+range query domains and `eql_v4.between` for them.
 
 The `OrdOre` types and `TextSearchOre` order by the same key, through a block
 ORE term (ore-rs's 6-bit schemes) in place of the OPE term. Each term
@@ -582,9 +588,9 @@ the installer disables these domains, and the `Ord` types are the ones to
 use. Text whose fold is longer than 1023 bytes, or ends in NUL, has no block
 ORE term and is refused, stored or queried.
 
-The rest of the catalog (ordered dates, timestamps and decimals, the v3 JSON types) is listed in
-`eql.Types` with the reason it is not produced yet, and `stashgen` refuses it
-with that reason. The guest builds the value: the generated code
+The catalog in `eql.Types` also lists EQL types the engine does not produce,
+with the reason for each; `stashgen` refuses those types with that reason.
+The guest builds a producible value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the
 EQL types and registers it on import, so the program runs that build and
 stores what it returns. `Fields.Email.Eq` returns the `eql.TextEqQuery`
@@ -601,8 +607,10 @@ column.
 
 `JsonSearch` stores a whole JSON document in one `public.eql_v4_json_search`
 column, from a struct, map or slice field, or a `json.RawMessage`
-(`stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"`; see the
-stashgen README). A struct is marshalled with `encoding/json` when it is
+(`stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"`). See the
+[stashgen reference](../cmd/stashgen/README.md#encrypted-json-documents) and
+the [runnable typed-document example](example/json/README.md). A struct is
+marshalled with `encoding/json` when it is
 sealed and read back into its type when it is opened. Its numbers come back
 exactly; the stashgen README lists what `encoding/json` does not keep
 (invalid UTF-8, a nil map or slice, a time's zone). Unlike the types above,

@@ -112,6 +112,8 @@ func DecryptCustomer(ctx context.Context, d encrypt.Decrypter, encrypted []Encry
 	return customerCodec.Decrypt(ctx, d, encrypted)
 }
 
+// CustomerFields provides operations for the sealed fields of Customer. Each
+// entry binds queries and encrypts updates using its field's declaration.
 var CustomerFields = struct {
 	Profile CustomerProfileField
 	Prefs   CustomerPrefsField
@@ -120,6 +122,8 @@ var CustomerFields = struct {
 	Prefs:   newCustomerPrefsField(gensupport.NewField[json.RawMessage](customerDeclaration, "prefs")),
 }
 
+// CustomerProfileField provides document queries and reads for the Profile
+// field.
 type CustomerProfileField struct {
 	field gensupport.Field[json.RawMessage]
 	// At has one accessor per path the field orders, whose methods
@@ -134,6 +138,7 @@ func newCustomerProfileField(f gensupport.Field[json.RawMessage]) CustomerProfil
 	}}
 }
 
+// Encrypt seals one Profile document for an update of its stored column.
 func (f CustomerProfileField) Encrypt(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	return eql.JSONSearch(out.EQL), err
@@ -199,6 +204,8 @@ func (f CustomerProfileField) ChildCount(ctx context.Context, c *encrypt.Cipher,
 	return gensupport.JSONNodeToken(ctx, f.field, c, "child_count", path)
 }
 
+// CustomerProfileFieldAt names the declared ordered paths of Profile. Use an
+// accessor's Selector with its ordering query.
 type CustomerProfileFieldAt struct {
 	Age      CustomerProfileFieldPath // $.age
 	VisitsAt CustomerProfileFieldPath // $.visits[*].at
@@ -264,6 +271,7 @@ func (p CustomerProfileFieldPath) Selector(ctx context.Context, c *encrypt.Ciphe
 	return gensupport.JSONSelect[eql.JSONEntry](ctx, p.field, c, p.path)
 }
 
+// CustomerPrefsField provides document queries and reads for the Prefs field.
 type CustomerPrefsField struct {
 	field gensupport.Field[json.RawMessage]
 }
@@ -272,6 +280,7 @@ func newCustomerPrefsField(f gensupport.Field[json.RawMessage]) CustomerPrefsFie
 	return CustomerPrefsField{field: f}
 }
 
+// Encrypt seals one Prefs document for an update of its stored column.
 func (f CustomerPrefsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v json.RawMessage) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	return eql.JSONSearch(out.EQL), err

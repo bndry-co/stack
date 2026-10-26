@@ -120,6 +120,8 @@ func DecryptSubscriber(ctx context.Context, d encrypt.Decrypter, encrypted []Enc
 	return subscriberCodec.Decrypt(ctx, d, encrypted)
 }
 
+// SubscriberFields provides operations for the sealed fields of Subscriber.
+// Each entry binds queries and encrypts updates using its field's declaration.
 var SubscriberFields = struct {
 	Profile SubscriberProfileField
 	Prefs   SubscriberPrefsField
@@ -130,6 +132,8 @@ var SubscriberFields = struct {
 	Labels:  newSubscriberLabelsField(gensupport.NewField[map[string]string](subscriberDeclaration, "labels")),
 }
 
+// SubscriberProfileField provides document queries and reads for the Profile
+// field.
 type SubscriberProfileField struct {
 	field gensupport.Field[SubscriberProfile]
 	// At has one accessor per path the field orders, whose methods
@@ -144,6 +148,7 @@ func newSubscriberProfileField(f gensupport.Field[SubscriberProfile]) Subscriber
 	}}
 }
 
+// Encrypt seals one Profile document for an update of its stored column.
 func (f SubscriberProfileField) Encrypt(ctx context.Context, c *encrypt.Cipher, v SubscriberProfile) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	return eql.JSONSearch(out.EQL), err
@@ -212,6 +217,8 @@ func (f SubscriberProfileField) ChildCount(ctx context.Context, c *encrypt.Ciphe
 	return gensupport.JSONNodeToken(ctx, f.field, c, "child_count", path)
 }
 
+// SubscriberProfileFieldAt names the declared ordered paths of Profile. Use an
+// accessor's Selector with its ordering query.
 type SubscriberProfileFieldAt struct {
 	Age      SubscriberProfileFieldPath // $.age
 	VisitsAt SubscriberProfileFieldPath // $.visits[*].at
@@ -277,6 +284,7 @@ func (p SubscriberProfileFieldPath) Selector(ctx context.Context, c *encrypt.Cip
 	return gensupport.JSONSelect[eql.JSONEntry](ctx, p.field, c, p.path)
 }
 
+// SubscriberPrefsField provides document queries and reads for the Prefs field.
 type SubscriberPrefsField struct {
 	field gensupport.Field[SubscriberPrefs]
 }
@@ -285,6 +293,7 @@ func newSubscriberPrefsField(f gensupport.Field[SubscriberPrefs]) SubscriberPref
 	return SubscriberPrefsField{field: f}
 }
 
+// Encrypt seals one Prefs document for an update of its stored column.
 func (f SubscriberPrefsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v SubscriberPrefs) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	return eql.JSONSearch(out.EQL), err
@@ -353,6 +362,8 @@ func (f SubscriberPrefsField) ChildCount(ctx context.Context, c *encrypt.Cipher,
 	return gensupport.JSONNodeToken(ctx, f.field, c, "child_count", path)
 }
 
+// SubscriberLabelsField provides document queries and reads for the Labels
+// field.
 type SubscriberLabelsField struct {
 	field gensupport.Field[map[string]string]
 }
@@ -361,6 +372,7 @@ func newSubscriberLabelsField(f gensupport.Field[map[string]string]) SubscriberL
 	return SubscriberLabelsField{field: f}
 }
 
+// Encrypt seals one Labels document for an update of its stored column.
 func (f SubscriberLabelsField) Encrypt(ctx context.Context, c *encrypt.Cipher, v map[string]string) (eql.JSONSearch, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	return eql.JSONSearch(out.EQL), err
