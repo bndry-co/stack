@@ -1250,9 +1250,11 @@ func notDocument(t types.Type) (string, bool) {
 // interface (read back as a map or a float64), a value JSON does not carry,
 // a map key encoding/json cannot write, and a struct field encoding/json
 // drops: an unexported one, one tagged json:"-", and two that write one
-// member. A type with both halves of a codec (MarshalJSON and
-// UnmarshalJSON, or MarshalText and UnmarshalText) writes and reads itself
-// and is not looked into; one half alone is refused.
+// member; and an embedded pointer to an unexported struct, whose promoted
+// fields encoding/json writes and cannot read back. A type with both
+// halves of a codec (MarshalJSON and UnmarshalJSON, or MarshalText and
+// UnmarshalText) writes and reads itself and is not looked into; one half
+// alone is refused.
 type documentWalk struct {
 	seen        map[types.Type]bool
 	holdsStruct bool
@@ -1310,13 +1312,19 @@ func (w *documentWalk) fields(u *types.Struct, names map[string]string, embeddin
 		}
 		if fld.Embedded() && name == "" {
 			et := fld.Type()
-			if p, ok := et.Underlying().(*types.Pointer); ok {
+			p, embedsPointer := et.Underlying().(*types.Pointer)
+			if embedsPointer {
 				et = p.Elem()
 			}
 			if st, ok := et.Underlying().(*types.Struct); ok {
 				if own, _ := ownCodec(et); !own {
 					// encoding/json promotes an untagged embedded
-					// struct's fields, exported or not the struct is.
+					// struct's fields, exported or not the struct is,
+					// but reading them through a nil pointer to an
+					// unexported struct fails: it cannot allocate one.
+					if embedsPointer && !fld.Exported() {
+						return "holds a struct that embeds *" + fld.Name() + ", a pointer to an unexported struct, whose fields encoding/json writes and cannot read back"
+					}
 					if embedding[et] {
 						continue
 					}

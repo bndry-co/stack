@@ -145,6 +145,8 @@ The generated code marshals a struct, map or slice type with `encoding/json` whe
 It calls `encoding/json` directly, never through `map[string]any`, so an `int64`, a `uint64` and a finite `float64` come back exactly.
 `stashgen` refuses a type that `encoding/json` cannot carry both ways: an interface such as `any` anywhere in it (it reads numbers back as `float64`); a struct field that `encoding/json` drops (unexported, tagged `json:"-"`, or one of two that write the same member); a `MarshalJSON` or `MarshalText` with no matching unmarshal method; a channel or a function.
 An unexported embedded struct is fine: its fields are promoted and stored.
+An embedded pointer to an unexported struct is refused: `encoding/json` writes its fields but cannot read them back, since it cannot allocate the struct.
+An embedded pointer to an exported struct is accepted, but whether it was nil is not stored: it comes back non-nil when the document holds a member it promotes, and nil when it holds none, so a non-nil pointer whose promoted fields are all left out by `omitempty` comes back nil.
 It refuses a string, a number and a bool too: a document is a struct, map or slice.
 A `[]byte` is refused, since `encoding/json` writes it as base64: declare JSON text as `json.RawMessage`.
 The engine parses the JSON text, so an object that names a member twice and an integer outside the 64-bit range are refused with `encrypt.ErrEncoding`.

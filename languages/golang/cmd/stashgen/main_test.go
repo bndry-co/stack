@@ -304,7 +304,7 @@ func TestRunGeneratesTypedJSONDocuments(t *testing.T) {
 		t.Skip(err)
 	}
 	_ = checker.Close()
-	types := "type Profile struct {\n\tName string `json:\"name\"`\n\tAge int64 `json:\"age\"`\n\tVisits []Visit `json:\"visits\"`\n}\n\ntype Visit struct {\n\tAt int64 `json:\"at\"`\n}\n\ntype Prefs struct {\n\tTheme string `json:\"theme\"`\n}\n\ntype Hidden struct {\n\tName string\n\tsecret string\n}\n\ntype Loose struct {\n\tExtra any\n}\n\ntype Dropped struct {\n\tName string\n\tToken string `json:\"-\"`\n}\n\ntype Twice struct {\n\tName string `json:\"name\"`\n\tAlias string `json:\"name\"`\n}\n\ntype Label struct{ V string }\n\nfunc (l Label) MarshalText() ([]byte, error) { return []byte(l.V), nil }\n\ntype base struct {\n\tKind string `json:\"kind\"`\n}\n\ntype Embeds struct {\n\tbase\n\tName string `json:\"name\"`\n}\n\ntype Stamped struct {\n\ttime.Time\n\tName string\n}\n"
+	types := "type Profile struct {\n\tName string `json:\"name\"`\n\tAge int64 `json:\"age\"`\n\tVisits []Visit `json:\"visits\"`\n}\n\ntype Visit struct {\n\tAt int64 `json:\"at\"`\n}\n\ntype Prefs struct {\n\tTheme string `json:\"theme\"`\n}\n\ntype Hidden struct {\n\tName string\n\tsecret string\n}\n\ntype Loose struct {\n\tExtra any\n}\n\ntype Dropped struct {\n\tName string\n\tToken string `json:\"-\"`\n}\n\ntype Twice struct {\n\tName string `json:\"name\"`\n\tAlias string `json:\"name\"`\n}\n\ntype Label struct{ V string }\n\nfunc (l Label) MarshalText() ([]byte, error) { return []byte(l.V), nil }\n\ntype base struct {\n\tKind string `json:\"kind\"`\n}\n\ntype Embeds struct {\n\tbase\n\tName string `json:\"name\"`\n}\n\ntype PtrEmbeds struct {\n\t*base\n\tName string `json:\"name\"`\n}\n\ntype Shared struct {\n\tKind string `json:\"kind\"`\n}\n\ntype PtrShared struct {\n\t*Shared\n\tName string `json:\"name\"`\n}\n\ntype Stamped struct {\n\ttime.Time\n\tName string\n}\n"
 	generate := func(fields string) (string, string, int) {
 		source := "package users\n\nimport (\n\t\"encoding/json\"\n\t\"time\"\n)\n\nvar (\n\t_ json.RawMessage\n\t_ time.Time\n)\n\n" + types + "\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n" + fields + "\n}\n"
 		dir := writeModule(t, map[string]string{"model.go": source})
@@ -316,6 +316,11 @@ func TestRunGeneratesTypedJSONDocuments(t *testing.T) {
 	// An unexported embedded struct's fields are promoted, and stored.
 	if _, stderr, code := generate("\tProfile Embeds `stash:\"profile,encrypt_into=JsonSearch\"`"); code != 0 {
 		t.Fatalf("an embedded unexported struct: exit %d\n%s", code, stderr)
+	}
+	// encoding/json allocates an embedded pointer to an exported struct
+	// when it reads a member the struct promotes.
+	if _, stderr, code := generate("\tProfile PtrShared `stash:\"profile,encrypt_into=JsonSearch\"`"); code != 0 {
+		t.Fatalf("an embedded pointer to an exported struct: exit %d\n%s", code, stderr)
 	}
 	written, stderr, code := generate("\tProfile Profile `stash:\"profile,encrypt_into=JsonSearch(ordered=$.age)\"`\n\tPrefs *Prefs `stash:\"prefs,encrypt_into=JsonSearch,null=sql\"`\n\tLabels map[string]string `stash:\"labels,encrypt_into=JsonSearch\"`\n\tScores []int64 `stash:\"scores,encrypt_into=JsonSearch\"`")
 	if code != 0 {
@@ -365,6 +370,7 @@ func TestRunGeneratesTypedJSONDocuments(t *testing.T) {
 		{"a field json drops", "\tProfile []Dropped `stash:\"profile,encrypt_into=JsonSearch\"`", "field Token tagged json:\"-\", which encoding/json drops"},
 		{"two fields, one member", "\tProfile Twice `stash:\"profile,encrypt_into=JsonSearch\"`", "fields Name and Alias both write the JSON member \"name\""},
 		{"a codec one way", "\tProfile map[string]Label `stash:\"profile,encrypt_into=JsonSearch\"`", "has MarshalText but no UnmarshalText"},
+		{"an embedded pointer to an unexported struct", "\tProfile PtrEmbeds `stash:\"profile,encrypt_into=JsonSearch\"`", "embeds *base, a pointer to an unexported struct"},
 		{"a codec taken from an embedded field", "\tProfile Stamped `stash:\"profile,encrypt_into=JsonSearch\"`", "takes MarshalJSON from a field it embeds"},
 		{"a channel", "\tProfile []chan int `stash:\"profile,encrypt_into=JsonSearch\"`", "holds a chan int, which JSON does not carry"},
 		{"a pointer to a pointer", "\tProfile **Profile `stash:\"profile,encrypt_into=JsonSearch,null=sql\"`", "a pointer to a pointer"},
