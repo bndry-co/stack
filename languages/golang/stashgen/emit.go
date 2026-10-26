@@ -1026,8 +1026,24 @@ func planJSON(f *genFile, g *genField) error {
 			g.jsonPaths = append(g.jsonPaths, jsonPath{name: name, path: path})
 		}
 	}
+	// The engine answers the orderings on a field that orders a path. A
+	// tag that orders one and gets none is the engine and the generator
+	// disagreeing: refused, rather than written as a field with no At.
+	if len(g.jsonPaths) > 0 && !answers(g, "lt_at") {
+		return fieldErr(f.typeName, g.GoName, "the tag orders %d paths, and the engine answers no ordering (lt_at) on %s: the generator and its engine disagree, which is a bug in this stashgen", len(g.jsonPaths), g.EQLType)
+	}
 	f.imports.add("encoding/json", "json")
 	return nil
+}
+
+// answers reports whether the engine answers op on the field.
+func answers(g *genField, op string) bool {
+	for _, o := range g.operators {
+		if o.Name == op {
+			return true
+		}
+	}
+	return false
 }
 
 // jsonPathName is an ordered path's accessor name: its keys in Go case,
@@ -1078,7 +1094,8 @@ func (w *writer) jsonEntry(g genField) {
 	// public.eql_v4_json_entry), not for the stored type.
 	leaf := strings.TrimSuffix(needle, "Query") + "LeafQuery"
 	entry := "eql." + EQLGoName("JsonEntry")
-	ordered := len(g.jsonPaths) > 0 && answered["lt_at"]
+	// planJSON refuses ordered paths the engine answers no ordering on.
+	ordered := len(g.jsonPaths) > 0
 	field := "gensupport.Field[" + g.valueExpr + "]"
 
 	w.p("type %s struct {", g.fieldType)
