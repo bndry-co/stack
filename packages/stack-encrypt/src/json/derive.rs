@@ -1182,7 +1182,7 @@ fn open_document<'a, K>(
         let aes = leaf_cipher(&key)?;
         if open_root {
             let keyset = responses.next_keyset()?;
-            open_whole_chain(&doc, &aes, &aad, Selectors::new(keyset, prf_context))
+            open_whole_chain(doc, &aes, &aad, Selectors::new(keyset, prf_context))
         } else {
             open_sealed_root(&doc, &aes, &aad)
         }
@@ -1209,7 +1209,7 @@ fn open_sealed_root(
 /// The whole document with its root open: every entry placed by the chain
 /// from the root's token, as one read of `$` that must reach every entry.
 fn open_whole_chain(
-    doc: &JsonDocument,
+    doc: JsonDocument,
     aes: &Aes256Cipher,
     aad: &Context<'_>,
     selectors: Selectors,
@@ -1233,12 +1233,15 @@ fn open_whole_chain(
         let _ = open_entry(aes, &doc.header, aad, first, 0, &cascade::no_children())?;
         return Err(shape("a document whose chain reaches its root"));
     }
-    let rows = doc
-        .entries
-        .iter()
+    let JsonDocument {
+        header, entries, ..
+    } = doc;
+    // The entries move into the rows: the document is opened, not kept.
+    let rows = entries
+        .into_iter()
         .enumerate()
         .map(|(j, entry)| Row {
-            entry: entry.clone(),
+            entry,
             j: j as u64,
             d: None,
         })
@@ -1249,7 +1252,7 @@ fn open_whole_chain(
         probe: false,
     }];
     let opening = Opening {
-        header: &doc.header,
+        header: &header,
         aad,
         aes,
     };
@@ -2955,7 +2958,7 @@ mod tests {
             SafeRand::from_controlled_seed(Protected::new([5; 32])),
         )
         .unwrap();
-        open_whole_chain(&doc, &aes, &context, Selectors::for_tests())
+        open_whole_chain(doc, &aes, &context, Selectors::for_tests())
     }
 
     #[test]
@@ -3015,7 +3018,7 @@ mod tests {
         let other = Context::from_encoded(b"users/bio");
         let selectors = Selectors::new(Arc::clone(&Selectors::for_tests().keyset), other.clone());
         assert!(matches!(
-            open_whole_chain(&doc, &aes, &other, selectors),
+            open_whole_chain(doc, &aes, &other, selectors),
             Err(Error::Aead)
         ));
     }

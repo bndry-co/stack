@@ -63,8 +63,9 @@ pub(crate) fn children_digest<'c>(children: impl IntoIterator<Item = &'c [u8]>) 
 
 /// The digest of no children: what a leaf, an empty container and the sealed
 /// root open under. The sealed root's ciphertext is the whole document, and
-/// the budget fallback returns it alone, so its AAD covers no other entry;
-/// it commits to the chain's heads inside its plaintext instead.
+/// the budget fallback returns it alone, so its AAD covers no other entry:
+/// it commits to nothing beneath it, and the chain's heads (which chain from
+/// nothing) are each checked only as the node at the top of a read.
 pub(crate) fn no_children() -> ChildrenDigest {
     children_digest(std::iter::empty())
 }

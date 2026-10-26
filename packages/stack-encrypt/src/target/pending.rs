@@ -14,11 +14,13 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::future::{Future, IntoFuture};
 use std::pin::Pin;
+use std::sync::Arc;
 
 use stack_kms::{DataKey, DataKeySource, GenerateKeyPayload, Iv, MaybeSend, RetrieveKeyPayload};
 use uuid::Uuid;
 
 use super::request::{tally, Request, RequestKind, Responses};
+use crate::keyset::KeysetState;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
 
 /// The boxed fulfilment: consumes this pending's slice of the responses and
@@ -577,10 +579,21 @@ async fn dispatch<K: DataKeySource>(
         .collect::<Result<_, _>>()?;
 
     // A keyset request is answered from the cipher's cache, and loaded from
-    // ZeroKMS only on a miss, as selecting the keyset would load it.
+    // ZeroKMS only on a miss, as selecting the keyset would load it. Each
+    // keyset is looked up once however many requests name it (a column of
+    // documents names one), and the answer is shared in request order.
+    let mut loaded: HashMap<Uuid, Arc<KeysetState>> = HashMap::new();
     let mut keysets = Vec::with_capacity(loads.len());
     for keyset_id in loads {
-        keysets.push(cipher.keyset_state(keyset_id).await?);
+        let state = match loaded.get(&keyset_id) {
+            Some(state) => Arc::clone(state),
+            None => {
+                let state = cipher.keyset_state(keyset_id).await?;
+                let _ = loaded.insert(keyset_id, Arc::clone(&state));
+                state
+            }
+        };
+        keysets.push(state);
     }
 
     Ok(Responses::new(generated, retrieved).with_keysets(keysets))
@@ -612,6 +625,10 @@ mod tests {
         /// The keyset each call named, in call order.
         generate_keysets: Mutex<Vec<Option<Uuid>>>,
         retrieve_keysets: Mutex<Vec<Option<Uuid>>>,
+        /// Index-key loads, and an id every load answers with instead of the
+        /// one asked for, when set.
+        load_calls: AtomicUsize,
+        answers_as: Mutex<Option<Uuid>>,
     }
 
     impl CountingSource {
@@ -637,6 +654,10 @@ mod tests {
 
         fn retrieve_keysets(&self) -> Vec<Option<Uuid>> {
             self.retrieve_keysets.lock().unwrap().clone()
+        }
+
+        fn load_calls(&self) -> usize {
+            self.load_calls.load(Ordering::Relaxed)
         }
     }
 
@@ -681,8 +702,75 @@ mod tests {
             &self,
             keyset_id: Option<IdentifiedBy>,
         ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
-            self.inner.load_index_key(keyset_id).await
+            self.load_calls.fetch_add(1, Ordering::Relaxed);
+            let (id, key) = self.inner.load_index_key(keyset_id).await?;
+            Ok((self.answers_as.lock().unwrap().unwrap_or(id), key))
         }
+    }
+
+    /// A pending that asks for the loaded state of `keyset` and resolves to
+    /// its id.
+    fn loading(
+        cipher: &StackCipher<CountingSource>,
+        keyset: Uuid,
+    ) -> Pending<'_, Uuid, CountingSource> {
+        Pending::request(cipher, vec![Request::load_keyset(keyset)], |responses| {
+            Ok(responses.next_keyset()?.id)
+        })
+    }
+
+    /// Keyset requests are answered once per keyset however many pendings
+    /// ask, from ZeroKMS on a miss and from the cache after.
+    #[tokio::test]
+    async fn keyset_requests_load_each_keyset_once_and_then_hit_the_cache() {
+        let cipher = cipher().await;
+        let at_init = cipher.kms().load_calls();
+        let other = FakeDataKeySource::new()
+            .load_index_key(Some(IdentifiedBy::Uuid(Uuid::from_u128(42))))
+            .await
+            .unwrap()
+            .0;
+        let pair = loading(&cipher, other)
+            .zip(loading(&cipher, other))
+            .await
+            .unwrap();
+        assert_eq!(
+            pair,
+            (other, other),
+            "both answered with the keyset asked for"
+        );
+        assert_eq!(
+            cipher.kms().load_calls(),
+            at_init + 1,
+            "one load for two requests"
+        );
+        assert_eq!(loading(&cipher, other).await.unwrap(), other);
+        assert_eq!(cipher.kms().load_calls(), at_init + 1, "then the cache");
+        let default = cipher.default_keyset().keyset_id();
+        assert_eq!(loading(&cipher, default).await.unwrap(), default);
+        assert_eq!(
+            cipher.kms().load_calls(),
+            at_init + 1,
+            "the default is never loaded again"
+        );
+    }
+
+    /// A source that answers a load by id for another keyset is refused,
+    /// and nothing is cached under either id.
+    #[tokio::test]
+    async fn a_keyset_answered_for_another_id_is_refused() {
+        let cipher = cipher().await;
+        let asked = Uuid::from_u128(42);
+        let answered = Uuid::from_u128(43);
+        *cipher.kms().answers_as.lock().unwrap() = Some(answered);
+        let refused = loading(&cipher, asked).await;
+        assert!(
+            matches!(refused, Err(Error::KeysetMismatch { left, right }) if left == asked && right == answered),
+            "{refused:?}"
+        );
+        let loads = cipher.kms().load_calls();
+        let _ = loading(&cipher, asked).await;
+        assert_eq!(cipher.kms().load_calls(), loads + 1, "nothing was cached");
     }
 
     fn d() -> Descriptor {

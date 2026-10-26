@@ -639,12 +639,17 @@ impl<K> StackCipher<K> {
             Lookup::Hit(state) => return Ok(state),
             Lookup::Stale(resolution) | Lookup::Miss(resolution) => resolution,
         };
-        let (id, index_key) = (self.index_keys)(&self.kms, IdentifiedBy::Uuid(id)).await?;
-        let state = Arc::new(KeysetState {
-            id,
-            name: None,
-            prf: hmac_prf_from_index_key(&index_key),
-        });
+        let (loaded, index_key) = (self.index_keys)(&self.kms, IdentifiedBy::Uuid(id)).await?;
+        // Asked by id, ZeroKMS answers for that id. A source that answers for
+        // another would have the document walked under another keyset's PRF,
+        // and cached under an id no later lookup asks for.
+        if loaded != id {
+            return Err(Error::KeysetMismatch {
+                left: id,
+                right: loaded,
+            });
+        }
+        let state = keyset_state_of(loaded, None, &index_key);
         Ok(self.keysets().insert(state, resolution))
     }
 
@@ -762,11 +767,22 @@ async fn load_keyset<K: IndexKeySource>(
         IdentifiedBy::Uuid(_) => None,
     };
     let (id, index_key) = kms.load_index_key(Some(keyset)).await?;
-    Ok(Arc::new(KeysetState {
+    Ok(keyset_state_of(id, name, &index_key))
+}
+
+/// The state the cipher holds for a loaded keyset: its id, the name it was
+/// selected by, and the PRF keyed by its index key. One construction for
+/// every way a keyset is loaded.
+fn keyset_state_of(
+    id: Uuid,
+    name: Option<String>,
+    index_key: &stack_kms::IndexKey,
+) -> Arc<KeysetState> {
+    Arc::new(KeysetState {
         id,
         name,
-        prf: hmac_prf_from_index_key(&index_key),
-    }))
+        prf: hmac_prf_from_index_key(index_key),
+    })
 }
 
 /// The client's own default keyset — the one a ZeroKMS administrator set for
@@ -775,11 +791,7 @@ async fn load_keyset<K: IndexKeySource>(
 /// there is no id or name to carry.
 async fn load_default_keyset<K: IndexKeySource>(kms: &K) -> Result<Arc<KeysetState>, Error> {
     let (id, index_key) = kms.load_index_key(None).await?;
-    Ok(Arc::new(KeysetState {
-        id,
-        name: None,
-        prf: hmac_prf_from_index_key(&index_key),
-    }))
+    Ok(keyset_state_of(id, None, &index_key))
 }
 
 /// The state of a [`StackCipherBuilder`] that has not been given a data-key

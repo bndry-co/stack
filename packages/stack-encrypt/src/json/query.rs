@@ -24,7 +24,7 @@ use crate::target::{DeclaredContext, Index, Json, Owned, Pending};
 use crate::{Error, KeysetCipher, Label, NonEmpty};
 
 /// One selector pair of a projection.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Pair16 {
     s: Tag,
     vs: Tag,
@@ -35,13 +35,47 @@ struct Pair16 {
 /// element that is a container. What a stored document carries as `q`,
 /// which the server reads (`json_tree_query`), and what a containment
 /// needle is.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+///
+/// Equality is as sets, which is how `jsonb @>` reads a projection: two
+/// projections are equal when they hold the same pairs in the same groups,
+/// whatever order their lists are in. A stored `q` is shuffled, so two
+/// seals of one document carry equal projections in different orders.
+#[derive(Clone, Debug, Default)]
 pub struct JsonProjection {
     sv: Vec<Pair16>,
     el: Vec<JsonProjection>,
 }
 
+impl PartialEq for JsonProjection {
+    fn eq(&self, other: &Self) -> bool {
+        Self::cmp_canonical(&self.canonical(), &other.canonical()).is_eq()
+    }
+}
+impl std::cmp::Eq for JsonProjection {}
+
 impl JsonProjection {
+    /// This projection with every list sorted, recursively: one spelling per
+    /// set of pairs and groups.
+    fn canonical(&self) -> Self {
+        let mut sv = self.sv.clone();
+        sv.sort_unstable();
+        let mut el: Vec<Self> = self.el.iter().map(Self::canonical).collect();
+        el.sort_unstable_by(Self::cmp_canonical);
+        Self { sv, el }
+    }
+
+    /// The order of two projections already in [`canonical`](Self::canonical)
+    /// form: by their pairs, then by their groups in turn.
+    fn cmp_canonical(a: &Self, b: &Self) -> std::cmp::Ordering {
+        a.sv.cmp(&b.sv).then_with(|| {
+            a.el.iter()
+                .zip(&b.el)
+                .map(|(x, y)| Self::cmp_canonical(x, y))
+                .find(|o| o.is_ne())
+                .unwrap_or_else(|| a.el.len().cmp(&b.el.len()))
+        })
+    }
+
     /// Put the pairs of every group, and the groups of every element list,
     /// in a uniformly random order ([`order::shuffle`](super::order::shuffle)).
     /// The server reads `q` as sets (`jsonb @>` over `sv` and `el`), so the
@@ -809,6 +843,60 @@ impl Json {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pair(n: u8) -> Pair16 {
+        Pair16 {
+            s: [n; 16],
+            vs: [n + 100; 16],
+        }
+    }
+
+    /// Projections compare as the sets `jsonb @>` reads: the order of their
+    /// lists does not count, their contents and their grouping do.
+    #[test]
+    fn projections_are_equal_as_sets() {
+        let group = |sv: Vec<Pair16>, el: Vec<JsonProjection>| JsonProjection { sv, el };
+        let a = group(
+            vec![pair(1), pair(2)],
+            vec![
+                group(vec![pair(3), pair(4)], vec![]),
+                group(vec![pair(5)], vec![]),
+            ],
+        );
+        let shuffled = group(
+            vec![pair(2), pair(1)],
+            vec![
+                group(vec![pair(5)], vec![]),
+                group(vec![pair(4), pair(3)], vec![]),
+            ],
+        );
+        assert_eq!(a, shuffled, "the same pairs in the same groups");
+        let regrouped = group(
+            vec![pair(1), pair(2)],
+            vec![
+                group(vec![pair(3)], vec![]),
+                group(vec![pair(4), pair(5)], vec![]),
+            ],
+        );
+        assert_ne!(a, regrouped, "the grouping counts");
+        let fewer = group(vec![pair(1)], a.el.clone());
+        assert_ne!(a, fewer, "a pair fewer");
+        let more_groups = group(a.sv.clone(), {
+            let mut el = a.el.clone();
+            el.push(JsonProjection::default());
+            el
+        });
+        assert_ne!(a, more_groups, "a group more");
+        let nested = group(
+            vec![],
+            vec![group(vec![], vec![group(vec![pair(1)], vec![])])],
+        );
+        assert_ne!(
+            nested,
+            group(vec![], vec![group(vec![pair(1)], vec![])]),
+            "depth counts"
+        );
+    }
     use serde_json::json;
 
     #[test]
