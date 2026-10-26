@@ -247,11 +247,11 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Changed
 
-- **vitaminc's Go bindings at an unreleased vitaminc commit (temporary).**
-  `vcffi` and `vcvalue` move to vitaminc `d7de535c4`, the merge of
-  cipherstash/vitaminc#526 into its `feat/aead-frame-storage-profile`
-  branch, for the storage profile (`vcffi.MarshalStorage`); vitaminc's Go
-  bindings have no tags, so the commit is the pin. One encoding changes
+- **vitaminc's Go bindings at an untagged vitaminc commit (temporary).**
+  `vcffi` and `vcvalue` move to vitaminc `06568ba93` on its `main`, which
+  carries the storage profile (`vcffi.MarshalStorage`, from
+  cipherstash/vitaminc#526); vitaminc's Go bindings have no tags, so the
+  commit is the pin. One encoding changes
   with them, and it comes from vitaminc `e9c3837b` (on `main`, in no Go
   tag yet), not from the storage profile: a nil pointer to a fixed-width
   value (`(*int64)(nil)`) is written as a typed null where it was written
