@@ -144,6 +144,7 @@ people, err := customers.Decrypt(ctx, cipher, rows) // each Profile is a Profile
 The generated code marshals a struct, map or slice type with `encoding/json` when it seals the field, and unmarshals the opened document into the declared type.
 It calls `encoding/json` directly, never through `map[string]any`, so an `int64`, a `uint64` and a finite `float64` come back exactly.
 `stashgen` refuses a type that `encoding/json` cannot carry both ways: an interface such as `any` anywhere in it (it reads numbers back as `float64`); a struct field that `encoding/json` drops (unexported, tagged `json:"-"`, or one of two that write the same member); a `MarshalJSON` or `MarshalText` with no matching unmarshal method; a channel or a function.
+It refuses a field tagged `json:",string"` anywhere in a document: `encoding/json` stores its number or bool as a JSON string (`"age":"40"`), so `EqAt`, an ordering or a needle by the number would match nothing, and an ordered path would order the text. A document's numbers cross as their exact digits without it.
 An unexported embedded struct is fine: its fields are promoted and stored.
 An embedded pointer to an unexported struct is refused: `encoding/json` writes its fields but cannot read them back, since it cannot allocate the struct.
 An embedded pointer to an exported struct is accepted, but whether it was nil is not stored: it comes back non-nil when the document holds a member it promotes, and nil when it holds none, so a non-nil pointer whose promoted fields are all left out by `omitempty` comes back nil.

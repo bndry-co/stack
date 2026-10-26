@@ -1248,13 +1248,14 @@ func notDocument(t types.Type) (string, bool) {
 // it, once per type: what it writes must read back to the same value, so
 // nothing is dropped and nothing changes type on the way. It refuses an
 // interface (read back as a map or a float64), a value JSON does not carry,
-// a map key encoding/json cannot write, and a struct field encoding/json
-// drops: an unexported one, one tagged json:"-", and two that write one
-// member; and an embedded pointer to an unexported struct, whose promoted
-// fields encoding/json writes and cannot read back. A type with both
-// halves of a codec (MarshalJSON and UnmarshalJSON, or MarshalText and
-// UnmarshalText) writes and reads itself and is not looked into; one half
-// alone is refused.
+// a map key encoding/json cannot write, a struct field encoding/json drops
+// (an unexported one, one tagged json:"-", two that write one member), a
+// field tagged json:",string", stored as a JSON string that a query by its
+// number or bool does not match, and an embedded pointer to an unexported
+// struct, whose promoted fields encoding/json writes and cannot read
+// back. A type with both halves of a codec (MarshalJSON and UnmarshalJSON,
+// or MarshalText and UnmarshalText) writes and reads itself and is not
+// looked into; one half alone is refused.
 type documentWalk struct {
 	seen        map[types.Type]bool
 	holdsStruct bool
@@ -1309,9 +1310,17 @@ func (w *documentWalk) fields(u *types.Struct, names map[string]string, embeddin
 	for i := range u.NumFields() {
 		fld := u.Field(i)
 		tag := reflect.StructTag(u.Tag(i)).Get("json")
-		name, _, _ := strings.Cut(tag, ",")
+		name, options, _ := strings.Cut(tag, ",")
 		if tag == "-" {
 			return "holds a struct with a field " + fld.Name() + ` tagged json:"-", which encoding/json drops`
+		}
+		// ",string" writes a number or bool as a JSON string, so a query
+		// by the number or bool at that path matches nothing. A
+		// document's numbers cross as their exact digits without it.
+		for option := range strings.SplitSeq(options, ",") {
+			if option == "string" {
+				return "holds a struct with a field " + fld.Name() + ` tagged json:",string", which encoding/json stores as a JSON string, so EqAt, an ordering or a needle by its number or bool would match nothing`
+			}
 		}
 		if fld.Embedded() && name == "" {
 			et := fld.Type()

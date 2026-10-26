@@ -20,7 +20,9 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   exactly. A pointer to one takes `null=sql`. `stashgen` refuses, when it
   runs, a type `encoding/json` cannot carry both ways: an interface such as
   `any`, a struct field `encoding/json` drops (unexported, tagged
-  `json:"-"`, or two writing one member), an embedded pointer to an
+  `json:"-"`, or two writing one member), a field tagged
+  `json:",string"` (stored as a JSON string, which a query by its number
+  does not match), an embedded pointer to an
   unexported struct (written, never read back), a one-way `MarshalJSON` or
   `MarshalText`, a channel, a function, a scalar, or a `[]byte`. The `Fields` entry's operands are Go
   values now: `Contains`, `ContainedBy`, `EqAt`, `Lt`, `Lte`, `Gt`, `Gte`
