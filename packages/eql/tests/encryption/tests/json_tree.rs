@@ -792,9 +792,9 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .iter()
         .map(entry)
         .collect();
-    // `json_tree_children` returns the rows in the stored order.
-    let mut found: Vec<(Option<u64>, Option<u32>)> = elements.iter().map(|e| (e.j, e.d)).collect();
-    found.sort_unstable();
+    // `json_tree_children` returns an array's elements in position order,
+    // whatever slots they are stored at: compared unsorted.
+    let found: Vec<(Option<u64>, Option<u32>)> = elements.iter().map(|e| (e.j, e.d)).collect();
     let first = slot(
         &mut db,
         "json_tree_rows",
@@ -807,11 +807,10 @@ fn postgres_extracts_walks_and_orders_by_path() {
         1,
         &subtree_key("$.nested.list[1]"),
     );
-    let mut expected = vec![(Some(first), Some(1)), (Some(second), Some(1))];
-    expected.sort_unstable();
     assert_eq!(
-        found, expected,
-        "both elements, each at the slot it is stored at"
+        found,
+        vec![(Some(first), Some(1)), (Some(second), Some(1))],
+        "both elements, in position order, each at the slot it is stored at"
     );
     let members: i32 = db
         .query_one(

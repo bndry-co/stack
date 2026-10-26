@@ -523,10 +523,12 @@ $$;
 --! @brief The children of the node whose token is `token`, as rows.
 --!
 --! What `jsonb_array_elements` is for an encrypted array, and the members of
---! an encrypted object: one row per child, in ordinal order (an array's
---! elements by position, an object's members by their keyed rank), each
---! opening on its own. Enumerating one level needs no child's token, so the
---! rows are the same whichever rule each child's token takes.
+--! an encrypted object: one row per child, in ordinal order, which puts an
+--! array's elements in position order and an object's members in the random
+--! order their ordinals were drawn in. A scalar or empty-container child
+--! opens on its own; a child with children of its own opens with its
+--! subtree. Enumerating one level needs no child's token, so the rows are
+--! the same whichever rule each child's token takes.
 --!
 --! @param e public.{{prefix}}_json_tree The stored document.
 --! @param token text The node's token, base64: derived by the client from
@@ -571,7 +573,7 @@ AS $$
   SELECT (doc.meta || (doc.sv -> p.j) || jsonb_build_object('j', p.j, 'd', 1))::public.{{prefix}}_json_tree_entry
   FROM visited AS p, doc
   WHERE p.j IS NOT NULL
-  ORDER BY p.j
+  ORDER BY p.o
 $$;
 
 --! @brief How many children the node whose token is `token` has: the length
