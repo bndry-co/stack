@@ -271,7 +271,7 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 			if !ok {
 				reason := fmt.Sprintf("the engine does not derive the %s index yet", idx.Name)
 				if idx.Name == IndexJSON {
-					reason = "the json index is not an output beside a ciphertext: store a JSON document as a json.RawMessage field with encrypt_into=EncryptedJson, whose EQL type carries the index"
+					reason = "the json index is not an output beside a ciphertext: store a JSON document as a json.RawMessage field with encrypt_into=JsonSearch, whose EQL type carries the index"
 				}
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: reason}
 			}

@@ -113,7 +113,7 @@ func TestRefusals(t *testing.T) {
 		{"an opaque struct with a map keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tM map[hidden]int") + "\ntype hidden struct{ A int }\n", stashgen.Request{Type: "User"}, "M", "map key that is not a string or an integer"},
 		{"an EQL type the engine cannot produce yet", user(ctx + "\tAge int64 `stash:\"age,encrypt_into=BigintOrdOre\"`"), stashgen.Request{Type: "User"}, "Age", "has no EQL type BigintOrdOre"},
 		{"an index on a composite", user(ctx + "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`"), stashgen.Request{Type: "User"}, "Attrs", "seals only as part of an opaque struct"},
-		{"the json index as an output", user(ctx + "\tAttrs string `stash:\"attrs,index=json\"`"), stashgen.Request{Type: "User"}, "Attrs", "encrypt_into=EncryptedJson"},
+		{"the json index as an output", user(ctx + "\tAttrs string `stash:\"attrs,index=json\"`"), stashgen.Request{Type: "User"}, "Attrs", "encrypt_into=JsonSearch"},
 		{"an index option a query term cannot use", user(ctx + "\tEmail string `stash:\"email,encrypt,index=match(k=3)\"`"), stashgen.Request{Type: "User"}, "Email", "a query term uses only the default index options"},
 		{"a passthrough field that has an index", user(ctx + "\tID int64 `stash:\"id,passthrough,index=equality\"`"), stashgen.Request{Type: "User"}, "ID", "passthrough field has no index"},
 		{"an embedded struct from another package with no tag", user(ctx + "\tgorm.Model\n\tEmail string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "Model", "cannot carry tags; tag the field"},

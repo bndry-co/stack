@@ -13,7 +13,7 @@ import (
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
 )
 
-// Encrypted JSON documents (EncryptedJson, public.eql_v4_json_tree) the Go
+// Encrypted JSON documents (JsonSearch, public.eql_v4_json_search) the Go
 // SDK stores, found by the queries its generated methods derive and read by
 // its selections and reads, inside PostgreSQL with EQL v4 installed. Each
 // query's rows are the ones the plaintexts say. Skipped unless DATABASE_URL
@@ -41,7 +41,7 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
-	exec(`CREATE TEMP TABLE customers (id bigint PRIMARY KEY, profile public.eql_v4_json_tree NOT NULL, prefs public.eql_v4_json_tree)`)
+	exec(`CREATE TEMP TABLE customers (id bigint PRIMARY KEY, profile public.eql_v4_json_search NOT NULL, prefs public.eql_v4_json_search)`)
 	t.Cleanup(func() { _, _ = conn.ExecContext(context.Background(), `DROP TABLE IF EXISTS customers`) })
 	encrypted, err := testusers.EncryptCustomer(ctx, cipher, jsonCustomers)
 	if err != nil {
@@ -114,21 +114,21 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 	}
 
 	// Containment, both ways.
-	q := eql.EncryptedJSONQuery(must(f.Contains(ctx, cipher, json.RawMessage(`{"name":"Alice"}`))))
-	want("contains name", ids(`SELECT id FROM customers WHERE profile @> $1::eql_v4.query_json_tree ORDER BY id`, q), 1)
-	q = eql.EncryptedJSONQuery(must(f.Contains(ctx, cipher, json.RawMessage(`{"visits":[{"at":5}]}`))))
-	want("contains an element", ids(`SELECT id FROM customers WHERE profile @> $1::eql_v4.query_json_tree ORDER BY id`, q), 2)
-	q = eql.EncryptedJSONQuery(must(f.ContainedBy(ctx, cipher, json.RawMessage(`{"name":"Dan","x":1}`))))
-	want("contained by", ids(`SELECT id FROM customers WHERE profile <@ $1::eql_v4.query_json_tree ORDER BY id`, q), 4)
+	q := eql.JSONSearchQuery(must(f.Contains(ctx, cipher, json.RawMessage(`{"name":"Alice"}`))))
+	want("contains name", ids(`SELECT id FROM customers WHERE profile @> $1::eql_v4.query_json ORDER BY id`, q), 1)
+	q = eql.JSONSearchQuery(must(f.Contains(ctx, cipher, json.RawMessage(`{"visits":[{"at":5}]}`))))
+	want("contains an element", ids(`SELECT id FROM customers WHERE profile @> $1::eql_v4.query_json ORDER BY id`, q), 2)
+	q = eql.JSONSearchQuery(must(f.ContainedBy(ctx, cipher, json.RawMessage(`{"name":"Dan","x":1}`))))
+	want("contained by", ids(`SELECT id FROM customers WHERE profile <@ $1::eql_v4.query_json ORDER BY id`, q), 4)
 	// Equality at a wildcard path matches any element.
-	q = eql.EncryptedJSONQuery(must(f.EqAt(ctx, cipher, "$.visits[*].at", json.RawMessage(`1`))))
-	want("eq_at", ids(`SELECT id FROM customers WHERE profile @> $1::eql_v4.query_json_tree ORDER BY id`, q), 1)
+	q = eql.JSONSearchQuery(must(f.EqAt(ctx, cipher, "$.visits[*].at", json.RawMessage(`1`))))
+	want("eq_at", ids(`SELECT id FROM customers WHERE profile @> $1::eql_v4.query_json ORDER BY id`, q), 1)
 	// Containment on the optional column: SQL NULL rows match nothing.
 	pq, err := testusers.CustomerFields.Prefs.Contains(ctx, cipher, json.RawMessage(`{"theme":"dark"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want("prefs contains", ids(`SELECT id FROM customers WHERE prefs @> $1::eql_v4.query_json_tree ORDER BY id`, pq), 1)
+	want("prefs contains", ids(`SELECT id FROM customers WHERE prefs @> $1::eql_v4.query_json ORDER BY id`, pq), 1)
 
 	// Orderings at an ordered path compare the leaf `->` extracts there,
 	// selected by the accessor's own Selector, so the path is named once.
@@ -140,12 +140,12 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want("age < 40", ids(`SELECT id FROM customers WHERE (profile -> $1::text) < $2::eql_v4.query_json_tree_leaf ORDER BY id`, age.Selector(), lt), 1, 2)
+	want("age < 40", ids(`SELECT id FROM customers WHERE (profile -> $1::text) < $2::eql_v4.query_json_leaf ORDER BY id`, age.Selector(), lt), 1, 2)
 	rng, err := f.At.Age.Between(ctx, cipher, json.RawMessage(`30`), json.RawMessage(`70`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want("age between", ids(`SELECT id FROM customers WHERE (profile -> $1::text) >= $2::eql_v4.query_json_tree_leaf AND (profile -> $1::text) <= $3::eql_v4.query_json_tree_leaf ORDER BY id`, age.Selector(), rng.Low, rng.High), 1, 3)
+	want("age between", ids(`SELECT id FROM customers WHERE (profile -> $1::text) >= $2::eql_v4.query_json_leaf AND (profile -> $1::text) <= $3::eql_v4.query_json_leaf ORDER BY id`, age.Selector(), rng.Low, rng.High), 1, 3)
 	at, err := f.At.VisitsAt.Selector(ctx, cipher)
 	if err != nil {
 		t.Fatal(err)
@@ -154,20 +154,20 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want("first visit > 2", ids(`SELECT id FROM customers WHERE (profile -> $1::text) > $2::eql_v4.query_json_tree_leaf ORDER BY id`, at.Selector(), gt), 1, 2)
+	want("first visit > 2", ids(`SELECT id FROM customers WHERE (profile -> $1::text) > $2::eql_v4.query_json_leaf ORDER BY id`, at.Selector(), gt), 1, 2)
 
 	// `->` opened against the selection that asked for it: each row's
 	// value, and no value where the row has none.
-	selected := func(sel encrypt.JSONSelection[eql.EncryptedJSONEntry]) []encrypt.JSONValue {
+	selected := func(sel encrypt.JSONSelection[eql.JSONEntry]) []encrypt.JSONValue {
 		t.Helper()
 		rows, err := conn.QueryContext(ctx, `SELECT profile -> $1::text FROM customers ORDER BY id`, sel.Selector())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer rows.Close()
-		var entries []*eql.EncryptedJSONEntry
+		var entries []*eql.JSONEntry
 		for rows.Next() {
-			var e *eql.EncryptedJSONEntry
+			var e *eql.JSONEntry
 			if err := rows.Scan(&e); err != nil {
 				t.Fatal(err)
 			}
@@ -206,14 +206,14 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 	}
 	walk := func(budget int) [][]json.RawMessage {
 		t.Helper()
-		groups := make([][]eql.EncryptedJSONEntry, len(jsonCustomers))
+		groups := make([][]eql.JSONEntry, len(jsonCustomers))
 		for i, cust := range jsonCustomers {
 			rows, err := conn.QueryContext(ctx, `SELECT e FROM customers, eql_v4.json_tree_subtree(profile, $2::text[], $3) AS e WHERE id = $1`, cust.ID, read.Tokens(), budget)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for rows.Next() {
-				var e eql.EncryptedJSONEntry
+				var e eql.JSONEntry
 				if err := rows.Scan(&e); err != nil {
 					t.Fatal(err)
 				}
@@ -252,13 +252,13 @@ func TestJSONDocumentsQueryAndReadInPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var entries []eql.EncryptedJSONEntry
+	var entries []eql.JSONEntry
 	rs, err := conn.QueryContext(ctx, `SELECT e FROM customers, eql_v4.json_tree_subtree(profile, $1::text[]) AS e WHERE id = 1`, visits.Tokens())
 	if err != nil {
 		t.Fatal(err)
 	}
 	for rs.Next() {
-		var e eql.EncryptedJSONEntry
+		var e eql.JSONEntry
 		if err := rs.Scan(&e); err != nil {
 			t.Fatal(err)
 		}

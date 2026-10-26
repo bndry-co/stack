@@ -46,7 +46,7 @@ type Field struct {
 	// EQLType is the EQL type an EncryptInto field seals into.
 	EQLType string
 	// TargetOptions are the EQL type's options, for a type that takes them
-	// (EncryptedJson); nil for its defaults.
+	// (JsonSearch); nil for its defaults.
 	TargetOptions *record.TargetOptions
 	// Identity is the field's part of its context when it differs from Name:
 	// a column that was renamed keeps the identity it was first written
@@ -276,7 +276,7 @@ const (
 	// KindDecimal is encrypt.Decimal.
 	KindDecimal
 	// KindJSON is json.RawMessage: a JSON document, stored as an
-	// EncryptedJSON value.
+	// JSONSearch value.
 	KindJSON
 )
 

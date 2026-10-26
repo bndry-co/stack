@@ -141,13 +141,13 @@ type JSONReadOptions struct{ WildcardBound uint32 }
 // JSONRange is both bounds of a between at a path.
 type JSONRange[Q ~[]byte] struct{ Low, High Q }
 
-// JSONSelection is a prepared `->` on an EncryptedJSON field.
+// JSONSelection is a prepared `->` on a JSONSearch field.
 type JSONSelection[E ~[]byte] struct{ _ E }
 
 func (JSONSelection[E]) Selector() JSONSelector                          { return "" }
 func (JSONSelection[E]) Open(context.Context, []*E) ([]JSONValue, error) { return nil, nil }
 
-// JSONRead is a prepared subtree read on an EncryptedJSON field.
+// JSONRead is a prepared subtree read on a JSONSearch field.
 type JSONRead[E ~[]byte] struct{ _ E }
 
 func (JSONRead[E]) Tokens() JSONTokens                              { return nil }

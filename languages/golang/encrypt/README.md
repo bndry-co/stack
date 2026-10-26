@@ -593,15 +593,15 @@ column.
 
 ### Encrypted JSON documents
 
-`EncryptedJson` stores a whole JSON document in one `public.eql_v4_json_tree`
-column, from a `json.RawMessage` field (`stash:"profile,encrypt_into=EncryptedJson(ordered=$.age)"`;
+`JsonSearch` stores a whole JSON document in one `public.eql_v4_json_search`
+column, from a `json.RawMessage` field (`stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"`;
 see the stashgen README). One entry per node is encrypted, so the database
 can test containment, equality and ordering at a path, return one node with
 `->`, and walk a subtree, without decrypting:
 
 ```go
 q, err := users.Fields.Profile.Contains(ctx, cipher, json.RawMessage(`{"plan":"pro"}`))
-rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE profile @> $1::eql_v4.query_json_tree`, q)
+rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE profile @> $1::eql_v4.query_json`, q)
 
 read, err := users.Fields.Profile.Subtree(ctx, cipher, "$.visits[*].at", encrypt.JSONReadOptions{})
 // SELECT e FROM users, eql_v4.json_tree_subtree(profile, $1::text[], 64) AS e WHERE id = $2
