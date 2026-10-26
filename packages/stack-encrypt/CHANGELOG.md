@@ -16,6 +16,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`dynamic::ValueKind` gains `Json`, and `ValueKind::ALL` holds 21
   kinds** (#1349). The enum is not `#[non_exhaustive]`, so an exhaustive
   `match` on it, or a `[ValueKind; 20]` binding of `ALL`, stops compiling.
+### Changed
+
+- **`->` on a JSON index container with members is `Error::JsonNotALeaf`.**
+  Every entry's ciphertext now commits to its children's ciphertexts (the
+  cascade), so a container's entry does not open on its own, and `->`
+  returns one entry. The client cannot tell a container from an altered
+  entry before the open, so the error names both causes and claims
+  neither; the Go guest maps it to `STATUS_ENCODING`, where a container was
+  `OpenedType` before. Read a container with a subtree read
+  (`KeysetCipher::json_subtree_key`). Decrypting a JSON document whose root
+  is open loads the keyset it was sealed under, beside its data key; a load
+  that fails is `Error::KeysetLoad` on those documents alone.
+- **Awaiting a `Pending` needs an `IndexKeySource` as well as a
+  `DataKeySource`.** A root-open JSON document's keyset is loaded through
+  the cipher's own keyset path when the pending settles, so `IntoFuture for
+  Pending`, `StackCipher::decrypt`, `KeysetCipher::encrypt` and the other
+  settling entry points bound `K: DataKeySource + IndexKeySource`. Every
+  `StackCipher` is built over a source that implements both
+  (`StackCipherBuilder::init` requires it), so a concrete call site is
+  unchanged; generic code written over `K: DataKeySource` alone adds the
+  second bound.
 
 ### Fixed
 

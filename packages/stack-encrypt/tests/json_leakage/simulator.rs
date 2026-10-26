@@ -26,6 +26,15 @@
 //! self tag from its own token, by the rule the profile states for it.
 //! Every other parent and self tag is random bytes, as a tag under a token
 //! the database never sees is to it.
+//!
+//! The stored order is drawn as the crate draws it
+//! ([`StoredOrder::Random`]): per row, the root at slot `0` and the other
+//! nodes at a uniformly random permutation of the slots `1..n`, and every
+//! list of the stored `q` shuffled, each by Fisher–Yates over the
+//! simulator's generator. The profile names nodes, not slots, so the tags
+//! the chain programs follow each node to wherever it is stored. A needle's
+//! lists are shuffled the same way, afresh for each query
+//! ([`SentOrder::Random`]), as the client shuffles them.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -41,7 +50,7 @@ use super::chain::{
 use super::observe::QueryKind;
 use super::profile::{
     GroupLeakage, KindOrder, Leakage, OrderKind, OrderingLeak, Placement, QueryLeakage, RowLeakage,
-    Step, TokenName, TokenStep,
+    SentOrder, Step, StoredOrder, TokenName, TokenStep,
 };
 
 /// The version byte `vitaminc-encrypt` writes at the front of every
@@ -79,6 +88,15 @@ fn random_vec(rng: &mut TestRng, len: usize) -> Vec<u8> {
 
 fn b64(bytes: &[u8]) -> String {
     Base64::encode_string(bytes)
+}
+
+/// A uniform shuffle of `items` (Fisher–Yates). Each draw reduces a 64-bit
+/// word modulo at most a few hundred, a bias below `2^-55`.
+fn shuffle<T>(items: &mut [T], rng: &mut TestRng) {
+    for i in (1..items.len()).rev() {
+        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+        items.swap(i, j);
+    }
 }
 
 /// The tags a row's entries carry where some query's token links them.
@@ -315,8 +333,11 @@ impl Simulator<'_> {
         bytes.clone()
     }
 
-    fn group(&mut self, group: &GroupLeakage) -> Value {
-        let pairs: Vec<Value> = group
+    /// A projection's wire form: in the walk's order, or with every list
+    /// shuffled, as a stored `q` is under [`StoredOrder::Random`] and a
+    /// needle under [`SentOrder::Random`].
+    fn group(&mut self, group: &GroupLeakage, shuffled: bool) -> Value {
+        let mut pairs: Vec<Value> = group
             .pairs
             .iter()
             .map(|&(s, vs)| {
@@ -325,20 +346,44 @@ impl Simulator<'_> {
                 json!({"s": b64(&s), "vs": b64(&vs)})
             })
             .collect();
-        let elements: Vec<Value> = group.elements.iter().map(|g| self.group(g)).collect();
+        let mut elements: Vec<Value> = group
+            .elements
+            .iter()
+            .map(|g| self.group(g, shuffled))
+            .collect();
+        if shuffled {
+            shuffle(&mut pairs, self.rng);
+            shuffle(&mut elements, self.rng);
+        }
         json!({"sv": pairs, "el": elements})
     }
 
+    /// The slot each of a row's `n` nodes is stored at, by its index in the
+    /// profile's numbering: the root at `0` and the rest at a uniformly
+    /// random permutation of `1..n`, or the numbering itself where the
+    /// profile states the depth-first order.
+    fn slots(&mut self, n: usize) -> Vec<usize> {
+        let mut slots: Vec<usize> = (0..n).collect();
+        if self.leakage.stored_order == StoredOrder::Random {
+            if let Some(rest) = slots.get_mut(1..) {
+                shuffle(rest, self.rng);
+            }
+        }
+        slots
+    }
+
     /// Entry `i`'s ordinal under its parent, whose token is `parent`: an
-    /// element's position, or a member's rank among its sibling members
-    /// under the simulator's own keyed rank.
+    /// element's position, or a member's place in the random permutation
+    /// its object's members are given in this row (simulated as a rank
+    /// under the simulator's own key, salted by the row).
     fn ordinal(&mut self, row: &RowLeakage, i: usize, parent: &Tag16) -> u32 {
         let entry = &row.entries[i];
         match entry.step {
             Step::Element(n) => u32::try_from(n).expect("a small array"),
             Step::Member => {
+                let iv = self.iv(row);
                 let mine = self.selector(entry.selector);
-                let my_rank = simulated_rank(&self.rank_key, parent, &mine);
+                let my_rank = simulated_rank(&self.rank_key, &iv, parent, &mine);
                 let siblings: Vec<usize> = (0..row.entries.len())
                     .filter(|&j| {
                         row.entries[j].parent == entry.parent && row.entries[j].step == Step::Member
@@ -348,7 +393,7 @@ impl Simulator<'_> {
                     .into_iter()
                     .filter(|&j| {
                         let theirs = self.selector(row.entries[j].selector);
-                        simulated_rank(&self.rank_key, parent, &theirs) < my_rank
+                        simulated_rank(&self.rank_key, &iv, parent, &theirs) < my_rank
                     })
                     .count();
                 u32::try_from(below).expect("a small object")
@@ -406,8 +451,8 @@ impl Simulator<'_> {
                 let _ = linked[r].x.insert(h, self_tag(&iv, &t));
                 let _ = tokens.insert(h, t);
             }
-            // Parents before children: the stored order puts them first,
-            // but a mutant may not, so by depth.
+            // Parents before children: the profile's numbering puts them
+            // first, but a mutant's may not, so by depth.
             let mut reach = read.reach[r].clone();
             reach.sort_by_key(|&i| (depth(row, i), i));
             for c in reach {
@@ -454,7 +499,7 @@ impl Simulator<'_> {
         header.extend_from_slice(&u16::try_from(tag.len()).expect("a short tag").to_le_bytes());
         header.extend_from_slice(&tag);
 
-        let entries: Vec<Value> = row
+        let by_node: Vec<Value> = row
             .entries
             .iter()
             .enumerate()
@@ -483,7 +528,15 @@ impl Simulator<'_> {
                 wire
             })
             .collect();
-        let q = self.group(&row.projection);
+        let slots = self.slots(by_node.len());
+        let mut entries = vec![Value::Null; by_node.len()];
+        for (wire, slot) in by_node.into_iter().zip(slots) {
+            entries[slot] = wire;
+        }
+        let q = self.group(
+            &row.projection,
+            self.leakage.stored_order == StoredOrder::Random,
+        );
         json!({"h": b64(&header), "sv": entries, "q": q})
     }
 
@@ -500,13 +553,17 @@ impl Simulator<'_> {
                 (QueryKind::Subtree, json!({"t": tokens, "budget": budget}))
             }
             QueryLeakage::Contains { needle, alt } => {
-                let mut wire = self.group(needle);
+                let shuffled = self.leakage.sent_order == SentOrder::Random;
+                let mut wire = self.group(needle, shuffled);
                 if let Some(alt) = alt {
-                    wire["alt"] = self.group(alt);
+                    wire["alt"] = self.group(alt, shuffled);
                 }
                 (QueryKind::Contains, wire)
             }
-            QueryLeakage::Equals { needle } => (QueryKind::Equals, self.group(needle)),
+            QueryLeakage::Equals { needle } => {
+                let shuffled = self.leakage.sent_order == SentOrder::Random;
+                (QueryKind::Equals, self.group(needle, shuffled))
+            }
             QueryLeakage::Order { selector, bound } => {
                 let s = self.selector(*selector);
                 let op = self.ordering(bound.class, bound.len);
