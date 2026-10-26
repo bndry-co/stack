@@ -37,6 +37,8 @@ From the repository root, install the toolchain pinned by `mise.toml` and
 build the guests before running Go tests:
 
 ```sh
+mise run wasm:guest:build
+mise run wasm:guest:build:eql
 mise run wasm:guest:build:deterministic
 mise run wasm:guest:build:eql:deterministic
 mise run wasm:auth-guest:build

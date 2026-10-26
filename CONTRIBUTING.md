@@ -87,6 +87,8 @@ The Go module is in `languages/golang/`, outside the pnpm workspace. Its
 checkout, build those guests before running the Go suite:
 
 ```bash
+mise run wasm:guest:build
+mise run wasm:guest:build:eql
 mise run wasm:guest:build:deterministic
 mise run wasm:guest:build:eql:deterministic
 mise run wasm:auth-guest:build
