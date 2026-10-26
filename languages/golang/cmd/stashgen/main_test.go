@@ -291,10 +291,6 @@ func TestModelFlagsRepeat(t *testing.T) {
 	}
 }
 
-// A json.RawMessage field stored as an encrypted JSON document, against the
-// embedded engine with the EQL types: the generated entry has the
-// document's methods and an accessor per ordered path, and every refusal
-// names the field before anything is written.
 // A document field of a Go type: encoding/json writes it when it is sealed
 // and reads it back when it is opened, and the generator refuses, when the
 // code is generated, a type that it cannot carry both ways.
@@ -399,6 +395,10 @@ func TestRunGeneratesTypedJSONDocuments(t *testing.T) {
 	}
 }
 
+// A json.RawMessage field stored as an encrypted JSON document, against the
+// embedded engine with the EQL types: the generated entry has the
+// document's methods and an accessor per ordered path, and every refusal
+// names the field before anything is written.
 func TestRunGeneratesJSONSearchFields(t *testing.T) {
 	checker, err := encrypt.NewChecker(context.Background())
 	if err != nil {
