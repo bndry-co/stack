@@ -256,6 +256,21 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	if !errors.Is(err, encrypt.ErrEncoding) || errors.Is(err, encrypt.ErrAuthentication) || !errors.As(err, &d) || d.Code != "stack_encrypt::json_not_a_leaf" {
 		t.Fatalf("a container through ->: %v", err)
 	}
+	// A subtree read's request carries its wildcard bound as Go writes an
+	// integer, which the engine reads as its bound: a row with no node at
+	// the path opens to no values, and a bound the engine cannot read would
+	// be refused as ErrEncoding. (A read past the bound is refused as
+	// ErrEncoding too; TestJSONDocumentsQueryAndReadInPostgres reads one
+	// from PostgreSQL's own rows.)
+	bounded := vcvalue.Object{{Key: "operation", Value: "subtree"}, {Key: "path", Value: "$.visits[*].at"}, {Key: "wildcard_bound", Value: uint32(1)}}
+	opened, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", bounded, [][][]byte{{}})
+	if err != nil || len(opened) != 1 || len(opened[0]) != 0 {
+		t.Fatalf("a bounded subtree read of no rows: %q %v", opened, err)
+	}
+	unreadable := vcvalue.Object{{Key: "operation", Value: "subtree"}, {Key: "path", Value: "$.visits[*].at"}, {Key: "wildcard_bound", Value: "1"}}
+	if _, err := cipher.JSONOpen(ctx, jsonPlan(), "profile", unreadable, [][][]byte{{}}); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a bound that is not an integer: %v", err)
+	}
 }
 
 // decodeNumbers decodes JSON text with each number kept as its text.
