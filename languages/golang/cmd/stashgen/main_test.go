@@ -483,7 +483,7 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 		{"two paths, one accessor", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.a_b;$.aB)\"`", "both name the accessor At.AB"},
 		{"the same ordered path twice", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.a;$.a)\"`", "the ordered path $.a is given twice"},
 		{"a path with no accessor name", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.__)\"`", "no Go accessor name"},
-		{"a type defined over json.RawMessage", "\tProfile Doc `stash:\"profile,encrypt_into=JsonSearch\"`", "Customer.Profile: JsonSearch seals a json document: declare the field json.RawMessage"},
+		{"a type defined over json.RawMessage", "\tProfile Doc `stash:\"profile,encrypt_into=JsonSearch\"`", "Customer.Profile: JsonSearch seals a json document, and Doc is written by encoding/json as a base64 string"},
 		{"a string into a document", "\tProfile string `stash:\"profile,encrypt_into=JsonSearch\"`", "JsonSearch seals a json"},
 		{"options on a type that takes none", "\tEmail string `stash:\"email,encrypt_into=TextEq(ordered=$.a)\"`", "the engine refuses the declaration"},
 	} {

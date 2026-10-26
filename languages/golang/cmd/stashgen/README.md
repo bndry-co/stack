@@ -161,7 +161,7 @@ A `json.RawMessage` comes back as JSON text that holds the same values; key orde
 A pointer field (`*Profile`, `*json.RawMessage`) is optional and must say `null=sql`: a document has no fixed length to hide a missing one behind.
 A nil pointer is SQL `NULL`; a non-nil `*json.RawMessage` holding `null` is a stored JSON `null`.
 A `json.RawMessage` sealed any other way (`encrypt`, `index=equality`) is bytes, as any type defined over `[]byte` is.
-`JsonSearch` takes `json.RawMessage` itself, or an alias of it (`type Doc = json.RawMessage`), and refuses a type defined over it (`type Doc json.RawMessage`): `stashgen` knows a document by the `json.RawMessage` type, where a scalar type is accepted with any type defined over it.
+`JsonSearch` takes `json.RawMessage` itself, or an alias of it (`type Doc = json.RawMessage`), and refuses a type defined over it (`type Doc json.RawMessage`): such a type has no `MarshalJSON`, so `encoding/json` would write it as a base64 string, not as the JSON text it holds, where a scalar type is accepted with any type defined over it.
 
 The type takes options in parentheses: `ordered=` names the paths whose numbers and strings carry an ordering term, separated by `;`, and `sealed_root=false` turns off the sealed root (on by default).
 `encrypt_into=JsonSearch(ordered=$.age;$.visits[*].at)` orders two paths.
