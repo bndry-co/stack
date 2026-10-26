@@ -26,7 +26,7 @@ use crate::status::{fail_auth, fail_profile, STATUS_AUTH_REFRESH_REQUIRED};
 enum Config {
     AccessKey {
         crn: String,
-        access_key: String,
+        access_key: Vec<u8>,
         base_url: Option<String>,
     },
     Oidc {
@@ -93,7 +93,8 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
         } => {
             let access_key = Zeroizing::new(access_key);
             let crn: Crn = crn.parse().map_err(|e| fail_auth(&AuthError::from(e)))?;
-            let key: AccessKey = access_key
+            let key: AccessKey = std::str::from_utf8(&access_key)
+                .map_err(|_| malformed("access key is not UTF-8"))?
                 .parse()
                 .map_err(|e| fail_auth(&AuthError::from(e)))?;
             let mut builder = AccessKeyStrategy::builder(crn, key).transport(WasiAuthTransport);

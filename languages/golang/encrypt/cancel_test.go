@@ -462,7 +462,7 @@ func TestACallCancelledDuringATokenExchangeLeavesTheProfileOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	strategy, err := store.AccessKey(context.Background(), testCRN, testAccessKey, auth.WithBaseURL(server.URL))
+	strategy, err := store.AccessKey(context.Background(), testCRN, auth.NewAccessKey([]byte(testAccessKey)), auth.WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}

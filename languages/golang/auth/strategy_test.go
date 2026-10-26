@@ -90,7 +90,7 @@ func TestAccessKeyStrategyCachesAndPreservesRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestUsageLimitIsPreservedAcrossGuest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +464,7 @@ func TestAutoUsesEnvironmentPresenceAndProfileExistence(t *testing.T) {
 	} else if d := wantDiagnostic(t, err, "stack_auth::invalid_access_key"); strings.Contains(fmt.Sprintf("%v %+v", err, *d), keyMarker) {
 		t.Fatalf("the access key is in the Diagnostic: %v %+v", err, *d)
 	}
-	if _, err := profile.AccessKey(context.Background(), "invalid", "CSAKtestKeyId.testKeySecret"); !errors.Is(err, ErrConfig) {
+	if _, err := profile.AccessKey(context.Background(), "invalid", NewAccessKey([]byte("CSAKtestKeyId.testKeySecret"))); !errors.Is(err, ErrConfig) {
 		t.Fatalf("malformed CRN for access key: error = %v, want %v", err, ErrConfig)
 	} else {
 		wantCode(t, err, "stack_auth::invalid_crn")
@@ -623,7 +623,7 @@ func TestAuthRequestsIdentifyTheLibraryNotGo(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -664,7 +664,7 @@ func TestAuthTransportErrorNamesTheHTTPStatusNotTheBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -697,7 +697,7 @@ func TestAuthTransportErrorWithoutAResponseNamesNoStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(addr))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(addr))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,7 +723,7 @@ func TestAuthTransportErrorTextIsNotInTheDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.invalid"))
+	strategy, err := profile.AccessKey(ctx, testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL("https://cts.invalid"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -766,7 +766,7 @@ func TestOutOfRangeAuthStatusIsTransport(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer profile.Close()
-			strategy, err := profile.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.invalid"))
+			strategy, err := profile.AccessKey(ctx, testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL("https://cts.invalid"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -829,7 +829,7 @@ func TestOpenWithoutProfileRunsAccessKeyAndRefusesProfileReads(t *testing.T) {
 func TestStrategyReportsItsStoresMemoryLockLive(t *testing.T) {
 	ctx := context.Background()
 	_, s := profile(t)
-	strategy, err := s.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.invalid"))
+	strategy, err := s.AccessKey(ctx, testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL("https://cts.invalid"))
 	if err != nil {
 		t.Fatal(err)
 	}

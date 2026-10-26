@@ -77,19 +77,22 @@ func (s *ProfileStore) newStrategy(ctx context.Context, config any, device bool)
 	return &Strategy{store: s, handle: string(out), device: device}, nil
 }
 
-// AccessKey constructs stack-auth's access-key strategy for crn. The key
-// stays in the guest after construction; it is not sent on each Token call.
-func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...StrategyOption) (*Strategy, error) {
-	if crn == "" || key == "" {
+// AccessKey consumes key, including on failure. The key stays in the guest
+// after construction; it is not sent on each Token call.
+func (s *ProfileStore) AccessKey(ctx context.Context, crn string, key *AccessKey, opts ...StrategyOption) (*Strategy, error) {
+	defer key.Wipe()
+	if crn == "" || key.IsZero() {
 		return nil, ErrConfig
 	}
 	o := strategyConfig(opts)
+	encoded := encodeAccessKey(guest.AccessKeyBytes(key))
+	defer guest.Wipe(encoded)
 	return s.newStrategy(ctx, struct {
-		Kind    string `json:"kind"`
-		CRN     string `json:"crn"`
-		Key     string `json:"access_key"`
-		BaseURL string `json:"base_url,omitempty"`
-	}{"access_key", crn, key, o.baseURL}, false)
+		Kind    string          `json:"kind"`
+		CRN     string          `json:"crn"`
+		Key     json.RawMessage `json:"access_key"`
+		BaseURL string          `json:"base_url,omitempty"`
+	}{"access_key", crn, encoded, o.baseURL}, false)
 }
 
 // OIDC constructs stack-auth's federation strategy. provider is called on
@@ -148,7 +151,7 @@ func (s *ProfileStore) Auto(ctx context.Context, opts ...StrategyOption) (*Strat
 		if !crnSet {
 			return nil, ErrConfig
 		}
-		return s.AccessKey(ctx, crn, key, opts...)
+		return s.AccessKey(ctx, crn, NewAccessKey([]byte(key)), opts...)
 	}
 	workspace, err := s.CurrentWorkspaceStore(ctx)
 	if err != nil {

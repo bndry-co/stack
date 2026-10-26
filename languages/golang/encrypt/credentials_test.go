@@ -729,7 +729,7 @@ func TestNewCredentialsReportsTheStrategysMemoryLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	strategy, err := store.AccessKey(ctx, testCRN, testAccessKey, auth.WithBaseURL("https://cts.example.com"))
+	strategy, err := store.AccessKey(ctx, testCRN, auth.NewAccessKey([]byte(testAccessKey)), auth.WithBaseURL("https://cts.example.com"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -769,7 +769,7 @@ func TestRequireLockedMemoryRefusesUnlockedCredentials(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = store.Close() })
-			strategy, err := store.AccessKey(ctx, testCRN, testAccessKey, auth.WithBaseURL(cts.URL))
+			strategy, err := store.AccessKey(ctx, testCRN, auth.NewAccessKey([]byte(testAccessKey)), auth.WithBaseURL(cts.URL))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -874,7 +874,7 @@ func TestNewCredentialsLeavesTheStrategyToTheCaller(t *testing.T) {
 	}
 	defer store.Close()
 	cts := newStub(t, http.StatusUnauthorized, "", "nope")
-	strategy, err := store.AccessKey(ctx, testCRN, "CSAKtest.key", auth.WithBaseURL(cts.URL))
+	strategy, err := store.AccessKey(ctx, testCRN, auth.NewAccessKey([]byte("CSAKtest.key")), auth.WithBaseURL(cts.URL))
 	if err != nil {
 		t.Fatal(err)
 	}

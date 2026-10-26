@@ -93,6 +93,10 @@ discovery for local tests or a custom CTS host; `WithCacheCapacity(n)` sets
 how many users' CTS tokens an OIDC strategy keeps (1024 unless set), sized to
 the users it serves within a CTS token's lifetime.
 
+`AccessKey` takes `auth.NewAccessKey(ownedBytes)`, not a string. It consumes
+and wipes those bytes even if construction fails. Do not retain or reuse
+the slice. The key prints only a redaction.
+
 ## What the guest is given
 
 Exactly one directory, mounted read-write at a fixed guest path, and no

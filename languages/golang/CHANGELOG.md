@@ -125,6 +125,10 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Breaking
 
+- `ProfileStore.AccessKey` now consumes `*auth.AccessKey`, constructed with
+  `auth.NewAccessKey(ownedBytes)`, instead of a string. It wipes the owned
+  bytes on success and failure.
+
 - **`eql.SteVecDocument` and `eql.SteVecQuery` are gone.** They named
   EQL v4's SteVec domains, which the engine never produced and the v4
   bundle no longer carries: in v4, `public.eql_v4_json_search` is the

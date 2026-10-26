@@ -75,7 +75,7 @@ func TestATokenFetchCancelledFailsOnlyItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestAnAccessKeyExchangeEndsWithItsCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestATokenRequestWhoseContextEndsInTheQueueNeverReachesTheGuest(t *testing.
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestATokenFetchThatRunsOnAfterItsContextEndsClosesTheProfile(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.example.com"))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL("https://cts.example.com"))
 	if err != nil {
 		t.Fatal(err)
 	}
