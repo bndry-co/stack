@@ -84,7 +84,12 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   form for them), a type with only one of `MarshalText` and
   `UnmarshalText`, a map key that is not an integer, a string, bytes or
   text, and a type that only `MarshalJSON` carries over a struct with
-  unexported fields. A blob a later release writes is
+  unexported fields. **Rows already sealed with an `encrypt.Decimal` or
+  `encrypt.Date` in an opaque struct do not decrypt under this release**,
+  since no generated file can name the field: before upgrading, decrypt
+  them with the earlier release, change the field to a string (or to its
+  parts), and encrypt them again; the earlier release writes JSON, which
+  this release reads. A blob a later release writes is
   `encrypt.ErrStorageVersion`. This takes vcffi from the unreleased
   cipherstash/vitaminc#526 by pseudo-version; the storage format is a
   compatibility commitment only once vitaminc releases it, so no Go
@@ -234,15 +239,20 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Changed
 
-- **vitaminc's Go bindings from cipherstash/vitaminc#526 (temporary).**
-  `vcffi` and `vcvalue` move to an unreleased commit, for the storage
-  profile (`vcffi.MarshalStorage`). One encoding changes with them: a nil
-  pointer to a fixed-width value (`(*int64)(nil)`) is written as a typed
-  null where it was written as a null. The engine reads a typed null as a
-  null, and generated code passes an untyped nil for a nil pointer, so
-  this only shows in the bytes a hand-built `record.Source` or query input
-  sends. The pin returns to a vitaminc release before this module is
-  tagged.
+- **vitaminc's Go bindings at an unreleased vitaminc commit (temporary).**
+  `vcffi` and `vcvalue` move to vitaminc `d7de535c4`, the merge of
+  cipherstash/vitaminc#526 into its `feat/aead-frame-storage-profile`
+  branch, for the storage profile (`vcffi.MarshalStorage`); vitaminc's Go
+  bindings have no tags, so the commit is the pin. One encoding changes
+  with them, and it comes from vitaminc `e9c3837b` (on `main`, in no Go
+  tag yet), not from the storage profile: a nil pointer to a fixed-width
+  value (`(*int64)(nil)`) is written as a typed null where it was written
+  as a null. The engine reads a typed null as a null, and generated code
+  passes an untyped nil for a nil pointer, so this only shows in the bytes
+  a hand-built `record.Source` or query input sends. The pin returns to a
+  vitaminc release before this module is tagged:
+  `scripts/go-release-version.mjs` refuses a final version while `go.mod`
+  names a vitaminc pseudo-version.
 - **An EQL v4 block ORE term is one hex string.** The `ob` of a value
   encrypted into an `_ord_ore` or `text_search_ore` EQL type is
   `"ob": "0202…"`, where it was a one-element array, and the EQL v4 bundle
