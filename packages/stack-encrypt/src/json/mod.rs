@@ -567,14 +567,14 @@ impl JsonDocument {
         }
     }
 
-    /// The node stored at slot `j` as an extraction returns it: the entry
+    /// The node stored at `slot` as an extraction returns it: the entry
     /// with the header beside it. A scalar or an empty container opens on
     /// its own; a container with children opens only with its subtree.
-    pub fn node(&self, j: usize) -> Option<JsonNode> {
-        self.entries.get(j).map(|entry| JsonNode {
+    pub fn node(&self, slot: usize) -> Option<JsonNode> {
+        self.entries.get(slot).map(|entry| JsonNode {
             entry: entry.clone(),
             header: self.header.clone(),
-            j: j as u64,
+            slot: slot as u64,
             depth: None,
         })
     }
@@ -606,9 +606,9 @@ where
 }
 
 /// One entry as an extraction returns it: the entry, the document's header
-/// grafted beside it, and the slot `j` the entry is stored at in the
-/// document, which its ciphertext is bound to. What `->` and the walk
-/// return per row.
+/// grafted beside it, and the slot the entry is stored at in the document
+/// (`j` on the wire), which its ciphertext is bound to. What `->` and the
+/// walk return per row.
 ///
 /// A row is the database's word, so it does not open on its own: the
 /// selector the client derived opens the entry `->` returned
@@ -623,7 +623,7 @@ where
 pub struct JsonNode {
     entry: JsonEntry,
     header: JsonHeader,
-    j: u64,
+    slot: u64,
     depth: Option<u32>,
 }
 
@@ -639,8 +639,8 @@ impl JsonNode {
     /// The slot the entry is stored at in the document, `j` on the wire.
     /// The stored order is random, so it is not the node's place in the
     /// document.
-    pub fn ordinal(&self) -> u64 {
-        self.j
+    pub fn slot(&self) -> u64 {
+        self.slot
     }
     /// The entry's depth below the walk's start, when the walk reported one.
     pub fn depth(&self) -> Option<u32> {
@@ -747,7 +747,7 @@ impl JsonSubtree {
     pub fn is_sealed_root(&self) -> bool {
         matches!(
             self.nodes.as_slice(),
-            [node] if node.j == 0 && node.depth == Some(0) && node.header.sealed_root()
+            [node] if node.slot == 0 && node.depth == Some(0) && node.header.sealed_root()
         )
     }
 }
@@ -908,7 +908,7 @@ impl From<JsonNode> for NodeWire {
         Self {
             entry: EntryWire::from(&node.entry),
             h: base64(&node.header.to_bytes()),
-            j: node.j,
+            j: node.slot,
             d: node.depth,
             i: None,
             v: None,
@@ -924,7 +924,7 @@ impl TryFrom<NodeWire> for JsonNode {
             entry: JsonEntry::try_from(w.entry)?,
             header: JsonHeader::from_bytes(&unbase64(&w.h)?)
                 .map_err(|_| WireError("not a header"))?,
-            j: w.j,
+            slot: w.j,
             depth: w.d,
         })
     }

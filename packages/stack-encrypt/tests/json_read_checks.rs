@@ -218,7 +218,7 @@ mod given_the_entry_arrow_returned {
         let extracted = hello.open(row(&doc, number, None));
         assert_eq!(extracted.selector(), hello, "the selector asked for");
         assert_eq!(
-            extracted.node().ordinal(),
+            extracted.node().slot(),
             number as u64,
             "the row as returned"
         );
@@ -340,7 +340,7 @@ mod given_the_rows_of_a_read {
         let mut reversed = rows.clone();
         reversed.reverse();
         let mut by_slot = rows;
-        by_slot.sort_by_key(JsonNode::ordinal);
+        by_slot.sort_by_key(JsonNode::slot);
         for rows in [reversed, by_slot] {
             let value = open_value(&cipher, nested.open(rows)).await;
             assert_eq!(value.unwrap(), fixture()["nested"]);
@@ -464,10 +464,7 @@ mod given_the_rows_of_a_read {
         let nested = key(&cipher, "$.nested").await;
         let deep = slot(&cipher, &doc, "$.nested.deep").await;
         let rows = walk(&doc, &nested);
-        let at = rows
-            .iter()
-            .position(|n| n.ordinal() == deep as u64)
-            .unwrap();
+        let at = rows.iter().position(|n| n.slot() == deep as u64).unwrap();
         let forged = with_x(rows, at, "AAAAAAAAAAA=".into());
         assertions::wrong_entry(open_value(&cipher, nested.open(forged)).await, RULE);
     }
@@ -484,7 +481,7 @@ mod given_the_rows_of_a_read {
         let s = selector_bytes(&selector(&cipher, "$.a.k").await);
         let as_element = chain::element_token(&a.token_bytes()[0], &s, 0);
         let rows = walk(&doc, &a);
-        let at = rows.iter().position(|n| n.ordinal() == k as u64).unwrap();
+        let at = rows.iter().position(|n| n.slot() == k as u64).unwrap();
         let forged = with_x(
             rows,
             at,
@@ -602,7 +599,7 @@ mod given_the_rows_of_a_read {
         let other = slot(&cipher, &doc, "$.nested.list[1].x").await;
         let honest = walk(&doc, &first);
         assert_eq!(
-            honest.iter().map(JsonNode::ordinal).collect::<Vec<_>>(),
+            honest.iter().map(JsonNode::slot).collect::<Vec<_>>(),
             [element as u64, own as u64],
             "the element and its x"
         );
@@ -641,10 +638,8 @@ mod given_the_rows_of_a_read {
         let x = slot(&cipher, &doc, "$.nested.list[0].x").await;
         let mut rows = walk(&doc, &nested);
         let (i, k) = (
-            rows.iter()
-                .position(|n| n.ordinal() == deep as u64)
-                .unwrap(),
-            rows.iter().position(|n| n.ordinal() == x as u64).unwrap(),
+            rows.iter().position(|n| n.slot() == deep as u64).unwrap(),
+            rows.iter().position(|n| n.slot() == x as u64).unwrap(),
         );
         let mut a = serde_json::to_value(&rows[i]).unwrap();
         let mut b = serde_json::to_value(&rows[k]).unwrap();
@@ -670,7 +665,7 @@ mod given_the_rows_of_a_read {
             let rows: Vec<JsonNode> = walk(&doc, &nested)
                 .into_iter()
                 .map(|n| {
-                    if n.ordinal() == j as u64 {
+                    if n.slot() == j as u64 {
                         row(&doc, j, Some(d))
                     } else {
                         n
@@ -790,7 +785,7 @@ mod given_the_rows_of_a_read {
         let nested = key(&cipher, "$.nested").await;
         let rows: Vec<JsonNode> = walk(&doc, &nested)
             .iter()
-            .map(|n| row(&doc, n.ordinal() as usize, None))
+            .map(|n| row(&doc, n.slot() as usize, None))
             .collect();
         let value = open_value(&cipher, nested.open(rows)).await;
         assert_eq!(value.unwrap(), fixture()["nested"], "the sub-document");
@@ -947,10 +942,7 @@ fn with_x(mut rows: Vec<JsonNode>, at: usize, x: String) -> Vec<JsonNode> {
 /// `rows` without the row of the entry at slot `j`.
 fn without(rows: Vec<JsonNode>, j: usize) -> Vec<JsonNode> {
     let before = rows.len();
-    let rows: Vec<JsonNode> = rows
-        .into_iter()
-        .filter(|n| n.ordinal() != j as u64)
-        .collect();
+    let rows: Vec<JsonNode> = rows.into_iter().filter(|n| n.slot() != j as u64).collect();
     assert_eq!(rows.len() + 1, before, "the row at {j} was among them");
     rows
 }
@@ -971,7 +963,7 @@ fn exchange_tags(rows: Vec<JsonNode>, a: usize, b: usize) -> Vec<JsonNode> {
         let wire = serde_json::to_value(n).unwrap();
         (wire["x"].clone(), wire["p"].clone())
     };
-    let find = |j: usize| rows.iter().position(|n| n.ordinal() == j as u64).unwrap();
+    let find = |j: usize| rows.iter().position(|n| n.slot() == j as u64).unwrap();
     let (i, k) = (find(a), find(b));
     let ((xa, pa), (xb, pb)) = (tags(&rows[i]), tags(&rows[k]));
     let retag = |n: &JsonNode, x: &Value, p: &Value| {

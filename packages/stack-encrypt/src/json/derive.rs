@@ -7,7 +7,7 @@
 //! order for an object and in position order for an array. Sealing runs the
 //! other way, from the leaves up, so that each node's AAD can bind the AEAD
 //! tags of its children ([`cascade`](super::cascade)); the AAD also binds the
-//! slot `j` the entry is stored at.
+//! slot the entry is stored at.
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -43,10 +43,8 @@ const VALUE_DOMAIN: &[u8] = b"stack-encrypt/json/value/v1";
 /// PAE domain of a chain head's token: the root's, or a top-level field's
 /// under the sealed root.
 const TOKEN_DOMAIN: &[u8] = b"stack-encrypt/json/token/v1";
-/// PAE domain of an entry's AAD. `v2` binds the digest of the node's
-/// children's AEAD tags ([`cascade`](super::cascade)); `v1` bound the slot
-/// as the node's depth-first position and nothing of its children.
-const ENTRY_AAD_DOMAIN: &[u8] = b"stack-encrypt/json/entry/v2";
+/// PAE domain of an entry's AAD ([`entry_aad`]).
+const ENTRY_AAD_DOMAIN: &[u8] = b"stack-encrypt/json/entry/v1";
 /// PAE domain of an object member's rank under its parent's token, which
 /// orders the members' ordinals. Keyed, so a token does not let its holder
 /// test key names.
@@ -847,25 +845,29 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     )
 }
 
-/// An entry's AAD: the domain, the keyset, the column's AAD, the key tag,
-/// the entry's selector, the slot `j` it is stored at, and the digest of its
-/// children's AEAD tags ([`cascade::children_digest`]). The last is what
-/// makes a node's ciphertext commit to everything beneath it.
+/// The AAD an entry is sealed and opened under, PAE-framed: the domain;
+/// `keyset_id`, the keyset the document's data key was minted under;
+/// `column`, the column's own AAD (its caller context); `key_tag`, the
+/// ZeroKMS tag of that data key ([`JsonHeader::tag`]); `selector`, the
+/// entry's path selector; `slot`, the slot the entry is stored at in `sv`;
+/// and `children`, the digest of the entry's children's AEAD tags
+/// ([`cascade::children_digest`]), which is what makes a node's ciphertext
+/// commit to everything beneath it.
 fn entry_aad(
     keyset_id: Uuid,
-    aad: &Context<'_>,
-    tag: &[u8],
-    s: &Tag,
-    j: u64,
+    column: &Context<'_>,
+    key_tag: &[u8],
+    selector: JsonSelector,
+    slot: u64,
     children: &ChildrenDigest,
 ) -> Context<'static> {
     Context::pae(&[
         ENTRY_AAD_DOMAIN,
         keyset_id.as_bytes(),
-        aad.as_bytes(),
-        tag,
-        s,
-        &j.to_le_bytes(),
+        column.as_bytes(),
+        key_tag,
+        &selector.0,
+        &slot.to_le_bytes(),
         children,
     ])
 }
@@ -993,6 +995,10 @@ fn seal(
     // node has a larger index, and the reverse order seals a node's children
     // before the node.
     for (i, plain) in plain.into_iter().enumerate().rev() {
+        debug_assert!(
+            children[i].iter().all(|&child| child > i),
+            "the walk is pre-order: a child is sealed before its parent"
+        );
         // The root's plaintext is the whole document when the root is
         // sealed; the node encoding it replaces is wiped as it drops.
         let plaintext = if i == 0 {
@@ -1001,12 +1007,15 @@ fn seal(
             plain
         };
         let digest = cascade::children_digest(children[i].iter().map(|&c| sealed[c].as_slice()));
-        let c = cipher
-            .seal(
-                plaintext,
-                &entry_aad(keyset_id, aad, &tag, &nodes[i].s, slots[i] as u64, &digest),
-            )
-            .map_err(|_| Error::Aead)?;
+        let aad = entry_aad(
+            keyset_id,
+            aad,
+            &tag,
+            JsonSelector(nodes[i].s),
+            slots[i] as u64,
+            &digest,
+        );
+        let c = cipher.seal(plaintext, &aad).map_err(|_| Error::Aead)?;
         sealed[i] = c.as_ref().to_vec();
     }
     let mut entries: Vec<Option<JsonEntry>> =
@@ -1141,22 +1150,27 @@ fn decode_node(plaintext: &Protected<Vec<u8>>) -> Result<Opened, Error> {
     })
 }
 
-/// Open one entry stored at slot `j`, under the digest of the children it
+/// Open one entry stored at `slot`, under the digest of the children it
 /// must have been sealed over. The plaintext the cipher returns stays in its
 /// `Protected` and is wiped when decoding is done.
 fn open_entry(
     cipher: &Aes256Cipher,
     header: &JsonHeader,
-    aad: &Context<'_>,
+    column: &Context<'_>,
     entry: &JsonEntry,
-    j: u64,
+    slot: u64,
     children: &ChildrenDigest,
 ) -> Result<Opened, Error> {
+    let aad = entry_aad(
+        header.keyset_id,
+        column,
+        &header.tag,
+        JsonSelector(entry.s),
+        slot,
+        children,
+    );
     let plaintext = cipher
-        .open(
-            LocalCipherText::from(entry.c.clone()),
-            &entry_aad(header.keyset_id, aad, &header.tag, &entry.s, j, children),
-        )
+        .open(LocalCipherText::from(entry.c.clone()), &aad)
         .map_err(|_| Error::Aead)?;
     decode_node(&plaintext)
 }
@@ -1172,25 +1186,22 @@ fn hand_over(value: Protected<PlainJson>) -> Value {
     value.risky_unwrap().into_value()
 }
 
-/// The retrieve request for a document's one data key, and the AAD its
-/// entries open under.
-fn retrieval(
+/// What opening a document's entries under the caller's context needs
+/// from ZeroKMS and from the context: the request that retrieves the
+/// document's one data key (its `iv`, its tag and its keyset from the
+/// header, and the context's descriptor, which ZeroKMS bound the key to),
+/// and the column AAD every entry opens under ([`entry_aad`]), which is the
+/// context's AAD. Refused with [`Error::DescriptorTooLong`] before any
+/// request is made.
+fn key_retrieval(
     header: &JsonHeader,
-    context: AeadContext,
+    context: vitaminc_aead::ContextPiece<'static>,
 ) -> Result<(Request, Context<'static>), Error> {
-    retrieval_of(header, context.into_context())
-}
-
-/// [`retrieval`] over a context already split into its piece.
-fn retrieval_of(
-    header: &JsonHeader,
-    piece: vitaminc_aead::ContextPiece<'static>,
-) -> Result<(Request, Context<'static>), Error> {
-    let descriptor = Descriptor::from_piece(&piece);
+    let descriptor = Descriptor::from_piece(&context);
     descriptor.check()?;
     Ok((
         Request::retrieve_under(header.iv, header.tag.clone(), descriptor, header.keyset_id),
-        piece.into_aad().into_owned(),
+        context.into_aad().into_owned(),
     ))
 }
 
@@ -1214,7 +1225,7 @@ fn open_document<'a, K>(
 ) -> Pending<'a, Value, K> {
     let piece = context.into_context();
     let prf_context = piece.clone().into_prf_context().into_owned();
-    let (request, aad) = match retrieval_of(&doc.header, piece) {
+    let (request, aad) = match key_retrieval(&doc.header, piece) {
         Ok(parts) => parts,
         Err(error) => return Pending::failed(cipher, error),
     };
@@ -1288,10 +1299,10 @@ fn open_whole_chain(
     let rows = entries
         .into_iter()
         .enumerate()
-        .map(|(j, entry)| Row {
+        .map(|(slot, entry)| ReturnedRow {
             entry,
-            j: j as u64,
-            d: None,
+            slot: slot as u64,
+            depth: None,
         })
         .collect();
     let reads = [Read {
@@ -1356,7 +1367,7 @@ impl DecryptInto<Value> for JsonExtracted {
             return Decryption::failed(wrong("the entry at the path asked for"));
         }
         Decryption::from_open(move |cipher| {
-            let (request, aad) = match retrieval(&node.header, context) {
+            let (request, aad) = match key_retrieval(&node.header, context.into_context()) {
                 Ok(parts) => parts,
                 Err(error) => return Pending::failed(cipher, error),
             };
@@ -1368,7 +1379,7 @@ impl DecryptInto<Value> for JsonExtracted {
                     &node.header,
                     &aad,
                     &node.entry,
-                    node.j,
+                    node.slot,
                     &cascade::no_children(),
                 )?;
                 opened
@@ -1466,13 +1477,13 @@ impl DecryptInto<Value> for JsonSubtree {
 }
 
 /// One row of a read as the server returned it, not yet opened: the entry,
-/// the slot `j` its ciphertext is bound to, and the depth the server
-/// reported, which is optional on the wire and checked against the place
-/// the chain puts the row in.
-struct Row {
+/// the slot its ciphertext is bound to, and the depth the server reported,
+/// which is optional on the wire and checked against the place the chain
+/// puts the row in.
+struct ReturnedRow {
     entry: JsonEntry,
-    j: u64,
-    d: Option<u32>,
+    slot: u64,
+    depth: Option<u32>,
 }
 
 /// Open every row and place each node a token named, checking every row
@@ -1497,11 +1508,11 @@ fn open_subtree<'a, K>(
     // repeating an entry, which would let it line up one container as many
     // times as it likes: an honest database never returns one, so it is the
     // wrong entry, not a shape the target refuses.
-    nodes.sort_by_key(|n| n.j);
-    if nodes.windows(2).any(|pair| pair[0].j == pair[1].j) {
+    nodes.sort_by_key(|n| n.slot);
+    if nodes.windows(2).any(|pair| pair[0].slot == pair[1].slot) {
         return Pending::failed(cipher, wrong("rows of distinct entries"));
     }
-    let (request, aad) = match retrieval(&header, context) {
+    let (request, aad) = match key_retrieval(&header, context.into_context()) {
         Ok(parts) => parts,
         Err(error) => return Pending::failed(cipher, error),
     };
@@ -1510,10 +1521,10 @@ fn open_subtree<'a, K>(
         let aes = leaf_cipher(&key_bytes)?;
         let rows = nodes
             .into_iter()
-            .map(|n| Row {
+            .map(|n| ReturnedRow {
                 entry: n.entry,
-                j: n.j,
-                d: n.depth,
+                slot: n.slot,
+                depth: n.depth,
             })
             .collect();
         let opening = Opening {
@@ -1533,12 +1544,12 @@ struct Opening<'o> {
     aes: &'o Aes256Cipher,
 }
 
-/// Where a node sits, for the check of its selector: at the top of a read,
-/// named by a concrete path, or beneath a node whose selector bytes are
-/// known.
-enum Under<'p> {
-    Path(&'p JsonPath),
-    Node(&'p Protected<Vec<u8>>),
+/// Where the selector a node must carry comes from: the concrete path of
+/// the read that named it, for the node at the top of a read, or the
+/// selector bytes of its parent, extended by its own label, beneath one.
+enum ExpectedSelector<'p> {
+    OfPath(&'p JsonPath),
+    UnderParent(&'p Protected<Vec<u8>>),
 }
 
 /// Put the rows of a read back into the nodes its `reads` named, in the
@@ -1576,20 +1587,20 @@ enum Under<'p> {
 /// under another element (`$.items[0].price` for `$.items[1].price`) at the
 /// top of a read, which no bound field tells apart; and rows withheld whole.
 fn place(
-    rows: Vec<Row>,
+    rows: Vec<ReturnedRow>,
     reads: &[Read],
     selectors: &Selectors,
     bound: u32,
     opening: &Opening<'_>,
 ) -> Result<Vec<Protected<PlainJson>>, Error> {
-    let mut placing = Placing::new(rows, selectors, opening);
+    let mut walk = ChainWalk::new(rows, selectors, opening);
     let mut reached = Vec::new();
     let mut truncated = false;
     for read in reads {
-        let Some(at) = placing.find(&read.token) else {
+        let Some(at) = walk.find(&read.token) else {
             continue;
         };
-        let (value, _) = placing.node(at, &read.token, Under::Path(&read.path), 0)?;
+        let (value, _) = walk.node(at, &read.token, ExpectedSelector::OfPath(&read.path), 0)?;
         if read.probe {
             truncated = true;
         } else {
@@ -1598,7 +1609,7 @@ fn place(
     }
     // A read returns the subtrees of the nodes its tokens name and nothing
     // else, so a row none of them reaches is not an answer to it.
-    if placing.used.contains(&false) {
+    if walk.placed.contains(&false) {
         return Err(wrong("rows the walked paths reach"));
     }
     if truncated {
@@ -1607,36 +1618,37 @@ fn place(
     Ok(reached)
 }
 
-/// The rows of one read being placed: which have been placed, and the
-/// server's two lookups over them, by self tag and by parent tag.
-struct Placing<'k> {
-    rows: Vec<Row>,
-    used: Vec<bool>,
-    by_x: HashMap<super::SelfTag, usize>,
-    by_p: HashMap<super::ParentTag, usize>,
+/// The client's walk of the chain over the rows of one read, as the server
+/// walked it: the rows, which of them the walk has placed, and the server's
+/// two lookups over them, by self tag and by parent tag.
+struct ChainWalk<'k> {
+    rows: Vec<ReturnedRow>,
+    placed: Vec<bool>,
+    by_self_tag: HashMap<super::SelfTag, usize>,
+    by_parent_tag: HashMap<super::ParentTag, usize>,
     selectors: &'k Selectors,
     opening: &'k Opening<'k>,
 }
 
-impl<'k> Placing<'k> {
-    fn new(rows: Vec<Row>, selectors: &'k Selectors, opening: &'k Opening<'k>) -> Self {
+impl<'k> ChainWalk<'k> {
+    fn new(rows: Vec<ReturnedRow>, selectors: &'k Selectors, opening: &'k Opening<'k>) -> Self {
         // Where several rows carry one tag, which no sealing produces, the
         // last of them, as the server's index keeps it
         // (`eql_v4_internal.json_tree_index` builds it with
         // `jsonb_object_agg`), so the client tries the row the server found.
-        let mut by_x = HashMap::with_capacity(rows.len());
-        let mut by_p = HashMap::with_capacity(rows.len());
+        let mut by_self_tag = HashMap::with_capacity(rows.len());
+        let mut by_parent_tag = HashMap::with_capacity(rows.len());
         for (i, row) in rows.iter().enumerate() {
-            let _ = by_x.insert(row.entry.x, i);
+            let _ = by_self_tag.insert(row.entry.x, i);
             if let Some(p) = row.entry.p {
-                let _ = by_p.insert(p, i);
+                let _ = by_parent_tag.insert(p, i);
             }
         }
         Self {
-            used: vec![false; rows.len()],
+            placed: vec![false; rows.len()],
             rows,
-            by_x,
-            by_p,
+            by_self_tag,
+            by_parent_tag,
             selectors,
             opening,
         }
@@ -1644,7 +1656,7 @@ impl<'k> Placing<'k> {
 
     /// The row carrying the self tag of `token`.
     fn find(&self, token: &Tag) -> Option<usize> {
-        self.by_x
+        self.by_self_tag
             .get(&self_tag(&self.opening.header.iv, token))
             .copied()
     }
@@ -1660,7 +1672,7 @@ impl<'k> Placing<'k> {
         // A node has fewer children than there are rows, so the probe loop
         // is bounded whatever the tags say.
         for o in 0..u32::try_from(self.rows.len()).unwrap_or(u32::MAX) {
-            let Some(&child) = self.by_p.get(&parent_tag(iv, token, o)) else {
+            let Some(&child) = self.by_parent_tag.get(&parent_tag(iv, token, o)) else {
                 break;
             };
             let child_token = hit_token(iv, token, &self.rows[child].entry, o)
@@ -1671,11 +1683,11 @@ impl<'k> Placing<'k> {
     }
 
     /// Place and open the row at `at`, the node whose token is `token`,
-    /// sitting `under` its parent `d` levels below the node its read named:
-    /// its children found by the chain, then the node opened under the
-    /// digest of their tags, then the checks, then the children in turn.
-    /// Returns the node's value and its label, which its parent places it
-    /// by.
+    /// `depth` levels below the node its read named, which must carry the
+    /// selector `expected` says: its children found by the chain, then the
+    /// node opened under the digest of their tags, then the checks, then
+    /// the children in turn. Returns the node's value and its label, which
+    /// its parent places it by.
     ///
     /// The recursion follows only nodes that opened, so it follows the tree
     /// that was sealed, which nests no deeper than [`MAX_DEPTH`].
@@ -1683,16 +1695,16 @@ impl<'k> Placing<'k> {
         &mut self,
         at: usize,
         token: &Tag,
-        under: Under<'_>,
-        d: u32,
+        expected: ExpectedSelector<'_>,
+        depth: u32,
     ) -> Result<(Protected<PlainJson>, Label), Error> {
         let refused = || wrong("a node the walked path reaches");
         // No row is placed twice: below a node the chain follows only
         // children that open under its digest, which are the ones sealed
         // there, and a key's paths are disjoint, so no row is both a read's
         // node and beneath another's.
-        self.used[at] = true;
-        if self.rows[at].d.is_some_and(|got| got != d) {
+        self.placed[at] = true;
+        if self.rows[at].depth.is_some_and(|got| got != depth) {
             return Err(wrong("a row at the depth the chain gives it"));
         }
         let children = self.children(token)?;
@@ -1703,10 +1715,10 @@ impl<'k> Placing<'k> {
         );
         let row = &self.rows[at];
         let Opening { header, aad, aes } = *self.opening;
-        let opened = open_entry(aes, header, aad, &row.entry, row.j, &digest)?;
+        let opened = open_entry(aes, header, aad, &row.entry, row.slot, &digest)?;
         // The sealed root is the whole document, read only at `$`.
         if opened.whole.is_some()
-            && !matches!(under, Under::Path(path) if path.segments().is_empty())
+            && !matches!(expected, ExpectedSelector::OfPath(path) if path.segments().is_empty())
         {
             return Err(wrong("a node of the walked subtree"));
         }
@@ -1716,14 +1728,16 @@ impl<'k> Placing<'k> {
         let (label, opened) = take_label(opened);
         // The selector the chain gives this node: the read's path for the
         // node it named, its parent's path extended by its own label below.
-        let bytes = match under {
-            Under::Path(path) => {
+        let bytes = match expected {
+            ExpectedSelector::OfPath(path) => {
                 if !names(path, &label) {
                     return Err(refused());
                 }
                 path.protected_selector_bytes()
             }
-            Under::Node(parent) => child_selector_bytes(parent, &label).ok_or_else(refused)?,
+            ExpectedSelector::UnderParent(parent) => {
+                child_selector_bytes(parent, &label).ok_or_else(refused)?
+            }
         };
         if self.selectors.of(bytes.clone())? != row.entry.s {
             return Err(refused());
@@ -1735,7 +1749,8 @@ impl<'k> Placing<'k> {
             Kind::Object => {
                 let mut object = protected_object();
                 for (child, child_token) in children {
-                    let (value, child_label) = self.child(child, token, &child_token, &bytes, d)?;
+                    let (value, child_label) =
+                        self.child(child, token, &child_token, &bytes, depth)?;
                     let Label::Key(key) = child_label else {
                         return Err(shape("an object member"));
                     };
@@ -1746,7 +1761,8 @@ impl<'k> Placing<'k> {
             Kind::Array => {
                 let mut array = protected_array(children.len());
                 for (i, (child, child_token)) in children.into_iter().enumerate() {
-                    let (value, child_label) = self.child(child, token, &child_token, &bytes, d)?;
+                    let (value, child_label) =
+                        self.child(child, token, &child_token, &bytes, depth)?;
                     if !matches!(child_label, Label::Index(at) if at == i as u64) {
                         return Err(shape("an array element in order"));
                     }
@@ -1768,9 +1784,14 @@ impl<'k> Placing<'k> {
         parent_token: &Tag,
         child_token: &Tag,
         parent_bytes: &Protected<Vec<u8>>,
-        d: u32,
+        depth: u32,
     ) -> Result<(Protected<PlainJson>, Label), Error> {
-        let (value, label) = self.node(child, child_token, Under::Node(parent_bytes), d + 1)?;
+        let (value, label) = self.node(
+            child,
+            child_token,
+            ExpectedSelector::UnderParent(parent_bytes),
+            depth + 1,
+        )?;
         let s = self.rows[child].entry.s;
         if labelled_token(parent_token, &s, &label).as_ref() != Some(child_token) {
             return Err(wrong("a child under the rule its label names"));
@@ -1876,7 +1897,7 @@ fn open_fallback<'a, K>(
     let Some(root) = nodes.into_iter().next() else {
         return Pending::failed(cipher, shape("the sealed root"));
     };
-    let (request, aad) = match retrieval(&root.header, context) {
+    let (request, aad) = match key_retrieval(&root.header, context.into_context()) {
         Ok(parts) => parts,
         Err(error) => return Pending::failed(cipher, error),
     };
@@ -1888,7 +1909,7 @@ fn open_fallback<'a, K>(
             &root.header,
             &aad,
             &root.entry,
-            root.j,
+            root.slot,
             &cascade::no_children(),
         )?;
         let whole = opened.whole.ok_or_else(|| shape("a sealed root"))?;

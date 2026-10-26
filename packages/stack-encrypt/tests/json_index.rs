@@ -1078,7 +1078,7 @@ mod given_an_extracted_node {
         wire["i"] = json!({"t": "users", "c": "profile"});
         wire["v"] = json!(4);
         let back: JsonNode = serde_json::from_value(wire).unwrap();
-        assert_eq!(back.ordinal(), x as u64, "the node keeps its slot");
+        assert_eq!(back.slot(), x as u64, "the node keeps its slot");
         assert_eq!(
             cipher
                 .decrypt_as::<Value, JsonExtracted>(
