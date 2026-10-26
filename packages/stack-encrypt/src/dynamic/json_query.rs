@@ -9,8 +9,8 @@
 //!
 //! | operator | input | operand |
 //! |---|---|---|
-//! | `contains`, `contained_by` | `{"json"}`: a JSON needle | EQL: the needle's projection (`eql_v4.query_json`) |
-//! | `eq_at` | `{"path", "json"}`: a scalar at a path | EQL: the needle holding the scalar there |
+//! | `contains`, `contained_by` | `{"json"}`: a JSON document | EQL: the document's selector set (`eql_v4.query_json`) |
+//! | `eq_at` | `{"path", "json"}`: a scalar at a path | EQL: the selector set of the document holding the scalar there |
 //! | `lt_at`, `lte_at`, `gt_at`, `gte_at` | `{"path", "json"}`: a number or string at an ordered path | EQL: the path's selector and the leaf's ordering term (`eql_v4.query_json_leaf`) |
 //! | `between_at` | `{"path", "low", "high"}` | EQL, two of them: the low bound's then the high's |
 //! | `selector` | `{"path"}` | text: the selector `->` takes |
@@ -24,9 +24,13 @@
 //! `selector`): a selector reads every position as the wildcard, so the
 //! query would compare whichever element the database found first. A
 //! positional read is a `subtree` read. Equality at a wildcard path matches
-//! when any element matches; an ordering or `->` through one compares the
-//! first. Two `eq_at` predicates on one row need not hold of the same
-//! array element; one containment needle holding both does.
+//! when any element matches. `->` at a wildcard path, and an ordering
+//! written over it (`eql_v4.ord_term(col -> sel)`), see an unspecified
+//! element of the row, since entries are stored in a random order; an
+//! ordering over every element is written over all its matches
+//! (`json_tree_path_query`). Two `eq_at` predicates on one row need not
+//! hold of the same array element; one containment query of a document
+//! holding both does.
 //!
 //! # Reads
 //!
@@ -64,8 +68,8 @@ use crate::{KeysetCipher, Label, NonEmpty, Pending};
 /// The SQL type a JSON operand binds as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Binds {
-    /// The target's needle domain (`eql_v4.query_json`).
-    Needle,
+    /// The target's query domain (`eql_v4.query_json`).
+    Query,
     /// The target's leaf operand domain (`eql_v4.query_json_leaf`).
     Leaf,
     /// `text`.
@@ -80,7 +84,7 @@ pub(super) enum Binds {
 /// must be placed.
 pub(super) fn binds(op: OpSpec) -> Option<Binds> {
     match op {
-        OpSpec::Contains | OpSpec::ContainedBy | OpSpec::EqAt => Some(Binds::Needle),
+        OpSpec::Contains | OpSpec::ContainedBy | OpSpec::EqAt => Some(Binds::Query),
         OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt | OpSpec::BetweenAt => {
             Some(Binds::Leaf)
         }
@@ -96,11 +100,11 @@ pub(super) fn binds(op: OpSpec) -> Option<Binds> {
     }
 }
 
-/// The SQL type an operand of `binds` binds as for `target`: its needle
+/// The SQL type an operand of `binds` binds as for `target`: its query
 /// or leaf domain, which a resolver may not name, or text.
 pub(super) fn domain(target: &super::TargetDescriptor, binds: Binds) -> Option<String> {
     match binds {
-        Binds::Needle => target.query_sql_domain.clone(),
+        Binds::Query => target.query_sql_domain.clone(),
         Binds::Leaf => target.leaf_query_sql_domain.clone(),
         Binds::Text => Some("text".to_owned()),
         Binds::TextArray => Some("text[]".to_owned()),
@@ -162,7 +166,7 @@ fn json_reason(error: crate::json::JsonTextError) -> Reason {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NeedleInput {
+struct DocumentInput {
     json: JsonText,
 }
 
@@ -198,7 +202,7 @@ struct ReadInput {
 /// An operator's input, read from its frame and checked: everything
 /// [`derive`] would refuse before it derives anything.
 enum Input {
-    Needle(Parsed),
+    Document(Parsed),
     At(JsonPath, Parsed),
     Between(JsonPath, Parsed, Parsed),
     Path(JsonPath),
@@ -243,8 +247,8 @@ fn term(error: TermError) -> Error {
 /// Read and check an operator's input against the field's options.
 fn read_input(op: OpSpec, options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
     match op {
-        OpSpec::Contains | OpSpec::ContainedBy => Ok(Input::Needle(
-            read_frame::<NeedleInput>(input)?.json.parse()?,
+        OpSpec::Contains | OpSpec::ContainedBy => Ok(Input::Document(
+            read_frame::<DocumentInput>(input)?.json.parse()?,
         )),
         OpSpec::EqAt => read_eq_at(input),
         OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt => {
@@ -355,7 +359,7 @@ pub(super) fn derive<'a, K: 'static>(
 ) -> Result<Pending<'a, Operand, K>, Error> {
     let column = || NonEmpty::from(label.clone());
     Ok(match read_input(op, options, input)? {
-        Input::Needle(needle) => terms(keyset, options, label, needle.0.clone())
+        Input::Document(document) => terms(keyset, options, label, document.0.clone())
             .try_map(|terms| eql(&JsonQuery::of_terms(terms)).map(Operand::One)),
         Input::At(path, value) if op == OpSpec::EqAt => {
             terms(keyset, options, label, path.holding(value.0.clone()))
@@ -490,7 +494,9 @@ enum Opener {
 /// not parse, a wildcard that expands too far). A row that is not the one
 /// the read asked for fails the pending
 /// ([`crate::Error::JsonWrongEntry`]), as does a wildcard read of an array
-/// longer than the bound ([`crate::Error::JsonWildcardTruncated`]).
+/// longer than the bound ([`crate::Error::JsonWildcardTruncated`]). A
+/// `selector` entry that does not open alone, a container with members or
+/// an altered entry, is [`crate::Error::JsonNotALeaf`].
 pub(super) fn open<'a, K: 'static>(
     keyset: &'a KeysetCipher<'_, K>,
     label: &Label,

@@ -120,13 +120,13 @@ pub enum OpSpec {
     /// the field's match index fixes.
     Matches,
     /// `"contains"`: [`op::Contains`](crate::op::Contains), a stored
-    /// document containing a JSON needle (`@>`). Answered by the JSON index
+    /// document containing a JSON document (`@>`). Answered by the JSON index
     /// of a field that stores a document. The inputs of this and the
     /// operators below are named by [`OpSpec::input`]; [`query_term`]
     /// derives their operands and [`json_open`] opens their reads.
     Contains,
     /// `"contained_by"`: [`op::ContainedBy`](crate::op::ContainedBy), a
-    /// stored document contained by a JSON needle (`<@`).
+    /// stored document contained by a JSON document (`<@`).
     ContainedBy,
     /// `"eq_at"`: [`op::AtPath`](crate::op::AtPath)`(op::Eq)`, a scalar at
     /// a path.
@@ -1011,6 +1011,10 @@ pub fn check_json_open(
 /// ([`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)), as does a
 /// wildcard read of an array longer than its bound
 /// ([`Error::JsonWildcardTruncated`](crate::Error::JsonWildcardTruncated)).
+/// A `selector` entry that does not open alone, a container with members
+/// or an altered entry, fails it as
+/// [`Error::JsonNotALeaf`](crate::Error::JsonNotALeaf); a container is read
+/// with `subtree`.
 pub fn json_open<'a, K>(
     cipher: &'a KeysetCipher<'_, K>,
     plan: &Plan,

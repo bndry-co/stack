@@ -195,9 +195,10 @@ pub struct JsonOptions {
     /// (`$.scores[2]`) is refused, here and in an ordering query
     /// ([`TermError::JsonOrderingAtPosition`](crate::sem::TermError::JsonOrderingAtPosition)):
     /// an ordering compares the leaf `->` extracts by the path's selector,
-    /// which reads every position as the wildcard, so it reaches the first
-    /// element at the path and never the one a position names. An ordering
-    /// asked at a path no entry here covers is refused
+    /// which reads every position as the wildcard, so it reaches an
+    /// unspecified element at the path (entries are stored in a random
+    /// order) and never the one a position names. An ordering asked at a
+    /// path no entry here covers is refused
     /// ([`TermError::JsonPathNotOrdered`](crate::sem::TermError::JsonPathNotOrdered)).
     pub ordered: BTreeSet<JsonPath>,
 }

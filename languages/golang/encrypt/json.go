@@ -21,7 +21,11 @@ import (
 // the field's declaration and this cipher's keyset, and checks every row
 // against it; the rows never say which path they are for. A row that is not
 // one the read asked for is [ErrEncoding]; a wildcard read of an array
-// longer than its bound is too. What comes back is, per group, the JSON
+// longer than its bound is too, and so is a selector entry that does not
+// open alone: a container with members, whose entry commits to children
+// col -> does not return, or an altered entry, which the client cannot
+// tell apart (code stack_encrypt::json_not_a_leaf). Read a container with a
+// subtree read. What comes back is, per group, the JSON
 // text of each value the read reached, in document order: plaintext, which
 // the caller owns. One ZeroKMS request for every group. For generated code.
 //

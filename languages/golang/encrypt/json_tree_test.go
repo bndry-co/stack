@@ -201,7 +201,7 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
-	sealed, err := cipher.Seal(ctx, jsonPlan(), []record.Source{{"profile": []byte(`{"name":"Alice","age":34}`)}})
+	sealed, err := cipher.Seal(ctx, jsonPlan(), []record.Source{{"profile": []byte(`{"name":"Alice","age":34,"visits":[{"at":3}]}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,6 +245,16 @@ func TestJSONSelectorReadsOpenAgainstTheirRequest(t *testing.T) {
 	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.age"}}, [][][]byte{{name}})
 	if !errors.Is(err, encrypt.ErrEncoding) {
 		t.Fatalf("another path's entry: %v", err)
+	}
+	// col -> on a container with members returns its entry alone, which
+	// commits to children the read does not hold: it does not open, and
+	// the refusal is ErrEncoding (a container or an altered entry, the
+	// client cannot tell which), never ErrAuthentication.
+	visits := extract(selector("$.visits"))
+	_, err = cipher.JSONOpen(ctx, jsonPlan(), "profile", vcvalue.Object{{Key: "operation", Value: "selector"}, {Key: "path", Value: "$.visits"}}, [][][]byte{{visits}})
+	var d *encrypt.Diagnostic
+	if !errors.Is(err, encrypt.ErrEncoding) || errors.Is(err, encrypt.ErrAuthentication) || !errors.As(err, &d) || d.Code != "stack_encrypt::json_not_a_leaf" {
+		t.Fatalf("a container through ->: %v", err)
 	}
 }
 

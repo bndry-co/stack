@@ -27,7 +27,7 @@ use serde_json::{json, Value};
 use stack_encrypt::dynamic::{
     self, record, Scope, TargetDescriptor, TargetError, TargetResolver, ValueFrame,
 };
-use stack_encrypt::json::{JsonDocument, JsonOptions};
+use stack_encrypt::json::{JsonDocument, JsonOptions, JsonQuery};
 use stack_encrypt::target::{ExpectedContext, Layout};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
 
@@ -527,6 +527,13 @@ fn one(term: &dynamic::QueryTerm) -> Value {
     serde_json::from_slice(bytes).unwrap()
 }
 
+/// A containment or equality operand, read back as the engine's
+/// `JsonQuery`, which compares as sets: each derivation sends its selector
+/// set in a random order of its own.
+fn containment(operand: Value) -> JsonQuery {
+    serde_json::from_value(operand).unwrap()
+}
+
 /// The operators a document field answers, with the input each takes:
 /// the orderings at a path only when the field orders a path.
 #[test]
@@ -585,7 +592,8 @@ fn a_document_field_answers_the_json_operators() {
 }
 
 /// Every operand the data path derives is the typed chain's, in the EQL
-/// wire form, bound as the domain the target names for it.
+/// wire form, bound as the domain the target names for it. A containment
+/// or equality operand is the same selector set, in its own random order.
 #[tokio::test]
 async fn every_operand_is_the_typed_chains() {
     use stack_encrypt::op;
@@ -593,32 +601,32 @@ async fn every_operand_is_the_typed_chains() {
     let keyset = cipher.default_keyset();
     let plan = plan();
     let typed = typed_plan();
-    let needle = json!({"visits": [{"at": 3}], "name": "Alice"});
+    let document = json!({"visits": [{"at": 3}], "name": "Alice"});
 
     for (operator, typed_op) in [("contains", true), ("contained_by", false)] {
         let term = data_term(
             &keyset,
             &plan,
             operator,
-            &[("json", json!(needle.to_string()))],
+            &[("json", json!(document.to_string()))],
         )
         .await;
         let typed = if typed_op {
             cipher
-                .query(op::Contains, &needle)
+                .query(op::Contains, &document)
                 .on(&typed)
                 .await
                 .unwrap()
         } else {
             cipher
-                .query(op::ContainedBy, &needle)
+                .query(op::ContainedBy, &document)
                 .on(&typed)
                 .await
                 .unwrap()
         };
         assert_eq!(
-            one(&term),
-            serde_json::to_value(&typed).unwrap(),
+            containment(one(&term)),
+            containment(serde_json::to_value(&typed).unwrap()),
             "{operator}"
         );
         assert_eq!(term.domain(), Some("eql_v4.query_json"));
@@ -637,7 +645,10 @@ async fn every_operand_is_the_typed_chains() {
         .on(&typed)
         .await
         .unwrap();
-    assert_eq!(one(&eq), serde_json::to_value(&typed_eq).unwrap());
+    assert_eq!(
+        containment(one(&eq)),
+        containment(serde_json::to_value(&typed_eq).unwrap())
+    );
     assert_eq!(eq.domain(), Some("eql_v4.query_json"));
 
     let lt = data_term(
@@ -876,7 +887,8 @@ fn subtree_rows(doc: &stack_encrypt::json::JsonDocument, tokens: &[String]) -> V
         .collect()
 }
 
-/// The entry `doc -> selector` returns: the first entry carrying it.
+/// The entry `doc -> selector` returns: the first entry carrying it in
+/// stored order.
 fn extracted_row(doc: &stack_encrypt::json::JsonDocument, selector: &str) -> Option<String> {
     use base64::Engine;
     let selector: [u8; 16] = base64::engine::general_purpose::STANDARD
@@ -988,6 +1000,27 @@ async fn reads_open_against_the_request_that_prepared_them() {
         ages,
         [vec![json!(34)], vec![]],
         "absence is no value, not null"
+    );
+
+    // `->` on a container with members returns its entry alone, which
+    // commits to children the read does not return: it does not open, and
+    // the refusal names that cause and an altered entry, claiming neither.
+    // A container is read with `subtree`.
+    let visits = data_term(&keyset, &plan, "selector", &[("path", json!("$.visits"))]).await;
+    let dynamic::Operand::Text(visits) = visits.operand() else {
+        panic!()
+    };
+    let container = open(
+        &keyset,
+        &plan,
+        json!({"operation": "selector", "path": "$.visits"}),
+        vec![extracted_row(&stored[0], visits).into_iter().collect()],
+    )
+    .await;
+    assert!(
+        matches!(container, Err(stack_encrypt::Error::JsonNotALeaf)),
+        "{:?}",
+        container.err()
     );
 
     // A wildcard read: every element's `at` below the bound, per row.
