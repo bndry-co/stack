@@ -71,13 +71,20 @@ Three things stay outside it, by design, as they were before the cascade:
   read the database answers with fewer whole subtrees, or none, opens to
   what it returned.
 
+## Consequences
 
 - **A typed open separates a failed leaf from a refused shape.** A leaf
   that does not open (wrong key, wrong context, altered bytes) is
   `Error::Aead`. A value whose every leaf opened but whose type or shape the
   target refuses, including a container missing a field the target needs,
   is a shape mismatch: `Error::OpenedType`, not `Aead`. The Go guest maps
-  them to `STATUS_AUTH` and `STATUS_ENCODING`.
+  them to `STATUS_AUTH` and `STATUS_ENCODING`. One case cannot be
+  separated before the open: a JSON index entry returned by `->` that does
+  not open alone is either a container with children, whose ciphertext is
+  sealed over children `->` does not return, or an altered entry, and
+  nothing outside the ciphertext says which. That is `Error::JsonNotALeaf`,
+  which names both causes and claims neither, and maps to
+  `STATUS_ENCODING`.
 - **Review findings of these kinds are not defects.** `AGENTS.md` lists
   them under "Review guidelines", and `.github/copilot-instructions.md`
   repeats them. A finding that a *leaf* is not bound to its context, key,

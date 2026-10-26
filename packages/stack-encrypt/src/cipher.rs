@@ -217,6 +217,21 @@ pub enum Error {
         help("A wildcard read expands to the positions below its bound and fails when an array is longer, so it never returns part of the answer. Derive the key with a larger bound (`json_subtree_key_with_bound`), or read the array itself.")
     )]
     JsonWildcardTruncated { bound: u32 },
+    /// The JSON index entry `->` returned did not open on its own. An entry
+    /// opens alone only if it is a scalar, an empty container or the sealed
+    /// root: a container with children is sealed over its children's
+    /// ciphertexts, which `->` does not return. So the path named a container
+    /// with children, which is read with a subtree read
+    /// ([`KeysetCipher::json_subtree_key`](crate::KeysetCipher::json_subtree_key)),
+    /// or the entry was altered, or sealed under another key or column. The
+    /// client cannot tell which before the entry opens, so this names both
+    /// and claims neither.
+    #[error("the JSON index entry at the path did not open on its own")]
+    #[diagnostic(
+        code(stack_encrypt::json_not_a_leaf),
+        help("If the path names an object or an array with members, read it with a subtree read (`json_subtree_key`): `->` returns one entry, and a container's entry is sealed over its children. If the path names a scalar, the entry was altered, or sealed under another key or column.")
+    )]
+    JsonNotALeaf,
     /// ZeroKMS returned a different number of keys than were requested.
     #[error("expected {expected} data keys from ZeroKMS but received {received}")]
     #[diagnostic(code(stack_encrypt::key_count_mismatch))]
@@ -436,6 +451,7 @@ impl crate::ErrorPayload for Error {
             #[cfg(not(feature = "http"))]
             Self::Config(_) => serde_json::Map::new(),
             Self::Aead
+            | Self::JsonNotALeaf
             | Self::Other(_)
             | Self::UnsupportedShape
             | Self::ResponseShape

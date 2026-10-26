@@ -1023,7 +1023,7 @@ mod given_an_extracted_node {
             fixture(),
             "the sealed root is the document"
         );
-        assertions::refused_as_tampered(
+        assertions::refused_as_not_a_leaf(
             &scalar("$.nested").await,
             "a container is sealed over its children's tags and does not open alone",
         );
@@ -1577,13 +1577,15 @@ mod given_a_tampered_document {
             .await;
         assertions::refused_as_tampered(&wrong_context, "another column");
 
-        // A node lifted out of its document fails under another slot.
+        // A node lifted out of its document fails under another slot. Through
+        // `->` the refusal cannot be told from a container's, so it is
+        // `JsonNotALeaf`, which names both.
         let sealed = seal(&cipher, &value).await;
         let a = at(&cipher, &sealed, "$.a").await;
         let mut lifted = serde_json::to_value(sealed.node(a).unwrap()).unwrap();
         lifted["j"] = json!(3 - a);
         let lifted: JsonNode = serde_json::from_value(lifted).unwrap();
-        assertions::refused_as_tampered(
+        assertions::refused_as_not_a_leaf(
             &cipher
                 .decrypt_as::<Value, JsonExtracted>(extracted(&cipher, "$.a", lifted).await, aead())
                 .await,
@@ -3072,6 +3074,15 @@ mod assertions {
         assert!(
             matches!(result, Err(Error::Aead)),
             "{what}: should fail authentication, got {result:?}"
+        );
+    }
+
+    /// `result` is the refusal of an entry `->` returned that did not open
+    /// alone: a container with children, or an altered entry.
+    pub(super) fn refused_as_not_a_leaf<T: Debug>(result: &Result<T, Error>, what: &str) {
+        assert!(
+            matches!(result, Err(Error::JsonNotALeaf)),
+            "{what}: should be refused as not a leaf, got {result:?}"
         );
     }
 

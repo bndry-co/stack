@@ -1281,9 +1281,11 @@ fn open_whole_chain(
         &root.token_bytes().unwrap_or_default(),
     )?;
     // A document whose chain the root's token does not enter was sealed
-    // under another column or keyset, or its tags were rewritten. Opening
-    // its first entry lets the cipher say which, as it did before the chain
-    // was walked, rather than reporting rows no read reached.
+    // under another column or keyset, or its tags were rewritten. Its first
+    // entry is opened under the empty digest so that the cipher refuses it
+    // as it refuses a sealed root of another column: a root with children
+    // fails that open whichever the cause, and only a scalar or empty
+    // root reaches the shape error below.
     if doc.find(&token).is_none() {
         let first = doc
             .entries
@@ -1345,10 +1347,12 @@ fn wrong(expected: &'static str) -> Error {
 /// The entry opens under the digest of no children, which is what a
 /// scalar, an empty container and the sealed root are sealed under. A
 /// container with children is sealed over its children's tags, which `->`
-/// does not return, so it does not open alone: it is refused by the cipher
-/// with [`Error::Aead`], and its value opens through [`JsonSubtree`]. An
-/// empty container opens and holds no value of its own:
-/// [`Error::OpenedType`].
+/// does not return, so it does not open alone, and nothing outside the
+/// ciphertext says whether an entry is one. So an entry the cipher refuses
+/// here is [`Error::JsonNotALeaf`], which names both causes, a container
+/// with children (read it through [`JsonSubtree`]) and an altered entry,
+/// and claims neither. An empty container opens and holds no value of its
+/// own: [`Error::OpenedType`].
 ///
 /// At a wildcard path (a path with an array step, whose elements all share
 /// one selector, at any depth: every element under `$.a[*]`) the entry `->`
@@ -1381,7 +1385,11 @@ impl DecryptInto<Value> for JsonExtracted {
                     &node.entry,
                     node.slot,
                     &cascade::no_children(),
-                )?;
+                )
+                .map_err(|error| match error {
+                    Error::Aead => Error::JsonNotALeaf,
+                    other => other,
+                })?;
                 opened
                     .whole
                     .or(opened.scalar)

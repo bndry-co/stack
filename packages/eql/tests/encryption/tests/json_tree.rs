@@ -2148,7 +2148,10 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
     .unwrap();
     let deep = selector_of("$.nested.deep");
     let moved = extracted(&deep, arrow(&mut db, 2, &deep));
-    assert!(matches!(moved, Err(Error::Aead)), "`->`: {moved:?}");
+    assert!(
+        matches!(moved, Err(Error::JsonNotALeaf)),
+        "`->`: a moved entry cannot be told from a container, so both are named: {moved:?}"
+    );
     let moved = opened(&nested, read(&mut db, 2, &nested));
     assert!(matches!(moved, Err(Error::Aead)), "the read: {moved:?}");
 }

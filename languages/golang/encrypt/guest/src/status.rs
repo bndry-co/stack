@@ -144,6 +144,10 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // one it was opened as: sealed as that type, not tampered with, so
         // the caller's input and not STATUS_AUTH.
         stack_encrypt::Error::OpenedType { .. } => STATUS_ENCODING,
+        // The entry `->` returned did not open alone: a container with
+        // children asked for as a scalar, or an altered entry. The client
+        // cannot tell which, so neither STATUS_AUTH nor a claim of either.
+        stack_encrypt::Error::JsonNotALeaf => STATUS_ENCODING,
         _ => STATUS_INTERNAL,
     }
 }
@@ -304,6 +308,10 @@ mod tests {
         assert_eq!(status_for_error(&stack_encrypt::Error::Aead), STATUS_AUTH);
         assert_eq!(
             status_for_error(&stack_encrypt::Error::OpenedType { expected: "i32" }),
+            STATUS_ENCODING
+        );
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::JsonNotALeaf),
             STATUS_ENCODING
         );
         assert_eq!(

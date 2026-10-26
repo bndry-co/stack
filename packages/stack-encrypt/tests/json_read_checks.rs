@@ -261,7 +261,7 @@ mod given_the_entry_arrow_returned {
         wire["s"] = json!(hello.to_string());
         let relabelled: JsonNode = serde_json::from_value(wire).unwrap();
         let opened = open_extracted(&cipher, hello.open(relabelled)).await;
-        assert!(matches!(opened, Err(Error::Aead)), "{opened:?}");
+        assert!(matches!(opened, Err(Error::JsonNotALeaf)), "{opened:?}");
     }
 
     #[tokio::test]
@@ -277,8 +277,10 @@ mod given_the_entry_arrow_returned {
     }
 
     /// A container's entry is sealed over its children's tags, which `->`
-    /// does not return: alone it does not open, and the cipher refuses it.
-    /// An empty container opens, and holds no value of its own.
+    /// does not return: alone it does not open, and since nothing outside
+    /// the ciphertext says it is a container, the refusal names that and
+    /// tampering as the two causes rather than claiming one. An empty
+    /// container opens, and holds no value of its own.
     #[tokio::test]
     async fn a_container_does_not_open_alone() {
         let (cipher, _) = cipher().await;
@@ -286,7 +288,7 @@ mod given_the_entry_arrow_returned {
         let full = selector(&cipher, "$.full").await;
         let at = slot(&cipher, &doc, "$.full").await;
         let opened = open_extracted(&cipher, full.open(row(&doc, at, None))).await;
-        assert!(matches!(opened, Err(Error::Aead)), "{opened:?}");
+        assert!(matches!(opened, Err(Error::JsonNotALeaf)), "{opened:?}");
         let empty = selector(&cipher, "$.empty").await;
         let at = slot(&cipher, &doc, "$.empty").await;
         let opened = open_extracted(&cipher, empty.open(row(&doc, at, None))).await;

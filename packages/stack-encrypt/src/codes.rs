@@ -53,6 +53,7 @@ mod tests {
                 expected: "the entry at the path asked for",
             },
             Error::JsonWildcardTruncated { .. } => Error::JsonWildcardTruncated { bound: 64 },
+            Error::JsonNotALeaf => Error::JsonNotALeaf,
             Error::KeyCountMismatch { .. } => Error::KeyCountMismatch {
                 expected: 2,
                 received: 1,
