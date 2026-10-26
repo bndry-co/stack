@@ -150,7 +150,11 @@ pub fn wipe_value(value: &mut serde_json::Value) {
     plain::wipe(value);
 }
 
-pub(crate) use derive::{seal_pending, terms_pending, MAX_DEPTH};
+/// The deepest a document nests: the data plan refuses a path with more
+/// steps, which names no node.
+#[cfg(feature = "dynamic")]
+pub(crate) use derive::MAX_DEPTH;
+pub(crate) use derive::{seal_pending, terms_pending};
 pub(crate) use plain::PlainJson;
 pub(crate) use shuffle::Randomness;
 

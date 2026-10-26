@@ -808,7 +808,7 @@ async fn rows_that_are_not_the_reads_are_refused() {
         &plan,
         "profile",
         json_frame(&json!({"operation": "selector", "path": "$.visits"})),
-        frame(&vec![rows]),
+        frame(vec![rows]),
         &Documents,
     );
     assert_eq!(
