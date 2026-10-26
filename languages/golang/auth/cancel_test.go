@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,12 +33,9 @@ func tokenServer(t *testing.T, hold *atomic.Bool) *httptest.Server {
 	// cancellation, for a bounded time, before the server is closed (which
 	// would end the request's context itself and hide a request the client
 	// never cancelled).
-	var held sync.WaitGroup
 	done := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if hold.Load() {
-			held.Add(1)
-			defer held.Done()
 			// The server notices a client that hung up only once the body
 			// is read.
 			_, _ = io.Copy(io.Discard, r.Body)
@@ -60,7 +56,11 @@ func tokenServer(t *testing.T, hold *atomic.Bool) *httptest.Server {
 	t.Cleanup(server.Close)
 	t.Cleanup(func() {
 		close(done)
-		held.Wait()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Config.Shutdown(ctx); err != nil {
+			t.Errorf("waiting for token requests to end: %v", err)
+		}
 	})
 	jwt = testJWT(t, server.URL)
 	return server
@@ -75,7 +75,7 @@ func TestATokenFetchCancelledFailsOnlyItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestATokenFetchCancelledFailsOnlyItself(t *testing.T) {
 	}
 	hold.Store(false)
 	// The next Token waits for the abandoned one to finish.
-	if token, err := strategy.Token(context.Background()); err != nil || token == "" {
+	if token, err := strategy.Token(context.Background()); err != nil || token.Bearer() == "" {
 		t.Fatalf("the next Token: %q, %v", token, err)
 	}
 	if profile.root.closed || profile.root.inst.module.IsClosed() {
@@ -109,7 +109,7 @@ func TestAnAccessKeyExchangeEndsWithItsCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestARefreshAnsweredAfterItsCallerGaveUpIsKept(t *testing.T) {
 		}
 		_, _ = io.Copy(io.Discard, r.Body)
 		time.Sleep(150 * time.Millisecond)
-		fmt.Fprint(w, `{"access_token":"fresh","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`)
+		fmt.Fprintf(w, `{"access_token":%q,"token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`, deviceJWT(t, "http://"+r.Host, "fresh"))
 		close(answered)
 	}))
 	t.Cleanup(server.Close)
@@ -178,7 +178,7 @@ func TestARefreshAnsweredAfterItsCallerGaveUpIsKept(t *testing.T) {
 		t.Fatal("the cancelled Token waited for the service's answer")
 	default:
 	}
-	if token, err := strategy.Token(context.Background()); err != nil || token != "fresh" {
+	if token, err := strategy.Token(context.Background()); err != nil || token.Bearer() != deviceJWT(t, server.URL, "fresh") {
 		t.Fatalf("the next Token: %q, %v, want the refreshed token", token, err)
 	}
 	if n := requests.Load(); n != 1 {
@@ -208,7 +208,7 @@ func TestARefreshThatSucceedsAfterItsContextEndsFailsWithIt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		cancel()
-		fmt.Fprint(w, `{"access_token":"fresh","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`)
+		fmt.Fprintf(w, `{"access_token":%q,"token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`, deviceJWT(t, "http://"+r.Host, "fresh"))
 	}))
 	t.Cleanup(server.Close)
 	profile, err := Open(context.Background(), dir)
@@ -230,7 +230,7 @@ func TestARefreshThatSucceedsAfterItsContextEndsFailsWithIt(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || out != nil {
 		t.Fatalf("refresh: %q, %v, want no token and context.Canceled", out, err)
 	}
-	if token, err := strategy.Token(context.Background()); err != nil || token != "fresh" {
+	if token, err := strategy.Token(context.Background()); err != nil || token.Bearer() != deviceJWT(t, server.URL, "fresh") {
 		t.Fatalf("the next Token: %q, %v, want the refreshed token", token, err)
 	}
 }
@@ -244,7 +244,7 @@ func TestATokenRequestWhoseContextEndsInTheQueueNeverReachesTheGuest(t *testing.
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestATokenRequestWhoseContextEndsInTheQueueNeverReachesTheGuest(t *testing.
 			<-released
 		})
 	}
-	if token, err := strategy.Token(context.Background()); err != nil || token == "" {
+	if token, err := strategy.Token(context.Background()); err != nil || token.Bearer() == "" {
 		t.Fatalf("the next Token: %q, %v", token, err)
 	}
 }
@@ -286,7 +286,7 @@ func TestATokenFetchThatRunsOnAfterItsContextEndsClosesTheProfile(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.example.com"))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL("https://cts.example.com"))
 	if err != nil {
 		t.Fatal(err)
 	}

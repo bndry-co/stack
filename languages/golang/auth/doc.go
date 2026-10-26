@@ -39,6 +39,15 @@
 // [OAuth2TokenSource] adapts an existing golang.org/x/oauth2.TokenSource
 // into the OIDC provider interface.
 //
+// [Strategy.Token] returns a [ServiceToken] containing a bearer and its decoded
+// metadata, using Rust stack-auth's existing client contract. JWT signatures
+// are not verified locally; CTS and ZeroKMS authorize requests.
+// [WithAcceptedRoles] optionally checks decoded roles in Go to catch wrong
+// credentials. It is a configuration check, not proof of authorization.
+// The strategy's CTS configuration and credential store must be trusted.
+// [ProfileStore.AccessKey] consumes an opaque [AccessKey] from [NewAccessKey],
+// wiping its owned bytes even on failure.
+//
 // A call whose context ends, [Strategy.Token] included, fails with the
 // context's error and leaves the store and its strategies open: a request
 // cancelled while its token is exchanged or refreshed does not stop the
