@@ -538,6 +538,12 @@ fn malformed_inputs_are_refused_with_their_reason() {
         ),
         (OpSpec::Subtree, json!({"path": "$.visits[1]"})),
         (OpSpec::ChildCount, json!({"path": "$.visits"})),
+        // As many steps as a document has levels: the deepest path that
+        // can name a node is not refused as too deep.
+        (
+            OpSpec::Selector,
+            json!({"path": format!("${}", ".a".repeat(127))}),
+        ),
     ] {
         assert!(
             check(operator, input.clone()).is_ok(),
