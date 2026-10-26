@@ -339,6 +339,25 @@ mod tests {
         assert_eq!(cut("Hi", Tokenizer::Standard, false), vec!["Hi"]);
     }
 
+    /// Tokens are plaintext: zeroizing them wipes and drops both kinds,
+    /// which is what a `Zeroizing<Tokens>` does when a query is dropped.
+    #[test]
+    fn zeroizing_tokens_clears_both_kinds() {
+        let mut tokens = tokenize(
+            "Mike Ng",
+            &MatchOptions {
+                short_words: true,
+                ..MatchOptions::default()
+            },
+        );
+        assert!(
+            !tokens.tokenizer.is_empty() && !tokens.short_words.is_empty(),
+            "both kinds are cut before"
+        );
+        tokens.zeroize();
+        assert!(tokens.is_empty(), "no token of either kind is left after");
+    }
+
     mod given_short_words {
         use super::*;
 
