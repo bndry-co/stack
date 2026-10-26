@@ -62,9 +62,12 @@
 //! client derived for the read: [`JsonSelector::open`] for the one entry
 //! `->` returns ([`JsonExtracted`]), [`JsonSubtreeKey::open`] for the rows
 //! of a walk ([`JsonSubtree`]). Each checks that the rows are the ones the
-//! read asked for, which their ciphertexts alone do not say: an entry is
-//! sealed under its own selector and position, so any entry of the row
-//! opens.
+//! read asked for. Every entry's AAD binds its selector, the slot it is
+//! stored at and the digest of its children's AEAD tags (the cascade), so
+//! the rows beneath the node a read names open only as they were sealed;
+//! the node itself is checked against the path the client derived, since
+//! nothing above it is read. The entries are stored in a random order, root
+//! first, and no check reads a slot as a position in the document.
 //!
 //! # Where this deviates from the design
 //!
@@ -78,9 +81,10 @@
 //!   ciphertext), so there is one leaf cipher in the crate and no second
 //!   AES-GCM call site. Uniqueness under one document key is probabilistic
 //!   rather than structural: at `N` entries the collision probability is
-//!   `N² / 2^97`, negligible for any document. The ordinal still binds the
-//!   entry to its place through the AAD, so a moved or reordered entry fails
-//!   to open as the design requires. The cost is twelve bytes per entry.
+//!   `N² / 2^97`, negligible for any document. The AAD still binds the
+//!   entry to its slot, and its parent's AAD to its tag, so a moved or
+//!   reordered entry fails to open as the design requires. The cost is
+//!   twelve bytes per entry.
 //! - **Tokens chain by selector, and nothing stores a token.** The design
 //!   wraps each child's label-derived token under its parent's (`w`) and
 //!   stores the ordinal (`o`) so the server can find and unmask it. Here a
@@ -515,7 +519,9 @@ impl JsonDocument {
 
     /// The rows the server's read returns for `tokens` with no budget:
     /// for each token in order, the node it names at depth `0` and every
-    /// entry beneath it with its depth below that node, in document order.
+    /// entry beneath it with its depth below that node, each node followed
+    /// by its children in ordinal order. (The SQL returns the rows of a
+    /// token by slot instead, which the client does not rely on.)
     /// A token that names no node yields nothing. What
     /// `json_tree_subtree(doc, tokens, 0)` returns.
     ///
@@ -597,8 +603,9 @@ where
 }
 
 /// One entry as an extraction returns it: the entry, the document's header
-/// grafted beside it, and the entry's ordinal `j` in the document, which
-/// its ciphertext is bound to. What `->` and the walk return per row.
+/// grafted beside it, and the slot `j` the entry is stored at in the
+/// document, which its ciphertext is bound to. What `->` and the walk
+/// return per row.
 ///
 /// A row is the database's word, so it does not open on its own: the
 /// selector the client derived opens the entry `->` returned
@@ -626,7 +633,9 @@ impl JsonNode {
     pub fn header(&self) -> &JsonHeader {
         &self.header
     }
-    /// The entry's ordinal in the document.
+    /// The slot the entry is stored at in the document, `j` on the wire.
+    /// The stored order is random, so it is not the node's place in the
+    /// document.
     pub fn ordinal(&self) -> u64 {
         self.j
     }
