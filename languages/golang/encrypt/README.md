@@ -595,7 +595,9 @@ column.
 
 `JsonSearch` stores a whole JSON document in one `public.eql_v4_json_search`
 column, from a `json.RawMessage` field (`stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"`;
-see the stashgen README). One entry per node is encrypted, so the database
+see the stashgen README). Unlike the types above, a type defined over
+`json.RawMessage` (`type Doc json.RawMessage`) is refused; an alias of it
+(`type Doc = json.RawMessage`) is accepted. One entry per node is encrypted, so the database
 can test containment, equality and ordering at a path, return one node with
 `->`, and walk a subtree, without decrypting:
 

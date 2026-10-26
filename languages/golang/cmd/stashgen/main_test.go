@@ -302,7 +302,7 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 	}
 	_ = checker.Close()
 	source := func(fields string) string {
-		return "package users\n\nimport \"encoding/json\"\n\nvar _ json.RawMessage\n\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n" + fields + "\n}\n"
+		return "package users\n\nimport \"encoding/json\"\n\ntype Doc json.RawMessage\n\ntype DocAlias = json.RawMessage\n\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n" + fields + "\n}\n"
 	}
 	generate := func(fields string) (string, string, int) {
 		dir := writeModule(t, map[string]string{"model.go": source(fields)})
@@ -347,6 +347,12 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 			t.Errorf("the generated file lacks %q", want)
 		}
 	}
+	// An alias of json.RawMessage is the type itself, and is a document; a
+	// type defined over it is refused below.
+	written, stderr, code = generate("\tProfile DocAlias `stash:\"profile,encrypt_into=JsonSearch\"`")
+	if code != 0 || !strings.Contains(written, "Profile eql.JSONSearch") {
+		t.Fatalf("an alias of json.RawMessage: exit %d\n%s", code, stderr)
+	}
 	// An engine that answers no ordering on a field whose tag orders paths
 	// disagrees with the generator: refused by name, not written as a field
 	// with no At.
@@ -371,6 +377,7 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 		{"two paths, one accessor", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.a_b;$.aB)\"`", "both name the accessor At.AB"},
 		{"the same ordered path twice", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.a;$.a)\"`", "the ordered path $.a is given twice"},
 		{"a path with no accessor name", "\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.__)\"`", "no Go accessor name"},
+		{"a type defined over json.RawMessage", "\tProfile Doc `stash:\"profile,encrypt_into=JsonSearch\"`", "Customer.Profile: JsonSearch seals a json document: declare the field json.RawMessage"},
 		{"a string into a document", "\tProfile string `stash:\"profile,encrypt_into=JsonSearch\"`", "JsonSearch seals a json"},
 		{"options on a type that takes none", "\tEmail string `stash:\"email,encrypt_into=TextEq(ordered=$.a)\"`", "the engine refuses the declaration"},
 	} {

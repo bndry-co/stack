@@ -118,6 +118,7 @@ The field holds the document's JSON text; the engine parses it, so an object tha
 Values come back as JSON text holding the same values; key order and the spelling of numbers are not kept.
 A `*json.RawMessage` field is optional and must say `null=sql`: a document has no fixed length to hide a missing one behind. A non-nil pointer to `null` is a stored JSON `null`.
 A `json.RawMessage` sealed any other way (`encrypt`, `index=equality`) is bytes, as any type defined over `[]byte` is.
+`JsonSearch` takes `json.RawMessage` itself, or an alias of it (`type Doc = json.RawMessage`), and refuses a type defined over it (`type Doc json.RawMessage`): `stashgen` knows a document by the `json.RawMessage` type, where a scalar type is accepted with any type defined over it.
 
 The type takes options in parentheses: `ordered=` names the paths whose numbers and strings carry an ordering term, separated by `;`, and `sealed_root=false` turns off the sealed root (on by default).
 `encrypt_into=JsonSearch(ordered=$.age;$.visits[*].at)` orders two paths.
