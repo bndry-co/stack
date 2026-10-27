@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
+
+	"github.com/cipherstash/stack/languages/golang/control/internal/cts"
 )
 
 // Membership is a user's role in a workspace, as returned by listing memberships.
@@ -31,33 +32,48 @@ type CreatedMembership struct {
 }
 
 func (c *Client) CreateMembership(ctx context.Context, opts CreateMembershipOptions) (CreatedMembership, error) {
-	var out CreatedMembership
-	if err := c.request(ctx, "cts", http.MethodPost, "/api/memberships", opts, &out); err != nil {
+	input := cts.CreateMembershipRequest{UserId: opts.UserID}
+	if opts.Role != "" {
+		role := cts.Role(opts.Role)
+		input.Role = &role
+	}
+
+	var out cts.CreateMembershipResponse
+	if err := c.request(ctx, "cts", func(endpoint string) (*http.Request, error) {
+		return cts.NewCreateMembershipRequest(endpoint, &cts.CreateMembershipParams{}, input)
+	}, &out); err != nil {
 		return CreatedMembership{}, err
 	}
 
-	if out.ID == "" || out.WorkspaceID == "" || out.Subject == "" {
+	if out.Id == "" || out.WorkspaceId == "" || out.Sub == "" {
 		return CreatedMembership{}, fmt.Errorf("%w: incomplete create-membership response", ErrResponse)
 	}
 
-	return out, nil
+	return CreatedMembership{ID: out.Id, WorkspaceID: out.WorkspaceId, Subject: out.Sub}, nil
 }
 
 func (c *Client) ListMemberships(ctx context.Context) ([]Membership, error) {
-	var out []Membership
-	if err := c.request(ctx, "cts", http.MethodGet, "/api/memberships", nil, &out); err != nil {
+	var out cts.ListMembershipsResponse
+	if err := c.request(ctx, "cts", func(endpoint string) (*http.Request, error) {
+		return cts.NewListMembershipsRequest(endpoint, &cts.ListMembershipsParams{})
+	}, &out); err != nil {
 		return nil, err
 	}
 
+	memberships := make([]Membership, 0, len(out))
 	for _, member := range out {
-		if member.ID == "" || member.WorkspaceID == "" || member.Subject == "" {
+		if member.Id == "" || member.WorkspaceId == "" || member.Sub == "" {
 			return nil, fmt.Errorf("%w: missing membership identity", ErrResponse)
 		}
+
+		memberships = append(memberships, Membership{ID: member.Id, WorkspaceID: member.WorkspaceId, Subject: member.Sub, Role: member.Role})
 	}
 
-	return out, nil
+	return memberships, nil
 }
 
 func (c *Client) DeleteMembership(ctx context.Context, id string) error {
-	return c.request(ctx, "cts", http.MethodDelete, "/api/memberships/"+url.PathEscape(id), nil, nil)
+	return c.request(ctx, "cts", func(endpoint string) (*http.Request, error) {
+		return cts.NewDeleteMembershipRequest(endpoint, id, &cts.DeleteMembershipParams{})
+	}, nil)
 }

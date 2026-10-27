@@ -113,7 +113,7 @@ const (
 	requestTimeout   = 30 * time.Second
 )
 
-func (c *Client) request(ctx context.Context, service, method, path string, input, output any) error {
+func (c *Client) request(ctx context.Context, service string, build func(string) (*http.Request, error), output any) error {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
@@ -122,27 +122,20 @@ func (c *Client) request(ctx context.Context, service, method, path string, inpu
 		return err
 	}
 
-	var body []byte
-	if input != nil {
-		body, err = json.Marshal(input)
-		if err != nil {
-			return fmt.Errorf("%w: cannot encode %s request", ErrConfig, service)
-		}
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, endpoint+path, bytes.NewReader(body))
+	// Build against this operation's endpoint, never a shared mutable base URL.
+	req, err := build(endpoint)
 	if err != nil {
 		return fmt.Errorf("%w: cannot construct %s request", ErrConfig, service)
 	}
 
+	req = req.WithContext(ctx)
 	req.Header.Set("Authorization", "Bearer "+token.Bearer())
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "cipherstash-go/control")
-	if input != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
 
 	if service == "cts" {
+		// Fill generated workspace parameters from the same snapshot as the
+		// bearer, including operations whose schema omits the header.
 		req.Header.Set("x-cs-workspace-id", token.WorkspaceID())
 	}
 

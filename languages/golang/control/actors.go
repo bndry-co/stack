@@ -4,10 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
-	"strconv"
 
 	"github.com/cipherstash/stack/languages/golang/auth"
+	"github.com/cipherstash/stack/languages/golang/control/internal/cts"
 )
 
 // Actor is a machine identity. Its access-key identifier is a separate value.
@@ -64,20 +63,32 @@ func (a *CreatedActor) Wipe() {
 func (CreatedActor) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte("CreatedActor(***)")) }
 
 func (c *Client) CreateActor(ctx context.Context, opts CreateActorOptions) (*CreatedActor, error) {
-	var out struct {
-		Actor
-		Role      string `json:"role"`
-		AccessKey string `json:"accessKey"`
+	input := cts.CreateActorRequest{Name: opts.Name, Kind: cts.ActorKind(opts.Kind), TokenExpiry: opts.TokenExpiry}
+	if opts.Role != "" {
+		role := cts.Role(opts.Role)
+		input.Role = &role
 	}
-	if err := c.request(ctx, "cts", http.MethodPost, "/api/actors", opts, &out); err != nil {
+
+	var out struct {
+		cts.CreateActorResponse
+		// Preserve this optional response field, absent from the published schema.
+		CreatedAt string `json:"createdAt"`
+	}
+	if err := c.request(ctx, "cts", func(endpoint string) (*http.Request, error) {
+		return cts.NewCreateActorRequest(endpoint, input)
+	}, &out); err != nil {
 		return nil, err
 	}
 
-	if out.ID == "" || out.Name == "" || out.Kind == "" || out.Role == "" || out.AccessKey == "" {
+	if out.ActorId == "" || out.Name == "" || out.Kind == "" || out.Role == "" || out.AccessKey == "" {
 		return nil, fmt.Errorf("%w: incomplete create-actor response", ErrResponse)
 	}
 
-	return &CreatedActor{Actor: out.Actor, Role: out.Role, secret: &creationSecret{bytes: []byte(out.AccessKey)}}, nil
+	return &CreatedActor{
+		Actor:  Actor{ID: out.ActorId, Name: out.Name, Kind: string(out.Kind), CreatedAt: out.CreatedAt},
+		Role:   string(out.Role),
+		secret: &creationSecret{bytes: []byte(out.AccessKey)},
+	}, nil
 }
 
 type ListActorsOptions struct {
@@ -92,22 +103,19 @@ type ActorPage struct {
 }
 
 func (c *Client) ListActors(ctx context.Context, opts ListActorsOptions) (ActorPage, error) {
-	query := url.Values{}
+	params := cts.ListActorsParams{}
 	if opts.Limit != 0 {
-		query.Set("limit", strconv.Itoa(opts.Limit))
+		params.Limit = &opts.Limit
 	}
 
 	if opts.Cursor != "" {
-		query.Set("cursor", opts.Cursor)
+		params.Cursor = &opts.Cursor
 	}
 
-	path := "/api/actors"
-	if len(query) != 0 {
-		path += "?" + query.Encode()
-	}
-
-	var out ActorPage
-	if err := c.request(ctx, "cts", http.MethodGet, path, nil, &out); err != nil {
+	var out cts.ListActorsResponse
+	if err := c.request(ctx, "cts", func(endpoint string) (*http.Request, error) {
+		return cts.NewListActorsRequest(endpoint, &params)
+	}, &out); err != nil {
 		return ActorPage{}, err
 	}
 
@@ -115,18 +123,27 @@ func (c *Client) ListActors(ctx context.Context, opts ListActorsOptions) (ActorP
 		return ActorPage{}, fmt.Errorf("%w: missing actor list", ErrResponse)
 	}
 
-	for _, actor := range out.Items {
-		if actor.ID == "" || actor.Name == "" {
-			return ActorPage{}, fmt.Errorf("%w: missing actor identity", ErrResponse)
-		}
+	page := ActorPage{Items: make([]Actor, 0, len(out.Items))}
+	if out.NextCursor != nil {
+		page.NextCursor = *out.NextCursor
 	}
 
-	return out, nil
+	for _, actor := range out.Items {
+		if actor.ActorId == "" || actor.Name == "" {
+			return ActorPage{}, fmt.Errorf("%w: missing actor identity", ErrResponse)
+		}
+
+		page.Items = append(page.Items, Actor{ID: actor.ActorId, Name: actor.Name, Kind: string(actor.Kind), CreatedAt: actor.CreatedAt})
+	}
+
+	return page, nil
 }
 
 // DeleteActor deletes the actor and its owned access key.
 func (c *Client) DeleteActor(ctx context.Context, id string) error {
-	return c.request(ctx, "cts", http.MethodDelete, "/api/actors/"+url.PathEscape(id), nil, nil)
+	return c.request(ctx, "cts", func(endpoint string) (*http.Request, error) {
+		return cts.NewDeleteActorRequest(endpoint, id, &cts.DeleteActorParams{})
+	}, nil)
 }
 
 // AccessKeyMetadata never contains the access key's secret material.
@@ -140,16 +157,24 @@ type AccessKeyMetadata struct {
 }
 
 func (c *Client) ListAccessKeys(ctx context.Context) ([]AccessKeyMetadata, error) {
-	var out []AccessKeyMetadata
-	if err := c.request(ctx, "cts", http.MethodGet, "/api/access-keys", nil, &out); err != nil {
+	var out []cts.AccessKey
+	if err := c.request(ctx, "cts", func(endpoint string) (*http.Request, error) {
+		return cts.NewListAccessKeysRequest(endpoint, &cts.ListAccessKeysParams{})
+	}, &out); err != nil {
 		return nil, err
 	}
 
+	keys := make([]AccessKeyMetadata, 0, len(out))
 	for _, key := range out {
-		if key.ID == "" || key.Name == "" {
+		if key.KeyId == "" || key.KeyName == "" {
 			return nil, fmt.Errorf("%w: missing access-key identity", ErrResponse)
 		}
+
+		keys = append(keys, AccessKeyMetadata{
+			ID: key.KeyId, Name: key.KeyName, WorkspaceID: key.WorkspaceId,
+			Role: string(key.Role), CreatedAt: key.CreatedAt, LastUsedAt: key.LastUsedAt,
+		})
 	}
 
-	return out, nil
+	return keys, nil
 }

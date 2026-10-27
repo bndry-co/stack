@@ -131,3 +131,39 @@ Admin and Control grant/revoke requests against the existing default keyset retu
 A synthetic membership subject was rejected with HTTP 422. Real-user membership creation and deletion remain unproven.
 Keyset creation and enable/disable were not exercised against shared data because keysets cannot be deleted.
 Live OIDC federation requires a registered external identity provider; fixture coverage is not a live-provider proof.
+
+## Maintain the generated service protocol
+
+`internal/cts` and `internal/zerokms` contain checked-in OpenAPI snapshots, generator configurations, overlays and generated Go code.
+The snapshots were downloaded on 2026-10-27 from these public service endpoints:
+
+| Snapshot | Source |
+| --- | --- |
+| `internal/cts/openapi.json` | <https://eu-central-1.aws.cts.cipherstashmanaged.net/api/openapi.json> |
+| `internal/zerokms/openapi.json` | <https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net/api/openapi.json> |
+
+`go.mod` pins oapi-codegen v2.8.1 as a Go tool and its runtime at v1.8.0.
+From `languages/golang`, regenerate with:
+
+```sh
+go generate ./control/internal/...
+go test ./control/...
+golangci-lint run ./...
+```
+
+Generation reads only the checked-in snapshots; remote schema references are disabled.
+The existing Go CI job runs `go generate ./...` and rejects changed or untracked output.
+To update a snapshot, download its source, format it with `jq .`, inspect the schema changes, and regenerate.
+Keep generator adaptations in the overlays, not in the upstream schema or generated Go files.
+
+The configurations select only the SDK's administrative operations.
+CTS's overlay gives those operations unique names and preserves the SDK's integer widths.
+Both configurations represent UUIDs as strings, leaving identifier validation to the service as before.
+ZeroKMS's overlay preserves missing/null checks for required scalar fields and keeps creation keys base64-encoded.
+The CTS creation-response decoder also retains the optional `createdAt` field, which its published schema does not describe.
+
+Only request builders and wire models are used from the generated packages.
+The public types, authentication, deadlines, response limit, error mapping and secret ownership remain in `control`.
+Do not replace its decoder with generated `WithResponse` methods: those read unbounded bodies and retain raw responses.
+Generated types do not validate required fields or provide the Rust secret-handling guarantees mentioned in copied schema descriptions.
+The SDK's explicit response checks and one-shot secret wrappers remain necessary.

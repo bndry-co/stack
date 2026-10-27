@@ -2,11 +2,11 @@ package control
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
 	"github.com/cipherstash/stack/languages/golang/auth"
+	"github.com/cipherstash/stack/languages/golang/control/internal/zerokms"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 )
 
@@ -62,63 +62,64 @@ func (c *CreatedClient) Wipe() {
 func (CreatedClient) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte("CreatedClient(***)")) }
 
 func (c *Client) CreateClient(ctx context.Context, opts CreateClientOptions) (*CreatedClient, error) {
-	var out struct {
-		ID          string  `json:"id"`
-		Name        string  `json:"name"`
-		Description *string `json:"description"`
-		KeysetID    string  `json:"dataset_id"`
-		ClientKey   string  `json:"client_key"`
+	input := zerokms.CreateClientRequest{Name: opts.Name, Description: opts.Description}
+	if opts.KeysetID != "" {
+		input.KeysetId = &opts.KeysetID
 	}
-	if err := c.request(ctx, "zerokms", http.MethodPost, "/create-client", opts, &out); err != nil {
+
+	var out zerokms.CreateClientResponse
+	if err := c.request(ctx, "zerokms", func(endpoint string) (*http.Request, error) {
+		return zerokms.NewCreateClientRequest(endpoint, input)
+	}, &out); err != nil {
 		return nil, err
 	}
 
-	if out.ID == "" || out.Name == "" || out.Description == nil || out.KeysetID == "" || out.ClientKey == "" {
+	if out.Id == "" || out.Name == "" || out.Description == nil || out.DatasetId == "" || out.ClientKey == "" {
 		return nil, fmt.Errorf("%w: incomplete create-client response", ErrResponse)
 	}
 
 	return &CreatedClient{
-		EncryptionClient: EncryptionClient{ID: out.ID, Name: out.Name, Description: *out.Description, KeysetIDs: []string{out.KeysetID}},
-		KeysetID:         out.KeysetID, secret: &creationSecret{bytes: []byte(out.ClientKey)},
+		EncryptionClient: EncryptionClient{ID: out.Id, Name: out.Name, Description: *out.Description, KeysetIDs: []string{out.DatasetId}},
+		KeysetID:         out.DatasetId, secret: &creationSecret{bytes: []byte(out.ClientKey)},
 	}, nil
 }
 
 type ListClientsOptions struct{ KeysetID string }
 
 func (c *Client) ListClients(ctx context.Context, opts ListClientsOptions) ([]EncryptionClient, error) {
-	var input struct {
-		KeysetID any `json:"keyset_id,omitempty"`
-	}
-	if opts.KeysetID != "" {
-		input.KeysetID = struct {
-			UUID string `json:"Uuid"`
-		}{opts.KeysetID}
-	}
+	var out []zerokms.KeysetClient
+	if err := c.request(ctx, "zerokms", func(endpoint string) (*http.Request, error) {
+		input := zerokms.ListClientRequest{}
+		if opts.KeysetID != "" {
+			input.KeysetId = &zerokms.IdentifiedBy{}
+			if err := input.KeysetId.FromIdentifiedBy0(zerokms.IdentifiedBy0{Uuid: opts.KeysetID}); err != nil {
+				return nil, err
+			}
+		}
 
-	var out []struct {
-		ID          string          `json:"id"`
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		KeysetID    json.RawMessage `json:"keyset_id"`
-	}
-	if err := c.request(ctx, "zerokms", http.MethodPost, "/list-clients", input, &out); err != nil {
+		return zerokms.NewListClientsRequest(endpoint, input)
+	}, &out); err != nil {
 		return nil, err
 	}
 
 	clients := make([]EncryptionClient, 0, len(out))
 	for _, item := range out {
-		if item.ID == "" || len(item.KeysetID) == 0 || string(item.KeysetID) == "null" {
+		if item.Id == "" {
 			return nil, fmt.Errorf("%w: missing client identity or keyset associations", ErrResponse)
 		}
 
-		var ids []string
-		if err := json.Unmarshal(item.KeysetID, &ids); err != nil {
-			var id string
-			if err := json.Unmarshal(item.KeysetID, &id); err != nil {
+		ids, err := item.KeysetId.AsClientKeysetId1()
+		if err != nil {
+			id, err := item.KeysetId.AsClientKeysetId0()
+			if err != nil {
 				return nil, fmt.Errorf("%w: invalid client keyset associations", ErrResponse)
 			}
 
 			ids = []string{id}
+		}
+
+		if ids == nil {
+			return nil, fmt.Errorf("%w: missing client keyset associations", ErrResponse)
 		}
 
 		for _, id := range ids {
@@ -127,14 +128,14 @@ func (c *Client) ListClients(ctx context.Context, opts ListClientsOptions) ([]En
 			}
 		}
 
-		clients = append(clients, EncryptionClient{ID: item.ID, Name: item.Name, Description: item.Description, KeysetIDs: ids})
+		clients = append(clients, EncryptionClient{ID: item.Id, Name: item.Name, Description: item.Description, KeysetIDs: ids})
 	}
 
 	return clients, nil
 }
 
 func (c *Client) DeleteClient(ctx context.Context, id string) error {
-	return c.request(ctx, "zerokms", http.MethodPost, "/delete-client", struct {
-		ClientID string `json:"client_id"`
-	}{id}, nil)
+	return c.request(ctx, "zerokms", func(endpoint string) (*http.Request, error) {
+		return zerokms.NewDeleteClientRequest(endpoint, zerokms.DeleteClientRequest{ClientId: id})
+	}, nil)
 }
